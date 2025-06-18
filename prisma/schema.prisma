@@ -6,3 +6,24 @@ datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
+
+model Category {
+  id            Int   @id @default(autoincrement())
+  kiotvietId    Int?  @unique
+  name          String
+  parentId      Int?
+  parent        Category? @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children      Category[] @relation("CategoryHierarchy")
+  hasChildren   Boolean @default(false)
+  retailerId    Int?
+  createdDate   DateTime @default(now())
+  modifiedDate  DateTime @updatedAt
+  lastSyncedAt  DateTime @default(now())
+
+  products      Product[]
+
+  @@index([kiotvietId])
+  @@index([parentId])
+  @@index([lastSyncedAt])
+
+}
