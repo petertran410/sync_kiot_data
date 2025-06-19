@@ -23,10 +23,10 @@ export class SchedulerService implements OnModuleInit {
     }
   }
 
-  @Cron('0 */1 * * *')
+  @Cron('*/15 * * * *')
   async handleScheduledSync() {
     try {
-      await this.customerService.syncRecentCustomers(1);
+      await this.customerService.syncRecentCustomers(7);
     } catch (error) {
       this.logger.error(`Scheduled sync failed: ${error.message}`);
     }
