@@ -2,6 +2,7 @@ import { Controller, Post, Get, Body, Param, Query } from '@nestjs/common';
 import { KiotVietCustomerService } from '../services/kiot-viet/customer/customer.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { KiotVietBranchService } from 'src/services/kiot-viet/branch/branch.service';
+import { KiotVietCustomerGroupService } from 'src/services/kiot-viet/customer-group/customer-group.service';
 
 @Controller('sync')
 export class SyncController {
@@ -9,6 +10,7 @@ export class SyncController {
     private readonly customerService: KiotVietCustomerService,
     private readonly prismaService: PrismaService,
     private readonly branchService: KiotVietBranchService,
+    private readonly customerGroupService: KiotVietCustomerGroupService,
   ) {}
 
   @Post('customers/recent')
@@ -83,5 +85,11 @@ export class SyncController {
   async syncBranches() {
     await this.branchService.syncBranches();
     return { message: 'Branch sync completed' };
+  }
+
+  @Post('customer-groups')
+  async syncCustomerGroups() {
+    await this.customerGroupService.syncCustomerGroups();
+    return { message: 'Customer groups sync completed' };
   }
 }

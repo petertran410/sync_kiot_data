@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { KiotVietBranchService } from '../branch/branch.service';
 import { KiotVietAuthService } from '../auth.service';
+import { KiotVietCustomerGroupService } from '../customer-group/customer-group.service';
 import { firstValueFrom } from 'rxjs';
 import { Prisma } from '@prisma/client';
 import * as dayjs from 'dayjs';
@@ -21,6 +22,7 @@ export class KiotVietCustomerService {
     private readonly prismaService: PrismaService,
     private readonly authService: KiotVietAuthService,
     private readonly branchService: KiotVietBranchService,
+    private readonly customerGroupService: KiotVietCustomerGroupService,
   ) {
     const baseUrl = this.configService.get<string>('KIOT_BASE_URL');
     if (!baseUrl) {
@@ -79,6 +81,59 @@ export class KiotVietCustomerService {
     }
   }
 
+  private async handleCustomerGroups(
+    customerId: number,
+    groupsString: string | null,
+  ): Promise<void> {
+    if (!groupsString) return;
+
+    try {
+      const groupNames = groupsString.split('|').filter((name) => name.trim());
+
+      if (groupNames.length === 0) return;
+
+      const existingGroups = await this.prismaService.customerGroup.findMany({
+        where: { name: { in: groupNames } },
+      });
+
+      for (const group of existingGroups) {
+        try {
+          await this.prismaService.customerGroupRelation.upsert({
+            where: {
+              customerId_customerGroupId: {
+                customerId: customerId,
+                customerGroupId: group.id,
+              },
+            },
+            create: {
+              customerId: customerId,
+              customerGroupId: group.id,
+            },
+            update: {},
+          });
+        } catch (error) {
+          this.logger.debug(
+            `Customer group relation already exists: Customer ${customerId}, Group ${group.id}`,
+          );
+        }
+      }
+
+      const foundGroupNames = existingGroups.map((g) => g.name);
+      const missingGroups = groupNames.filter(
+        (name) => !foundGroupNames.includes(name),
+      );
+      if (missingGroups.length > 0) {
+        this.logger.warn(
+          `Customer groups not found: ${missingGroups.join(', ')}`,
+        );
+      }
+    } catch (error) {
+      this.logger.error(
+        `Failed to handle customer groups for customer ${customerId}: ${error.message}`,
+      );
+    }
+  }
+
   async batchSaveCustomers(customers: any[]) {
     if (!customers || customers.length === 0) return { created: 0, updated: 0 };
 
@@ -93,10 +148,14 @@ export class KiotVietCustomerService {
       existingCustomers.map((c) => [c.kiotVietId.toString(), c.id]),
     );
 
-    const customersToCreate: Prisma.CustomerCreateInput[] = [];
+    const customersToCreate: Array<{
+      createData: Prisma.CustomerCreateInput;
+      groups: string | null;
+    }> = [];
     const customersToUpdate: Array<{
       id: number;
       data: Prisma.CustomerUpdateInput;
+      groups: string | null;
     }> = [];
 
     for (const customerData of customers) {
@@ -107,11 +166,15 @@ export class KiotVietCustomerService {
         customersToUpdate.push({
           id: existingId,
           data: await this.prepareCustomerUpdateData(customerData),
+          groups: customerData.groups || null,
         });
       } else {
         const createData = await this.prepareCustomerCreateData(customerData);
         if (createData) {
-          customersToCreate.push(createData);
+          customersToCreate.push({
+            createData: createData,
+            groups: customerData.groups || null,
+          });
         }
       }
     }
@@ -120,27 +183,41 @@ export class KiotVietCustomerService {
     let updatedCount = 0;
 
     if (customersToCreate.length > 0) {
-      for (const customerData of customersToCreate) {
+      for (const { createData, groups } of customersToCreate) {
         try {
-          await this.prismaService.customer.create({
-            data: customerData,
+          const createdCustomer = await this.prismaService.customer.create({
+            data: createData,
           });
+
+          if (groups) {
+            await this.handleCustomerGroups(createdCustomer.id, groups);
+          }
+
           createdCount++;
         } catch (error) {
           this.logger.error(
-            `Failed to create customer ${customerData.code}: ${error.message}`,
+            `Failed to create customer ${createData.code}: ${error.message}`,
           );
         }
       }
     }
 
     if (customersToUpdate.length > 0) {
-      for (const { id, data } of customersToUpdate) {
+      for (const { id, data, groups } of customersToUpdate) {
         try {
           await this.prismaService.customer.update({
             where: { id },
             data,
           });
+
+          if (groups) {
+            await this.prismaService.customerGroupRelation.deleteMany({
+              where: { customerId: id },
+            });
+
+            await this.handleCustomerGroups(id, groups);
+          }
+
           updatedCount++;
         } catch (error) {
           this.logger.error(
@@ -550,13 +627,30 @@ export class KiotVietCustomerService {
   }
 
   async checkAndRunAppropriateSync(): Promise<void> {
+    // First sync branches
+    this.logger.log('Syncing branches first...');
+    try {
+      await this.branchService.syncBranches();
+    } catch (error) {
+      this.logger.warn(`Branch sync failed, continuing: ${error.message}`);
+    }
+
+    this.logger.log('Syncing customer groups...');
+    try {
+      await this.customerGroupService.syncCustomerGroups();
+    } catch (error) {
+      this.logger.warn(
+        `Customer group sync failed, continuing: ${error.message}`,
+      );
+    }
+
     const historicalSync = await this.prismaService.syncControl.findFirst({
       where: { name: 'customer_historical' },
     });
 
     if (!historicalSync) {
       this.logger.log(
-        'No historical sync record found. Starting full historical sync',
+        'No historical sync record found. Starting full historical sync...',
       );
       await this.syncHistoricalCustomers();
       return;

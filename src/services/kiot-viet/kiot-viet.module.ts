@@ -5,6 +5,7 @@ import { PrismaModule } from '../../prisma/prisma.module';
 import { KiotVietAuthService } from './auth.service';
 import { KiotVietCustomerService } from './customer/customer.service';
 import { KiotVietBranchService } from './branch/branch.service';
+import { KiotVietCustomerGroupService } from './customer-group/customer-group.service';
 
 @Module({
   imports: [
@@ -19,11 +20,13 @@ import { KiotVietBranchService } from './branch/branch.service';
     KiotVietAuthService,
     KiotVietCustomerService,
     KiotVietBranchService,
+    KiotVietCustomerGroupService,
   ],
   exports: [
     KiotVietAuthService,
     KiotVietCustomerService,
     KiotVietBranchService,
+    KiotVietCustomerGroupService,
   ],
 })
 export class KiotVietModule {}
