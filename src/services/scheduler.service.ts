@@ -1,43 +1,29 @@
-// src/services/scheduler.service.ts
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { KiotVietCustomerService } from './kiot-viet/customer/customer.service';
-import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
-export class SchedulerService {
+export class SchedulerService implements OnModuleInit {
   private readonly logger = new Logger(SchedulerService.name);
 
-  constructor(
-    private readonly customerService: KiotVietCustomerService,
-    private readonly prismaService: PrismaService,
-  ) {}
+  constructor(private readonly customerService: KiotVietCustomerService) {}
+
+  // Handle system startup
+  async onModuleInit() {
+    this.logger.log('Application started, checking sync status...');
+    try {
+      await this.customerService.checkAndRunAppropriateSync();
+    } catch (error) {
+      this.logger.error(`Startup sync check failed: ${error.message}`);
+    }
+  }
 
   @Cron('0 */1 * * *') // Run every hour
-  async handleCustomerSync() {
+  async handleScheduledSync() {
     try {
-      // Check if historical sync is running
-      const historicalSync = await this.prismaService.syncControl.findFirst({
-        where: {
-          syncType: 'customer_historical',
-          isRunning: true,
-        },
-      });
-
-      if (historicalSync) {
-        this.logger.log(
-          'Historical sync is running. Skipping scheduled recent sync.',
-        );
-        return;
-      }
-
-      // Run recent customer sync (last 24 hours)
-      await this.customerService.syncRecentCustomers(1);
-
-      // Remove any duplicates
-      await this.customerService.removeDuplicateCustomers();
+      await this.customerService.syncRecentCustomers(1); // Last 24 hours
     } catch (error) {
-      this.logger.error(`Scheduled customer sync failed: ${error.message}`);
+      this.logger.error(`Scheduled sync failed: ${error.message}`);
     }
   }
 }

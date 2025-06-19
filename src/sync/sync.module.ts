@@ -1,32 +1,13 @@
-// src/sync/sync.scheduler.ts
-import { Injectable, Logger } from '@nestjs/common';
-import { Cron } from '@nestjs/schedule';
-import { SyncService } from '../sync/sync.service';
+import { Module } from '@nestjs/common';
+import { SyncService } from './sync.service';
+import { SyncController } from './sync.controller';
+import { PrismaModule } from '../prisma/prisma.module';
+import { KiotVietModule } from '../services/kiot-viet/kiot-viet.module';
 
-@Injectable()
-export class SyncScheduler {
-  private readonly logger = new Logger(SyncScheduler.name);
-
-  constructor(private readonly syncService: SyncService) {}
-
-  @Cron('0 */1 * * *') // Run every hour
-  async handleRecurrentSync() {
-    try {
-      // Check if any historical sync is running
-      const historicalStatus =
-        await this.syncService.getSyncStatus('historical_multi');
-      if (historicalStatus?.isRunning) {
-        this.logger.log('Historical sync is running. Skipping recurrent sync.');
-        return;
-      }
-
-      // Start recent sync for customers
-      await this.syncService.startMultiEntitySync({
-        entities: ['customer'],
-        syncMode: 'recent',
-      });
-    } catch (error) {
-      this.logger.error(`Scheduled sync failed: ${error.message}`);
-    }
-  }
-}
+@Module({
+  imports: [PrismaModule, KiotVietModule],
+  providers: [SyncService],
+  controllers: [SyncController],
+  exports: [SyncService],
+})
+export class SyncModule {}
