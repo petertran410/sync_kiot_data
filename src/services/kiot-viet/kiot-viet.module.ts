@@ -2,11 +2,18 @@ import { Module } from '@nestjs/common';
 import { HttpModule } from '@nestjs/axios';
 import { ConfigModule } from '@nestjs/config';
 import { PrismaModule } from '../../prisma/prisma.module';
-import { KiotVietAuthService } from '../kiot-viet/auth.service';
-import { KiotVietCustomerService } from '../kiot-viet/customer/customer.service';
+import { KiotVietAuthService } from './auth.service';
+import { KiotVietCustomerService } from './customer/customer.service';
 
 @Module({
-  imports: [HttpModule, ConfigModule, PrismaModule],
+  imports: [
+    HttpModule.register({
+      timeout: 60000,
+      maxRedirects: 5,
+    }),
+    ConfigModule,
+    PrismaModule,
+  ],
   providers: [KiotVietAuthService, KiotVietCustomerService],
   exports: [KiotVietAuthService, KiotVietCustomerService],
 })

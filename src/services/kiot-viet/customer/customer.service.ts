@@ -10,7 +10,7 @@ import * as dayjs from 'dayjs';
 @Injectable()
 export class KiotVietCustomerService {
   private readonly logger = new Logger(KiotVietCustomerService.name);
-  private readonly baseUrl: string | undefined;
+  private readonly baseUrl: string;
   private readonly BATCH_SIZE = 500;
   private readonly PAGE_SIZE = 100;
 
@@ -20,7 +20,19 @@ export class KiotVietCustomerService {
     private readonly prismaService: PrismaService,
     private readonly authService: KiotVietAuthService,
   ) {
-    this.baseUrl = this.configService.get<string>('KIOT_BASE_URL');
+    const baseUrl = this.configService.get<string>('KIOT_BASE_URL');
+    if (!baseUrl) {
+      throw new Error('KIOT_BASE_URL environment variable is not configured');
+    }
+
+    this.baseUrl = baseUrl;
+
+    // Debug logging to check if services are injected
+    this.logger.debug(`HttpService injected: ${!!this.httpService}`);
+    this.logger.debug(`ConfigService injected: ${!!this.configService}`);
+    this.logger.debug(`PrismaService injected: ${!!this.prismaService}`);
+    this.logger.debug(`AuthService injected: ${!!this.authService}`);
+    this.logger.debug(`Base URL: ${this.baseUrl}`);
   }
 
   async fetchCustomers(params: {
@@ -29,7 +41,23 @@ export class KiotVietCustomerService {
     pageSize?: number;
   }) {
     try {
+      // Add validation
+      if (!this.httpService) {
+        throw new Error('HttpService is not available');
+      }
+
+      if (!this.authService) {
+        throw new Error('AuthService is not available');
+      }
+
+      if (!this.baseUrl) {
+        throw new Error('Base URL is not configured');
+      }
+
+      this.logger.debug('Getting request headers...');
       const headers = await this.authService.getRequestHeaders();
+
+      this.logger.debug('Making HTTP request to KiotViet API...');
       const { data } = await firstValueFrom(
         this.httpService.get(`${this.baseUrl}/customers`, {
           headers,
@@ -42,6 +70,7 @@ export class KiotVietCustomerService {
       return data;
     } catch (error) {
       this.logger.error(`Failed to fetch customers: ${error.message}`);
+      this.logger.error(`Error stack: ${error.stack}`);
       throw error;
     }
   }

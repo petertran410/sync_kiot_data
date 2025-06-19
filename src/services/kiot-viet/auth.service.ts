@@ -1,8 +1,9 @@
-import { Logger } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
 
+@Injectable()
 export class KiotVietAuthService {
   private readonly logger = new Logger(KiotVietAuthService.name);
   private accessToken: string;
@@ -46,9 +47,8 @@ export class KiotVietAuthService {
       );
 
       this.accessToken = data.access_token;
-
       this.tokenExpiry = new Date(Date.now() + data.expires_in * 1000);
-      this.logger.log('Kiotviet access token obtained successfully');
+      this.logger.log('KiotViet access token obtained successfully');
 
       return this.accessToken;
     } catch (error) {
@@ -63,13 +63,13 @@ export class KiotVietAuthService {
     const shopName = this.configService.get<string>('KIOT_SHOP_NAME');
 
     if (!shopName) {
-      throw new Error('Missing KiotViet shop name in configuraion');
+      throw new Error('Missing KiotViet shop name in configuration');
     }
 
     const token = await this.getAccessToken();
 
     return {
-      Retailer: this.configService.get<string>('KIOT_SHOP_NAME'),
+      Retailer: shopName,
       Authorization: `Bearer ${token}`,
     };
   }

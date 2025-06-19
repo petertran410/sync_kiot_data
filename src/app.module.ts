@@ -11,7 +11,7 @@ import { SchedulerService } from './services/scheduler.service';
 
 @Module({
   imports: [
-    ConfigModule.forRoot(),
+    ConfigModule.forRoot({ isGlobal: true }),
     ScheduleModule.forRoot(),
     PrismaModule,
     KiotVietModule,
