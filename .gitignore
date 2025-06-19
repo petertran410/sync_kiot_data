@@ -3,6 +3,11 @@
 /node_modules
 /build
 
+# Deployment
+deploy-sync-kiot.sh
+Dockerfile
+docker-compose.yml
+
 # Logs
 logs
 *.log
