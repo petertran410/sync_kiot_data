@@ -1,12 +1,14 @@
 import { Controller, Post, Get, Body, Param, Query } from '@nestjs/common';
 import { KiotVietCustomerService } from '../services/kiot-viet/customer/customer.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { KiotVietBranchService } from 'src/services/kiot-viet/branch/branch.service';
 
 @Controller('sync')
 export class SyncController {
   constructor(
     private readonly customerService: KiotVietCustomerService,
     private readonly prismaService: PrismaService,
+    private readonly branchService: KiotVietBranchService,
   ) {}
 
   @Post('customers/recent')
@@ -66,7 +68,6 @@ export class SyncController {
 
   @Post('customers/force-historical')
   async forceHistoricalSync() {
-    // First, reset any existing historical sync status
     await this.prismaService.syncControl.deleteMany({
       where: { name: 'customer_historical' },
     });
@@ -76,5 +77,11 @@ export class SyncController {
     return {
       message: 'Started complete historical customer sync from scratch',
     };
+  }
+
+  @Post('branches')
+  async syncBranches() {
+    await this.branchService.syncBranches();
+    return { message: 'Branch sync completed' };
   }
 }

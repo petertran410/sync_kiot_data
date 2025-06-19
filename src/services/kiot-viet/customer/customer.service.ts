@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { KiotVietBranchService } from '../branch/branch.service';
 import { KiotVietAuthService } from '../auth.service';
 import { firstValueFrom } from 'rxjs';
 import { Prisma } from '@prisma/client';
@@ -19,6 +20,7 @@ export class KiotVietCustomerService {
     private readonly configService: ConfigService,
     private readonly prismaService: PrismaService,
     private readonly authService: KiotVietAuthService,
+    private readonly branchService: KiotVietBranchService,
   ) {
     const baseUrl = this.configService.get<string>('KIOT_BASE_URL');
     if (!baseUrl) {
@@ -151,6 +153,13 @@ export class KiotVietCustomerService {
     return { created: createdCount, updated: updatedCount };
   }
 
+  private convertToLocalTime(dateString: string): Date {
+    if (!dateString) return new Date();
+
+    const date = new Date(dateString);
+    return date;
+  }
+
   private async prepareCustomerCreateData(
     customerData: any,
   ): Promise<Prisma.CustomerCreateInput | null> {
@@ -161,7 +170,7 @@ export class KiotVietCustomerService {
       type: customerData.type || 0,
       gender: customerData.gender,
       birthDate: customerData.birthDate
-        ? new Date(customerData.birthDate)
+        ? this.convertToLocalTime(customerData.birthDate)
         : null,
       contactNumber: customerData.contactNumber,
       address: customerData.address,
@@ -188,10 +197,10 @@ export class KiotVietCustomerService {
       retailerId: customerData.retailerId,
       isActive: true,
       createdDate: customerData.createdDate
-        ? new Date(customerData.createdDate)
+        ? this.convertToLocalTime(customerData.createdDate)
         : new Date(),
       modifiedDate: customerData.modifiedDate
-        ? new Date(customerData.modifiedDate)
+        ? this.convertToLocalTime(customerData.modifiedDate)
         : new Date(),
       lastSyncedAt: new Date(),
     };
@@ -230,7 +239,7 @@ export class KiotVietCustomerService {
       type: customerData.type,
       gender: customerData.gender,
       birthDate: customerData.birthDate
-        ? new Date(customerData.birthDate)
+        ? this.convertToLocalTime(customerData.birthDate)
         : null,
       contactNumber: customerData.contactNumber,
       address: customerData.address,
@@ -257,7 +266,7 @@ export class KiotVietCustomerService {
       retailerId: customerData.retailerId,
       isActive: true,
       modifiedDate: customerData.modifiedDate
-        ? new Date(customerData.modifiedDate)
+        ? this.convertToLocalTime(customerData.modifiedDate)
         : new Date(),
       lastSyncedAt: new Date(),
     };
@@ -273,8 +282,8 @@ export class KiotVietCustomerService {
             connect: { kiotVietId: customerData.branchId },
           };
         } else {
-          this.logger.warn(
-            `Branch with kiotVietId ${customerData.branchId} not found for customer ${customerData.code}`,
+          this.logger.debug(
+            `Branch ${customerData.branchId} not found for customer ${customerData.code} - skipping branch relationship`,
           );
         }
       } catch (error) {
