@@ -63,4 +63,18 @@ export class SyncController {
         : 'Historical sync disabled',
     };
   }
+
+  @Post('customers/force-historical')
+  async forceHistoricalSync() {
+    // First, reset any existing historical sync status
+    await this.prismaService.syncControl.deleteMany({
+      where: { name: 'customer_historical' },
+    });
+
+    // Start fresh historical sync
+    await this.customerService.syncHistoricalCustomers();
+    return {
+      message: 'Started complete historical customer sync from scratch',
+    };
+  }
 }

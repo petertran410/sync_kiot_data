@@ -61,6 +61,9 @@ export class KiotVietCustomerService {
           params: {
             ...params,
             includeRemoveIds: true,
+            includeTotal: true,
+            includeCustomerGroup: true,
+            includeCustomerSocial: true,
           },
         }),
       );
@@ -155,7 +158,7 @@ export class KiotVietCustomerService {
       kiotVietId: BigInt(customerData.id),
       code: customerData.code,
       name: customerData.name,
-      type: customerData.type,
+      type: customerData.type || 0,
       gender: customerData.gender,
       birthDate: customerData.birthDate
         ? new Date(customerData.birthDate)
@@ -172,7 +175,7 @@ export class KiotVietCustomerService {
       totalInvoiced: customerData.totalInvoiced
         ? new Prisma.Decimal(customerData.totalInvoiced)
         : null,
-      totalPoint: customerData.totalPoint,
+      totalPoint: customerData.totalPoint || null,
       totalRevenue: customerData.totalRevenue
         ? new Prisma.Decimal(customerData.totalRevenue)
         : null,
@@ -193,7 +196,6 @@ export class KiotVietCustomerService {
       lastSyncedAt: new Date(),
     };
 
-    // Handle branch relationship if branchId exists and branch exists in database
     if (customerData.branchId) {
       try {
         const branchExists = await this.prismaService.branch.findFirst({
@@ -544,6 +546,14 @@ export class KiotVietCustomerService {
       where: { name: 'customer_historical' },
     });
 
+    if (!historicalSync) {
+      this.logger.log(
+        'No historical sync record found. Starting full historical sync',
+      );
+      await this.syncHistoricalCustomers();
+      return;
+    }
+
     if (historicalSync?.isEnabled && historicalSync?.isRunning) {
       this.logger.log(
         'System restart detected: Historical sync was running, resuming...',
@@ -554,6 +564,9 @@ export class KiotVietCustomerService {
         'System restart detected: Historical sync enabled, starting...',
       );
       await this.syncHistoricalCustomers();
+    } else if (historicalSync?.status === 'completed') {
+      this.logger.log('Historical sync completed. Running recent sync...');
+      await this.syncRecentCustomers();
     } else {
       this.logger.log('System restart detected: Running recent sync...');
       await this.syncRecentCustomers();
