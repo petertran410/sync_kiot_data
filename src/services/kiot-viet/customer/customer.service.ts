@@ -10,9 +10,9 @@ import * as dayjs from 'dayjs';
 @Injectable()
 export class KiotVietCustomerService {
   private readonly logger = new Logger(KiotVietCustomerService.name);
-  private readonly baseUrl: string;
-  private readonly BATCH_SIZE = 500; // Process 500 customers at once for performance
-  private readonly PAGE_SIZE = 100; // KiotViet API limit
+  private readonly baseUrl: string | undefined;
+  private readonly BATCH_SIZE = 500;
+  private readonly PAGE_SIZE = 100;
 
   constructor(
     private readonly httpService: HttpService,
@@ -23,9 +23,6 @@ export class KiotVietCustomerService {
     this.baseUrl = this.configService.get<string>('KIOT_BASE_URL');
   }
 
-  /**
-   * Fetches customers from KiotViet with pagination
-   */
   async fetchCustomers(params: {
     lastModifiedFrom?: string;
     currentItem?: number;
@@ -49,74 +46,69 @@ export class KiotVietCustomerService {
     }
   }
 
-  /**
-   * Batch save customers with duplicate prevention
-   */
   async batchSaveCustomers(customers: any[]) {
     if (!customers || customers.length === 0) return { created: 0, updated: 0 };
 
     const kiotVietIds = customers.map((c) => BigInt(c.id));
 
-    // Get existing customers to determine create vs update
     const existingCustomers = await this.prismaService.customer.findMany({
       where: { kiotVietId: { in: kiotVietIds } },
       select: { kiotVietId: true, id: true },
     });
 
-    const existingMap = new Map(
+    const existingMap = new Map<string, number>(
       existingCustomers.map((c) => [c.kiotVietId.toString(), c.id]),
     );
 
-    const customersToCreate = [];
-    const customersToUpdate = [];
+    const customersToCreate: Prisma.CustomerCreateInput[] = [];
+    const customersToUpdate: Array<{
+      id: number;
+      data: Prisma.CustomerUpdateInput;
+    }> = [];
 
     for (const customerData of customers) {
       const kiotVietId = BigInt(customerData.id);
-      const customerRecord = this.prepareCustomerData(customerData);
+      const existingId = existingMap.get(kiotVietId.toString());
 
-      if (existingMap.has(kiotVietId.toString())) {
+      if (existingId) {
         customersToUpdate.push({
-          id: existingMap.get(kiotVietId.toString()),
-          data: customerRecord,
+          id: existingId,
+          data: this.prepareCustomerUpdateData(customerData),
         });
       } else {
-        customersToCreate.push(customerRecord);
+        customersToCreate.push(this.prepareCustomerCreateData(customerData));
       }
     }
 
     let createdCount = 0;
     let updatedCount = 0;
 
-    // Batch create new customers
     if (customersToCreate.length > 0) {
       await this.prismaService.customer.createMany({
         data: customersToCreate,
-        skipDuplicates: true, // Extra safety
+        skipDuplicates: true,
       });
       createdCount = customersToCreate.length;
     }
 
-    // Batch update existing customers
     if (customersToUpdate.length > 0) {
-      await this.prismaService.$transaction(
-        customersToUpdate.map(({ id, data }) =>
-          this.prismaService.customer.update({
-            where: { id },
-            data,
-          }),
-        ),
+      const updatePromises = customersToUpdate.map(({ id, data }) =>
+        this.prismaService.customer.update({
+          where: { id },
+          data,
+        }),
       );
+      await Promise.all(updatePromises);
       updatedCount = customersToUpdate.length;
     }
 
     return { created: createdCount, updated: updatedCount };
   }
 
-  /**
-   * Prepare customer data for database
-   */
-  private prepareCustomerData(customerData: any): Prisma.CustomerCreateInput {
-    return {
+  private prepareCustomerCreateData(
+    customerData: any,
+  ): Prisma.CustomerCreateInput {
+    const data: Prisma.CustomerCreateInput = {
       kiotVietId: BigInt(customerData.id),
       code: customerData.code,
       name: customerData.name,
@@ -148,7 +140,6 @@ export class KiotVietCustomerService {
         ? BigInt(customerData.psidFacebook)
         : null,
       retailerId: customerData.retailerId,
-      branchId: customerData.branchId,
       isActive: true,
       createdDate: customerData.createdDate
         ? new Date(customerData.createdDate)
@@ -158,11 +149,68 @@ export class KiotVietCustomerService {
         : new Date(),
       lastSyncedAt: new Date(),
     };
+
+    // Handle branch relationship if branchId exists
+    if (customerData.branchId) {
+      data.branch = {
+        connect: { id: customerData.branchId },
+      };
+    }
+
+    return data;
   }
 
-  /**
-   * Handle removed customers
-   */
+  private prepareCustomerUpdateData(
+    customerData: any,
+  ): Prisma.CustomerUpdateInput {
+    const data: Prisma.CustomerUpdateInput = {
+      code: customerData.code,
+      name: customerData.name,
+      type: customerData.type,
+      gender: customerData.gender,
+      birthDate: customerData.birthDate
+        ? new Date(customerData.birthDate)
+        : null,
+      contactNumber: customerData.contactNumber,
+      address: customerData.address,
+      locationName: customerData.locationName,
+      wardName: customerData.wardName,
+      email: customerData.email,
+      organization: customerData.organization,
+      taxCode: customerData.taxCode,
+      comments: customerData.comments,
+      debt: customerData.debt ? new Prisma.Decimal(customerData.debt) : null,
+      totalInvoiced: customerData.totalInvoiced
+        ? new Prisma.Decimal(customerData.totalInvoiced)
+        : null,
+      totalPoint: customerData.totalPoint,
+      totalRevenue: customerData.totalRevenue
+        ? new Prisma.Decimal(customerData.totalRevenue)
+        : null,
+      rewardPoint: customerData.rewardPoint
+        ? BigInt(customerData.rewardPoint)
+        : null,
+      psidFacebook: customerData.psidFacebook
+        ? BigInt(customerData.psidFacebook)
+        : null,
+      retailerId: customerData.retailerId,
+      isActive: true,
+      modifiedDate: customerData.modifiedDate
+        ? new Date(customerData.modifiedDate)
+        : new Date(),
+      lastSyncedAt: new Date(),
+    };
+
+    // Handle branch relationship if branchId exists
+    if (customerData.branchId) {
+      data.branch = {
+        connect: { id: customerData.branchId },
+      };
+    }
+
+    return data;
+  }
+
   async handleRemovedCustomers(removedIds: number[]) {
     if (!removedIds || removedIds.length === 0) return 0;
 
@@ -180,9 +228,6 @@ export class KiotVietCustomerService {
     }
   }
 
-  /**
-   * Remove duplicate customers (keep latest lastSyncedAt)
-   */
   async removeDuplicateCustomers(): Promise<number> {
     try {
       const duplicates = await this.prismaService.$queryRaw<
@@ -219,12 +264,8 @@ export class KiotVietCustomerService {
     }
   }
 
-  /**
-   * Sync recent customers (last X days)
-   */
   async syncRecentCustomers(days: number = 7): Promise<void> {
     try {
-      // Check if historical sync is running
       const historicalSync = await this.prismaService.syncControl.findFirst({
         where: { name: 'customer_historical', isRunning: true },
       });
@@ -234,7 +275,6 @@ export class KiotVietCustomerService {
         return;
       }
 
-      // Update sync control
       await this.prismaService.syncControl.upsert({
         where: { name: 'customer_recent' },
         create: {
@@ -286,10 +326,8 @@ export class KiotVietCustomerService {
         if (hasMoreData) currentItem += this.PAGE_SIZE;
       }
 
-      // Remove duplicates
       const duplicatesRemoved = await this.removeDuplicateCustomers();
 
-      // Update sync control
       await this.prismaService.syncControl.update({
         where: { name: 'customer_recent' },
         data: {
@@ -319,12 +357,8 @@ export class KiotVietCustomerService {
     }
   }
 
-  /**
-   * Sync all historical customers
-   */
   async syncHistoricalCustomers(): Promise<void> {
     try {
-      // Update sync control
       await this.prismaService.syncControl.upsert({
         where: { name: 'customer_historical' },
         create: {
@@ -341,7 +375,7 @@ export class KiotVietCustomerService {
           status: 'in_progress',
           startedAt: new Date(),
           error: null,
-          progress: null,
+          progress: {},
         },
       });
 
@@ -349,7 +383,7 @@ export class KiotVietCustomerService {
       let totalProcessed = 0;
       let batchCount = 0;
       let hasMoreData = true;
-      const customerBatch = [];
+      const customerBatch: any[] = [];
 
       this.logger.log('Starting historical customer sync...');
 
@@ -362,7 +396,6 @@ export class KiotVietCustomerService {
         if (response.data && response.data.length > 0) {
           customerBatch.push(...response.data);
 
-          // Process in batches for performance
           if (
             customerBatch.length >= this.BATCH_SIZE ||
             response.data.length < this.PAGE_SIZE
@@ -372,7 +405,6 @@ export class KiotVietCustomerService {
             totalProcessed += created + updated;
             batchCount++;
 
-            // Update progress
             await this.prismaService.syncControl.update({
               where: { name: 'customer_historical' },
               data: {
@@ -387,7 +419,7 @@ export class KiotVietCustomerService {
             this.logger.log(
               `Historical sync batch ${batchCount}: ${totalProcessed} customers processed`,
             );
-            customerBatch.length = 0; // Clear batch
+            customerBatch.length = 0;
           }
         }
 
@@ -399,16 +431,14 @@ export class KiotVietCustomerService {
         if (hasMoreData) currentItem += this.PAGE_SIZE;
       }
 
-      // Remove duplicates
       this.logger.log('Removing duplicates...');
       const duplicatesRemoved = await this.removeDuplicateCustomers();
 
-      // Complete historical sync and disable it
       await this.prismaService.syncControl.update({
         where: { name: 'customer_historical' },
         data: {
           isRunning: false,
-          isEnabled: false, // Disable after completion
+          isEnabled: false,
           status: 'completed',
           completedAt: new Date(),
           progress: { totalProcessed, duplicatesRemoved, batchCount },
@@ -434,9 +464,6 @@ export class KiotVietCustomerService {
     }
   }
 
-  /**
-   * Check sync status and determine what to run on startup
-   */
   async checkAndRunAppropriateSync(): Promise<void> {
     const historicalSync = await this.prismaService.syncControl.findFirst({
       where: { name: 'customer_historical' },

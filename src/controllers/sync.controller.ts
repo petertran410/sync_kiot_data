@@ -1,4 +1,3 @@
-// src/controllers/sync.controller.ts
 import { Controller, Post, Get, Body, Param, Query } from '@nestjs/common';
 import { KiotVietCustomerService } from '../services/kiot-viet/customer/customer.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -38,21 +37,23 @@ export class SyncController {
   @Post('customers/toggle-historical')
   async toggleHistoricalSync(@Body() body: { enabled: boolean }) {
     await this.prismaService.syncControl.upsert({
-      where: { id: 2 },
+      where: { name: 'customer_historical' },
       create: {
-        id: 2,
-        syncType: 'customer_historical',
+        name: 'customer_historical',
+        entities: ['customer'],
+        syncMode: 'historical',
         isRunning: body.enabled,
+        isEnabled: body.enabled,
         status: body.enabled ? 'in_progress' : 'stopped',
       },
       update: {
         isRunning: body.enabled,
+        isEnabled: body.enabled,
         status: body.enabled ? 'in_progress' : 'stopped',
       },
     });
 
     if (body.enabled) {
-      // Start the historical sync process
       await this.customerService.syncHistoricalCustomers();
     }
 
