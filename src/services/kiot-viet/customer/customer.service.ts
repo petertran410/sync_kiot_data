@@ -24,10 +24,8 @@ export class KiotVietCustomerService {
     if (!baseUrl) {
       throw new Error('KIOT_BASE_URL environment variable is not configured');
     }
-
     this.baseUrl = baseUrl;
 
-    // Debug logging to check if services are injected
     this.logger.debug(`HttpService injected: ${!!this.httpService}`);
     this.logger.debug(`ConfigService injected: ${!!this.configService}`);
     this.logger.debug(`PrismaService injected: ${!!this.prismaService}`);
@@ -41,7 +39,6 @@ export class KiotVietCustomerService {
     pageSize?: number;
   }) {
     try {
-      // Add validation
       if (!this.httpService) {
         throw new Error('HttpService is not available');
       }
@@ -89,11 +86,8 @@ export class KiotVietCustomerService {
       existingCustomers.map((c) => [c.kiotVietId.toString(), c.id]),
     );
 
-    const customersToCreate: Prisma.CustomerCreateInput[] = [];
-    const customersToUpdate: Array<{
-      id: number;
-      data: Prisma.CustomerUpdateInput;
-    }> = [];
+    const customersToCreate = [];
+    const customersToUpdate = [];
 
     for (const customerData of customers) {
       const kiotVietId = BigInt(customerData.id);
@@ -112,23 +106,37 @@ export class KiotVietCustomerService {
     let createdCount = 0;
     let updatedCount = 0;
 
+    // Create customers individually since createMany doesn't support relationships
     if (customersToCreate.length > 0) {
-      await this.prismaService.customer.createMany({
-        data: customersToCreate,
-        skipDuplicates: true,
-      });
-      createdCount = customersToCreate.length;
+      for (const customerData of customersToCreate) {
+        try {
+          await this.prismaService.customer.create({
+            data: customerData,
+          });
+          createdCount++;
+        } catch (error) {
+          this.logger.error(
+            `Failed to create customer ${customerData.code}: ${error.message}`,
+          );
+        }
+      }
     }
 
+    // Update existing customers
     if (customersToUpdate.length > 0) {
-      const updatePromises = customersToUpdate.map(({ id, data }) =>
-        this.prismaService.customer.update({
-          where: { id },
-          data,
-        }),
-      );
-      await Promise.all(updatePromises);
-      updatedCount = customersToUpdate.length;
+      for (const { id, data } of customersToUpdate) {
+        try {
+          await this.prismaService.customer.update({
+            where: { id },
+            data,
+          });
+          updatedCount++;
+        } catch (error) {
+          this.logger.error(
+            `Failed to update customer ${id}: ${error.message}`,
+          );
+        }
+      }
     }
 
     return { created: createdCount, updated: updatedCount };
@@ -179,10 +187,10 @@ export class KiotVietCustomerService {
       lastSyncedAt: new Date(),
     };
 
-    // Handle branch relationship if branchId exists
+    // Handle branch relationship if branchId exists and branch exists in database
     if (customerData.branchId) {
       data.branch = {
-        connect: { id: customerData.branchId },
+        connect: { kiotVietId: customerData.branchId },
       };
     }
 
@@ -233,7 +241,7 @@ export class KiotVietCustomerService {
     // Handle branch relationship if branchId exists
     if (customerData.branchId) {
       data.branch = {
-        connect: { id: customerData.branchId },
+        connect: { kiotVietId: customerData.branchId },
       };
     }
 
