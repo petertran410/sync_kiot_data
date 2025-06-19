@@ -1068,3 +1068,24 @@ model Webhook {
   @@index([kiotVietId])
   @@index([type])
 }
+
+model SyncControl {
+  id                Int       @id @default(autoincrement())
+  name              String    @unique // e.g., "full_historical", "customer_recent", etc.
+  entities          String[]  // List of entity types included in this sync operation
+  isRunning         Boolean   @default(false)
+  isEnabled         Boolean   @default(true)
+  startedAt         DateTime?
+  completedAt       DateTime?
+  progress          Json?     // Store progress info as JSON: {"customer": 50, "product": 100, ...}
+  completedEntities String[]  // List of entity types that have completed
+  currentEntity     String?   // Currently syncing entity (for sequential syncs)
+  syncMode          String    // "historical", "recent", "incremental" 
+  status            String    // "idle", "in_progress", "completed", "failed", "paused"
+  error             String?   @db.Text
+  lastRunAt         DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([isRunning, status])
+}
