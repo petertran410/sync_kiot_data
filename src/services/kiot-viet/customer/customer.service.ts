@@ -64,6 +64,8 @@ export class KiotVietCustomerService {
             includeTotal: true,
             includeCustomerGroup: true,
             includeCustomerSocial: true,
+            orderBy: 'createdDate',
+            orderDirection: 'DESC',
           },
         }),
       );
@@ -115,7 +117,6 @@ export class KiotVietCustomerService {
     let createdCount = 0;
     let updatedCount = 0;
 
-    // Create customers individually since createMany doesn't support relationships
     if (customersToCreate.length > 0) {
       for (const customerData of customersToCreate) {
         try {
@@ -131,7 +132,6 @@ export class KiotVietCustomerService {
       }
     }
 
-    // Update existing customers
     if (customersToUpdate.length > 0) {
       for (const { id, data } of customersToUpdate) {
         try {
@@ -262,7 +262,6 @@ export class KiotVietCustomerService {
       lastSyncedAt: new Date(),
     };
 
-    // Handle branch relationship if branchId exists
     if (customerData.branchId) {
       try {
         const branchExists = await this.prismaService.branch.findFirst({
