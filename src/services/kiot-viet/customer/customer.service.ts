@@ -86,8 +86,11 @@ export class KiotVietCustomerService {
       existingCustomers.map((c) => [c.kiotVietId.toString(), c.id]),
     );
 
-    const customersToCreate = [];
-    const customersToUpdate = [];
+    const customersToCreate: Prisma.CustomerCreateInput[] = [];
+    const customersToUpdate: Array<{
+      id: number;
+      data: Prisma.CustomerUpdateInput;
+    }> = [];
 
     for (const customerData of customers) {
       const kiotVietId = BigInt(customerData.id);
@@ -96,10 +99,13 @@ export class KiotVietCustomerService {
       if (existingId) {
         customersToUpdate.push({
           id: existingId,
-          data: this.prepareCustomerUpdateData(customerData),
+          data: await this.prepareCustomerUpdateData(customerData),
         });
       } else {
-        customersToCreate.push(this.prepareCustomerCreateData(customerData));
+        const createData = await this.prepareCustomerCreateData(customerData);
+        if (createData) {
+          customersToCreate.push(createData);
+        }
       }
     }
 
@@ -142,9 +148,9 @@ export class KiotVietCustomerService {
     return { created: createdCount, updated: updatedCount };
   }
 
-  private prepareCustomerCreateData(
+  private async prepareCustomerCreateData(
     customerData: any,
-  ): Prisma.CustomerCreateInput {
+  ): Promise<Prisma.CustomerCreateInput | null> {
     const data: Prisma.CustomerCreateInput = {
       kiotVietId: BigInt(customerData.id),
       code: customerData.code,
@@ -189,17 +195,33 @@ export class KiotVietCustomerService {
 
     // Handle branch relationship if branchId exists and branch exists in database
     if (customerData.branchId) {
-      data.branch = {
-        connect: { kiotVietId: customerData.branchId },
-      };
+      try {
+        const branchExists = await this.prismaService.branch.findFirst({
+          where: { kiotVietId: customerData.branchId },
+        });
+
+        if (branchExists) {
+          data.branch = {
+            connect: { kiotVietId: customerData.branchId },
+          };
+        } else {
+          this.logger.warn(
+            `Branch with kiotVietId ${customerData.branchId} not found for customer ${customerData.code}`,
+          );
+        }
+      } catch (error) {
+        this.logger.error(
+          `Error checking branch for customer ${customerData.code}: ${error.message}`,
+        );
+      }
     }
 
     return data;
   }
 
-  private prepareCustomerUpdateData(
+  private async prepareCustomerUpdateData(
     customerData: any,
-  ): Prisma.CustomerUpdateInput {
+  ): Promise<Prisma.CustomerUpdateInput> {
     const data: Prisma.CustomerUpdateInput = {
       code: customerData.code,
       name: customerData.name,
@@ -240,9 +262,25 @@ export class KiotVietCustomerService {
 
     // Handle branch relationship if branchId exists
     if (customerData.branchId) {
-      data.branch = {
-        connect: { kiotVietId: customerData.branchId },
-      };
+      try {
+        const branchExists = await this.prismaService.branch.findFirst({
+          where: { kiotVietId: customerData.branchId },
+        });
+
+        if (branchExists) {
+          data.branch = {
+            connect: { kiotVietId: customerData.branchId },
+          };
+        } else {
+          this.logger.warn(
+            `Branch with kiotVietId ${customerData.branchId} not found for customer ${customerData.code}`,
+          );
+        }
+      } catch (error) {
+        this.logger.error(
+          `Error checking branch for customer ${customerData.code}: ${error.message}`,
+        );
+      }
     }
 
     return data;
