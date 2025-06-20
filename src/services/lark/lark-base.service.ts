@@ -49,7 +49,7 @@ export class LarkBaseService {
   private mapKiotVietToLarkBase(customerData: any): any {
     const fields: any = {};
 
-    // Primary field - Tên Khách Hàng
+    // Primary field - Tên Khách Hàng (REQUIRED)
     if (customerData.name) {
       fields['fld71g8Gci'] = customerData.name;
     }
@@ -74,9 +74,9 @@ export class LarkBaseService {
       fields['fld17QvTM6'] = customerData.address;
     }
 
-    // kiotVietId
+    // kiotVietId (IMPORTANT for deduplication)
     if (customerData.id) {
-      fields['fldN5NE17y'] = customerData.id;
+      fields['fldN5NE17y'] = Number(customerData.id); // ✅ Convert to number
     }
 
     // Nợ Hiện Tại
@@ -177,35 +177,57 @@ export class LarkBaseService {
   ): Promise<Map<string, string>> {
     try {
       const existingRecords = new Map<string, string>();
-      const batchSize = 100;
+      const batchSize = 50; // ✅ Reduced batch size
 
       for (let i = 0; i < kiotVietIds.length; i += batchSize) {
         const batch = kiotVietIds.slice(i, i + batchSize);
 
-        const response = await this.client.bitable.appTableRecord.search({
-          path: {
-            app_token: this.baseToken,
-            table_id: this.tableId,
-          },
-          data: {
-            filter: {
-              conjunction: 'or',
-              conditions: batch.map((id) => ({
-                field_name: 'fldN5NE17y',
-                operator: 'is',
-                value: [id],
-              })),
-            },
-          },
-        });
+        // ✅ Fixed search structure
+        for (const kiotVietIdStr of batch) {
+          // ✅ Changed variable name to avoid confusion
+          try {
+            const kiotVietIdNum = Number(kiotVietIdStr); // ✅ Convert to number for API call
 
-        if (response.data?.items) {
-          response.data.items.forEach((record: any) => {
-            const kiotVietId = record.fields?.fldN5NE17y?.toString();
-            if (kiotVietId) {
-              existingRecords.set(kiotVietId, record.record_id);
+            const response = await this.client.bitable.appTableRecord.search({
+              path: {
+                app_token: this.baseToken,
+                table_id: this.tableId,
+              },
+              data: {
+                filter: {
+                  conjunction: 'and',
+                  conditions: [
+                    {
+                      field_name: 'fldN5NE17y',
+                      operator: 'is',
+                      value: [kiotVietIdNum], // ✅ Use number value
+                    },
+                  ],
+                },
+              },
+            });
+
+            if (response.data?.items && response.data.items.length > 0) {
+              const record = response.data.items[0];
+              const recordKiotVietId = record.fields?.fldN5NE17y?.toString();
+              const recordId = record.record_id; // ✅ Get record_id
+
+              // ✅ Check if both values exist before adding to map
+              if (recordKiotVietId && recordId) {
+                existingRecords.set(recordKiotVietId, recordId);
+              }
             }
-          });
+          } catch (searchError) {
+            this.logger.warn(
+              `Failed to search for kiotVietId ${kiotVietIdStr}: ${searchError.message}`,
+            );
+            // Continue with next ID
+          }
+        }
+
+        // Rate limiting delay
+        if (i + batchSize < kiotVietIds.length) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
         }
       }
 
@@ -222,9 +244,14 @@ export class LarkBaseService {
     if (!customers.length) return { success: 0, failed: 0 };
 
     try {
-      const records = customers.map((customer) =>
-        this.mapKiotVietToLarkBase(customer),
-      );
+      const records = customers
+        .map((customer) => this.mapKiotVietToLarkBase(customer))
+        .filter((record) => record.fields['fld71g8Gci']); // ✅ Ensure primary field exists
+
+      if (!records.length) {
+        this.logger.warn('No valid records to create (missing primary field)');
+        return { success: 0, failed: customers.length };
+      }
 
       const response = await this.client.bitable.appTableRecord.batchCreate({
         path: {
@@ -245,6 +272,12 @@ export class LarkBaseService {
       return { success: successCount, failed: failedCount };
     } catch (error) {
       this.logger.error(`LarkBase batch create failed: ${error.message}`);
+      if (error.response?.data) {
+        this.logger.error(
+          'Error details:',
+          JSON.stringify(error.response.data, null, 2),
+        );
+      }
       return { success: 0, failed: customers.length };
     }
   }
@@ -258,10 +291,19 @@ export class LarkBaseService {
     try {
       const records = customers
         .filter((customer) => existingRecords.has(customer.id.toString()))
-        .map((customer) => ({
-          record_id: existingRecords.get(customer.id.toString()),
-          fields: this.mapKiotVietToLarkBase(customer).fields,
-        }));
+        .map((customer) => {
+          const recordId = existingRecords.get(customer.id.toString());
+          // ✅ Check if recordId exists before creating update object
+          if (!recordId) {
+            return null;
+          }
+          return {
+            record_id: recordId,
+            fields: this.mapKiotVietToLarkBase(customer).fields,
+          };
+        })
+        .filter((record) => record !== null && record.fields['fld71g8Gci']) // ✅ Filter out null records and ensure primary field exists
+        .map((record) => record!); // ✅ TypeScript assertion after filter
 
       if (!records.length) return { success: 0, failed: 0 };
 
@@ -284,6 +326,12 @@ export class LarkBaseService {
       return { success: successCount, failed: failedCount };
     } catch (error) {
       this.logger.error(`LarkBase batch update failed: ${error.message}`);
+      if (error.response?.data) {
+        this.logger.error(
+          'Error details:',
+          JSON.stringify(error.response.data, null, 2),
+        );
+      }
       return { success: 0, failed: customers.length };
     }
   }
@@ -292,8 +340,12 @@ export class LarkBaseService {
     if (!customers.length) return;
 
     try {
-      const batchSize = 100; // Optimal batch size
+      const batchSize = 50; // ✅ Reduced batch size for better reliability
       let totalProcessed = 0;
+
+      this.logger.log(
+        `Starting LarkBase sync for ${customers.length} customers`,
+      );
 
       for (let i = 0; i < customers.length; i += batchSize) {
         const batch = customers.slice(i, i + batchSize);
@@ -308,6 +360,10 @@ export class LarkBaseService {
         );
         const toUpdate = batch.filter((c) =>
           existingRecords.has(c.id.toString()),
+        );
+
+        this.logger.log(
+          `Batch ${Math.floor(i / batchSize) + 1}: ${toCreate.length} to create, ${toUpdate.length} to update`,
         );
 
         // Process creates and updates in parallel
