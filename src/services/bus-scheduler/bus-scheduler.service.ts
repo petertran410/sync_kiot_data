@@ -13,6 +13,11 @@ import { KiotVietCategoryService } from '../kiot-viet/category/category.service'
 import { KiotVietCustomerService } from '../kiot-viet/customer/customer.service';
 import { KiotVietProductService } from '../kiot-viet/product/product.service';
 import { KiotVietOrderService } from '../kiot-viet/order/order.service';
+import {
+  EntityStatus,
+  EntityStatusSummary,
+  BusStatusResponse,
+} from '../../types/sync.types';
 
 interface SyncEntity {
   name: string;
@@ -401,39 +406,58 @@ export class BusSchedulerService implements OnModuleInit {
     await this.syncEntity(entity);
   }
 
-  async getBusStatus(): Promise<any> {
+  async getBusStatus(): Promise<{
+    busScheduler: any;
+    entities: EntityStatusSummary[];
+    isRunning: boolean;
+  }> {
     const busControl = await this.prismaService.syncControl.findFirst({
       where: { name: 'bus_scheduler_cycle' },
     });
 
-    const entityStatuses = await Promise.all(
-      this.syncEntities.map(async (entity) => {
-        const statuses = [];
+    const entityStatuses: EntityStatusSummary[] = [];
 
-        if (entity.syncType === 'full') {
-          const historical = await this.prismaService.syncControl.findFirst({
-            where: { name: `${entity.name}_historical` },
-          });
-          const recent = await this.prismaService.syncControl.findFirst({
-            where: { name: `${entity.name}_recent` },
-          });
+    for (const entity of this.syncEntities) {
+      const statuses: EntityStatus[] = [];
 
-          statuses.push({ type: 'historical', ...historical });
-          statuses.push({ type: 'recent', ...recent });
-        } else {
-          const simple = await this.prismaService.syncControl.findFirst({
-            where: { name: `${entity.name}_sync` },
+      if (entity.syncType === 'full') {
+        const historical = await this.prismaService.syncControl.findFirst({
+          where: { name: `${entity.name}_historical` },
+        });
+        const recent = await this.prismaService.syncControl.findFirst({
+          where: { name: `${entity.name}_recent` },
+        });
+
+        if (historical) {
+          statuses.push({
+            ...historical,
+            syncType: 'historical' as const,
           });
-          statuses.push({ type: 'simple', ...simple });
         }
+        if (recent) {
+          statuses.push({
+            ...recent,
+            syncType: 'recent' as const,
+          });
+        }
+      } else {
+        const simple = await this.prismaService.syncControl.findFirst({
+          where: { name: `${entity.name}_sync` },
+        });
+        if (simple) {
+          statuses.push({
+            ...simple,
+            syncType: 'simple' as const,
+          });
+        }
+      }
 
-        return {
-          entityName: entity.name,
-          syncType: entity.syncType,
-          statuses,
-        };
-      }),
-    );
+      entityStatuses.push({
+        entityName: entity.name,
+        entitySyncType: entity.syncType,
+        statuses,
+      });
+    }
 
     return {
       busScheduler: busControl,

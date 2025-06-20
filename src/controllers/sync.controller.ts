@@ -2,6 +2,7 @@
 import { Controller, Post, Get, Body, Param, Query } from '@nestjs/common';
 import { BusSchedulerService } from '../services/bus-scheduler/bus-scheduler.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { BusStatusResponse } from '../types/sync.types';
 
 @Controller('sync')
 export class SyncController {
@@ -11,7 +12,7 @@ export class SyncController {
   ) {}
 
   @Get('status')
-  async getSyncStatus() {
+  async getSyncStatus(): Promise<BusStatusResponse> {
     return this.busSchedulerService.getBusStatus();
   }
 

@@ -131,9 +131,7 @@ export class KiotVietProductService {
       hasVariants: productData.hasVariants,
       basePrice: new Prisma.Decimal(productData.basePrice || 0),
       unit: productData.unit,
-      masterProductId: productData.masterProductId
-        ? BigInt(productData.masterProductId)
-        : null,
+      // Fix: Use masterProduct relation instead of masterProductId
       masterUnitId: productData.masterUnitId
         ? BigInt(productData.masterUnitId)
         : null,
@@ -155,6 +153,13 @@ export class KiotVietProductService {
         : new Date(),
       lastSyncedAt: new Date(),
     };
+
+    // Fix: Handle masterProduct relationship correctly
+    if (productData.masterProductId) {
+      data.masterProduct = {
+        connect: { kiotVietId: BigInt(productData.masterProductId) },
+      };
+    }
 
     // Handle category relationship
     if (productData.categoryId) {
@@ -193,9 +198,7 @@ export class KiotVietProductService {
       hasVariants: productData.hasVariants,
       basePrice: new Prisma.Decimal(productData.basePrice || 0),
       unit: productData.unit,
-      masterProductId: productData.masterProductId
-        ? BigInt(productData.masterProductId)
-        : null,
+      // Fix: Use masterProduct relation instead of masterProductId
       masterUnitId: productData.masterUnitId
         ? BigInt(productData.masterUnitId)
         : null,
@@ -214,6 +217,13 @@ export class KiotVietProductService {
         : new Date(),
       lastSyncedAt: new Date(),
     };
+
+    // Fix: Handle masterProduct relationship correctly
+    if (productData.masterProductId) {
+      data.masterProduct = {
+        connect: { kiotVietId: BigInt(productData.masterProductId) },
+      };
+    }
 
     // Handle category relationship
     if (productData.categoryId) {

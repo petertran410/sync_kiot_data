@@ -116,7 +116,7 @@ export class KiotVietOrderService {
       kiotVietId: BigInt(orderData.id),
       code: orderData.code,
       purchaseDate: new Date(orderData.purchaseDate),
-      soldById: orderData.soldById ? BigInt(orderData.soldById) : null,
+      // Fix: Use soldBy relation instead of soldById
       cashierId: orderData.cashierId ? BigInt(orderData.cashierId) : null,
       total: new Prisma.Decimal(orderData.total || 0),
       totalPayment: new Prisma.Decimal(orderData.totalPayment || 0),
@@ -139,7 +139,17 @@ export class KiotVietOrderService {
         ? new Date(orderData.modifiedDate)
         : new Date(),
       lastSyncedAt: new Date(),
+      branch: {
+        create: undefined,
+        connectOrCreate: undefined,
+        connect: undefined,
+      },
     };
+
+    // Fix: Handle soldBy relationship correctly
+    if (orderData.soldById) {
+      data.soldBy = { connect: { kiotVietId: BigInt(orderData.soldById) } };
+    }
 
     // Handle branch relationship
     if (orderData.branchId) {
@@ -180,7 +190,7 @@ export class KiotVietOrderService {
     const data: Prisma.OrderUpdateInput = {
       code: orderData.code,
       purchaseDate: new Date(orderData.purchaseDate),
-      soldById: orderData.soldById ? BigInt(orderData.soldById) : null,
+      // Fix: Use soldBy relation instead of soldById
       cashierId: orderData.cashierId ? BigInt(orderData.cashierId) : null,
       total: new Prisma.Decimal(orderData.total || 0),
       totalPayment: new Prisma.Decimal(orderData.totalPayment || 0),
@@ -201,6 +211,11 @@ export class KiotVietOrderService {
         : new Date(),
       lastSyncedAt: new Date(),
     };
+
+    // Fix: Handle soldBy relationship correctly
+    if (orderData.soldById) {
+      data.soldBy = { connect: { kiotVietId: BigInt(orderData.soldById) } };
+    }
 
     // Handle relationships similar to create
     if (orderData.branchId) {
