@@ -184,9 +184,8 @@ export class LarkBaseService {
 
         // ✅ Fixed search structure
         for (const kiotVietIdStr of batch) {
-          // ✅ Changed variable name to avoid confusion
           try {
-            const kiotVietIdNum = Number(kiotVietIdStr); // ✅ Convert to number for API call
+            const kiotVietIdNum: number = Number(kiotVietIdStr);
 
             const response = await this.client.bitable.appTableRecord.search({
               path: {
@@ -200,7 +199,7 @@ export class LarkBaseService {
                     {
                       field_name: 'fldN5NE17y',
                       operator: 'is',
-                      value: [kiotVietIdNum], // ✅ Use number value
+                      value: [kiotVietIdNum] as any,
                     },
                   ],
                 },
