@@ -245,12 +245,17 @@ export class LarkBaseService {
     try {
       const records = customers
         .map((customer) => this.mapKiotVietToLarkBase(customer))
-        .filter((record) => record.fields['fld71g8Gci']); // ✅ Ensure primary field exists
+        .filter((record) => record.fields['fld71g8Gci']);
 
       if (!records.length) {
         this.logger.warn('No valid records to create (missing primary field)');
         return { success: 0, failed: customers.length };
       }
+
+      this.logger.debug(
+        `Attempting to create ${records.length} records in LarkBase`,
+      );
+      this.logger.debug('Sample record:', JSON.stringify(records[0], null, 2));
 
       const response = await this.client.bitable.appTableRecord.batchCreate({
         path: {
@@ -268,14 +273,26 @@ export class LarkBaseService {
       this.logger.log(
         `LarkBase batch create: ${successCount} success, ${failedCount} failed`,
       );
+
+      if (failedCount > 0) {
+        this.logger.error(
+          'LarkBase create response:',
+          JSON.stringify(response, null, 2),
+        );
+      }
+
       return { success: successCount, failed: failedCount };
     } catch (error) {
       this.logger.error(`LarkBase batch create failed: ${error.message}`);
+      this.logger.error('Error stack:', error.stack);
       if (error.response?.data) {
         this.logger.error(
-          'Error details:',
+          'LarkBase API Error:',
           JSON.stringify(error.response.data, null, 2),
         );
+      }
+      if (error.response?.status) {
+        this.logger.error('HTTP Status:', error.response.status);
       }
       return { success: 0, failed: customers.length };
     }
@@ -335,12 +352,15 @@ export class LarkBaseService {
     }
   }
 
-  async syncCustomersToLarkBase(customers: any[]): Promise<void> {
-    if (!customers.length) return;
+  async syncCustomersToLarkBase(
+    customers: any[],
+  ): Promise<{ success: number; failed: number }> {
+    if (!customers.length) return { success: 0, failed: 0 };
 
     try {
-      const batchSize = 50; // ✅ Reduced batch size for better reliability
-      let totalProcessed = 0;
+      const batchSize = 50;
+      let totalSuccess = 0;
+      let totalFailed = 0;
 
       this.logger.log(
         `Starting LarkBase sync for ${customers.length} customers`,
@@ -349,11 +369,9 @@ export class LarkBaseService {
       for (let i = 0; i < customers.length; i += batchSize) {
         const batch = customers.slice(i, i + batchSize);
 
-        // Get existing records
         const kiotVietIds = batch.map((c) => c.id.toString());
         const existingRecords = await this.getExistingRecords(kiotVietIds);
 
-        // Separate into create and update batches
         const toCreate = batch.filter(
           (c) => !existingRecords.has(c.id.toString()),
         );
@@ -365,7 +383,6 @@ export class LarkBaseService {
           `Batch ${Math.floor(i / batchSize) + 1}: ${toCreate.length} to create, ${toUpdate.length} to update`,
         );
 
-        // Process creates and updates in parallel
         const [createResult, updateResult] = await Promise.allSettled([
           toCreate.length > 0
             ? this.batchCreateRecords(toCreate)
@@ -377,12 +394,20 @@ export class LarkBaseService {
 
         const createSuccess =
           createResult.status === 'fulfilled' ? createResult.value.success : 0;
+        const createFailed =
+          createResult.status === 'fulfilled'
+            ? createResult.value.failed
+            : toCreate.length;
         const updateSuccess =
           updateResult.status === 'fulfilled' ? updateResult.value.success : 0;
+        const updateFailed =
+          updateResult.status === 'fulfilled'
+            ? updateResult.value.failed
+            : toUpdate.length;
 
-        totalProcessed += createSuccess + updateSuccess;
+        totalSuccess += createSuccess + updateSuccess;
+        totalFailed += createFailed + updateFailed;
 
-        // Log any errors
         if (createResult.status === 'rejected') {
           this.logger.error(`Create batch failed: ${createResult.reason}`);
         }
@@ -390,18 +415,19 @@ export class LarkBaseService {
           this.logger.error(`Update batch failed: ${updateResult.reason}`);
         }
 
-        // Rate limiting delay
         if (i + batchSize < customers.length) {
-          await new Promise((resolve) => setTimeout(resolve, 1000)); // 1 second delay between batches
+          await new Promise((resolve) => setTimeout(resolve, 1000));
         }
       }
 
       this.logger.log(
-        `LarkBase sync completed: ${totalProcessed} customers processed`,
+        `LarkBase sync completed: ${totalSuccess} success, ${totalFailed} failed`,
       );
+
+      return { success: totalSuccess, failed: totalFailed };
     } catch (error) {
       this.logger.error(`LarkBase sync failed: ${error.message}`);
-      throw error;
+      return { success: 0, failed: customers.length };
     }
   }
 }
