@@ -135,7 +135,7 @@ export class LarkBaseService {
     if (customerData.createdDate) {
       try {
         const date = new Date(customerData.createdDate);
-        fields['Thời Gian Tạo'] = Math.floor(date.getTime() / 1000);
+        fields['Thời Gian Tạo'] = date.getTime();
       } catch (error) {
         this.logger.warn(
           `Invalid createdDate for customer ${customerData.code}: ${customerData.createdDate}`,
@@ -147,7 +147,7 @@ export class LarkBaseService {
     if (customerData.modifiedDate) {
       try {
         const date = new Date(customerData.modifiedDate);
-        fields['Thời Gian Cập Nhật'] = Math.floor(date.getTime() / 1000);
+        fields['Thời Gian Cập Nhật'] = date.getTime();
       } catch (error) {
         this.logger.warn(
           `Invalid modifiedDate for customer ${customerData.code}: ${customerData.modifiedDate}`,
