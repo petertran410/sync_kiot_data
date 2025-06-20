@@ -305,6 +305,7 @@ export class KiotVietInvoiceService {
   }
 
   private async handleInvoiceRelations(invoiceId: number, invoiceData: any) {
+    // 1. Handle Payments (existing logic with upsert fix)
     if (invoiceData.payments && invoiceData.payments.length > 0) {
       for (const payment of invoiceData.payments) {
         try {
@@ -322,6 +323,7 @@ export class KiotVietInvoiceService {
             description: payment.description || null,
           };
 
+          // Handle bankAccount relationship
           if (payment.accountId) {
             const bankAccount = await this.prismaService.bankAccount.findFirst({
               where: { kiotVietId: payment.accountId },
@@ -331,6 +333,7 @@ export class KiotVietInvoiceService {
             }
           }
 
+          // FIXED: Use UPSERT instead of CREATE
           if (payment.id) {
             await this.prismaService.payment.upsert({
               where: { kiotVietId: BigInt(payment.id) },
@@ -348,7 +351,6 @@ export class KiotVietInvoiceService {
               },
             });
           } else {
-            // If no ID, just create
             await this.prismaService.payment.create({
               data: paymentData,
             });
@@ -358,136 +360,154 @@ export class KiotVietInvoiceService {
         }
       }
     }
+
+    // 2. Handle InvoiceDelivery (NEW - if included in list response)
+    if (invoiceData.invoiceDelivery) {
+      const delivery = invoiceData.invoiceDelivery;
+      try {
+        await this.prismaService.invoiceDelivery.upsert({
+          where: { invoiceId },
+          create: {
+            kiotVietId: delivery.id ? BigInt(delivery.id) : null,
+            invoice: { connect: { id: invoiceId } },
+            deliveryCode: delivery.deliveryCode,
+            status: delivery.status,
+            type: delivery.type,
+            price: delivery.price ? new Prisma.Decimal(delivery.price) : null,
+            receiver: delivery.receiver,
+            contactNumber: delivery.contactNumber,
+            address: delivery.address,
+            locationId: delivery.locationId,
+            locationName: delivery.locationName,
+            wardName: delivery.wardName,
+            usingPriceCod: delivery.usingPriceCod || false,
+            priceCodPayment: delivery.priceCodPayment
+              ? new Prisma.Decimal(delivery.priceCodPayment)
+              : null,
+            weight: delivery.weight,
+            length: delivery.length,
+            width: delivery.width,
+            height: delivery.height,
+            partnerDeliveryId: delivery.partnerDeliveryId
+              ? BigInt(delivery.partnerDeliveryId)
+              : null,
+          },
+          update: {
+            deliveryCode: delivery.deliveryCode,
+            status: delivery.status,
+            type: delivery.type,
+            price: delivery.price ? new Prisma.Decimal(delivery.price) : null,
+            receiver: delivery.receiver,
+            contactNumber: delivery.contactNumber,
+            address: delivery.address,
+            locationId: delivery.locationId,
+            locationName: delivery.locationName,
+            wardName: delivery.wardName,
+            usingPriceCod: delivery.usingPriceCod || false,
+            priceCodPayment: delivery.priceCodPayment
+              ? new Prisma.Decimal(delivery.priceCodPayment)
+              : null,
+            weight: delivery.weight,
+            length: delivery.length,
+            width: delivery.width,
+            height: delivery.height,
+            partnerDeliveryId: delivery.partnerDeliveryId
+              ? BigInt(delivery.partnerDeliveryId)
+              : null,
+          },
+        });
+      } catch (error) {
+        this.logger.error(`Failed to save invoice delivery: ${error.message}`);
+      }
+    }
+
+    // 3. For InvoiceDetails and InvoiceSurcharges - Need detail API call
+    // The list API doesn't include these, so we need to fetch detail
+    await this.handleDetailEntities(invoiceId, invoiceData.id);
   }
 
-  private async handleInvoiceChildEntities(
+  private async handleDetailEntities(
     invoiceId: number,
-    invoiceDetailData: any,
+    kiotVietInvoiceId: number,
   ) {
-    // Handle InvoiceDetails
-    if (
-      invoiceDetailData.invoiceDetails &&
-      invoiceDetailData.invoiceDetails.length > 0
-    ) {
-      await this.prismaService.invoiceDetail.deleteMany({
-        where: { invoiceId },
-      });
+    try {
+      // Fetch full invoice detail to get InvoiceDetails and InvoiceSurcharges
+      const detailData = await this.fetchInvoiceDetail(kiotVietInvoiceId);
 
-      for (const detail of invoiceDetailData.invoiceDetails) {
-        const product = await this.prismaService.product.findFirst({
-          where: { kiotVietId: BigInt(detail.productId) },
+      if (!detailData) return;
+
+      // Handle InvoiceDetails
+      if (detailData.invoiceDetails && detailData.invoiceDetails.length > 0) {
+        await this.prismaService.invoiceDetail.deleteMany({
+          where: { invoiceId },
         });
 
-        if (product) {
-          await this.prismaService.invoiceDetail.create({
+        for (const detail of detailData.invoiceDetails) {
+          const product = await this.prismaService.product.findFirst({
+            where: { kiotVietId: BigInt(detail.productId) },
+          });
+
+          if (product) {
+            await this.prismaService.invoiceDetail.create({
+              data: {
+                kiotVietId: detail.id ? BigInt(detail.id) : null,
+                invoice: { connect: { id: invoiceId } },
+                product: { connect: { id: product.id } },
+                quantity: detail.quantity,
+                price: new Prisma.Decimal(detail.price),
+                discount: detail.discount
+                  ? new Prisma.Decimal(detail.discount)
+                  : null,
+                discountRatio: detail.discountRatio,
+                note: detail.note,
+                serialNumbers: detail.serialNumbers,
+              },
+            });
+          }
+        }
+      }
+
+      // Handle InvoiceSurcharges
+      if (
+        detailData.invoiceOrderSurcharges &&
+        detailData.invoiceOrderSurcharges.length > 0
+      ) {
+        await this.prismaService.invoiceSurcharge.deleteMany({
+          where: { invoiceId },
+        });
+
+        for (const surcharge of detailData.invoiceOrderSurcharges) {
+          const surchargeRef = surcharge.surchargeId
+            ? await this.prismaService.surcharge.findFirst({
+                where: { kiotVietId: surcharge.surchargeId },
+              })
+            : null;
+
+          await this.prismaService.invoiceSurcharge.create({
             data: {
-              kiotVietId: detail.id ? BigInt(detail.id) : null,
+              kiotVietId: surcharge.id ? BigInt(surcharge.id) : null,
               invoice: { connect: { id: invoiceId } },
-              product: { connect: { id: product.id } },
-              quantity: detail.quantity,
-              price: new Prisma.Decimal(detail.price),
-              discount: detail.discount
-                ? new Prisma.Decimal(detail.discount)
+              surcharge: surchargeRef
+                ? { connect: { id: surchargeRef.id } }
+                : undefined,
+              surchargeName: surcharge.surchargeName,
+              surValue: surcharge.surValue
+                ? new Prisma.Decimal(surcharge.surValue)
                 : null,
-              discountRatio: detail.discountRatio,
-              note: detail.note,
-              serialNumbers: detail.serialNumbers,
+              price: surcharge.price
+                ? new Prisma.Decimal(surcharge.price)
+                : null,
+              createdDate: surcharge.createdDate
+                ? new Date(surcharge.createdDate)
+                : new Date(),
             },
           });
         }
       }
-    }
-
-    // Handle InvoiceDelivery
-    if (invoiceDetailData.invoiceDelivery) {
-      const delivery = invoiceDetailData.invoiceDelivery;
-      await this.prismaService.invoiceDelivery.upsert({
-        where: { invoiceId },
-        create: {
-          kiotVietId: delivery.id ? BigInt(delivery.id) : null,
-          invoice: { connect: { id: invoiceId } },
-          deliveryCode: delivery.deliveryCode,
-          status: delivery.status,
-          type: delivery.type,
-          price: delivery.price ? new Prisma.Decimal(delivery.price) : null,
-          receiver: delivery.receiver,
-          contactNumber: delivery.contactNumber,
-          address: delivery.address,
-          locationId: delivery.locationId,
-          locationName: delivery.locationName,
-          wardName: delivery.wardName,
-          usingPriceCod: delivery.usingPriceCod || false,
-          priceCodPayment: delivery.priceCodPayment
-            ? new Prisma.Decimal(delivery.priceCodPayment)
-            : null,
-          weight: delivery.weight,
-          length: delivery.length,
-          width: delivery.width,
-          height: delivery.height,
-          partnerDeliveryId: delivery.partnerDeliveryId
-            ? BigInt(delivery.partnerDeliveryId)
-            : null,
-        },
-        update: {
-          deliveryCode: delivery.deliveryCode,
-          status: delivery.status,
-          type: delivery.type,
-          price: delivery.price ? new Prisma.Decimal(delivery.price) : null,
-          receiver: delivery.receiver,
-          contactNumber: delivery.contactNumber,
-          address: delivery.address,
-          locationId: delivery.locationId,
-          locationName: delivery.locationName,
-          wardName: delivery.wardName,
-          usingPriceCod: delivery.usingPriceCod || false,
-          priceCodPayment: delivery.priceCodPayment
-            ? new Prisma.Decimal(delivery.priceCodPayment)
-            : null,
-          weight: delivery.weight,
-          length: delivery.length,
-          width: delivery.width,
-          height: delivery.height,
-          partnerDeliveryId: delivery.partnerDeliveryId
-            ? BigInt(delivery.partnerDeliveryId)
-            : null,
-        },
-      });
-    }
-
-    // Handle InvoiceSurcharges
-    if (
-      invoiceDetailData.invoiceOrderSurcharges &&
-      invoiceDetailData.invoiceOrderSurcharges.length > 0
-    ) {
-      await this.prismaService.invoiceSurcharge.deleteMany({
-        where: { invoiceId },
-      });
-
-      for (const surcharge of invoiceDetailData.invoiceOrderSurcharges) {
-        const surchargeRef = surcharge.surchargeId
-          ? await this.prismaService.surcharge.findFirst({
-              where: { kiotVietId: surcharge.surchargeId },
-            })
-          : null;
-
-        await this.prismaService.invoiceSurcharge.create({
-          data: {
-            kiotVietId: surcharge.id ? BigInt(surcharge.id) : null,
-            invoice: { connect: { id: invoiceId } },
-            surcharge: surchargeRef
-              ? { connect: { id: surchargeRef.id } }
-              : undefined,
-            surchargeName: surcharge.surchargeName,
-            surValue: surcharge.surValue
-              ? new Prisma.Decimal(surcharge.surValue)
-              : null,
-            price: surcharge.price ? new Prisma.Decimal(surcharge.price) : null,
-            createdDate: surcharge.createdDate
-              ? new Date(surcharge.createdDate)
-              : new Date(),
-          },
-        });
-      }
+    } catch (error) {
+      this.logger.error(
+        `Failed to handle detail entities for invoice ${kiotVietInvoiceId}: ${error.message}`,
+      );
     }
   }
 
@@ -504,7 +524,7 @@ export class KiotVietInvoiceService {
       this.logger.error(
         `Failed to fetch invoice detail ${invoiceId}: ${error.message}`,
       );
-      throw error;
+      return null;
     }
   }
 
