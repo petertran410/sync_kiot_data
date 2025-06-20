@@ -418,7 +418,7 @@ export class KiotVietOrderService {
       }
     }
 
-    // Handle payments
+    // FIXED: Handle payments with proper relationships
     if (orderData.payments && orderData.payments.length > 0) {
       await this.prismaService.payment.deleteMany({
         where: { orderId },
@@ -426,21 +426,37 @@ export class KiotVietOrderService {
 
       for (const payment of orderData.payments) {
         try {
+          // FIXED: Prepare payment data with proper relationships
+          const paymentData: any = {
+            kiotVietId: payment.id ? BigInt(payment.id) : null,
+            order: { connect: { id: orderId } }, // FIXED: Use relationship instead of orderId
+            code: payment.code,
+            amount: new Prisma.Decimal(payment.amount || 0),
+            method: payment.method,
+            status: payment.status,
+            transDate: payment.transDate
+              ? new Date(payment.transDate)
+              : new Date(),
+            bankAccountInfo: payment.bankAccount, // FIXED: Use bankAccountInfo field
+            description: payment.description || null,
+          };
+
+          // FIXED: Handle bankAccount relationship properly
+          if (payment.accountId) {
+            const bankAccount = await this.prismaService.bankAccount.findFirst({
+              where: { kiotVietId: payment.accountId },
+            });
+            if (bankAccount) {
+              paymentData.bankAccount = { connect: { id: bankAccount.id } };
+            } else {
+              this.logger.warn(
+                `Bank account with kiotVietId ${payment.accountId} not found for payment ${payment.code}`,
+              );
+            }
+          }
+
           await this.prismaService.payment.create({
-            data: {
-              kiotVietId: BigInt(payment.id),
-              orderId,
-              code: payment.code,
-              amount: new Prisma.Decimal(payment.amount || 0),
-              method: payment.method,
-              status: payment.status,
-              transDate: payment.transDate
-                ? new Date(payment.transDate)
-                : new Date(),
-              bankAccount: payment.bankAccount,
-              accountId: payment.accountId,
-              description: payment.description,
-            },
+            data: paymentData,
           });
         } catch (error) {
           this.logger.error(`Failed to save payment: ${error.message}`);
