@@ -6,6 +6,7 @@ import { KiotVietAuthService } from './auth.service';
 import { KiotVietCustomerService } from './customer/customer.service';
 import { KiotVietBranchService } from './branch/branch.service';
 import { KiotVietCustomerGroupService } from './customer-group/customer-group.service';
+import { LarkModule } from '../lark/lark.module';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { KiotVietCustomerGroupService } from './customer-group/customer-group.se
     }),
     ConfigModule,
     PrismaModule,
+    LarkModule,
   ],
   providers: [
     KiotVietAuthService,

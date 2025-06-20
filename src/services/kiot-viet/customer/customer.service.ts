@@ -5,6 +5,7 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { KiotVietBranchService } from '../branch/branch.service';
 import { KiotVietAuthService } from '../auth.service';
 import { KiotVietCustomerGroupService } from '../customer-group/customer-group.service';
+import { LarkBaseService } from '../../lark/lark-base.service';
 import { firstValueFrom } from 'rxjs';
 import { Prisma } from '@prisma/client';
 import * as dayjs from 'dayjs';
@@ -23,6 +24,7 @@ export class KiotVietCustomerService {
     private readonly authService: KiotVietAuthService,
     private readonly branchService: KiotVietBranchService,
     private readonly customerGroupService: KiotVietCustomerGroupService,
+    private readonly larkBaseService: LarkBaseService,
   ) {
     const baseUrl = this.configService.get<string>('KIOT_BASE_URL');
     if (!baseUrl) {
@@ -35,6 +37,7 @@ export class KiotVietCustomerService {
     this.logger.debug(`PrismaService injected: ${!!this.prismaService}`);
     this.logger.debug(`AuthService injected: ${!!this.authService}`);
     this.logger.debug(`Base URL: ${this.baseUrl}`);
+    this.logger.debug(`LarkBaseService injected: ${!!this.larkBaseService}`);
   }
 
   async fetchCustomers(params: {
@@ -179,6 +182,48 @@ export class KiotVietCustomerService {
       }
     }
 
+    let createdCount = 0;
+    let updatedCount = 0;
+
+    // Process database and LarkBase in parallel
+    const [dbResult, larkResult] = await Promise.allSettled([
+      // Database operations
+      this.processDatabaseOperations(customersToCreate, customersToUpdate),
+      // LarkBase operations
+      this.larkBaseService.syncCustomersToLarkBase(customers),
+    ]);
+
+    // Handle database results
+    if (dbResult.status === 'fulfilled') {
+      createdCount = dbResult.value.created;
+      updatedCount = dbResult.value.updated;
+    } else {
+      this.logger.error(`Database sync failed: ${dbResult.reason}`);
+      throw dbResult.reason;
+    }
+
+    // Handle LarkBase results
+    if (larkResult.status === 'rejected') {
+      this.logger.error(`LarkBase sync failed: ${larkResult.reason}`);
+      // Continue execution, don't throw - as per requirement
+    } else {
+      this.logger.log('LarkBase sync completed successfully');
+    }
+
+    return { created: createdCount, updated: updatedCount };
+  }
+
+  private async processDatabaseOperations(
+    customersToCreate: Array<{
+      createData: Prisma.CustomerCreateInput;
+      groups: string | null;
+    }>,
+    customersToUpdate: Array<{
+      id: number;
+      data: Prisma.CustomerUpdateInput;
+      groups: string | null;
+    }>,
+  ) {
     let createdCount = 0;
     let updatedCount = 0;
 
