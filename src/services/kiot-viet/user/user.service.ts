@@ -41,7 +41,7 @@ export class KiotVietUserService {
           params: {
             ...params,
             includeRemoveIds: true,
-            orderBy: 'modifiedDate',
+            orderBy: 'createdDate',
             orderDirection: 'DESC',
           },
         }),

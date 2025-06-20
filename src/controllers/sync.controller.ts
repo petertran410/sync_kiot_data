@@ -47,4 +47,23 @@ export class SyncController {
     });
     return syncControls;
   }
+
+  @Post('entity/:entityName/historical')
+  async forceHistoricalSync(@Param('entityName') entityName: string) {
+    // Reset the historical sync status first
+    await this.prismaService.syncControl.update({
+      where: { name: `${entityName}_historical` },
+      data: {
+        status: 'idle',
+        completedAt: null,
+        isEnabled: true,
+        isRunning: false,
+        error: null,
+      },
+    });
+
+    // Then run the sync
+    await this.busSchedulerService.manualSyncEntity(entityName);
+    return { message: `${entityName} historical sync started` };
+  }
 }
