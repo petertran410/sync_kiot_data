@@ -1,3 +1,4 @@
+// src/services/kiot-viet/kiot-viet.module.ts
 import { Module } from '@nestjs/common';
 import { HttpModule } from '@nestjs/axios';
 import { ConfigModule } from '@nestjs/config';
@@ -6,6 +7,14 @@ import { KiotVietAuthService } from './auth.service';
 import { KiotVietCustomerService } from './customer/customer.service';
 import { KiotVietBranchService } from './branch/branch.service';
 import { KiotVietCustomerGroupService } from './customer-group/customer-group.service';
+import { KiotVietTradeMarkService } from './trademark/trademark.service';
+import { KiotVietUserService } from './user/user.service';
+import { KiotVietSaleChannelService } from './sale-channel/sale-channel.service';
+import { KiotVietSurchargeService } from './surcharge/surcharge.service';
+import { KiotVietBankAccountService } from './bank-account/bank-account.service';
+import { KiotVietCategoryService } from './category/category.service';
+import { KiotVietProductService } from './product/product.service';
+import { KiotVietOrderService } from './order/order.service';
 import { LarkModule } from '../lark/lark.module';
 
 @Module({
@@ -23,12 +32,28 @@ import { LarkModule } from '../lark/lark.module';
     KiotVietCustomerService,
     KiotVietBranchService,
     KiotVietCustomerGroupService,
+    KiotVietTradeMarkService,
+    KiotVietUserService,
+    KiotVietSaleChannelService,
+    KiotVietSurchargeService,
+    KiotVietBankAccountService,
+    KiotVietCategoryService,
+    KiotVietProductService,
+    KiotVietOrderService,
   ],
   exports: [
     KiotVietAuthService,
     KiotVietCustomerService,
     KiotVietBranchService,
     KiotVietCustomerGroupService,
+    KiotVietTradeMarkService,
+    KiotVietUserService,
+    KiotVietSaleChannelService,
+    KiotVietSurchargeService,
+    KiotVietBankAccountService,
+    KiotVietCategoryService,
+    KiotVietProductService,
+    KiotVietOrderService,
   ],
 })
 export class KiotVietModule {}

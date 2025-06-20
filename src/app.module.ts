@@ -1,3 +1,4 @@
+// src/app.module.ts
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -6,8 +7,8 @@ import { AppService } from './app.service';
 import { PrismaModule } from './prisma/prisma.module';
 import { KiotVietModule } from './services/kiot-viet/kiot-viet.module';
 import { SyncModule } from './sync/sync.module';
+import { BusSchedulerModule } from './services/bus-scheduler/bus-scheduler.module';
 import { SyncController } from './controllers/sync.controller';
-import { SchedulerService } from './services/scheduler.service';
 
 @Module({
   imports: [
@@ -16,8 +17,9 @@ import { SchedulerService } from './services/scheduler.service';
     PrismaModule,
     KiotVietModule,
     SyncModule,
+    BusSchedulerModule,
   ],
   controllers: [AppController, SyncController],
-  providers: [AppService, SchedulerService],
+  providers: [AppService],
 })
 export class AppModule {}

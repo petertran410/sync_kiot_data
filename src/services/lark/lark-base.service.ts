@@ -392,81 +392,83 @@ export class LarkBaseService {
   async syncCustomersToLarkBase(
     customers: any[],
   ): Promise<{ success: number; failed: number }> {
-    if (!customers.length) return { success: 0, failed: 0 };
+    return { success: 0, failed: 0 };
 
-    try {
-      await this.getTableFields();
+    // if (!customers.length) return { success: 0, failed: 0 };
 
-      const batchSize = 50;
-      let totalSuccess = 0;
-      let totalFailed = 0;
+    // try {
+    //   await this.getTableFields();
 
-      this.logger.log(
-        `Starting LarkBase sync for ${customers.length} customers`,
-      );
+    //   const batchSize = 50;
+    //   let totalSuccess = 0;
+    //   let totalFailed = 0;
 
-      for (let i = 0; i < customers.length; i += batchSize) {
-        const batch = customers.slice(i, i + batchSize);
+    //   this.logger.log(
+    //     `Starting LarkBase sync for ${customers.length} customers`,
+    //   );
 
-        const kiotVietIds = batch.map((c) => c.id.toString());
-        const existingRecords = await this.getExistingRecords(kiotVietIds);
+    //   for (let i = 0; i < customers.length; i += batchSize) {
+    //     const batch = customers.slice(i, i + batchSize);
 
-        const toCreate = batch.filter(
-          (c) => !existingRecords.has(c.id.toString()),
-        );
-        const toUpdate = batch.filter((c) =>
-          existingRecords.has(c.id.toString()),
-        );
+    //     const kiotVietIds = batch.map((c) => c.id.toString());
+    //     const existingRecords = await this.getExistingRecords(kiotVietIds);
 
-        this.logger.log(
-          `Batch ${Math.floor(i / batchSize) + 1}: ${toCreate.length} to create, ${toUpdate.length} to update`,
-        );
+    //     const toCreate = batch.filter(
+    //       (c) => !existingRecords.has(c.id.toString()),
+    //     );
+    //     const toUpdate = batch.filter((c) =>
+    //       existingRecords.has(c.id.toString()),
+    //     );
 
-        const [createResult, updateResult] = await Promise.allSettled([
-          toCreate.length > 0
-            ? this.batchCreateRecords(toCreate)
-            : Promise.resolve({ success: 0, failed: 0 }),
-          toUpdate.length > 0
-            ? this.batchUpdateRecords(toUpdate, existingRecords)
-            : Promise.resolve({ success: 0, failed: 0 }),
-        ]);
+    //     this.logger.log(
+    //       `Batch ${Math.floor(i / batchSize) + 1}: ${toCreate.length} to create, ${toUpdate.length} to update`,
+    //     );
 
-        const createSuccess =
-          createResult.status === 'fulfilled' ? createResult.value.success : 0;
-        const createFailed =
-          createResult.status === 'fulfilled'
-            ? createResult.value.failed
-            : toCreate.length;
-        const updateSuccess =
-          updateResult.status === 'fulfilled' ? updateResult.value.success : 0;
-        const updateFailed =
-          updateResult.status === 'fulfilled'
-            ? updateResult.value.failed
-            : toUpdate.length;
+    //     const [createResult, updateResult] = await Promise.allSettled([
+    //       toCreate.length > 0
+    //         ? this.batchCreateRecords(toCreate)
+    //         : Promise.resolve({ success: 0, failed: 0 }),
+    //       toUpdate.length > 0
+    //         ? this.batchUpdateRecords(toUpdate, existingRecords)
+    //         : Promise.resolve({ success: 0, failed: 0 }),
+    //     ]);
 
-        totalSuccess += createSuccess + updateSuccess;
-        totalFailed += createFailed + updateFailed;
+    //     const createSuccess =
+    //       createResult.status === 'fulfilled' ? createResult.value.success : 0;
+    //     const createFailed =
+    //       createResult.status === 'fulfilled'
+    //         ? createResult.value.failed
+    //         : toCreate.length;
+    //     const updateSuccess =
+    //       updateResult.status === 'fulfilled' ? updateResult.value.success : 0;
+    //     const updateFailed =
+    //       updateResult.status === 'fulfilled'
+    //         ? updateResult.value.failed
+    //         : toUpdate.length;
 
-        if (createResult.status === 'rejected') {
-          this.logger.error(`Create batch failed: ${createResult.reason}`);
-        }
-        if (updateResult.status === 'rejected') {
-          this.logger.error(`Update batch failed: ${updateResult.reason}`);
-        }
+    //     totalSuccess += createSuccess + updateSuccess;
+    //     totalFailed += createFailed + updateFailed;
 
-        if (i + batchSize < customers.length) {
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-        }
-      }
+    //     if (createResult.status === 'rejected') {
+    //       this.logger.error(`Create batch failed: ${createResult.reason}`);
+    //     }
+    //     if (updateResult.status === 'rejected') {
+    //       this.logger.error(`Update batch failed: ${updateResult.reason}`);
+    //     }
 
-      this.logger.log(
-        `LarkBase sync completed: ${totalSuccess} success, ${totalFailed} failed`,
-      );
+    //     if (i + batchSize < customers.length) {
+    //       await new Promise((resolve) => setTimeout(resolve, 1000));
+    //     }
+    //   }
 
-      return { success: totalSuccess, failed: totalFailed };
-    } catch (error) {
-      this.logger.error(`LarkBase sync failed: ${error.message}`);
-      return { success: 0, failed: customers.length };
-    }
+    //   this.logger.log(
+    //     `LarkBase sync completed: ${totalSuccess} success, ${totalFailed} failed`,
+    //   );
+
+    //   return { success: totalSuccess, failed: totalFailed };
+    // } catch (error) {
+    //   this.logger.error(`LarkBase sync failed: ${error.message}`);
+    //   return { success: 0, failed: customers.length };
+    // }
   }
 }

@@ -1,0 +1,466 @@
+// src/services/bus-scheduler/bus-scheduler.service.ts
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
+import { PrismaService } from '../../prisma/prisma.service';
+import { KiotVietBranchService } from '../kiot-viet/branch/branch.service';
+import { KiotVietCustomerGroupService } from '../kiot-viet/customer-group/customer-group.service';
+import { KiotVietTradeMarkService } from '../kiot-viet/trademark/trademark.service';
+import { KiotVietUserService } from '../kiot-viet/user/user.service';
+import { KiotVietSaleChannelService } from '../kiot-viet/sale-channel/sale-channel.service';
+import { KiotVietSurchargeService } from '../kiot-viet/surcharge/surcharge.service';
+import { KiotVietBankAccountService } from '../kiot-viet/bank-account/bank-account.service';
+import { KiotVietCategoryService } from '../kiot-viet/category/category.service';
+import { KiotVietCustomerService } from '../kiot-viet/customer/customer.service';
+import { KiotVietProductService } from '../kiot-viet/product/product.service';
+import { KiotVietOrderService } from '../kiot-viet/order/order.service';
+
+interface SyncEntity {
+  name: string;
+  service: any;
+  syncMethod: string;
+  syncType: 'simple' | 'full';
+  dependencies?: string[];
+  retryCount?: number;
+}
+
+@Injectable()
+export class BusSchedulerService implements OnModuleInit {
+  private readonly logger = new Logger(BusSchedulerService.name);
+  private isRunning = false;
+  private readonly MAX_RETRIES = 2;
+
+  // Define sync entities in dependency order
+  private readonly syncEntities: SyncEntity[] = [
+    // Phase 1 - No Dependencies
+    {
+      name: 'branch',
+      service: 'branchService',
+      syncMethod: 'syncBranches',
+      syncType: 'simple',
+    },
+    {
+      name: 'customergroup',
+      service: 'customerGroupService',
+      syncMethod: 'syncCustomerGroups',
+      syncType: 'simple',
+    },
+    {
+      name: 'trademark',
+      service: 'tradeMarkService',
+      syncMethod: 'syncTradeMarks',
+      syncType: 'simple',
+    },
+    {
+      name: 'user',
+      service: 'userService',
+      syncMethod: 'syncHistoricalUsers',
+      syncType: 'full',
+    },
+    {
+      name: 'salechannel',
+      service: 'saleChannelService',
+      syncMethod: 'syncSaleChannels',
+      syncType: 'simple',
+    },
+    {
+      name: 'surcharge',
+      service: 'surchargeService',
+      syncMethod: 'syncSurcharges',
+      syncType: 'simple',
+    },
+    {
+      name: 'bankaccount',
+      service: 'bankAccountService',
+      syncMethod: 'syncBankAccounts',
+      syncType: 'simple',
+    },
+
+    // Phase 2 - Basic Dependencies
+    {
+      name: 'category',
+      service: 'categoryService',
+      syncMethod: 'syncCategories',
+      syncType: 'simple',
+      dependencies: [],
+    },
+    {
+      name: 'customer',
+      service: 'customerService',
+      syncMethod: 'syncHistoricalCustomers',
+      syncType: 'full',
+      dependencies: ['branch', 'customergroup'],
+    },
+
+    // Phase 3 - Complex Dependencies
+    {
+      name: 'product',
+      service: 'productService',
+      syncMethod: 'syncHistoricalProducts',
+      syncType: 'full',
+      dependencies: ['category', 'trademark'],
+    },
+
+    // Phase 4 - Transaction Dependencies
+    {
+      name: 'order',
+      service: 'orderService',
+      syncMethod: 'syncHistoricalOrders',
+      syncType: 'full',
+      dependencies: ['branch', 'customer', 'product', 'user', 'salechannel'],
+    },
+  ];
+
+  constructor(
+    private readonly prismaService: PrismaService,
+    private readonly branchService: KiotVietBranchService,
+    private readonly customerGroupService: KiotVietCustomerGroupService,
+    private readonly tradeMarkService: KiotVietTradeMarkService,
+    private readonly userService: KiotVietUserService,
+    private readonly saleChannelService: KiotVietSaleChannelService,
+    private readonly surchargeService: KiotVietSurchargeService,
+    private readonly bankAccountService: KiotVietBankAccountService,
+    private readonly categoryService: KiotVietCategoryService,
+    private readonly customerService: KiotVietCustomerService,
+    private readonly productService: KiotVietProductService,
+    private readonly orderService: KiotVietOrderService,
+  ) {}
+
+  async onModuleInit() {
+    this.logger.log(
+      'BusSchedulerService initialized, checking for startup sync...',
+    );
+
+    // Small delay to ensure all services are ready
+    setTimeout(async () => {
+      try {
+        await this.checkAndRunStartupSync();
+      } catch (error) {
+        this.logger.error(`Startup sync check failed: ${error.message}`);
+      }
+    }, 2000);
+  }
+
+  @Cron('0 */15 * * * *') // Every 15 minutes
+  async handleScheduledSync() {
+    if (this.isRunning) {
+      this.logger.log('Bus scheduler already running, skipping scheduled sync');
+      return;
+    }
+
+    try {
+      await this.runSyncCycle();
+    } catch (error) {
+      this.logger.error(`Scheduled sync cycle failed: ${error.message}`);
+    }
+  }
+
+  private async checkAndRunStartupSync(): Promise<void> {
+    this.logger.log('Checking if startup sync is needed...');
+
+    const needsHistoricalSync = await this.checkForMissingHistoricalSyncs();
+
+    if (needsHistoricalSync.length > 0) {
+      this.logger.log(
+        `Found entities needing historical sync: ${needsHistoricalSync.join(', ')}`,
+      );
+      await this.runSyncCycle();
+    } else {
+      this.logger.log('No historical sync needed, running recent sync cycle');
+      await this.runSyncCycle();
+    }
+  }
+
+  private async checkForMissingHistoricalSyncs(): Promise<string[]> {
+    const needsHistorical: string[] = [];
+
+    for (const entity of this.syncEntities) {
+      if (entity.syncType === 'full') {
+        const historicalSync = await this.prismaService.syncControl.findFirst({
+          where: {
+            name: `${entity.name}_historical`,
+            status: 'completed',
+          },
+        });
+
+        if (!historicalSync) {
+          needsHistorical.push(entity.name);
+        }
+      }
+    }
+
+    return needsHistorical;
+  }
+
+  private async runSyncCycle(): Promise<void> {
+    if (this.isRunning) {
+      this.logger.log('Sync cycle already running, skipping');
+      return;
+    }
+
+    try {
+      this.isRunning = true;
+
+      // Create bus cycle tracking
+      await this.prismaService.syncControl.upsert({
+        where: { name: 'bus_scheduler_cycle' },
+        create: {
+          name: 'bus_scheduler_cycle',
+          entities: this.syncEntities.map((e) => e.name),
+          syncMode: 'cycle',
+          isRunning: true,
+          status: 'in_progress',
+          startedAt: new Date(),
+          progress: { currentEntity: null, completed: [], failed: [] },
+        },
+        update: {
+          isRunning: true,
+          status: 'in_progress',
+          startedAt: new Date(),
+          progress: { currentEntity: null, completed: [], failed: [] },
+          error: null,
+        },
+      });
+
+      this.logger.log('Starting bus scheduler sync cycle...');
+
+      const completed: string[] = [];
+      const failed: string[] = [];
+
+      for (const entity of this.syncEntities) {
+        await this.updateBusCycleProgress(entity.name, completed, failed);
+
+        try {
+          await this.syncEntity(entity);
+          completed.push(entity.name);
+          this.logger.log(`✅ ${entity.name} sync completed`);
+        } catch (error) {
+          failed.push(entity.name);
+          this.logger.error(`❌ ${entity.name} sync failed: ${error.message}`);
+
+          // Continue with next entity (resilient approach)
+        }
+      }
+
+      // Update final bus cycle status
+      const finalStatus =
+        failed.length > 0 ? 'completed_with_errors' : 'completed';
+      const finalError =
+        failed.length > 0 ? `Failed entities: ${failed.join(', ')}` : null;
+
+      await this.prismaService.syncControl.update({
+        where: { name: 'bus_scheduler_cycle' },
+        data: {
+          isRunning: false,
+          status: finalStatus,
+          completedAt: new Date(),
+          progress: {
+            currentEntity: null,
+            completed,
+            failed,
+            totalEntities: this.syncEntities.length,
+            completedCount: completed.length,
+            failedCount: failed.length,
+          },
+          error: finalError,
+        },
+      });
+
+      this.logger.log(
+        `Bus scheduler cycle completed: ${completed.length} successful, ${failed.length} failed`,
+      );
+
+      if (failed.length > 0) {
+        this.logger.warn(`Failed entities: ${failed.join(', ')}`);
+      }
+    } catch (error) {
+      await this.prismaService.syncControl.update({
+        where: { name: 'bus_scheduler_cycle' },
+        data: {
+          isRunning: false,
+          status: 'failed',
+          completedAt: new Date(),
+          error: error.message,
+        },
+      });
+
+      this.logger.error(`Bus scheduler cycle failed: ${error.message}`);
+      throw error;
+    } finally {
+      this.isRunning = false;
+    }
+  }
+
+  private async updateBusCycleProgress(
+    currentEntity: string,
+    completed: string[],
+    failed: string[],
+  ) {
+    await this.prismaService.syncControl.update({
+      where: { name: 'bus_scheduler_cycle' },
+      data: {
+        progress: {
+          currentEntity,
+          completed,
+          failed,
+          totalEntities: this.syncEntities.length,
+          completedCount: completed.length,
+          failedCount: failed.length,
+        },
+      },
+    });
+  }
+
+  private async syncEntity(entity: SyncEntity): Promise<void> {
+    this.logger.log(`Starting ${entity.name} sync...`);
+
+    let retryCount = 0;
+    let lastError: Error | null = null;
+
+    while (retryCount <= this.MAX_RETRIES) {
+      try {
+        await this.executeSyncMethod(entity);
+        return; // Success, exit retry loop
+      } catch (error) {
+        lastError = error;
+        retryCount++;
+
+        if (retryCount <= this.MAX_RETRIES) {
+          this.logger.warn(
+            `${entity.name} sync failed (attempt ${retryCount}/${this.MAX_RETRIES + 1}), retrying: ${error.message}`,
+          );
+          await this.delay(1000 * retryCount); // Progressive delay
+        }
+      }
+    }
+
+    // All retries failed
+    throw new Error(
+      `${entity.name} sync failed after ${this.MAX_RETRIES + 1} attempts. Last error: ${lastError?.message}`,
+    );
+  }
+
+  private async executeSyncMethod(entity: SyncEntity): Promise<void> {
+    const service = this[entity.service];
+
+    if (!service) {
+      throw new Error(
+        `Service ${entity.service} not found for entity ${entity.name}`,
+      );
+    }
+
+    if (entity.syncType === 'full') {
+      // Check if historical sync is needed
+      const historicalSync = await this.prismaService.syncControl.findFirst({
+        where: {
+          name: `${entity.name}_historical`,
+          status: 'completed',
+        },
+      });
+
+      if (!historicalSync) {
+        // Run historical sync
+        this.logger.log(`Running historical sync for ${entity.name}`);
+        await service[entity.syncMethod]();
+      } else {
+        // Run recent sync
+        this.logger.log(`Running recent sync for ${entity.name}`);
+        const recentMethod = entity.syncMethod.replace('Historical', 'Recent');
+        if (service[recentMethod]) {
+          await service[recentMethod](7); // 7 days
+        } else {
+          this.logger.warn(
+            `Recent sync method ${recentMethod} not found for ${entity.name}`,
+          );
+        }
+      }
+    } else {
+      // Simple sync
+      this.logger.log(`Running simple sync for ${entity.name}`);
+      await service[entity.syncMethod]();
+    }
+  }
+
+  private delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  // Manual sync methods for API endpoints
+  async manualSyncEntity(entityName: string): Promise<void> {
+    if (this.isRunning) {
+      throw new Error(
+        'Bus scheduler is currently running, cannot run manual sync',
+      );
+    }
+
+    const entity = this.syncEntities.find((e) => e.name === entityName);
+    if (!entity) {
+      throw new Error(`Entity ${entityName} not found`);
+    }
+
+    this.logger.log(`Manual sync requested for ${entityName}`);
+    await this.syncEntity(entity);
+  }
+
+  async getBusStatus(): Promise<any> {
+    const busControl = await this.prismaService.syncControl.findFirst({
+      where: { name: 'bus_scheduler_cycle' },
+    });
+
+    const entityStatuses = await Promise.all(
+      this.syncEntities.map(async (entity) => {
+        const statuses = [];
+
+        if (entity.syncType === 'full') {
+          const historical = await this.prismaService.syncControl.findFirst({
+            where: { name: `${entity.name}_historical` },
+          });
+          const recent = await this.prismaService.syncControl.findFirst({
+            where: { name: `${entity.name}_recent` },
+          });
+
+          statuses.push({ type: 'historical', ...historical });
+          statuses.push({ type: 'recent', ...recent });
+        } else {
+          const simple = await this.prismaService.syncControl.findFirst({
+            where: { name: `${entity.name}_sync` },
+          });
+          statuses.push({ type: 'simple', ...simple });
+        }
+
+        return {
+          entityName: entity.name,
+          syncType: entity.syncType,
+          statuses,
+        };
+      }),
+    );
+
+    return {
+      busScheduler: busControl,
+      entities: entityStatuses,
+      isRunning: this.isRunning,
+    };
+  }
+
+  async stopBusScheduler(): Promise<void> {
+    this.logger.log('Stop requested for bus scheduler');
+    // Note: Cannot forcefully stop running syncs, but can prevent new cycles
+    this.isRunning = false;
+  }
+
+  async forceResetBusScheduler(): Promise<void> {
+    this.logger.log('Force reset requested for bus scheduler');
+
+    await this.prismaService.syncControl.updateMany({
+      where: { isRunning: true },
+      data: {
+        isRunning: false,
+        status: 'failed',
+        error: 'Force reset by admin',
+      },
+    });
+
+    this.isRunning = false;
+    this.logger.log('Bus scheduler force reset completed');
+  }
+}
