@@ -57,6 +57,34 @@ export class LarkBaseService {
     return { fields };
   }
 
+  async getTableFields(): Promise<void> {
+    try {
+      const response = await this.client.bitable.appTableField.list({
+        path: {
+          app_token: this.baseToken,
+          table_id: this.tableId,
+        },
+      });
+
+      this.logger.log('Actual LarkBase fields:');
+      if (response.data?.items) {
+        response.data.items.forEach((field) => {
+          this.logger.log(
+            `Field ID: ${field.field_id}, Name: ${field.field_name}, Type: ${field.type}`,
+          );
+        });
+      }
+    } catch (error) {
+      this.logger.error(`Failed to get table fields: ${error.message}`);
+      if (error.response?.data) {
+        this.logger.error(
+          'Error details:',
+          JSON.stringify(error.response.data, null, 2),
+        );
+      }
+    }
+  }
+
   async getExistingRecords(
     kiotVietIds: string[],
   ): Promise<Map<string, string>> {
@@ -243,6 +271,8 @@ export class LarkBaseService {
     if (!customers.length) return { success: 0, failed: 0 };
 
     try {
+      await this.getTableFields();
+
       const batchSize = 50;
       let totalSuccess = 0;
       let totalFailed = 0;
