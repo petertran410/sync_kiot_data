@@ -117,8 +117,10 @@ export class KiotVietInvoiceService {
   private async prepareInvoiceCreateData(
     invoiceData: any,
   ): Promise<Prisma.InvoiceCreateInput> {
-    // CORRECTED: Handle required branch relationship first
     if (!invoiceData.branchId) {
+      this.logger.warn(
+        `Invoice ${invoiceData.code} is missing branchId, skipping...`,
+      );
       throw new Error(
         `Invoice ${invoiceData.code} is missing required branchId`,
       );
@@ -134,34 +136,46 @@ export class KiotVietInvoiceService {
       );
     }
 
-    // CORRECTED: Using exact field names from API documentation response
     const data: Prisma.InvoiceCreateInput = {
-      kiotVietId: BigInt(invoiceData.id), // id: long
-      code: invoiceData.code, // code: string
-      orderCode: invoiceData.orderCode || null, // Not in list response but might exist
-      purchaseDate: new Date(invoiceData.purchaseDate), // purchaseDate: datetime
-      branch: { connect: { id: branch.id } }, // branchId: int (handled as relationship)
-      total: new Prisma.Decimal(invoiceData.total || 0), // total: decimal
-      totalPayment: new Prisma.Decimal(invoiceData.totalPayment || 0), // totalPayment: decimal
+      kiotVietId: BigInt(invoiceData.id),
+      code: invoiceData.code,
+      orderCode: invoiceData.orderCode || null,
+      purchaseDate: new Date(invoiceData.purchaseDate),
+      branch: { connect: { id: branch.id } },
+      total: new Prisma.Decimal(invoiceData.total || 0),
+      totalPayment: new Prisma.Decimal(invoiceData.totalPayment || 0),
       discount: invoiceData.discount
         ? new Prisma.Decimal(invoiceData.discount)
-        : null, // May not be in list response
-      discountRatio: invoiceData.discountRatio || null, // May not be in list response
-      status: invoiceData.status, // status: int
-      description: invoiceData.description || null, // May not be in list response
-      usingCod: invoiceData.usingCod || false, // usingCod: boolean
-      isApplyVoucher: invoiceData.isApplyVoucher || false, // Not in response structure, may not exist
-      retailerId: invoiceData.retailerId || null, // Not explicitly mentioned but might exist
-      createdDate: invoiceData.createdDate // createdDate: datetime
+        : null,
+      discountRatio: invoiceData.discountRatio || null,
+      status: invoiceData.status,
+      description: invoiceData.description || null,
+      usingCod: invoiceData.usingCod || false,
+      isApplyVoucher: invoiceData.isApplyVoucher || false,
+      retailerId: invoiceData.retailerId || null,
+      createdDate: invoiceData.createdDate
         ? new Date(invoiceData.createdDate)
         : new Date(),
-      modifiedDate: invoiceData.modifiedDate // modifiedDate: datetime
+      modifiedDate: invoiceData.modifiedDate
         ? new Date(invoiceData.modifiedDate)
         : new Date(),
       lastSyncedAt: new Date(),
     };
 
-    // CORRECTED: Handle soldById (from response structure)
+    if (invoiceData.branchId) {
+      const branch = await this.prismaService.branch.findFirst({
+        where: { kiotVietId: invoiceData.branchId },
+      });
+
+      if (branch) {
+        data.branch = { connect: { id: branch.id } };
+      } else {
+        this.logger.warn(
+          `Branch ${invoiceData.branchId} not found for invoice ${invoiceData.code}, creating without branch reference`,
+        );
+      }
+    }
+
     if (invoiceData.soldById) {
       const soldByUser = await this.prismaService.user.findFirst({
         where: { kiotVietId: BigInt(invoiceData.soldById) },
@@ -175,7 +189,6 @@ export class KiotVietInvoiceService {
       }
     }
 
-    // CORRECTED: Handle customerId (from response structure)
     if (invoiceData.customerId) {
       const customer = await this.prismaService.customer.findFirst({
         where: { kiotVietId: BigInt(invoiceData.customerId) },
@@ -189,7 +202,6 @@ export class KiotVietInvoiceService {
       }
     }
 
-    // Handle orderId if present (may not be in list response, but could be in detail)
     if (invoiceData.orderId) {
       const order = await this.prismaService.order.findFirst({
         where: { kiotVietId: BigInt(invoiceData.orderId) },
@@ -203,7 +215,6 @@ export class KiotVietInvoiceService {
       }
     }
 
-    // Handle saleChannelId if present (not in basic list response structure shown)
     if (invoiceData.saleChannelId) {
       const saleChannel = await this.prismaService.saleChannel.findFirst({
         where: { kiotVietId: invoiceData.saleChannelId },
@@ -220,11 +231,9 @@ export class KiotVietInvoiceService {
     return data;
   }
 
-  // CORRECTED: Update method following same pattern
   private async prepareInvoiceUpdateData(
     invoiceData: any,
   ): Promise<Prisma.InvoiceUpdateInput> {
-    // CORRECTED: Using exact field names from API documentation response
     const data: Prisma.InvoiceUpdateInput = {
       code: invoiceData.code, // code: string
       orderCode: invoiceData.orderCode || null,
@@ -245,6 +254,20 @@ export class KiotVietInvoiceService {
         : new Date(),
       lastSyncedAt: new Date(),
     };
+
+    if (invoiceData.branchId) {
+      const branch = await this.prismaService.branch.findFirst({
+        where: { kiotVietId: invoiceData.branchId },
+      });
+
+      if (branch) {
+        data.branch = { connect: { id: branch.id } };
+      } else {
+        this.logger.warn(
+          `Branch ${invoiceData.branchId} not found for invoice ${invoiceData.code}, creating without branch reference`,
+        );
+      }
+    }
 
     // Handle relationships same as create
     if (invoiceData.soldById) {

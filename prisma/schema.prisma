@@ -442,8 +442,8 @@ model Invoice {
   orderId           Int?
   order             Order?             @relation(fields: [orderId], references: [id])
   purchaseDate      DateTime
-  branchId          Int
-  branch            Branch             @relation("BranchInvoices", fields: [branchId], references: [id])
+  branchId          Int?
+  branch            Branch?             @relation("BranchInvoices", fields: [branchId], references: [id])
   soldById          BigInt?
   soldBy            User?              @relation("InvoiceSoldBy", fields: [soldById], references: [kiotVietId])
   customerId        Int?

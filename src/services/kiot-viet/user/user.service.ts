@@ -135,7 +135,7 @@ export class KiotVietUserService {
     }
   }
 
-  async syncRecentUsers(days: number = 7): Promise<void> {
+  async syncRecentUsers(days: number = 180): Promise<void> {
     try {
       await this.prismaService.syncControl.upsert({
         where: { name: 'user_recent' },
