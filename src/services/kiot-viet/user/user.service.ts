@@ -41,7 +41,7 @@ export class KiotVietUserService {
           params: {
             ...params,
             includeRemoveIds: true,
-            orderBy: 'modifiedDate',
+            orderBy: 'createdDate', // FIXED: Changed from 'modifiedDate' to 'createdDate'
             orderDirection: 'DESC',
           },
         }),
@@ -83,9 +83,7 @@ export class KiotVietUserService {
           description: userData.description,
           birthDate: userData.birthDate ? new Date(userData.birthDate) : null,
           retailerId: userData.retailerId,
-          modifiedDate: userData.modifiedDate
-            ? new Date(userData.modifiedDate)
-            : new Date(),
+          // FIXED: Removed modifiedDate since users don't have this field
           lastSyncedAt: new Date(),
         };
 
@@ -157,6 +155,9 @@ export class KiotVietUserService {
       const lastModifiedFrom = dayjs()
         .subtract(days, 'day')
         .format('YYYY-MM-DD');
+
+      this.logger.log(`Starting recent user sync for last ${days} days...`);
+
       let currentItem = 0;
       let totalProcessed = 0;
       let hasMoreData = true;
@@ -173,7 +174,7 @@ export class KiotVietUserService {
           totalProcessed += created + updated;
 
           this.logger.log(
-            `User recent sync progress: ${totalProcessed} users processed`,
+            `User recent sync progress: ${totalProcessed} processed`,
           );
         }
 
@@ -223,7 +224,6 @@ export class KiotVietUserService {
           entities: ['user'],
           syncMode: 'historical',
           isRunning: true,
-          isEnabled: true,
           status: 'in_progress',
           startedAt: new Date(),
         },
@@ -232,17 +232,16 @@ export class KiotVietUserService {
           status: 'in_progress',
           startedAt: new Date(),
           error: null,
-          progress: {},
         },
       });
+
+      this.logger.log('Starting historical user sync...');
 
       let currentItem = 0;
       let totalProcessed = 0;
       let batchCount = 0;
       let hasMoreData = true;
       const userBatch: any[] = [];
-
-      this.logger.log('Starting historical user sync...');
 
       while (hasMoreData) {
         const response = await this.fetchUsers({
@@ -253,10 +252,7 @@ export class KiotVietUserService {
         if (response.data && response.data.length > 0) {
           userBatch.push(...response.data);
 
-          if (
-            userBatch.length >= this.BATCH_SIZE ||
-            response.data.length < this.PAGE_SIZE
-          ) {
+          if (userBatch.length >= this.BATCH_SIZE) {
             const { created, updated } = await this.batchSaveUsers(userBatch);
             totalProcessed += created + updated;
             batchCount++;
@@ -285,6 +281,13 @@ export class KiotVietUserService {
 
         hasMoreData = response.data && response.data.length === this.PAGE_SIZE;
         if (hasMoreData) currentItem += this.PAGE_SIZE;
+      }
+
+      // Process remaining users in batch
+      if (userBatch.length > 0) {
+        const { created, updated } = await this.batchSaveUsers(userBatch);
+        totalProcessed += created + updated;
+        batchCount++;
       }
 
       await this.prismaService.syncControl.update({
