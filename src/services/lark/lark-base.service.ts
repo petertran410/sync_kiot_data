@@ -49,9 +49,9 @@ export class LarkBaseService {
   private mapKiotVietToLarkBase(customerData: any): any {
     const fields: any = {};
 
-    // Only test with primary field first
+    // Use field names instead of field IDs
     if (customerData.name) {
-      fields['fld71g8Gci'] = customerData.name;
+      fields['Tên Khách Hàng'] = customerData.name;
     }
 
     return { fields };
@@ -156,56 +156,37 @@ export class LarkBaseService {
     if (!customers.length) return { success: 0, failed: 0 };
 
     try {
-      const records = customers
-        .map((customer) => this.mapKiotVietToLarkBase(customer))
-        .filter((record) => record.fields['fld71g8Gci']);
+      // Test with just one record first
+      const testRecord = {
+        fields: {
+          'Tên Khách Hàng': customers[0].name, // Use field name
+        },
+      };
 
-      if (!records.length) {
-        this.logger.warn('No valid records to create (missing primary field)');
-        return { success: 0, failed: customers.length };
-      }
+      this.logger.debug('Testing single record create with field name');
+      this.logger.debug('Test record:', JSON.stringify(testRecord, null, 2));
 
-      this.logger.debug(
-        `Attempting to create ${records.length} records in LarkBase`,
-      );
-      this.logger.debug('Sample record:', JSON.stringify(records[0], null, 2));
-
-      const response = await this.client.bitable.appTableRecord.batchCreate({
+      const response = await this.client.bitable.appTableRecord.create({
         path: {
           app_token: this.baseToken,
           table_id: this.tableId,
         },
-        data: {
-          records,
-        },
+        data: testRecord,
       });
 
-      const successCount = response.data?.records?.length || 0;
-      const failedCount = customers.length - successCount;
-
       this.logger.log(
-        `LarkBase batch create: ${successCount} success, ${failedCount} failed`,
+        'Single record test result:',
+        JSON.stringify(response, null, 2),
       );
 
-      if (failedCount > 0) {
-        this.logger.error(
-          'LarkBase create response:',
-          JSON.stringify(response, null, 2),
-        );
-      }
-
-      return { success: successCount, failed: failedCount };
+      return { success: 1, failed: customers.length - 1 };
     } catch (error) {
-      this.logger.error(`LarkBase batch create failed: ${error.message}`);
-      this.logger.error('Error stack:', error.stack);
+      this.logger.error(`Single record test failed: ${error.message}`);
       if (error.response?.data) {
         this.logger.error(
-          'LarkBase API Error:',
+          'Error details:',
           JSON.stringify(error.response.data, null, 2),
         );
-      }
-      if (error.response?.status) {
-        this.logger.error('HTTP Status:', error.response.status);
       }
       return { success: 0, failed: customers.length };
     }
