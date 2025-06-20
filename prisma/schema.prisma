@@ -308,6 +308,7 @@ model Branch {
 
   @@index([kiotVietId])
   Cashflow Cashflow[]
+  Invoice Invoice[]
 }
 
 model User {
@@ -443,7 +444,7 @@ model Invoice {
   order             Order?             @relation(fields: [orderId], references: [id])
   purchaseDate      DateTime
   branchId          Int?
-  branch            Branch?             @relation("BranchInvoices", fields: [branchId], references: [id])
+  branch            Branch?             @relation(fields: [branchId], references: [id])
   soldById          BigInt?
   soldBy            User?              @relation("InvoiceSoldBy", fields: [soldById], references: [kiotVietId])
   customerId        Int?
@@ -477,6 +478,7 @@ model Invoice {
   @@index([soldById])
   @@index([saleChannelId])
   @@index([lastSyncedAt])
+  Branch Branch[] @relation("BranchInvoices")
 }
 
 model InvoiceDetail {
