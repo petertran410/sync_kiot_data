@@ -42,6 +42,8 @@ export class KiotVietOrderService {
             ...params,
             includePayment: true,
             includeOrderDelivery: true,
+            includeRemoveIds: true,
+            SaleChannel: true,
             orderBy: 'modifiedDate',
             orderDirection: 'DESC',
           },

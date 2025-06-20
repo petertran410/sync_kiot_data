@@ -307,6 +307,7 @@ model Branch {
   voucherCampaigns  VoucherCampaignBranch[]
 
   @@index([kiotVietId])
+  Cashflow Cashflow[]
 }
 
 model User {
@@ -320,6 +321,7 @@ model User {
   description       String?
   birthDate         DateTime?
   retailerId        Int?
+  isActive          Boolean?
   createdDate       DateTime           @default(now())
   modifiedDate      DateTime           @updatedAt
   lastSyncedAt      DateTime           @default(now())
@@ -597,6 +599,7 @@ model BankAccount {
   payments          Payment[]
   
   @@index([kiotVietId])
+  Cashflow Cashflow[]
 }
 
 model SaleChannel {
@@ -1067,6 +1070,43 @@ model Webhook {
   
   @@index([kiotVietId])
   @@index([type])
+}
+
+model Cashflow {
+  id                     Int       @id @default(autoincrement())
+  kiotVietId             BigInt    @unique
+  code                   String    @unique
+  address                String?
+  branchId               Int?
+  branch                 Branch?   @relation(fields: [branchId], references: [id])
+  wardName               String?
+  contactNumber          String?
+  createdBy              BigInt?
+  usedForFinancialReporting Int?
+  cashFlowGroupId        Int?
+  method                 String    // Cash, Transfer, Card, etc.
+  partnerType            String    // A: all, C: customer, S: supplier, U: user, D: delivery, O: other
+  partnerId              BigInt?
+  status                 Int       // 0: paid, 1: cancelled
+  statusValue            String?   // Status in text
+  transDate              DateTime
+  amount                 Decimal   @db.Decimal(15, 2)
+  partnerName            String?
+  userName               String?
+  accountId              Int?
+  bankAccount            BankAccount? @relation(fields: [accountId], references: [id])
+  description            String?
+  isReceipt              Boolean   // true: receipt, false: disbursement
+  retailerId             Int?
+  createdDate            DateTime  @default(now())
+  lastSyncedAt           DateTime  @default(now())
+
+  @@index([kiotVietId])
+  @@index([branchId])
+  @@index([partnerType])
+  @@index([isReceipt])
+  @@index([transDate])
+  @@index([accountId])
 }
 
 model SyncControl {

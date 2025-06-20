@@ -41,7 +41,7 @@ export class KiotVietUserService {
           params: {
             ...params,
             includeRemoveIds: true,
-            orderBy: 'createdDate', // FIXED: Changed from 'modifiedDate' to 'createdDate'
+            orderBy: 'modifiedDate',
             orderDirection: 'DESC',
           },
         }),
@@ -83,7 +83,6 @@ export class KiotVietUserService {
           description: userData.description,
           birthDate: userData.birthDate ? new Date(userData.birthDate) : null,
           retailerId: userData.retailerId,
-          // FIXED: Removed modifiedDate since users don't have this field
           lastSyncedAt: new Date(),
         };
 
@@ -115,16 +114,20 @@ export class KiotVietUserService {
     return { created: createdCount, updated: updatedCount };
   }
 
-  private async handleRemovedUsers(removedIds: number[]) {
-    if (!removedIds || removedIds.length === 0) return 0;
+  private async handleRemovedUsers(removeIds: number[]) {
+    if (!removeIds || removeIds.length === 0) return 0;
 
     try {
+      // Mark users as inactive instead of deleting them
       const result = await this.prismaService.user.updateMany({
-        where: { kiotVietId: { in: removedIds.map((id) => BigInt(id)) } },
-        data: { lastSyncedAt: new Date() },
+        where: { kiotVietId: { in: removeIds.map((id) => BigInt(id)) } },
+        data: {
+          isActive: false,
+          lastSyncedAt: new Date(),
+        },
       });
 
-      this.logger.log(`Updated ${result.count} removed users`);
+      this.logger.log(`Marked ${result.count} users as inactive`);
       return result.count;
     } catch (error) {
       this.logger.error(`Failed to handle removed users: ${error.message}`);

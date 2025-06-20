@@ -28,7 +28,6 @@ export class KiotVietInvoiceService {
     this.baseUrl = baseUrl;
   }
 
-  // CORRECTED: Following exact API documentation parameters
   async fetchInvoices(params: {
     lastModifiedFrom?: string;
     currentItem?: number;
@@ -41,14 +40,12 @@ export class KiotVietInvoiceService {
           headers,
           params: {
             ...params,
-            // CORRECTED: Using exact parameters from API documentation
-            includePayment: true, // Boolean as per doc
-            includeInvoiceDelivery: true, // Boolean as per doc
-            // CORRECTED: Using 'createdDate' since response has both createdDate and modifiedDate
-            // The doc example shows "orderBy=name" but invoices don't have name field
-            // So using createdDate which definitely exists in response
-            orderBy: 'createdDate',
-            orderDirection: 'DESC', // DESC for most recent first
+            includePayment: true,
+            includeInvoiceDelivery: true,
+            includeRemoveIds: true,
+            SaleChannel: true,
+            orderBy: 'modifiedDate',
+            orderDirection: 'DESC',
           },
         }),
       );
@@ -307,57 +304,208 @@ export class KiotVietInvoiceService {
     return data;
   }
 
-  // CORRECTED: Handle child relations based on API documentation structure
   private async handleInvoiceRelations(invoiceId: number, invoiceData: any) {
-    // Handle payments - CORRECTED: Based on documented payment structure
     if (invoiceData.payments && invoiceData.payments.length > 0) {
-      await this.prismaService.payment.deleteMany({
-        where: { invoiceId },
-      });
-
       for (const payment of invoiceData.payments) {
         try {
-          // CORRECTED: Using exact payment structure from documentation
           const paymentData: any = {
-            kiotVietId: payment.id ? BigInt(payment.id) : null, // id: long
+            kiotVietId: payment.id ? BigInt(payment.id) : null,
             invoice: { connect: { id: invoiceId } },
-            code: payment.code, // code: string
-            amount: new Prisma.Decimal(payment.amount || 0), // amount: decimal
-            method: payment.method, // method: string
-            status: payment.status, // status: byte?
-            transDate: payment.transDate // transDate: datetime
+            code: payment.code,
+            amount: new Prisma.Decimal(payment.amount || 0),
+            method: payment.method,
+            status: payment.status,
+            transDate: payment.transDate
               ? new Date(payment.transDate)
               : new Date(),
-            bankAccountInfo: payment.bankAccount, // bankAccount: string
-            description: payment.description || null, // description: string (not shown in example but might exist)
+            bankAccountInfo: payment.bankAccount,
+            description: payment.description || null,
           };
 
-          // Handle accountId if present
           if (payment.accountId) {
             const bankAccount = await this.prismaService.bankAccount.findFirst({
               where: { kiotVietId: payment.accountId },
             });
             if (bankAccount) {
               paymentData.bankAccount = { connect: { id: bankAccount.id } };
-            } else {
-              this.logger.warn(
-                `Bank account with kiotVietId ${payment.accountId} not found for payment ${payment.code}`,
-              );
             }
           }
 
-          await this.prismaService.payment.create({
-            data: paymentData,
-          });
+          if (payment.id) {
+            await this.prismaService.payment.upsert({
+              where: { kiotVietId: BigInt(payment.id) },
+              create: paymentData,
+              update: {
+                code: payment.code,
+                amount: new Prisma.Decimal(payment.amount || 0),
+                method: payment.method,
+                status: payment.status,
+                transDate: payment.transDate
+                  ? new Date(payment.transDate)
+                  : new Date(),
+                bankAccountInfo: payment.bankAccount,
+                description: payment.description || null,
+              },
+            });
+          } else {
+            // If no ID, just create
+            await this.prismaService.payment.create({
+              data: paymentData,
+            });
+          }
         } catch (error) {
           this.logger.error(`Failed to save payment: ${error.message}`);
         }
       }
     }
+  }
 
-    // Note: Other child relations (invoiceDetails, invoiceDelivery, invoiceSurcharges)
-    // would be handled here, but they're not included in the basic list response
-    // They would come from the detail API or be included with specific parameters
+  private async handleInvoiceChildEntities(
+    invoiceId: number,
+    invoiceDetailData: any,
+  ) {
+    // Handle InvoiceDetails
+    if (
+      invoiceDetailData.invoiceDetails &&
+      invoiceDetailData.invoiceDetails.length > 0
+    ) {
+      await this.prismaService.invoiceDetail.deleteMany({
+        where: { invoiceId },
+      });
+
+      for (const detail of invoiceDetailData.invoiceDetails) {
+        const product = await this.prismaService.product.findFirst({
+          where: { kiotVietId: BigInt(detail.productId) },
+        });
+
+        if (product) {
+          await this.prismaService.invoiceDetail.create({
+            data: {
+              kiotVietId: detail.id ? BigInt(detail.id) : null,
+              invoice: { connect: { id: invoiceId } },
+              product: { connect: { id: product.id } },
+              quantity: detail.quantity,
+              price: new Prisma.Decimal(detail.price),
+              discount: detail.discount
+                ? new Prisma.Decimal(detail.discount)
+                : null,
+              discountRatio: detail.discountRatio,
+              note: detail.note,
+              serialNumbers: detail.serialNumbers,
+            },
+          });
+        }
+      }
+    }
+
+    // Handle InvoiceDelivery
+    if (invoiceDetailData.invoiceDelivery) {
+      const delivery = invoiceDetailData.invoiceDelivery;
+      await this.prismaService.invoiceDelivery.upsert({
+        where: { invoiceId },
+        create: {
+          kiotVietId: delivery.id ? BigInt(delivery.id) : null,
+          invoice: { connect: { id: invoiceId } },
+          deliveryCode: delivery.deliveryCode,
+          status: delivery.status,
+          type: delivery.type,
+          price: delivery.price ? new Prisma.Decimal(delivery.price) : null,
+          receiver: delivery.receiver,
+          contactNumber: delivery.contactNumber,
+          address: delivery.address,
+          locationId: delivery.locationId,
+          locationName: delivery.locationName,
+          wardName: delivery.wardName,
+          usingPriceCod: delivery.usingPriceCod || false,
+          priceCodPayment: delivery.priceCodPayment
+            ? new Prisma.Decimal(delivery.priceCodPayment)
+            : null,
+          weight: delivery.weight,
+          length: delivery.length,
+          width: delivery.width,
+          height: delivery.height,
+          partnerDeliveryId: delivery.partnerDeliveryId
+            ? BigInt(delivery.partnerDeliveryId)
+            : null,
+        },
+        update: {
+          deliveryCode: delivery.deliveryCode,
+          status: delivery.status,
+          type: delivery.type,
+          price: delivery.price ? new Prisma.Decimal(delivery.price) : null,
+          receiver: delivery.receiver,
+          contactNumber: delivery.contactNumber,
+          address: delivery.address,
+          locationId: delivery.locationId,
+          locationName: delivery.locationName,
+          wardName: delivery.wardName,
+          usingPriceCod: delivery.usingPriceCod || false,
+          priceCodPayment: delivery.priceCodPayment
+            ? new Prisma.Decimal(delivery.priceCodPayment)
+            : null,
+          weight: delivery.weight,
+          length: delivery.length,
+          width: delivery.width,
+          height: delivery.height,
+          partnerDeliveryId: delivery.partnerDeliveryId
+            ? BigInt(delivery.partnerDeliveryId)
+            : null,
+        },
+      });
+    }
+
+    // Handle InvoiceSurcharges
+    if (
+      invoiceDetailData.invoiceOrderSurcharges &&
+      invoiceDetailData.invoiceOrderSurcharges.length > 0
+    ) {
+      await this.prismaService.invoiceSurcharge.deleteMany({
+        where: { invoiceId },
+      });
+
+      for (const surcharge of invoiceDetailData.invoiceOrderSurcharges) {
+        const surchargeRef = surcharge.surchargeId
+          ? await this.prismaService.surcharge.findFirst({
+              where: { kiotVietId: surcharge.surchargeId },
+            })
+          : null;
+
+        await this.prismaService.invoiceSurcharge.create({
+          data: {
+            kiotVietId: surcharge.id ? BigInt(surcharge.id) : null,
+            invoice: { connect: { id: invoiceId } },
+            surcharge: surchargeRef
+              ? { connect: { id: surchargeRef.id } }
+              : undefined,
+            surchargeName: surcharge.surchargeName,
+            surValue: surcharge.surValue
+              ? new Prisma.Decimal(surcharge.surValue)
+              : null,
+            price: surcharge.price ? new Prisma.Decimal(surcharge.price) : null,
+            createdDate: surcharge.createdDate
+              ? new Date(surcharge.createdDate)
+              : new Date(),
+          },
+        });
+      }
+    }
+  }
+
+  async fetchInvoiceDetail(invoiceId: number) {
+    try {
+      const headers = await this.authService.getRequestHeaders();
+      const { data } = await firstValueFrom(
+        this.httpService.get(`${this.baseUrl}/invoices/${invoiceId}`, {
+          headers,
+        }),
+      );
+      return data;
+    } catch (error) {
+      this.logger.error(
+        `Failed to fetch invoice detail ${invoiceId}: ${error.message}`,
+      );
+      throw error;
+    }
   }
 
   // Rest of sync methods remain the same...
