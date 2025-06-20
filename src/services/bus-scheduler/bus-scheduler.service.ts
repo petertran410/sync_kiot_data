@@ -13,6 +13,7 @@ import { KiotVietCategoryService } from '../kiot-viet/category/category.service'
 import { KiotVietCustomerService } from '../kiot-viet/customer/customer.service';
 import { KiotVietProductService } from '../kiot-viet/product/product.service';
 import { KiotVietOrderService } from '../kiot-viet/order/order.service';
+import { KiotVietInvoiceService } from '../kiot-viet/invoice/invoice.service';
 import {
   EntityStatus,
   EntityStatusSummary,
@@ -113,6 +114,21 @@ export class BusSchedulerService implements OnModuleInit {
       syncType: 'full',
       dependencies: ['branch', 'customer', 'product', 'user', 'salechannel'],
     },
+
+    {
+      name: 'invoice',
+      service: 'invoiceService',
+      syncMethod: 'syncHistoricalInvoices',
+      syncType: 'full',
+      dependencies: [
+        'branch',
+        'customer',
+        'product',
+        'user',
+        'order',
+        'salechannel',
+      ],
+    },
   ];
 
   constructor(
@@ -128,6 +144,7 @@ export class BusSchedulerService implements OnModuleInit {
     private readonly customerService: KiotVietCustomerService,
     private readonly productService: KiotVietProductService,
     private readonly orderService: KiotVietOrderService,
+    private readonly invoiceService: KiotVietInvoiceService,
   ) {}
 
   async onModuleInit() {
@@ -135,7 +152,6 @@ export class BusSchedulerService implements OnModuleInit {
       'BusSchedulerService initialized, checking for startup sync...',
     );
 
-    // Small delay to ensure all services are ready
     setTimeout(async () => {
       try {
         await this.checkAndRunStartupSync();
