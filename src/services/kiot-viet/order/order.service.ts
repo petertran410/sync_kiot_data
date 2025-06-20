@@ -86,6 +86,8 @@ export class KiotVietOrderService {
         this.logger.error(
           `Failed to save order ${orderData.code}: ${error.message}`,
         );
+        // Continue processing other orders instead of stopping
+        continue;
       }
     }
 
@@ -112,11 +114,27 @@ export class KiotVietOrderService {
   private async prepareOrderCreateData(
     orderData: any,
   ): Promise<Prisma.OrderCreateInput> {
+    // FIXED: Handle required branch relationship first
+    if (!orderData.branchId) {
+      throw new Error(`Order ${orderData.code} is missing required branchId`);
+    }
+
+    const branch = await this.prismaService.branch.findFirst({
+      where: { kiotVietId: orderData.branchId },
+    });
+
+    if (!branch) {
+      throw new Error(
+        `Required branch with kiotVietId ${orderData.branchId} not found for order ${orderData.code}`,
+      );
+    }
+
     const data: Prisma.OrderCreateInput = {
       kiotVietId: BigInt(orderData.id),
       code: orderData.code,
       purchaseDate: new Date(orderData.purchaseDate),
-      // Fix: Use soldBy relation instead of soldById
+      // FIXED: Always provide required branch relationship
+      branch: { connect: { id: branch.id } },
       cashierId: orderData.cashierId ? BigInt(orderData.cashierId) : null,
       total: new Prisma.Decimal(orderData.total || 0),
       totalPayment: new Prisma.Decimal(orderData.totalPayment || 0),
@@ -139,58 +157,60 @@ export class KiotVietOrderService {
         ? new Date(orderData.modifiedDate)
         : new Date(),
       lastSyncedAt: new Date(),
-      branch: {
-        create: undefined,
-        connectOrCreate: undefined,
-        connect: undefined,
-      },
     };
 
-    // Fix: Handle soldBy relationship correctly
+    // FIXED: Check if user exists before connecting (optional relationship)
     if (orderData.soldById) {
-      data.soldBy = { connect: { kiotVietId: BigInt(orderData.soldById) } };
-    }
-
-    // Handle branch relationship
-    if (orderData.branchId) {
-      const branch = await this.prismaService.branch.findFirst({
-        where: { kiotVietId: orderData.branchId },
+      const soldByUser = await this.prismaService.user.findFirst({
+        where: { kiotVietId: BigInt(orderData.soldById) },
       });
-      if (branch) {
-        data.branch = { connect: { id: branch.id } };
+      if (soldByUser) {
+        data.soldBy = { connect: { kiotVietId: BigInt(orderData.soldById) } };
+      } else {
+        this.logger.warn(
+          `User with kiotVietId ${orderData.soldById} not found for order ${orderData.code}. Creating order without soldBy reference.`,
+        );
       }
     }
 
-    // Handle customer relationship
+    // Handle customer relationship (optional)
     if (orderData.customerId) {
       const customer = await this.prismaService.customer.findFirst({
         where: { kiotVietId: BigInt(orderData.customerId) },
       });
       if (customer) {
         data.customer = { connect: { id: customer.id } };
+      } else {
+        this.logger.warn(
+          `Customer with kiotVietId ${orderData.customerId} not found for order ${orderData.code}`,
+        );
       }
     }
 
-    // Handle sale channel relationship
+    // Handle sale channel relationship (optional)
     if (orderData.saleChannelId) {
       const saleChannel = await this.prismaService.saleChannel.findFirst({
         where: { kiotVietId: orderData.saleChannelId },
       });
       if (saleChannel) {
         data.saleChannel = { connect: { id: saleChannel.id } };
+      } else {
+        this.logger.warn(
+          `Sale channel with kiotVietId ${orderData.saleChannelId} not found for order ${orderData.code}`,
+        );
       }
     }
 
     return data;
   }
 
+  // FIXED: prepareOrderUpdateData method
   private async prepareOrderUpdateData(
     orderData: any,
   ): Promise<Prisma.OrderUpdateInput> {
     const data: Prisma.OrderUpdateInput = {
       code: orderData.code,
       purchaseDate: new Date(orderData.purchaseDate),
-      // Fix: Use soldBy relation instead of soldById
       cashierId: orderData.cashierId ? BigInt(orderData.cashierId) : null,
       total: new Prisma.Decimal(orderData.total || 0),
       totalPayment: new Prisma.Decimal(orderData.totalPayment || 0),
@@ -212,21 +232,37 @@ export class KiotVietOrderService {
       lastSyncedAt: new Date(),
     };
 
-    // Fix: Handle soldBy relationship correctly
+    // FIXED: Check if user exists before connecting (optional relationship)
     if (orderData.soldById) {
-      data.soldBy = { connect: { kiotVietId: BigInt(orderData.soldById) } };
+      const soldByUser = await this.prismaService.user.findFirst({
+        where: { kiotVietId: BigInt(orderData.soldById) },
+      });
+      if (soldByUser) {
+        data.soldBy = { connect: { kiotVietId: BigInt(orderData.soldById) } };
+      } else {
+        this.logger.warn(
+          `User with kiotVietId ${orderData.soldById} not found for order ${orderData.code}. Updating order without soldBy reference.`,
+        );
+        // Explicitly disconnect if user no longer exists
+        data.soldBy = { disconnect: true };
+      }
     }
 
-    // Handle relationships similar to create
+    // Handle branch relationship (required)
     if (orderData.branchId) {
       const branch = await this.prismaService.branch.findFirst({
         where: { kiotVietId: orderData.branchId },
       });
       if (branch) {
         data.branch = { connect: { id: branch.id } };
+      } else {
+        throw new Error(
+          `Required branch with kiotVietId ${orderData.branchId} not found for order ${orderData.code}`,
+        );
       }
     }
 
+    // Handle customer relationship (optional)
     if (orderData.customerId) {
       const customer = await this.prismaService.customer.findFirst({
         where: { kiotVietId: BigInt(orderData.customerId) },
@@ -236,6 +272,7 @@ export class KiotVietOrderService {
       }
     }
 
+    // Handle sale channel relationship (optional)
     if (orderData.saleChannelId) {
       const saleChannel = await this.prismaService.saleChannel.findFirst({
         where: { kiotVietId: orderData.saleChannelId },
@@ -279,6 +316,10 @@ export class KiotVietOrderService {
                 isMaster: detail.isMaster !== false,
               },
             });
+          } else {
+            this.logger.warn(
+              `Product with kiotVietId ${detail.productId} not found for order ${orderData.code}`,
+            );
           }
         } catch (error) {
           this.logger.error(`Failed to save order detail: ${error.message}`);
@@ -361,7 +402,7 @@ export class KiotVietOrderService {
                 ? BigInt(surcharge.kiotVietId)
                 : null,
               orderId,
-              surchargeId: surchargeEntity ? surchargeEntity.id : null,
+              surchargeId: surchargeEntity?.id || null,
               surchargeName: surcharge.surchargeName,
               surValue: surcharge.surValue
                 ? new Prisma.Decimal(surcharge.surValue)
@@ -369,9 +410,6 @@ export class KiotVietOrderService {
               price: surcharge.price
                 ? new Prisma.Decimal(surcharge.price)
                 : null,
-              createdDate: surcharge.createdDate
-                ? new Date(surcharge.createdDate)
-                : new Date(),
             },
           });
         } catch (error) {
@@ -388,17 +426,10 @@ export class KiotVietOrderService {
 
       for (const payment of orderData.payments) {
         try {
-          const bankAccount = payment.accountId
-            ? await this.prismaService.bankAccount.findFirst({
-                where: { kiotVietId: payment.accountId },
-              })
-            : null;
-
           await this.prismaService.payment.create({
             data: {
-              kiotVietId: payment.kiotVietId
-                ? BigInt(payment.kiotVietId)
-                : null,
+              kiotVietId: BigInt(payment.id),
+              orderId,
               code: payment.code,
               amount: new Prisma.Decimal(payment.amount || 0),
               method: payment.method,
@@ -406,9 +437,8 @@ export class KiotVietOrderService {
               transDate: payment.transDate
                 ? new Date(payment.transDate)
                 : new Date(),
-              accountId: bankAccount ? bankAccount.id : null,
-              bankAccountInfo: payment.bankAccount,
-              orderId,
+              bankAccount: payment.bankAccount,
+              accountId: payment.accountId,
               description: payment.description,
             },
           });
@@ -442,6 +472,9 @@ export class KiotVietOrderService {
       const lastModifiedFrom = dayjs()
         .subtract(days, 'day')
         .format('YYYY-MM-DD');
+
+      this.logger.log(`Starting recent order sync for last ${days} days...`);
+
       let currentItem = 0;
       let totalProcessed = 0;
       let hasMoreData = true;
@@ -460,7 +493,7 @@ export class KiotVietOrderService {
           totalProcessed += created + updated;
 
           this.logger.log(
-            `Order recent sync progress: ${totalProcessed} orders processed`,
+            `Order recent sync progress: ${totalProcessed} processed`,
           );
         }
 
@@ -536,10 +569,7 @@ export class KiotVietOrderService {
         if (response.data && response.data.length > 0) {
           orderBatch.push(...response.data);
 
-          if (
-            orderBatch.length >= this.BATCH_SIZE ||
-            response.data.length < this.PAGE_SIZE
-          ) {
+          if (orderBatch.length >= this.BATCH_SIZE) {
             const { created, updated } = await this.batchSaveOrders(orderBatch);
             totalProcessed += created + updated;
             batchCount++;
@@ -564,6 +594,13 @@ export class KiotVietOrderService {
 
         hasMoreData = response.data && response.data.length === this.PAGE_SIZE;
         if (hasMoreData) currentItem += this.PAGE_SIZE;
+      }
+
+      // Process remaining orders in batch
+      if (orderBatch.length > 0) {
+        const { created, updated } = await this.batchSaveOrders(orderBatch);
+        totalProcessed += created + updated;
+        batchCount++;
       }
 
       await this.prismaService.syncControl.update({
