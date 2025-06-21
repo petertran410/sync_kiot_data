@@ -4,6 +4,7 @@ import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { KiotVietAuthService } from '../auth.service';
+import { LarkBaseService } from '../../lark/lark-base.service';
 import { firstValueFrom } from 'rxjs';
 import { Prisma } from '@prisma/client';
 import * as dayjs from 'dayjs';
@@ -20,6 +21,7 @@ export class KiotVietInvoiceService {
     private readonly configService: ConfigService,
     private readonly prismaService: PrismaService,
     private readonly authService: KiotVietAuthService,
+    private readonly larkBaseService: LarkBaseService,
   ) {
     const baseUrl = this.configService.get<string>('KIOT_BASE_URL');
     if (!baseUrl) {
@@ -535,6 +537,61 @@ export class KiotVietInvoiceService {
     }
   }
 
+  private async batchSaveInvoicesWithLarkTracking(invoices: any[]) {
+    if (!invoices || invoices.length === 0) {
+      return { created: 0, updated: 0, larkResult: { success: 0, failed: 0 } };
+    }
+
+    // 1. Save to database (existing logic)
+    const { created, updated } = await this.batchSaveInvoices(invoices);
+
+    // 2. Prepare data for Lark Base sync
+    const invoicesWithEnrichedData =
+      await this.enrichInvoicesForLarkBase(invoices);
+
+    // 3. Sync to Lark Base
+    const larkResult = await this.larkBaseService.syncInvoicesToLarkBase(
+      invoicesWithEnrichedData,
+    );
+
+    return { created, updated, larkResult };
+  }
+
+  private async enrichInvoicesForLarkBase(invoices: any[]): Promise<any[]> {
+    const enrichedInvoices = [];
+
+    for (const invoiceData of invoices) {
+      let branchName = null;
+      let customerName = null;
+
+      // Get branch name from branchId
+      if (invoiceData.branchId) {
+        const branch = await this.prismaService.branch.findFirst({
+          where: { kiotVietId: invoiceData.branchId },
+          select: { name: true },
+        });
+        branchName = branch?.name || null;
+      }
+
+      // Get customer name from customerId
+      if (invoiceData.customerId) {
+        const customer = await this.prismaService.customer.findFirst({
+          where: { kiotVietId: BigInt(invoiceData.customerId) },
+          select: { name: true },
+        });
+        customerName = customer?.name || null;
+      }
+
+      enrichedInvoices.push({
+        invoiceData,
+        branchName,
+        customerName,
+      });
+    }
+
+    return enrichedInvoices;
+  }
+
   async fetchInvoiceDetail(invoiceId: number) {
     try {
       const headers = await this.authService.getRequestHeaders();
@@ -552,90 +609,9 @@ export class KiotVietInvoiceService {
     }
   }
 
-  // Rest of sync methods remain the same...
-  async syncRecentInvoices(days: number = 7): Promise<void> {
-    try {
-      await this.prismaService.syncControl.upsert({
-        where: { name: 'invoice_recent' },
-        create: {
-          name: 'invoice_recent',
-          entities: ['invoice'],
-          syncMode: 'recent',
-          isRunning: true,
-          status: 'in_progress',
-          startedAt: new Date(),
-        },
-        update: {
-          isRunning: true,
-          status: 'in_progress',
-          startedAt: new Date(),
-          error: null,
-        },
-      });
-
-      const lastModifiedFrom = dayjs()
-        .subtract(days, 'day')
-        .format('YYYY-MM-DD');
-
-      this.logger.log(`Starting recent invoice sync for last ${days} days...`);
-
-      let currentItem = 0;
-      let totalProcessed = 0;
-      let hasMoreData = true;
-
-      while (hasMoreData) {
-        const response = await this.fetchInvoices({
-          lastModifiedFrom,
-          currentItem,
-          pageSize: this.PAGE_SIZE,
-        });
-
-        if (response.data && response.data.length > 0) {
-          const { created, updated } = await this.batchSaveInvoices(
-            response.data,
-          );
-          totalProcessed += created + updated;
-
-          this.logger.log(
-            `Invoice recent sync progress: ${totalProcessed} processed`,
-          );
-        }
-
-        hasMoreData = response.data && response.data.length === this.PAGE_SIZE;
-        if (hasMoreData) currentItem += this.PAGE_SIZE;
-      }
-
-      await this.prismaService.syncControl.update({
-        where: { name: 'invoice_recent' },
-        data: {
-          isRunning: false,
-          status: 'completed',
-          completedAt: new Date(),
-          progress: { totalProcessed },
-        },
-      });
-
-      this.logger.log(
-        `Invoice recent sync completed: ${totalProcessed} processed`,
-      );
-    } catch (error) {
-      await this.prismaService.syncControl.update({
-        where: { name: 'invoice_recent' },
-        data: {
-          isRunning: false,
-          status: 'failed',
-          completedAt: new Date(),
-          error: error.message,
-        },
-      });
-
-      this.logger.error(`Invoice recent sync failed: ${error.message}`);
-      throw error;
-    }
-  }
-
   async syncHistoricalInvoices(): Promise<void> {
     try {
+      // Database sync control
       await this.prismaService.syncControl.upsert({
         where: { name: 'invoice_historical' },
         create: {
@@ -656,13 +632,32 @@ export class KiotVietInvoiceService {
         },
       });
 
+      // LarkBase sync control
+      await this.prismaService.syncControl.upsert({
+        where: { name: 'invoice_historical_lark' },
+        create: {
+          name: 'invoice_historical_lark',
+          entities: ['invoice_lark'],
+          syncMode: 'historical',
+          isRunning: true,
+          isEnabled: true,
+          status: 'in_progress',
+          startedAt: new Date(),
+        },
+        update: {
+          isRunning: true,
+          status: 'in_progress',
+          startedAt: new Date(),
+          error: null,
+          progress: {},
+        },
+      });
+
       let currentItem = 0;
       let totalProcessed = 0;
-      let batchCount = 0;
+      let totalLarkSuccess = 0;
+      let totalLarkFailed = 0;
       let hasMoreData = true;
-      const invoiceBatch: any[] = [];
-
-      this.logger.log('Starting historical invoice sync...');
 
       while (hasMoreData) {
         const response = await this.fetchInvoices({
@@ -671,60 +666,58 @@ export class KiotVietInvoiceService {
         });
 
         if (response.data && response.data.length > 0) {
-          invoiceBatch.push(...response.data);
+          const { created, updated, larkResult } =
+            await this.batchSaveInvoicesWithLarkTracking(response.data);
+          totalProcessed += created + updated;
 
-          if (invoiceBatch.length >= this.BATCH_SIZE) {
-            const { created, updated } =
-              await this.batchSaveInvoices(invoiceBatch);
-            totalProcessed += created + updated;
-            batchCount++;
-
-            await this.prismaService.syncControl.update({
-              where: { name: 'invoice_historical' },
-              data: {
-                progress: {
-                  totalProcessed,
-                  batchCount,
-                  lastProcessedItem: currentItem + response.data.length,
-                },
-              },
-            });
-
-            this.logger.log(
-              `Invoice historical sync batch ${batchCount}: ${totalProcessed} invoices processed`,
-            );
-            invoiceBatch.length = 0;
+          if (larkResult) {
+            totalLarkSuccess += larkResult.success;
+            totalLarkFailed += larkResult.failed;
           }
+
+          this.logger.log(
+            `Historical sync progress: ${totalProcessed} invoices processed, LarkBase: ${totalLarkSuccess} success, ${totalLarkFailed} failed`,
+          );
         }
 
         hasMoreData = response.data && response.data.length === this.PAGE_SIZE;
         if (hasMoreData) currentItem += this.PAGE_SIZE;
       }
 
-      // Process remaining invoices in batch
-      if (invoiceBatch.length > 0) {
-        const { created, updated } = await this.batchSaveInvoices(invoiceBatch);
-        totalProcessed += created + updated;
-        batchCount++;
-      }
-
+      // Update database sync control
       await this.prismaService.syncControl.update({
         where: { name: 'invoice_historical' },
         data: {
           isRunning: false,
-          isEnabled: false,
           status: 'completed',
           completedAt: new Date(),
-          progress: { totalProcessed, batchCount },
+          progress: { totalProcessed },
+        },
+      });
+
+      // Update LarkBase sync control
+      await this.prismaService.syncControl.update({
+        where: { name: 'invoice_historical_lark' },
+        data: {
+          isRunning: false,
+          status: totalLarkFailed > 0 ? 'completed_with_errors' : 'completed',
+          completedAt: new Date(),
+          progress: { totalLarkSuccess, totalLarkFailed },
+          error:
+            totalLarkFailed > 0
+              ? `${totalLarkFailed} records failed to sync to LarkBase`
+              : null,
         },
       });
 
       this.logger.log(
-        `Invoice historical sync completed: ${totalProcessed} invoices processed`,
+        `Historical sync completed: ${totalProcessed} invoices processed, LarkBase: ${totalLarkSuccess} success, ${totalLarkFailed} failed`,
       );
     } catch (error) {
-      await this.prismaService.syncControl.update({
-        where: { name: 'invoice_historical' },
+      await this.prismaService.syncControl.updateMany({
+        where: {
+          name: { in: ['invoice_historical', 'invoice_historical_lark'] },
+        },
         data: {
           isRunning: false,
           status: 'failed',
@@ -733,7 +726,128 @@ export class KiotVietInvoiceService {
         },
       });
 
-      this.logger.error(`Invoice historical sync failed: ${error.message}`);
+      this.logger.error(`Historical sync failed: ${error.message}`);
+      throw error;
+    }
+  }
+
+  // UPDATED: Recent sync with Lark Base integration
+  async syncRecentInvoices(days: number = 7): Promise<void> {
+    try {
+      // Database sync control
+      await this.prismaService.syncControl.upsert({
+        where: { name: 'invoice_recent' },
+        create: {
+          name: 'invoice_recent',
+          entities: ['invoice'],
+          syncMode: 'recent',
+          isRunning: true,
+          status: 'in_progress',
+          startedAt: new Date(),
+        },
+        update: {
+          isRunning: true,
+          status: 'in_progress',
+          startedAt: new Date(),
+          error: null,
+        },
+      });
+
+      // LarkBase sync control
+      await this.prismaService.syncControl.upsert({
+        where: { name: 'invoice_recent_lark' },
+        create: {
+          name: 'invoice_recent_lark',
+          entities: ['invoice_lark'],
+          syncMode: 'recent',
+          isRunning: true,
+          status: 'in_progress',
+          startedAt: new Date(),
+        },
+        update: {
+          isRunning: true,
+          status: 'in_progress',
+          startedAt: new Date(),
+          error: null,
+        },
+      });
+
+      const lastModifiedFrom = dayjs()
+        .subtract(days, 'day')
+        .format('YYYY-MM-DD');
+      let currentItem = 0;
+      let totalProcessed = 0;
+      let totalLarkSuccess = 0;
+      let totalLarkFailed = 0;
+      let hasMoreData = true;
+
+      while (hasMoreData) {
+        const response = await this.fetchInvoices({
+          lastModifiedFrom,
+          currentItem,
+          pageSize: this.PAGE_SIZE,
+        });
+
+        if (response.data && response.data.length > 0) {
+          const { created, updated, larkResult } =
+            await this.batchSaveInvoicesWithLarkTracking(response.data);
+          totalProcessed += created + updated;
+
+          if (larkResult) {
+            totalLarkSuccess += larkResult.success;
+            totalLarkFailed += larkResult.failed;
+          }
+
+          this.logger.log(
+            `Recent sync progress: ${totalProcessed} invoices processed, LarkBase: ${totalLarkSuccess} success, ${totalLarkFailed} failed`,
+          );
+        }
+
+        hasMoreData = response.data && response.data.length === this.PAGE_SIZE;
+        if (hasMoreData) currentItem += this.PAGE_SIZE;
+      }
+
+      // Update database sync control
+      await this.prismaService.syncControl.update({
+        where: { name: 'invoice_recent' },
+        data: {
+          isRunning: false,
+          status: 'completed',
+          completedAt: new Date(),
+          progress: { totalProcessed },
+        },
+      });
+
+      // Update LarkBase sync control
+      await this.prismaService.syncControl.update({
+        where: { name: 'invoice_recent_lark' },
+        data: {
+          isRunning: false,
+          status: totalLarkFailed > 0 ? 'completed_with_errors' : 'completed',
+          completedAt: new Date(),
+          progress: { totalLarkSuccess, totalLarkFailed },
+          error:
+            totalLarkFailed > 0
+              ? `${totalLarkFailed} records failed to sync to LarkBase`
+              : null,
+        },
+      });
+
+      this.logger.log(
+        `Recent sync completed: ${totalProcessed} invoices processed, LarkBase: ${totalLarkSuccess} success, ${totalLarkFailed} failed`,
+      );
+    } catch (error) {
+      await this.prismaService.syncControl.updateMany({
+        where: { name: { in: ['invoice_recent', 'invoice_recent_lark'] } },
+        data: {
+          isRunning: false,
+          status: 'failed',
+          completedAt: new Date(),
+          error: error.message,
+        },
+      });
+
+      this.logger.error(`Recent sync failed: ${error.message}`);
       throw error;
     }
   }

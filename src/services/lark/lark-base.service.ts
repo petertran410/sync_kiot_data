@@ -7,34 +7,59 @@ import * as lark from '@larksuiteoapi/node-sdk';
 export class LarkBaseService {
   private readonly logger = new Logger(LarkBaseService.name);
   private client: lark.Client;
-  private readonly baseToken: string;
-  private readonly tableId: string;
+
+  // Customer
+  private readonly customerBaseToken: string;
+  private readonly customerTableId: string;
+
+  // Invoice
+  private readonly invoiceBaseToken: string;
+  private readonly invoiceTableId: string;
 
   constructor(private readonly configService: ConfigService) {
     const appId = this.configService.get<string>('LARK_CUSTOMER_SYNC_APP_ID');
+
     const appSecret = this.configService.get<string>(
       'LARK_CUSTOMER_SYNC_APP_SECRET',
     );
-    const baseToken = this.configService.get<string>(
+
+    const customerBaseToken = this.configService.get<string>(
       'LARK_CUSTOMER_SYNC_BASE_TOKEN',
     );
-    const tableId = this.configService.get<string>(
+
+    const customerTableId = this.configService.get<string>(
       'LARK_CUSTOMER_SYNC_TABLE_ID',
     );
 
-    if (!baseToken) {
-      throw new Error(
-        'LARK_BASE_TOKEN environment vairable is not configution',
-      );
+    const invoiceBaseToken = this.configService.get<string>(
+      'LARK_INVOICE_SYNC_BASE_TOKEN',
+    );
+
+    const invoiceTableId = this.configService.get<string>(
+      'LARK_INVOICE_SYNC_TABLE_ID',
+    );
+
+    if (!customerBaseToken || !customerTableId) {
+      throw new Error('LARK customer environment vairable is not configution');
     }
-    if (!tableId) {
-      throw new Error('LARK_TABLE_ID environment variable is not configuraion');
+    if (!invoiceBaseToken || !invoiceTableId) {
+      throw new Error('LARK invoice environment variable is not configuraion');
     }
 
-    this.baseToken = baseToken;
-    this.tableId = tableId;
+    this.customerBaseToken = customerBaseToken;
+    this.customerTableId = customerTableId;
 
-    if (!appId || !appSecret || !this.baseToken || !this.tableId) {
+    this.invoiceBaseToken = invoiceBaseToken;
+    this.invoiceTableId = invoiceTableId;
+
+    if (
+      !appId ||
+      !appSecret ||
+      !this.customerBaseToken ||
+      !this.customerTableId ||
+      !this.invoiceBaseToken ||
+      !this.invoiceTableId
+    ) {
       throw new Error('Missing LarkSuite configuration');
     }
 
@@ -46,7 +71,7 @@ export class LarkBaseService {
     });
   }
 
-  private mapKiotVietToLarkBase(customerData: any): any {
+  private mapCustomerToLarkBase(customerData: any): any {
     const fields: any = {};
 
     // Primary field - Tên Khách Hàng (REQUIRED)
@@ -186,12 +211,354 @@ export class LarkBaseService {
     return { fields };
   }
 
-  async getTableFields(): Promise<void> {
+  private mapInvoiceToLarkBase(
+    invoiceData: any,
+    branchName?: string,
+    customerName?: string,
+  ): any {
+    const fields: any = {};
+
+    // Primary field - Mã Hóa Đơn (REQUIRED)
+    if (invoiceData.code) {
+      fields['Mã Hóa Đơn'] = invoiceData.code;
+    }
+
+    // Mã Đơn Hàng
+    if (invoiceData.orderCode) {
+      fields['Mã Đơn Hàng'] = invoiceData.orderCode;
+    }
+
+    // Ngày Mua
+    if (invoiceData.purchaseDate) {
+      fields['Ngày Mua'] = new Date(invoiceData.purchaseDate).getTime();
+    }
+
+    // Chi Nhánh - mapped from branchId to branchName
+    if (branchName) {
+      fields['Chi Nhánh'] = branchName;
+    }
+
+    // Tên Khách Hàng - customer name as string
+    if (customerName) {
+      fields['Tên Khách Hàng'] = customerName;
+    }
+
+    // Tổng Sau Giảm Giá - total after discount
+    if (invoiceData.total !== null && invoiceData.total !== undefined) {
+      fields['Tổng Sau Giảm Giá'] = Number(invoiceData.total);
+    }
+
+    // Tổng Tiền Hàng - calculate total before discount
+    if (invoiceData.total !== null && invoiceData.total !== undefined) {
+      const total = Number(invoiceData.total);
+      const discount = Number(invoiceData.discount || 0);
+      const totalBeforeDiscount = total + discount;
+      fields['Tổng Tiền Hàng'] = totalBeforeDiscount;
+    }
+
+    // Khách Đã Trả
+    if (
+      invoiceData.totalPayment !== null &&
+      invoiceData.totalPayment !== undefined
+    ) {
+      fields['Khách Đã Trả'] = Number(invoiceData.totalPayment);
+    }
+
+    // Discount
+    if (invoiceData.discount !== null && invoiceData.discount !== undefined) {
+      fields['Discount'] = Number(invoiceData.discount);
+    }
+
+    // Mức Độ Giảm Giá
+    if (
+      invoiceData.discountRatio !== null &&
+      invoiceData.discountRatio !== undefined
+    ) {
+      fields['Mức Độ Giảm Giá'] = Number(invoiceData.discountRatio);
+    }
+
+    // Ghi Chú
+    if (invoiceData.description) {
+      fields['Ghi Chú'] = invoiceData.description;
+    }
+
+    // Ngày Tạo
+    if (invoiceData.createdDate) {
+      fields['Ngày Tạo'] = new Date(invoiceData.createdDate).getTime();
+    }
+
+    // Ngày Cập Nhật
+    if (invoiceData.modifiedDate) {
+      fields['Ngày Cập Nhật'] = new Date(invoiceData.modifiedDate).getTime();
+    }
+
+    // kiotVietId (IMPORTANT for deduplication)
+    if (invoiceData.id) {
+      fields['kiotVietId'] = Number(invoiceData.id);
+    }
+
+    return { fields };
+  }
+
+  async getInvoiceTableFields(): Promise<void> {
     try {
       const response = await this.client.bitable.appTableField.list({
         path: {
-          app_token: this.baseToken,
-          table_id: this.tableId,
+          app_token: this.invoiceBaseToken,
+          table_id: this.invoiceTableId,
+        },
+      });
+
+      this.logger.log('Invoice LarkBase fields:');
+      if (response.data?.items) {
+        response.data.items.forEach((field) => {
+          this.logger.log(
+            `Field ID: ${field.field_id}, Name: ${field.field_name}, Type: ${field.type}`,
+          );
+        });
+      }
+    } catch (error) {
+      this.logger.error(`Failed to get invoice table fields: ${error.message}`);
+    }
+  }
+
+  async getExistingInvoiceRecords(
+    kiotVietIds: string[],
+  ): Promise<Map<string, string>> {
+    try {
+      const existingRecords = new Map<string, string>();
+      const batchSize = 50;
+
+      for (let i = 0; i < kiotVietIds.length; i += batchSize) {
+        const batch = kiotVietIds.slice(i, i + batchSize);
+
+        for (const kiotVietIdStr of batch) {
+          try {
+            const kiotVietIdNum = Number(kiotVietIdStr);
+
+            const response = await this.client.bitable.appTableRecord.search({
+              path: {
+                app_token: this.invoiceBaseToken,
+                table_id: this.invoiceTableId,
+              },
+              data: {
+                filter: {
+                  conjunction: 'and',
+                  conditions: [
+                    {
+                      field_name: 'kiotVietId',
+                      operator: 'is',
+                      value: [kiotVietIdNum] as any,
+                    },
+                  ],
+                },
+              },
+            });
+
+            if (response.data?.items && response.data.items.length > 0) {
+              const record = response.data.items[0];
+              const recordKiotVietId = record.fields?.['kiotVietId'];
+              if (recordKiotVietId === kiotVietIdNum) {
+                existingRecords.set(kiotVietIdStr, record.record_id!);
+              }
+            }
+          } catch (error) {
+            this.logger.debug(
+              `Error checking kiotVietId ${kiotVietIdStr}: ${error.message}`,
+            );
+          }
+        }
+      }
+
+      this.logger.log(`Found ${existingRecords.size} existing invoice records`);
+      return existingRecords;
+    } catch (error) {
+      this.logger.error(
+        `Failed to get existing invoice records: ${error.message}`,
+      );
+      return new Map();
+    }
+  }
+
+  async batchCreateInvoiceRecords(
+    invoices: any[],
+  ): Promise<{ success: number; failed: number }> {
+    if (!invoices.length) return { success: 0, failed: 0 };
+
+    try {
+      const records = invoices
+        .map((invoice) => {
+          const mappedData = this.mapInvoiceToLarkBase(
+            invoice.invoiceData,
+            invoice.branchName,
+            invoice.customerName,
+          );
+          return mappedData.fields['Mã Hóa Đơn'] ? mappedData : null;
+        })
+        .filter((record) => record !== null)
+        .map((record) => ({ fields: record!.fields }));
+
+      if (!records.length) return { success: 0, failed: 0 };
+
+      const response = await this.client.bitable.appTableRecord.batchCreate({
+        path: {
+          app_token: this.invoiceBaseToken,
+          table_id: this.invoiceTableId,
+        },
+        data: { records },
+      });
+
+      const successCount = response.data?.records?.length || 0;
+      const failedCount = records.length - successCount;
+
+      this.logger.log(
+        `Invoice LarkBase batch create: ${successCount} success, ${failedCount} failed`,
+      );
+      return { success: successCount, failed: failedCount };
+    } catch (error) {
+      this.logger.error(
+        `Invoice LarkBase batch create failed: ${error.message}`,
+      );
+      return { success: 0, failed: invoices.length };
+    }
+  }
+
+  async batchUpdateInvoiceRecords(
+    invoices: any[],
+    existingRecords: Map<string, string>,
+  ): Promise<{ success: number; failed: number }> {
+    if (!invoices.length) return { success: 0, failed: 0 };
+
+    try {
+      const records = invoices
+        .filter((invoice) =>
+          existingRecords.has(invoice.invoiceData.id.toString()),
+        )
+        .map((invoice) => {
+          const recordId = existingRecords.get(
+            invoice.invoiceData.id.toString(),
+          );
+          if (!recordId) return null;
+
+          const mappedData = this.mapInvoiceToLarkBase(
+            invoice.invoiceData,
+            invoice.branchName,
+            invoice.customerName,
+          );
+
+          return {
+            record_id: recordId,
+            fields: mappedData.fields,
+          };
+        })
+        .filter((record) => record !== null && record.fields['Mã Hóa Đơn']);
+
+      if (!records.length) return { success: 0, failed: 0 };
+
+      const response = await this.client.bitable.appTableRecord.batchUpdate({
+        path: {
+          app_token: this.invoiceBaseToken,
+          table_id: this.invoiceTableId,
+        },
+        data: { records },
+      });
+
+      const successCount = response.data?.records?.length || 0;
+      const failedCount = records.length - successCount;
+
+      this.logger.log(
+        `Invoice LarkBase batch update: ${successCount} success, ${failedCount} failed`,
+      );
+      return { success: successCount, failed: failedCount };
+    } catch (error) {
+      this.logger.error(
+        `Invoice LarkBase batch update failed: ${error.message}`,
+      );
+      return { success: 0, failed: invoices.length };
+    }
+  }
+
+  async syncInvoicesToLarkBase(
+    invoicesWithData: any[],
+  ): Promise<{ success: number; failed: number }> {
+    if (!invoicesWithData.length) return { success: 0, failed: 0 };
+
+    try {
+      await this.getInvoiceTableFields();
+
+      const batchSize = 70;
+      let totalSuccess = 0;
+      let totalFailed = 0;
+
+      this.logger.log(
+        `Starting Invoice LarkBase sync for ${invoicesWithData.length} invoices`,
+      );
+
+      for (let i = 0; i < invoicesWithData.length; i += batchSize) {
+        const batch = invoicesWithData.slice(i, i + batchSize);
+
+        const kiotVietIds = batch.map((item) => item.invoiceData.id.toString());
+        const existingRecords =
+          await this.getExistingInvoiceRecords(kiotVietIds);
+
+        const toCreate = batch.filter(
+          (item) => !existingRecords.has(item.invoiceData.id.toString()),
+        );
+        const toUpdate = batch.filter((item) =>
+          existingRecords.has(item.invoiceData.id.toString()),
+        );
+
+        this.logger.log(
+          `Invoice batch ${Math.floor(i / batchSize) + 1}: ${toCreate.length} to create, ${toUpdate.length} to update`,
+        );
+
+        const [createResult, updateResult] = await Promise.allSettled([
+          toCreate.length > 0
+            ? this.batchCreateInvoiceRecords(toCreate)
+            : Promise.resolve({ success: 0, failed: 0 }),
+          toUpdate.length > 0
+            ? this.batchUpdateInvoiceRecords(toUpdate, existingRecords)
+            : Promise.resolve({ success: 0, failed: 0 }),
+        ]);
+
+        const createSuccess =
+          createResult.status === 'fulfilled' ? createResult.value.success : 0;
+        const createFailed =
+          createResult.status === 'fulfilled'
+            ? createResult.value.failed
+            : toCreate.length;
+        const updateSuccess =
+          updateResult.status === 'fulfilled' ? updateResult.value.success : 0;
+        const updateFailed =
+          updateResult.status === 'fulfilled'
+            ? updateResult.value.failed
+            : toUpdate.length;
+
+        totalSuccess += createSuccess + updateSuccess;
+        totalFailed += createFailed + updateFailed;
+
+        if (i + batchSize < invoicesWithData.length) {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+      }
+
+      this.logger.log(
+        `Invoice LarkBase sync completed: ${totalSuccess} success, ${totalFailed} failed`,
+      );
+
+      return { success: totalSuccess, failed: totalFailed };
+    } catch (error) {
+      this.logger.error(`Invoice LarkBase sync failed: ${error.message}`);
+      return { success: 0, failed: invoicesWithData.length };
+    }
+  }
+
+  async getCustomerTableFields(): Promise<void> {
+    try {
+      const response = await this.client.bitable.appTableField.list({
+        path: {
+          app_token: this.customerBaseToken,
+          table_id: this.customerTableId,
         },
       });
 
@@ -230,8 +597,8 @@ export class LarkBaseService {
 
             const response = await this.client.bitable.appTableRecord.search({
               path: {
-                app_token: this.baseToken,
-                table_id: this.tableId,
+                app_token: this.customerBaseToken,
+                table_id: this.customerTableId,
               },
               data: {
                 filter: {
@@ -283,7 +650,7 @@ export class LarkBaseService {
 
     try {
       const records = customers
-        .map((customer) => this.mapKiotVietToLarkBase(customer))
+        .map((customer) => this.mapCustomerToLarkBase(customer))
         .filter((record) => record.fields['Tên Khách Hàng']);
 
       if (!records.length) {
@@ -298,8 +665,8 @@ export class LarkBaseService {
 
       const response = await this.client.bitable.appTableRecord.batchCreate({
         path: {
-          app_token: this.baseToken,
-          table_id: this.tableId,
+          app_token: this.customerBaseToken,
+          table_id: this.customerTableId,
         },
         data: {
           records,
@@ -352,7 +719,7 @@ export class LarkBaseService {
 
           return {
             record_id: recordId,
-            fields: this.mapKiotVietToLarkBase(customer).fields,
+            fields: this.mapCustomerToLarkBase(customer).fields,
           };
         })
         .filter((record) => record !== null && record.fields['Tên Khách Hàng'])
@@ -362,8 +729,8 @@ export class LarkBaseService {
 
       const response = await this.client.bitable.appTableRecord.batchUpdate({
         path: {
-          app_token: this.baseToken,
-          table_id: this.tableId,
+          app_token: this.customerBaseToken,
+          table_id: this.customerTableId,
         },
         data: {
           records,
@@ -397,7 +764,7 @@ export class LarkBaseService {
     if (!customers.length) return { success: 0, failed: 0 };
 
     try {
-      await this.getTableFields();
+      await this.getCustomerTableFields();
 
       const batchSize = 70;
       let totalSuccess = 0;
