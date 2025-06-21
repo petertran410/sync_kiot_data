@@ -18,7 +18,6 @@ export class SyncController {
 
   @Post('start')
   async startSyncCycle() {
-    // This will trigger the bus scheduler cycle manually
     return { message: 'Sync cycle started' };
   }
 
@@ -48,10 +47,26 @@ export class SyncController {
     return syncControls;
   }
 
-  @Post('entity/:entityName/historical')
+  @Post('entity/:entityName/force-historical')
   async forceHistoricalSync(@Param('entityName') entityName: string) {
-    // Reset the historical sync status first
-    await this.prismaService.syncControl.update({
+    try {
+      await this.busSchedulerService.forceHistoricalSyncEntity(entityName);
+      return {
+        message: `${entityName} historical sync completed successfully`,
+        forced: true,
+      };
+    } catch (error) {
+      return {
+        message: `${entityName} historical sync failed: ${error.message}`,
+        forced: true,
+        error: error.message,
+      };
+    }
+  }
+
+  @Post('entity/:entityName/historical')
+  async historicalSync(@Param('entityName') entityName: string) {
+    await this.prismaService.syncControl.updateMany({
       where: { name: `${entityName}_historical` },
       data: {
         status: 'idle',
@@ -62,7 +77,6 @@ export class SyncController {
       },
     });
 
-    // Then run the sync
     await this.busSchedulerService.manualSyncEntity(entityName);
     return { message: `${entityName} historical sync started` };
   }

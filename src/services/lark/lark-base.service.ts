@@ -284,7 +284,7 @@ export class LarkBaseService {
     try {
       const records = customers
         .map((customer) => this.mapKiotVietToLarkBase(customer))
-        .filter((record) => record.fields['Tên Khách Hàng']); // Ensure primary field exists
+        .filter((record) => record.fields['Tên Khách Hàng']);
 
       if (!records.length) {
         this.logger.warn('No valid records to create (missing primary field)');

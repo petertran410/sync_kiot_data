@@ -127,12 +127,17 @@ export class KiotVietInvoiceService {
   private async prepareInvoiceCreateData(
     invoiceData: any,
   ): Promise<Prisma.InvoiceCreateInput> {
+    const total = invoiceData.total || 0;
+    const discount = invoiceData.discount || 0;
+    const totalCostOfGoods = total + discount || 0;
+
     const data: Prisma.InvoiceCreateInput = {
       kiotVietId: BigInt(invoiceData.id),
       code: invoiceData.code,
       orderCode: invoiceData.orderCode || null,
       purchaseDate: new Date(invoiceData.purchaseDate),
       total: new Prisma.Decimal(invoiceData.total || 0),
+      totalCostOfGoods: new Prisma.Decimal(totalCostOfGoods || 0),
       totalPayment: new Prisma.Decimal(invoiceData.totalPayment || 0),
       discount: invoiceData.discount
         ? new Prisma.Decimal(invoiceData.discount)
@@ -149,7 +154,6 @@ export class KiotVietInvoiceService {
       lastSyncedAt: new Date(),
     };
 
-    // Handle branch as optional
     if (invoiceData.branchId) {
       const branch = await this.prismaService.branch.findFirst({
         where: { kiotVietId: invoiceData.branchId },
@@ -160,18 +164,22 @@ export class KiotVietInvoiceService {
       } else {
         await this.handleMissingBranch(invoiceData.branchId, invoiceData.code);
         this.logger.warn(
-          `Branch ${invoiceData.branchId} not found for invoice ${invoiceData.code}. This branch may have been deleted in KiotViet. Creating invoice without branch reference.`,
+          `Branch ${invoiceData.branchId} not found for invoice ${invoiceData.code}. Creating invoice without branch reference.`,
         );
       }
     }
 
-    // Handle other relationships (keep existing logic)
     if (invoiceData.soldById) {
       const soldByUser = await this.prismaService.user.findFirst({
         where: { kiotVietId: BigInt(invoiceData.soldById) },
       });
+
       if (soldByUser) {
         data.soldBy = { connect: { kiotVietId: BigInt(invoiceData.soldById) } };
+      } else {
+        this.logger.warn(
+          `User with kiotVietId ${invoiceData.soldById} not found for invoice ${invoiceData.code}. Creating invoice without soldBy reference.`,
+        );
       }
     }
 
@@ -217,39 +225,36 @@ export class KiotVietInvoiceService {
     return data;
   }
 
-  async reportMissingBranches() {
-    if (this.missingBranches.size > 0) {
-      this.logger.warn(
-        `Total missing branches: ${this.missingBranches.size}`,
-        Array.from(this.missingBranches),
-      );
-    }
-  }
-
   private async prepareInvoiceUpdateData(
     invoiceData: any,
   ): Promise<Prisma.InvoiceUpdateInput> {
+    const total = invoiceData.total || 0;
+    const discount = invoiceData.discount || 0;
+    const totalCostOfGoods = total + discount || 0;
+
     const data: Prisma.InvoiceUpdateInput = {
-      code: invoiceData.code, // code: string
+      code: invoiceData.code,
       orderCode: invoiceData.orderCode || null,
-      purchaseDate: new Date(invoiceData.purchaseDate), // purchaseDate: datetime
-      total: new Prisma.Decimal(invoiceData.total || 0), // total: decimal
-      totalPayment: new Prisma.Decimal(invoiceData.totalPayment || 0), // totalPayment: decimal
+      purchaseDate: new Date(invoiceData.purchaseDate),
+      total: new Prisma.Decimal(invoiceData.total || 0),
+      totalCostOfGoods: new Prisma.Decimal(totalCostOfGoods || 0),
+      totalPayment: new Prisma.Decimal(invoiceData.totalPayment || 0),
       discount: invoiceData.discount
         ? new Prisma.Decimal(invoiceData.discount)
         : null,
       discountRatio: invoiceData.discountRatio || null,
-      status: invoiceData.status, // status: int
+      status: invoiceData.status,
       description: invoiceData.description || null,
-      usingCod: invoiceData.usingCod || false, // usingCod: boolean
+      usingCod: invoiceData.usingCod || false,
       isApplyVoucher: invoiceData.isApplyVoucher || false,
       retailerId: invoiceData.retailerId || null,
-      modifiedDate: invoiceData.modifiedDate // modifiedDate: datetime
+      modifiedDate: invoiceData.modifiedDate
         ? new Date(invoiceData.modifiedDate)
         : new Date(),
       lastSyncedAt: new Date(),
     };
 
+    // Handle branch - set to null if not found (FIXED: same as create)
     if (invoiceData.branchId) {
       const branch = await this.prismaService.branch.findFirst({
         where: { kiotVietId: invoiceData.branchId },
@@ -258,40 +263,31 @@ export class KiotVietInvoiceService {
       if (branch) {
         data.branch = { connect: { id: branch.id } };
       } else {
+        await this.handleMissingBranch(invoiceData.branchId, invoiceData.code);
         this.logger.warn(
-          `Branch ${invoiceData.branchId} not found for invoice ${invoiceData.code}, creating without branch reference`,
+          `Branch ${invoiceData.branchId} not found for invoice ${invoiceData.code}. Updating invoice without branch reference.`,
         );
+        data.branch = { disconnect: true }; // Explicitly set to null
       }
     }
 
-    // Handle relationships same as create
+    // Handle soldBy user - set to null if not found (FIXED: same as create)
     if (invoiceData.soldById) {
       const soldByUser = await this.prismaService.user.findFirst({
         where: { kiotVietId: BigInt(invoiceData.soldById) },
       });
+
       if (soldByUser) {
         data.soldBy = { connect: { kiotVietId: BigInt(invoiceData.soldById) } };
       } else {
         this.logger.warn(
           `User with kiotVietId ${invoiceData.soldById} not found for invoice ${invoiceData.code}. Updating invoice without soldBy reference.`,
         );
-        data.soldBy = { disconnect: true };
+        data.soldBy = { disconnect: true }; // Explicitly set to null
       }
     }
 
-    if (invoiceData.branchId) {
-      const branch = await this.prismaService.branch.findFirst({
-        where: { kiotVietId: invoiceData.branchId },
-      });
-      if (branch) {
-        data.branch = { connect: { id: branch.id } };
-      } else {
-        throw new Error(
-          `Required branch with kiotVietId ${invoiceData.branchId} not found for invoice ${invoiceData.code}`,
-        );
-      }
-    }
-
+    // Handle other relationships (existing logic)
     if (invoiceData.customerId) {
       const customer = await this.prismaService.customer.findFirst({
         where: { kiotVietId: BigInt(invoiceData.customerId) },
@@ -322,8 +318,16 @@ export class KiotVietInvoiceService {
     return data;
   }
 
+  async reportMissingBranches() {
+    if (this.missingBranches.size > 0) {
+      this.logger.warn(
+        `Total missing branches: ${this.missingBranches.size}`,
+        Array.from(this.missingBranches),
+      );
+    }
+  }
+
   private async handleInvoiceRelations(invoiceId: number, invoiceData: any) {
-    // 1. Handle Payments (existing logic with upsert fix)
     if (invoiceData.payments && invoiceData.payments.length > 0) {
       for (const payment of invoiceData.payments) {
         try {
@@ -449,12 +453,10 @@ export class KiotVietInvoiceService {
     kiotVietInvoiceId: number,
   ) {
     try {
-      // Fetch full invoice detail to get InvoiceDetails and InvoiceSurcharges
       const detailData = await this.fetchInvoiceDetail(kiotVietInvoiceId);
 
       if (!detailData) return;
 
-      // Handle InvoiceDetails
       if (detailData.invoiceDetails && detailData.invoiceDetails.length > 0) {
         await this.prismaService.invoiceDetail.deleteMany({
           where: { invoiceId },
@@ -466,19 +468,23 @@ export class KiotVietInvoiceService {
           });
 
           if (product) {
+            const quantity = detail.quantity || 0;
+            const price = detail.price || 0;
+            const discount = detail.discount || 0;
+            const subTotal = (price - discount) * quantity;
+
             await this.prismaService.invoiceDetail.create({
               data: {
                 kiotVietId: detail.id ? BigInt(detail.id) : null,
                 invoice: { connect: { id: invoiceId } },
                 product: { connect: { id: product.id } },
-                quantity: detail.quantity,
-                price: new Prisma.Decimal(detail.price),
-                discount: detail.discount
-                  ? new Prisma.Decimal(detail.discount)
-                  : null,
+                quantity: quantity,
+                price: new Prisma.Decimal(price),
+                discount: discount ? new Prisma.Decimal(discount) : null,
                 discountRatio: detail.discountRatio,
                 note: detail.note,
                 serialNumbers: detail.serialNumbers,
+                subTotal: new Prisma.Decimal(subTotal || 0),
               },
             });
           }

@@ -161,7 +161,7 @@ export class BusSchedulerService implements OnModuleInit {
     }, 2000);
   }
 
-  @Cron('0 */15 * * * *') // Every 15 minutes
+  @Cron('0 */15 * * * *')
   async handleScheduledSync() {
     if (this.isRunning) {
       this.logger.log('Bus scheduler already running, skipping scheduled sync');
@@ -221,7 +221,6 @@ export class BusSchedulerService implements OnModuleInit {
     try {
       this.isRunning = true;
 
-      // Create bus cycle tracking
       await this.prismaService.syncControl.upsert({
         where: { name: 'bus_scheduler_cycle' },
         create: {
@@ -257,12 +256,9 @@ export class BusSchedulerService implements OnModuleInit {
         } catch (error) {
           failed.push(entity.name);
           this.logger.error(`❌ ${entity.name} sync failed: ${error.message}`);
-
-          // Continue with next entity (resilient approach)
         }
       }
 
-      // Update final bus cycle status
       const finalStatus =
         failed.length > 0 ? 'completed_with_errors' : 'completed';
       const finalError =
@@ -340,7 +336,7 @@ export class BusSchedulerService implements OnModuleInit {
     while (retryCount <= this.MAX_RETRIES) {
       try {
         await this.executeSyncMethod(entity);
-        return; // Success, exit retry loop
+        return;
       } catch (error) {
         lastError = error;
         retryCount++;
@@ -349,12 +345,11 @@ export class BusSchedulerService implements OnModuleInit {
           this.logger.warn(
             `${entity.name} sync failed (attempt ${retryCount}/${this.MAX_RETRIES + 1}), retrying: ${error.message}`,
           );
-          await this.delay(1000 * retryCount); // Progressive delay
+          await this.delay(1000 * retryCount);
         }
       }
     }
 
-    // All retries failed
     throw new Error(
       `${entity.name} sync failed after ${this.MAX_RETRIES + 1} attempts. Last error: ${lastError?.message}`,
     );
@@ -370,7 +365,6 @@ export class BusSchedulerService implements OnModuleInit {
     }
 
     if (entity.syncType === 'full') {
-      // Check if historical sync is needed
       const historicalSync = await this.prismaService.syncControl.findFirst({
         where: {
           name: `${entity.name}_historical`,
@@ -379,15 +373,13 @@ export class BusSchedulerService implements OnModuleInit {
       });
 
       if (!historicalSync) {
-        // Run historical sync
         this.logger.log(`Running historical sync for ${entity.name}`);
         await service[entity.syncMethod]();
       } else {
-        // Run recent sync
         this.logger.log(`Running recent sync for ${entity.name}`);
         const recentMethod = entity.syncMethod.replace('Historical', 'Recent');
         if (service[recentMethod]) {
-          await service[recentMethod](7); // 7 days
+          await service[recentMethod](7);
         } else {
           this.logger.warn(
             `Recent sync method ${recentMethod} not found for ${entity.name}`,
@@ -395,7 +387,6 @@ export class BusSchedulerService implements OnModuleInit {
         }
       }
     } else {
-      // Simple sync
       this.logger.log(`Running simple sync for ${entity.name}`);
       await service[entity.syncMethod]();
     }
@@ -405,11 +396,10 @@ export class BusSchedulerService implements OnModuleInit {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  // Manual sync methods for API endpoints
   async manualSyncEntity(entityName: string): Promise<void> {
     if (this.isRunning) {
       throw new Error(
-        'Bus scheduler is currently running, cannot run manual sync',
+        'Bus scheduler is currently running, cannot run manual sync. Use forceHistoricalSyncEntity to override.',
       );
     }
 
@@ -484,7 +474,6 @@ export class BusSchedulerService implements OnModuleInit {
 
   async stopBusScheduler(): Promise<void> {
     this.logger.log('Stop requested for bus scheduler');
-    // Note: Cannot forcefully stop running syncs, but can prevent new cycles
     this.isRunning = false;
   }
 
@@ -502,5 +491,90 @@ export class BusSchedulerService implements OnModuleInit {
 
     this.isRunning = false;
     this.logger.log('Bus scheduler force reset completed');
+  }
+
+  async forceHistoricalSyncEntity(entityName: string): Promise<void> {
+    const entity = this.syncEntities.find((e) => e.name === entityName);
+    if (!entity) {
+      throw new Error(`Entity ${entityName} not found`);
+    }
+
+    if (entity.syncType !== 'full') {
+      throw new Error(`Entity ${entityName} does not support historical sync`);
+    }
+
+    this.logger.log(`Force historical sync requested for ${entityName}`);
+
+    // Temporarily override bus scheduler
+    const wasRunning = this.isRunning;
+    this.isRunning = true; // Prevent other syncs
+
+    try {
+      // Reset historical sync status
+      await this.prismaService.syncControl.upsert({
+        where: { name: `${entityName}_historical` },
+        create: {
+          name: `${entityName}_historical`,
+          entities: [entityName],
+          syncMode: 'historical',
+          isEnabled: true,
+          isRunning: true,
+          status: 'in_progress',
+          startedAt: new Date(),
+          progress: { stage: 'starting' },
+        },
+        update: {
+          status: 'in_progress',
+          isEnabled: true,
+          isRunning: true,
+          startedAt: new Date(),
+          progress: { stage: 'restarted' },
+          error: null,
+          completedAt: null,
+        },
+      });
+
+      // Force run historical sync
+      const service = this[entity.service];
+      if (!service) {
+        throw new Error(
+          `Service ${entity.service} not found for entity ${entityName}`,
+        );
+      }
+
+      this.logger.log(`Running forced historical sync for ${entityName}`);
+      await service[entity.syncMethod]();
+
+      // Mark as completed
+      await this.prismaService.syncControl.update({
+        where: { name: `${entityName}_historical` },
+        data: {
+          status: 'completed',
+          isRunning: false,
+          completedAt: new Date(),
+          progress: { stage: 'completed', forced: true },
+        },
+      });
+
+      this.logger.log(`✅ Forced historical sync completed for ${entityName}`);
+    } catch (error) {
+      await this.prismaService.syncControl.update({
+        where: { name: `${entityName}_historical` },
+        data: {
+          status: 'failed',
+          isRunning: false,
+          error: error.message,
+          progress: { stage: 'failed', forced: true },
+        },
+      });
+
+      this.logger.error(
+        `❌ Forced historical sync failed for ${entityName}: ${error.message}`,
+      );
+      throw error;
+    } finally {
+      // Restore original running state
+      this.isRunning = wasRunning;
+    }
   }
 }
