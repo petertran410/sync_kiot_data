@@ -13,6 +13,7 @@ interface EnrichedInvoiceData {
   invoiceData: any;
   branchName: string | null;
   customerName: string | null;
+  userName: string | null;
 }
 
 @Injectable()
@@ -575,6 +576,7 @@ export class KiotVietInvoiceService {
     for (const invoiceData of invoices) {
       let branchName: string | null = null; // FIXED: Allow both string and null
       let customerName: string | null = null; // FIXED: Allow both string and null
+      let userName: string | null = null;
 
       // Get branch name from branchId
       if (invoiceData.branchId) {
@@ -594,11 +596,20 @@ export class KiotVietInvoiceService {
         customerName = customer?.name || null;
       }
 
+      if (invoiceData.soldById) {
+        const user = await this.prismaService.user.findFirst({
+          where: { kiotVietId: BigInt(invoiceData.soldById) },
+          select: { givenName: true },
+        });
+        userName = user?.givenName || null; // Use full display name
+      }
+
       // FIXED: Properly typed object
       enrichedInvoices.push({
         invoiceData,
         branchName,
         customerName,
+        userName,
       });
     }
 

@@ -221,6 +221,7 @@ export class LarkBaseService {
     invoiceData: any,
     branchName?: string | null, // FIXED: Allow null
     customerName?: string | null, // FIXED: Allow null
+    userName?: string | null,
   ): any {
     const fields: any = {};
 
@@ -249,6 +250,10 @@ export class LarkBaseService {
     if (customerName) {
       // FIXED: Only set if not null/undefined
       fields['Tên Khách Hàng'] = customerName;
+    }
+
+    if (userName) {
+      fields['Người Bán'] = userName;
     }
 
     // Tổng Sau Giảm Giá - total after discount
