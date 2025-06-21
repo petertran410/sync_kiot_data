@@ -228,7 +228,7 @@ export class LarkBaseService {
 
     // Primary field - Mã Hóa Đơn (REQUIRED)
     if (invoiceData.code) {
-      fields['Mã Hóa Đơn'] = invoiceData.code;
+      fields['Mã Hoá Đơn'] = invoiceData.code;
     }
 
     // Mã Đơn Hàng
@@ -400,7 +400,6 @@ export class LarkBaseService {
     if (!invoices.length) return { success: 0, failed: 0 };
 
     try {
-      // FIXED: Proper type handling and filtering
       const records = invoices
         .map((invoice) => {
           const mappedData = this.mapInvoiceToLarkBase(
@@ -409,12 +408,21 @@ export class LarkBaseService {
             invoice.customerName,
             invoice.userName,
           );
-          return mappedData.fields['Mã Hóa Đơn'] ? mappedData : null;
+          return mappedData.fields['Mã Hoá Đơn'] ? mappedData : null;
         })
         .filter((record): record is { fields: any } => record !== null)
-        .map((record) => ({ fields: record.fields })); // FIXED: Ensure proper structure
+        .map((record) => ({ fields: record.fields }));
 
       if (!records.length) return { success: 0, failed: 0 };
+
+      // ADD: Log what we're sending to Lark API
+      this.logger.debug(
+        `Attempting to create ${records.length} invoice records in LarkBase`,
+      );
+      this.logger.debug(
+        'Sample invoice record:',
+        JSON.stringify(records[0], null, 2),
+      );
 
       const response = await this.client.bitable.appTableRecord.batchCreate({
         path: {
@@ -430,11 +438,31 @@ export class LarkBaseService {
       this.logger.log(
         `Invoice LarkBase batch create: ${successCount} success, ${failedCount} failed`,
       );
+
+      // ADD: Log detailed response when there are failures
+      if (failedCount > 0) {
+        this.logger.error(
+          'Invoice LarkBase create response:',
+          JSON.stringify(response, null, 2),
+        );
+      }
+
       return { success: successCount, failed: failedCount };
     } catch (error) {
       this.logger.error(
         `Invoice LarkBase batch create failed: ${error.message}`,
       );
+      // ADD: Detailed error logging like customer version
+      this.logger.error('Error stack:', error.stack);
+      if (error.response?.data) {
+        this.logger.error(
+          'Invoice LarkBase API Error:',
+          JSON.stringify(error.response.data, null, 2),
+        );
+      }
+      if (error.response?.status) {
+        this.logger.error('HTTP Status:', error.response.status);
+      }
       return { success: 0, failed: invoices.length };
     }
   }
@@ -471,7 +499,7 @@ export class LarkBaseService {
         })
         .filter(
           (record): record is { record_id: string; fields: any } =>
-            record !== null && record.fields['Mã Hóa Đơn'],
+            record !== null && record.fields['Mã Hoá Đơn'],
         ); // FIXED: Type guard to ensure non-null records
 
       if (!records.length) return { success: 0, failed: 0 };
