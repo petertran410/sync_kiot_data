@@ -7,6 +7,7 @@ interface InvoiceForLarkBase {
   invoiceData: any;
   branchName: string | null;
   customerName: string | null;
+  userName: string | null; // ADD this
 }
 
 @Injectable()
@@ -219,8 +220,8 @@ export class LarkBaseService {
 
   private mapInvoiceToLarkBase(
     invoiceData: any,
-    branchName?: string | null, // FIXED: Allow null
-    customerName?: string | null, // FIXED: Allow null
+    branchName?: string | null,
+    customerName?: string | null,
     userName?: string | null,
   ): any {
     const fields: any = {};
@@ -406,6 +407,7 @@ export class LarkBaseService {
             invoice.invoiceData,
             invoice.branchName,
             invoice.customerName,
+            invoice.userName,
           );
           return mappedData.fields['Mã Hóa Đơn'] ? mappedData : null;
         })
@@ -459,6 +461,7 @@ export class LarkBaseService {
             invoice.invoiceData,
             invoice.branchName,
             invoice.customerName,
+            invoice.userName,
           );
 
           return {

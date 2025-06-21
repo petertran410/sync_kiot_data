@@ -601,7 +601,7 @@ export class KiotVietInvoiceService {
           where: { kiotVietId: BigInt(invoiceData.soldById) },
           select: { givenName: true },
         });
-        userName = user?.givenName || null; // Use full display name
+        userName = user?.givenName || null;
       }
 
       // FIXED: Properly typed object
