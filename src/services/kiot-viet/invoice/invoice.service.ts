@@ -670,7 +670,11 @@ export class KiotVietInvoiceService {
       let totalProcessed = 0;
       let totalLarkSuccess = 0;
       let totalLarkFailed = 0;
+      let batchCount = 0;
       let hasMoreData = true;
+      const invoiceBatch: any[] = []; // ADDED: Batch accumulator like customer.service.ts
+
+      this.logger.log('Starting historical invoice sync...');
 
       while (hasMoreData) {
         const response = await this.fetchInvoices({
@@ -679,18 +683,51 @@ export class KiotVietInvoiceService {
         });
 
         if (response.data && response.data.length > 0) {
-          const { created, updated, larkResult } =
-            await this.batchSaveInvoicesWithLarkTracking(response.data);
-          totalProcessed += created + updated;
+          invoiceBatch.push(...response.data); // ADDED: Accumulate into batch
 
-          if (larkResult) {
-            totalLarkSuccess += larkResult.success;
-            totalLarkFailed += larkResult.failed;
+          // ADDED: Process batch when it reaches BATCH_SIZE or no more data (like customer.service.ts)
+          if (
+            invoiceBatch.length >= this.BATCH_SIZE ||
+            response.data.length < this.PAGE_SIZE
+          ) {
+            const { created, updated, larkResult } =
+              await this.batchSaveInvoicesWithLarkTracking(invoiceBatch);
+            totalProcessed += created + updated;
+            batchCount++;
+
+            if (larkResult) {
+              totalLarkSuccess += larkResult.success;
+              totalLarkFailed += larkResult.failed;
+            }
+
+            // ADDED: Update progress like customer.service.ts
+            await this.prismaService.syncControl.update({
+              where: { name: 'invoice_historical' },
+              data: {
+                progress: {
+                  totalProcessed,
+                  batchCount,
+                  lastProcessedItem: currentItem + response.data.length,
+                },
+              },
+            });
+
+            await this.prismaService.syncControl.update({
+              where: { name: 'invoice_historical_lark' },
+              data: {
+                progress: {
+                  totalLarkSuccess,
+                  totalLarkFailed,
+                  batchCount,
+                },
+              },
+            });
+
+            this.logger.log(
+              `Historical sync batch ${batchCount}: ${totalProcessed} invoices processed, LarkBase: ${totalLarkSuccess} success, ${totalLarkFailed} failed`,
+            );
+            invoiceBatch.length = 0; // ADDED: Clear batch like customer.service.ts
           }
-
-          this.logger.log(
-            `Historical sync progress: ${totalProcessed} invoices processed, LarkBase: ${totalLarkSuccess} success, ${totalLarkFailed} failed`,
-          );
         }
 
         hasMoreData = response.data && response.data.length === this.PAGE_SIZE;
@@ -702,9 +739,10 @@ export class KiotVietInvoiceService {
         where: { name: 'invoice_historical' },
         data: {
           isRunning: false,
+          isEnabled: false, // ADDED: Disable after completion like customer.service.ts
           status: 'completed',
           completedAt: new Date(),
-          progress: { totalProcessed },
+          progress: { totalProcessed, batchCount },
         },
       });
 
@@ -713,9 +751,10 @@ export class KiotVietInvoiceService {
         where: { name: 'invoice_historical_lark' },
         data: {
           isRunning: false,
+          isEnabled: false, // ADDED: Disable after completion like customer.service.ts
           status: totalLarkFailed > 0 ? 'completed_with_errors' : 'completed',
           completedAt: new Date(),
-          progress: { totalLarkSuccess, totalLarkFailed },
+          progress: { totalLarkSuccess, totalLarkFailed, batchCount },
           error:
             totalLarkFailed > 0
               ? `${totalLarkFailed} records failed to sync to LarkBase`
@@ -747,6 +786,16 @@ export class KiotVietInvoiceService {
   // UPDATED: Recent sync with Lark Base integration
   async syncRecentInvoices(days: number = 7): Promise<void> {
     try {
+      // Check if historical sync is running (like customer.service.ts)
+      const historicalSync = await this.prismaService.syncControl.findFirst({
+        where: { name: 'invoice_historical', isRunning: true },
+      });
+
+      if (historicalSync) {
+        this.logger.log('Historical sync is running. Skipping recent sync.');
+        return;
+      }
+
       // Database sync control
       await this.prismaService.syncControl.upsert({
         where: { name: 'invoice_recent' },
