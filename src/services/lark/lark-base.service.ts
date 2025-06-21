@@ -3,6 +3,12 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as lark from '@larksuiteoapi/node-sdk';
 
+interface InvoiceForLarkBase {
+  invoiceData: any;
+  branchName: string | null;
+  customerName: string | null;
+}
+
 @Injectable()
 export class LarkBaseService {
   private readonly logger = new Logger(LarkBaseService.name);
@@ -381,11 +387,12 @@ export class LarkBaseService {
   }
 
   async batchCreateInvoiceRecords(
-    invoices: any[],
+    invoices: InvoiceForLarkBase[],
   ): Promise<{ success: number; failed: number }> {
     if (!invoices.length) return { success: 0, failed: 0 };
 
     try {
+      // FIXED: Proper type handling and filtering
       const records = invoices
         .map((invoice) => {
           const mappedData = this.mapInvoiceToLarkBase(
@@ -395,8 +402,8 @@ export class LarkBaseService {
           );
           return mappedData.fields['Mã Hóa Đơn'] ? mappedData : null;
         })
-        .filter((record) => record !== null)
-        .map((record) => ({ fields: record!.fields }));
+        .filter((record): record is { fields: any } => record !== null)
+        .map((record) => ({ fields: record.fields })); // FIXED: Ensure proper structure
 
       if (!records.length) return { success: 0, failed: 0 };
 
@@ -424,12 +431,13 @@ export class LarkBaseService {
   }
 
   async batchUpdateInvoiceRecords(
-    invoices: any[],
+    invoices: InvoiceForLarkBase[],
     existingRecords: Map<string, string>,
   ): Promise<{ success: number; failed: number }> {
     if (!invoices.length) return { success: 0, failed: 0 };
 
     try {
+      // FIXED: Proper type handling and filtering
       const records = invoices
         .filter((invoice) =>
           existingRecords.has(invoice.invoiceData.id.toString()),
@@ -451,7 +459,10 @@ export class LarkBaseService {
             fields: mappedData.fields,
           };
         })
-        .filter((record) => record !== null && record.fields['Mã Hóa Đơn']);
+        .filter(
+          (record): record is { record_id: string; fields: any } =>
+            record !== null && record.fields['Mã Hóa Đơn'],
+        ); // FIXED: Type guard to ensure non-null records
 
       if (!records.length) return { success: 0, failed: 0 };
 
@@ -479,7 +490,7 @@ export class LarkBaseService {
   }
 
   async syncInvoicesToLarkBase(
-    invoicesWithData: any[],
+    invoicesWithData: InvoiceForLarkBase[], // FIXED: Use proper interface
   ): Promise<{ success: number; failed: number }> {
     if (!invoicesWithData.length) return { success: 0, failed: 0 };
 
@@ -536,6 +547,13 @@ export class LarkBaseService {
 
         totalSuccess += createSuccess + updateSuccess;
         totalFailed += createFailed + updateFailed;
+
+        if (createResult.status === 'rejected') {
+          this.logger.error(`Create batch failed: ${createResult.reason}`);
+        }
+        if (updateResult.status === 'rejected') {
+          this.logger.error(`Update batch failed: ${updateResult.reason}`);
+        }
 
         if (i + batchSize < invoicesWithData.length) {
           await new Promise((resolve) => setTimeout(resolve, 1000));

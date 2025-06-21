@@ -9,6 +9,12 @@ import { firstValueFrom } from 'rxjs';
 import { Prisma } from '@prisma/client';
 import * as dayjs from 'dayjs';
 
+interface EnrichedInvoiceData {
+  invoiceData: any;
+  branchName: string | null;
+  customerName: string | null;
+}
+
 @Injectable()
 export class KiotVietInvoiceService {
   private readonly logger = new Logger(KiotVietInvoiceService.name);
@@ -537,7 +543,11 @@ export class KiotVietInvoiceService {
     }
   }
 
-  private async batchSaveInvoicesWithLarkTracking(invoices: any[]) {
+  private async batchSaveInvoicesWithLarkTracking(invoices: any[]): Promise<{
+    created: number;
+    updated: number;
+    larkResult: { success: number; failed: number };
+  }> {
     if (!invoices || invoices.length === 0) {
       return { created: 0, updated: 0, larkResult: { success: 0, failed: 0 } };
     }
@@ -557,12 +567,14 @@ export class KiotVietInvoiceService {
     return { created, updated, larkResult };
   }
 
-  private async enrichInvoicesForLarkBase(invoices: any[]): Promise<any[]> {
-    const enrichedInvoices = [];
+  private async enrichInvoicesForLarkBase(
+    invoices: any[],
+  ): Promise<EnrichedInvoiceData[]> {
+    const enrichedInvoices: EnrichedInvoiceData[] = [];
 
     for (const invoiceData of invoices) {
-      let branchName = null;
-      let customerName = null;
+      let branchName: string | null = null; // FIXED: Allow both string and null
+      let customerName: string | null = null; // FIXED: Allow both string and null
 
       // Get branch name from branchId
       if (invoiceData.branchId) {
@@ -582,6 +594,7 @@ export class KiotVietInvoiceService {
         customerName = customer?.name || null;
       }
 
+      // FIXED: Properly typed object
       enrichedInvoices.push({
         invoiceData,
         branchName,
