@@ -238,7 +238,8 @@ export class LarkBaseService {
 
     // Ngày Mua
     if (invoiceData.purchaseDate) {
-      fields['Ngày Mua'] = new Date(invoiceData.purchaseDate).getTime();
+      const vietnamDate = new Date(invoiceData.purchaseDate + '+07:00');
+      fields['Ngày Mua'] = vietnamDate.getTime();
     }
 
     // Chi Nhánh - mapped from branchId to branchName
@@ -298,12 +299,14 @@ export class LarkBaseService {
 
     // Ngày Tạo
     if (invoiceData.createdDate) {
-      fields['Ngày Tạo'] = new Date(invoiceData.createdDate).getTime();
+      const vietnamDate = new Date(invoiceData.createdDate + '+07:00');
+      fields['Ngày Tạo'] = vietnamDate.getTime();
     }
 
     // Ngày Cập Nhật
     if (invoiceData.modifiedDate) {
-      fields['Ngày Cập Nhật'] = new Date(invoiceData.modifiedDate).getTime();
+      const vietnamDate = new Date(invoiceData.modifiedDate + '+07:00');
+      fields['Ngày Cập Nhật'] = vietnamDate.getTime();
     }
 
     // kiotVietId (IMPORTANT for deduplication)
@@ -415,7 +418,6 @@ export class LarkBaseService {
 
       if (!records.length) return { success: 0, failed: 0 };
 
-      // ADD: Log what we're sending to Lark API
       this.logger.debug(
         `Attempting to create ${records.length} invoice records in LarkBase`,
       );
@@ -474,7 +476,6 @@ export class LarkBaseService {
     if (!invoices.length) return { success: 0, failed: 0 };
 
     try {
-      // FIXED: Proper type handling and filtering
       const records = invoices
         .filter((invoice) =>
           existingRecords.has(invoice.invoiceData.id.toString()),
@@ -528,7 +529,7 @@ export class LarkBaseService {
   }
 
   async syncInvoicesToLarkBase(
-    invoicesWithData: InvoiceForLarkBase[], // FIXED: Use proper interface
+    invoicesWithData: InvoiceForLarkBase[],
   ): Promise<{ success: number; failed: number }> {
     if (!invoicesWithData.length) return { success: 0, failed: 0 };
 
@@ -642,7 +643,7 @@ export class LarkBaseService {
   ): Promise<Map<string, string>> {
     try {
       const existingRecords = new Map<string, string>();
-      const batchSize = 50;
+      const batchSize = 70;
 
       for (let i = 0; i < kiotVietIds.length; i += batchSize) {
         const batch = kiotVietIds.slice(i, i + batchSize);

@@ -364,7 +364,6 @@ export class KiotVietInvoiceService {
             }
           }
 
-          // FIXED: Use UPSERT instead of CREATE
           if (payment.id) {
             await this.prismaService.payment.upsert({
               where: { kiotVietId: BigInt(payment.id) },
@@ -392,7 +391,6 @@ export class KiotVietInvoiceService {
       }
     }
 
-    // 2. Handle InvoiceDelivery (NEW - if included in list response)
     if (invoiceData.invoiceDelivery) {
       const delivery = invoiceData.invoiceDelivery;
       try {
@@ -452,8 +450,6 @@ export class KiotVietInvoiceService {
       }
     }
 
-    // 3. For InvoiceDetails and InvoiceSurcharges - Need detail API call
-    // The list API doesn't include these, so we need to fetch detail
     await this.handleDetailEntities(invoiceId, invoiceData.id);
   }
 
@@ -574,11 +570,10 @@ export class KiotVietInvoiceService {
     const enrichedInvoices: EnrichedInvoiceData[] = [];
 
     for (const invoiceData of invoices) {
-      let branchName: string | null = null; // FIXED: Allow both string and null
-      let customerName: string | null = null; // FIXED: Allow both string and null
+      let branchName: string | null = null;
+      let customerName: string | null = null;
       let userName: string | null = null;
 
-      // Get branch name from branchId
       if (invoiceData.branchId) {
         const branch = await this.prismaService.branch.findFirst({
           where: { kiotVietId: invoiceData.branchId },
@@ -683,7 +678,7 @@ export class KiotVietInvoiceService {
       let totalLarkFailed = 0;
       let batchCount = 0;
       let hasMoreData = true;
-      const invoiceBatch: any[] = []; // ADDED: Batch accumulator like customer.service.ts
+      const invoiceBatch: any[] = [];
 
       this.logger.log('Starting historical invoice sync...');
 
@@ -694,9 +689,8 @@ export class KiotVietInvoiceService {
         });
 
         if (response.data && response.data.length > 0) {
-          invoiceBatch.push(...response.data); // ADDED: Accumulate into batch
+          invoiceBatch.push(...response.data);
 
-          // ADDED: Process batch when it reaches BATCH_SIZE or no more data (like customer.service.ts)
           if (
             invoiceBatch.length >= this.BATCH_SIZE ||
             response.data.length < this.PAGE_SIZE
@@ -711,7 +705,6 @@ export class KiotVietInvoiceService {
               totalLarkFailed += larkResult.failed;
             }
 
-            // ADDED: Update progress like customer.service.ts
             await this.prismaService.syncControl.update({
               where: { name: 'invoice_historical' },
               data: {
@@ -737,7 +730,7 @@ export class KiotVietInvoiceService {
             this.logger.log(
               `Historical sync batch ${batchCount}: ${totalProcessed} invoices processed, LarkBase: ${totalLarkSuccess} success, ${totalLarkFailed} failed`,
             );
-            invoiceBatch.length = 0; // ADDED: Clear batch like customer.service.ts
+            invoiceBatch.length = 0;
           }
         }
 
@@ -750,19 +743,18 @@ export class KiotVietInvoiceService {
         where: { name: 'invoice_historical' },
         data: {
           isRunning: false,
-          isEnabled: false, // ADDED: Disable after completion like customer.service.ts
+          isEnabled: false,
           status: 'completed',
           completedAt: new Date(),
           progress: { totalProcessed, batchCount },
         },
       });
 
-      // Update LarkBase sync control
       await this.prismaService.syncControl.update({
         where: { name: 'invoice_historical_lark' },
         data: {
           isRunning: false,
-          isEnabled: false, // ADDED: Disable after completion like customer.service.ts
+          isEnabled: false,
           status: totalLarkFailed > 0 ? 'completed_with_errors' : 'completed',
           completedAt: new Date(),
           progress: { totalLarkSuccess, totalLarkFailed, batchCount },
