@@ -499,18 +499,20 @@ export class BusSchedulerService implements OnModuleInit {
       throw new Error(`Entity ${entityName} not found`);
     }
 
+    this.logger.log(
+      `Entity found: ${entity.name}, service: ${entity.service}, method: ${entity.syncMethod}`,
+    );
+
     if (entity.syncType !== 'full') {
       throw new Error(`Entity ${entityName} does not support historical sync`);
     }
 
     this.logger.log(`Force historical sync requested for ${entityName}`);
 
-    // Temporarily override bus scheduler
     const wasRunning = this.isRunning;
-    this.isRunning = true; // Prevent other syncs
+    this.isRunning = true;
 
     try {
-      // Reset historical sync status
       await this.prismaService.syncControl.upsert({
         where: { name: `${entityName}_historical` },
         create: {
@@ -536,11 +538,16 @@ export class BusSchedulerService implements OnModuleInit {
 
       // Force run historical sync
       const service = this[entity.service];
+      this.logger.log(
+        `Service resolved: ${!!service} - ${service?.constructor?.name || 'undefined'}`,
+      );
       if (!service) {
         throw new Error(
           `Service ${entity.service} not found for entity ${entityName}`,
         );
       }
+
+      this.logger.log(`Method exists: ${!!service[entity.syncMethod]}`);
 
       this.logger.log(`Running forced historical sync for ${entityName}`);
       await service[entity.syncMethod]();
