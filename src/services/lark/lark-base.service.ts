@@ -165,26 +165,14 @@ export class LarkBaseService {
 
     // Thời Gian Tạo
     if (customerData.createdDate) {
-      try {
-        const date = new Date(customerData.createdDate);
-        fields['Thời Gian Tạo'] = date.getTime();
-      } catch (error) {
-        this.logger.warn(
-          `Invalid createdDate for customer ${customerData.code}: ${customerData.createdDate}`,
-        );
-      }
+      const vietnamDate = new Date(customerData.createdDate + '+07:00');
+      fields['Thời Gian Tạo'] = vietnamDate.getTime();
     }
 
     // Thời Gian Cập Nhật
     if (customerData.modifiedDate) {
-      try {
-        const date = new Date(customerData.modifiedDate);
-        fields['Thời Gian Cập Nhật'] = date.getTime();
-      } catch (error) {
-        this.logger.warn(
-          `Invalid modifiedDate for customer ${customerData.code}: ${customerData.modifiedDate}`,
-        );
-      }
+      const vietnamDate = new Date(customerData.modifiedDate + '+07:00');
+      fields['Thời Gian Cập Nhật'] = vietnamDate.getTime();
     }
 
     // Giới Tính (Single Select)
@@ -454,7 +442,6 @@ export class LarkBaseService {
       this.logger.error(
         `Invoice LarkBase batch create failed: ${error.message}`,
       );
-      // ADD: Detailed error logging like customer version
       this.logger.error('Error stack:', error.stack);
       if (error.response?.data) {
         this.logger.error(
