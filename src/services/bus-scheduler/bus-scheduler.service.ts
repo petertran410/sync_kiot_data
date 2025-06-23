@@ -38,12 +38,12 @@ export class BusSchedulerService implements OnModuleInit {
   // Define sync entities in dependency order
   private readonly syncEntities: SyncEntity[] = [
     // Phase 1 - No Dependencies
-    {
-      name: 'branch',
-      service: 'branchService',
-      syncMethod: 'syncBranches',
-      syncType: 'simple',
-    },
+    // {
+    //   name: 'branch',
+    //   service: 'branchService',
+    //   syncMethod: 'syncBranches',
+    //   syncType: 'simple',
+    // },
     {
       name: 'customergroup',
       service: 'customerGroupService',
@@ -56,30 +56,30 @@ export class BusSchedulerService implements OnModuleInit {
       syncMethod: 'syncTradeMarks',
       syncType: 'simple',
     },
-    {
-      name: 'user',
-      service: 'userService',
-      syncMethod: 'syncHistoricalUsers',
-      syncType: 'full',
-    },
-    {
-      name: 'salechannel',
-      service: 'saleChannelService',
-      syncMethod: 'syncSaleChannels',
-      syncType: 'simple',
-    },
-    {
-      name: 'surcharge',
-      service: 'surchargeService',
-      syncMethod: 'syncSurcharges',
-      syncType: 'simple',
-    },
-    {
-      name: 'bankaccount',
-      service: 'bankAccountService',
-      syncMethod: 'syncBankAccounts',
-      syncType: 'simple',
-    },
+    // {
+    //   name: 'user',
+    //   service: 'userService',
+    //   syncMethod: 'syncHistoricalUsers',
+    //   syncType: 'full',
+    // },
+    // {
+    //   name: 'salechannel',
+    //   service: 'saleChannelService',
+    //   syncMethod: 'syncSaleChannels',
+    //   syncType: 'simple',
+    // },
+    // {
+    //   name: 'surcharge',
+    //   service: 'surchargeService',
+    //   syncMethod: 'syncSurcharges',
+    //   syncType: 'simple',
+    // },
+    // {
+    //   name: 'bankaccount',
+    //   service: 'bankAccountService',
+    //   syncMethod: 'syncBankAccounts',
+    //   syncType: 'simple',
+    // },
 
     // Phase 2 - Basic Dependencies
     {
