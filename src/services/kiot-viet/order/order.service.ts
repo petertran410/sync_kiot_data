@@ -65,6 +65,23 @@ export class KiotVietOrderService {
     }
   }
 
+  async fetchOrderDetail(orderId: number) {
+    try {
+      const headers = await this.authService.getRequestHeaders();
+      const { data } = await firstValueFrom(
+        this.httpService.get(`${this.baseUrl}/orders/${orderId}`, {
+          headers,
+        }),
+      );
+      return data;
+    } catch (error) {
+      this.logger.error(
+        `Failed to fetch order detail ${orderId}: ${error.message}`,
+      );
+      throw error;
+    }
+  }
+
   private async batchSaveOrders(orders: any[]) {
     if (!orders || orders.length === 0) return { created: 0, updated: 0 };
 
@@ -554,8 +571,24 @@ export class KiotVietOrderService {
 
     const { created, updated } = await this.batchSaveOrders(orders);
 
-    const ordersWithEnrichedData = await this.enrichOrdersForLarkBase(orders);
+    const detailedOrders: any[] = [];
 
+    for (const order of orders) {
+      try {
+        const detailedOrder = await this.fetchOrderDetail(order.id);
+        detailedOrders.push(detailedOrder);
+
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      } catch (error) {
+        this.logger.error(
+          `Failed to fetch detail for order ${order.id}: ${error.message}`,
+        );
+        detailedOrders.push(order);
+      }
+    }
+
+    const ordersWithEnrichedData =
+      await this.enrichOrdersForLarkBase(detailedOrders);
     const larkResult = await this.larkBaseService.syncOrdersToLarkBase(
       ordersWithEnrichedData,
     );
@@ -569,6 +602,26 @@ export class KiotVietOrderService {
     const enrichedOrders: EnrichedOrderData[] = [];
 
     for (const orderData of orders) {
+      this.logger.debug(`=== Processing Order ${orderData.id} ===`);
+      this.logger.debug(`Invoices count: ${orderData.invoices?.length || 0}`);
+      this.logger.debug(
+        `Surcharges count: ${orderData.invoiceOrderSurcharges?.length || 0}`,
+      );
+
+      if (orderData.invoices) {
+        this.logger.debug(
+          'Invoice codes:',
+          orderData.invoices.map((inv) => inv.invoiceCode),
+        );
+      }
+
+      if (orderData.invoiceOrderSurcharges) {
+        this.logger.debug(
+          'Surcharge prices:',
+          orderData.invoiceOrderSurcharges.map((s) => s.price),
+        );
+      }
+
       let branchName: string | null = null;
       let customerName: string | null = null;
       let userName: string | null = null;
