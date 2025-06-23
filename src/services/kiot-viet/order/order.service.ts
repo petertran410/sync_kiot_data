@@ -1,3 +1,4 @@
+import { LarkBaseService } from './../../lark/lark-base.service';
 // src/services/kiot-viet/order/order.service.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
@@ -7,6 +8,13 @@ import { KiotVietAuthService } from '../auth.service';
 import { firstValueFrom } from 'rxjs';
 import { Prisma } from '@prisma/client';
 import * as dayjs from 'dayjs';
+
+interface EnrichedOrderData {
+  orderData: any;
+  branchName: string | null;
+  customerName: string | null;
+  userName: string | null;
+}
 
 @Injectable()
 export class KiotVietOrderService {
@@ -20,6 +28,7 @@ export class KiotVietOrderService {
     private readonly configService: ConfigService,
     private readonly prismaService: PrismaService,
     private readonly authService: KiotVietAuthService,
+    private readonly larkBaseService: LarkBaseService,
   ) {
     const baseUrl = this.configService.get<string>('KIOT_BASE_URL');
     if (!baseUrl) {
@@ -88,7 +97,6 @@ export class KiotVietOrderService {
         this.logger.error(
           `Failed to save order ${orderData.code}: ${error.message}`,
         );
-        // Continue processing other orders instead of stopping
         continue;
       }
     }
@@ -112,34 +120,49 @@ export class KiotVietOrderService {
 
     await this.handleOrderRelations(orderId, orderData);
   }
+  private missingBranches = new Set<number>();
+
+  private async handleMissingBranch(branchId: number, orderCode: string) {
+    if (!this.missingBranches.has(branchId)) {
+      this.missingBranches.add(branchId);
+      this.logger.warn(
+        `New missing branch detected: ${branchId} (first seen in invoice ${orderCode})`,
+      );
+    }
+  }
 
   private async prepareOrderCreateData(
     orderData: any,
   ): Promise<Prisma.OrderCreateInput> {
-    // FIXED: Handle required branch relationship first
-    if (!orderData.branchId) {
-      throw new Error(`Order ${orderData.code} is missing required branchId`);
-    }
-
-    const branch = await this.prismaService.branch.findFirst({
-      where: { kiotVietId: orderData.branchId },
-    });
-
-    if (!branch) {
-      throw new Error(
-        `Required branch with kiotVietId ${orderData.branchId} not found for order ${orderData.code}`,
+    const total = orderData.total || 0; // Khách cần trả
+    const discount = orderData.discounnt || 0;
+    let thuKhac = 0;
+    if (
+      orderData.invoiceOrderSurcharges &&
+      orderData.invoiceOrderSurcharges.length > 0
+    ) {
+      thuKhac = orderData.invoiceOrderSurcharges.reduce(
+        (sum: any, surcharge: any) => {
+          return sum + Number(surcharge.price || 0);
+        },
+        0,
       );
     }
+    const tongThuKhac = Number(thuKhac || 0);
+    const totalCostOfGoods = total + discount - tongThuKhac;
+    const otherRevenue = tongThuKhac;
+    const totalAfterDiscount = totalCostOfGoods - tongThuKhac;
 
     const data: Prisma.OrderCreateInput = {
       kiotVietId: BigInt(orderData.id),
       code: orderData.code,
       purchaseDate: new Date(orderData.purchaseDate),
-      // FIXED: Always provide required branch relationship
-      branch: { connect: { id: branch.id } },
       cashierId: orderData.cashierId ? BigInt(orderData.cashierId) : null,
+      totalCostOfGoods: new Prisma.Decimal(totalCostOfGoods || 0),
       total: new Prisma.Decimal(orderData.total || 0),
+      totalAfterDiscount: new Prisma.Decimal(totalAfterDiscount || 0),
       totalPayment: new Prisma.Decimal(orderData.totalPayment || 0),
+      otherRevenue: new Prisma.Decimal(otherRevenue || 0),
       discount: orderData.discount
         ? new Prisma.Decimal(orderData.discount)
         : null,
@@ -161,7 +184,21 @@ export class KiotVietOrderService {
       lastSyncedAt: new Date(),
     };
 
-    // FIXED: Check if user exists before connecting (optional relationship)
+    if (orderData.branchId) {
+      const branch = await this.prismaService.branch.findFirst({
+        where: { kiotVietId: orderData.branchId },
+      });
+
+      if (branch) {
+        data.branch = { connect: { id: branch.id } };
+      } else {
+        await this.handleMissingBranch(orderData.branchId, orderData.code);
+        this.logger.warn(
+          `Branch ${orderData.branchId} not found for orders ${orderData.code}. Creating order without branch reference.`,
+        );
+      }
+    }
+
     if (orderData.soldById) {
       const soldByUser = await this.prismaService.user.findFirst({
         where: { kiotVietId: BigInt(orderData.soldById) },
@@ -175,7 +212,6 @@ export class KiotVietOrderService {
       }
     }
 
-    // Handle customer relationship (optional)
     if (orderData.customerId) {
       const customer = await this.prismaService.customer.findFirst({
         where: { kiotVietId: BigInt(orderData.customerId) },
@@ -189,7 +225,6 @@ export class KiotVietOrderService {
       }
     }
 
-    // Handle sale channel relationship (optional)
     if (orderData.saleChannelId) {
       const saleChannel = await this.prismaService.saleChannel.findFirst({
         where: { kiotVietId: orderData.saleChannelId },
@@ -206,16 +241,37 @@ export class KiotVietOrderService {
     return data;
   }
 
-  // FIXED: prepareOrderUpdateData method
   private async prepareOrderUpdateData(
     orderData: any,
   ): Promise<Prisma.OrderUpdateInput> {
+    const total = orderData.total || 0; // Khách cần trả
+    const discount = orderData.discounnt || 0;
+    let thuKhac = 0;
+    if (
+      orderData.invoiceOrderSurcharges &&
+      orderData.invoiceOrderSurcharges.length > 0
+    ) {
+      thuKhac = orderData.invoiceOrderSurcharges.reduce(
+        (sum: any, surcharge: any) => {
+          return sum + Number(surcharge.price || 0);
+        },
+        0,
+      );
+    }
+    const tongThuKhac = Number(thuKhac || 0);
+    const totalCostOfGoods = total + discount - tongThuKhac;
+    const otherRevenue = tongThuKhac;
+    const totalAfterDiscount = totalCostOfGoods - tongThuKhac;
+
     const data: Prisma.OrderUpdateInput = {
       code: orderData.code,
       purchaseDate: new Date(orderData.purchaseDate),
       cashierId: orderData.cashierId ? BigInt(orderData.cashierId) : null,
+      totalCostOfGoods: new Prisma.Decimal(totalCostOfGoods || 0),
       total: new Prisma.Decimal(orderData.total || 0),
+      totalAfterDiscount: new Prisma.Decimal(totalAfterDiscount || 0),
       totalPayment: new Prisma.Decimal(orderData.totalPayment || 0),
+      otherRevenue: new Prisma.Decimal(otherRevenue || 0),
       discount: orderData.discount
         ? new Prisma.Decimal(orderData.discount)
         : null,
@@ -234,7 +290,21 @@ export class KiotVietOrderService {
       lastSyncedAt: new Date(),
     };
 
-    // FIXED: Check if user exists before connecting (optional relationship)
+    if (orderData.branchId) {
+      const branch = await this.prismaService.branch.findFirst({
+        where: { kiotVietId: orderData.branchId },
+      });
+      if (branch) {
+        data.branch = { connect: { id: branch.id } };
+      } else {
+        await this.handleMissingBranch(orderData.branchId, orderData.code);
+        this.logger.warn(
+          `Branch ${orderData.branchId} not found for orders ${orderData.code}. Updating order without branch reference.`,
+        );
+        data.branch = { disconnect: true };
+      }
+    }
+
     if (orderData.soldById) {
       const soldByUser = await this.prismaService.user.findFirst({
         where: { kiotVietId: BigInt(orderData.soldById) },
@@ -245,26 +315,10 @@ export class KiotVietOrderService {
         this.logger.warn(
           `User with kiotVietId ${orderData.soldById} not found for order ${orderData.code}. Updating order without soldBy reference.`,
         );
-        // Explicitly disconnect if user no longer exists
         data.soldBy = { disconnect: true };
       }
     }
 
-    // Handle branch relationship (required)
-    if (orderData.branchId) {
-      const branch = await this.prismaService.branch.findFirst({
-        where: { kiotVietId: orderData.branchId },
-      });
-      if (branch) {
-        data.branch = { connect: { id: branch.id } };
-      } else {
-        throw new Error(
-          `Required branch with kiotVietId ${orderData.branchId} not found for order ${orderData.code}`,
-        );
-      }
-    }
-
-    // Handle customer relationship (optional)
     if (orderData.customerId) {
       const customer = await this.prismaService.customer.findFirst({
         where: { kiotVietId: BigInt(orderData.customerId) },
@@ -287,13 +341,17 @@ export class KiotVietOrderService {
     return data;
   }
 
-  private async handleOrderRelations(orderId: number, orderData: any) {
-    // Handle order details
-    if (orderData.orderDetails && orderData.orderDetails.length > 0) {
-      await this.prismaService.orderDetail.deleteMany({
-        where: { orderId },
-      });
+  async reportMissingBranches() {
+    if (this.missingBranches.size > 0) {
+      this.logger.warn(
+        `Total missing branches: ${this.missingBranches.size}`,
+        Array.from(this.missingBranches),
+      );
+    }
+  }
 
+  private async handleOrderRelations(orderId: number, orderData: any) {
+    if (orderData.orderDetails && orderData.orderDetails.length > 0) {
       for (const detail of orderData.orderDetails) {
         try {
           const product = await this.prismaService.product.findFirst({
@@ -428,10 +486,9 @@ export class KiotVietOrderService {
 
       for (const payment of orderData.payments) {
         try {
-          // FIXED: Prepare payment data with proper relationships
           const paymentData: any = {
             kiotVietId: payment.id ? BigInt(payment.id) : null,
-            order: { connect: { id: orderId } }, // FIXED: Use relationship instead of orderId
+            order: { connect: { id: orderId } },
             code: payment.code,
             amount: new Prisma.Decimal(payment.amount || 0),
             method: payment.method,
@@ -439,11 +496,10 @@ export class KiotVietOrderService {
             transDate: payment.transDate
               ? new Date(payment.transDate)
               : new Date(),
-            bankAccountInfo: payment.bankAccount, // FIXED: Use bankAccountInfo field
+            bankAccountInfo: payment.bankAccount,
             description: payment.description || null,
           };
 
-          // FIXED: Handle bankAccount relationship properly
           if (payment.accountId) {
             const bankAccount = await this.prismaService.bankAccount.findFirst({
               where: { kiotVietId: payment.accountId },
@@ -457,9 +513,29 @@ export class KiotVietOrderService {
             }
           }
 
-          await this.prismaService.payment.create({
-            data: paymentData,
-          });
+          if (payment.id) {
+            await this.prismaService.payment.upsert({
+              where: { kiotVietId: BigInt(payment.id) },
+              create: paymentData,
+              update: {
+                code: payment.code,
+                amount: new Prisma.Decimal(payment.amount || 0),
+                method: payment.method,
+                status: payment.status,
+                transDate: payment.transDate
+                  ? new Date(payment.transDate)
+                  : new Date(),
+                bankAccountInfo: payment.bankAccount,
+                description: payment.description || null,
+                // Update order relationship
+                order: { connect: { id: orderId } },
+              },
+            });
+          } else {
+            await this.prismaService.payment.create({
+              data: paymentData,
+            });
+          }
         } catch (error) {
           this.logger.error(`Failed to save payment: ${error.message}`);
         }
@@ -467,8 +543,82 @@ export class KiotVietOrderService {
     }
   }
 
+  private async batchSaveOrdersWithLarkTracking(orders: any[]): Promise<{
+    created: number;
+    updated: number;
+    larkResult: { success: number; failed: number };
+  }> {
+    if (!orders || orders.length === 0) {
+      return { created: 0, updated: 0, larkResult: { success: 0, failed: 0 } };
+    }
+
+    const { created, updated } = await this.batchSaveOrders(orders);
+
+    const ordersWithEnrichedData = await this.enrichOrdersForLarkBase(orders);
+
+    const larkResult = await this.larkBaseService.syncOrdersToLarkBase(
+      ordersWithEnrichedData,
+    );
+
+    return { created, updated, larkResult };
+  }
+
+  private async enrichOrdersForLarkBase(
+    orders: any[],
+  ): Promise<EnrichedOrderData[]> {
+    const enrichedOrders: EnrichedOrderData[] = [];
+
+    for (const orderData of orders) {
+      let branchName: string | null = null;
+      let customerName: string | null = null;
+      let userName: string | null = null;
+
+      if (orderData.branchId) {
+        const branch = await this.prismaService.branch.findFirst({
+          where: { kiotVietId: orderData.branchId },
+          select: { name: true },
+        });
+        branchName = branch?.name || null;
+      }
+
+      if (orderData.customerId) {
+        const customer = await this.prismaService.customer.findFirst({
+          where: { kiotVietId: BigInt(orderData.customerId) },
+          select: { name: true },
+        });
+        customerName = customer?.name || null;
+      }
+
+      if (orderData.soldById) {
+        const user = await this.prismaService.user.findFirst({
+          where: { kiotVietId: BigInt(orderData.soldById) },
+          select: { givenName: true },
+        });
+        userName = user?.givenName || null;
+      }
+
+      enrichedOrders.push({
+        orderData,
+        branchName,
+        customerName,
+        userName,
+      });
+    }
+
+    return enrichedOrders;
+  }
+
   async syncRecentOrders(days: number = 7): Promise<void> {
     try {
+      const historicalSync = await this.prismaService.syncControl.findFirst({
+        where: { name: 'order_historical', isRunning: true },
+      });
+
+      if (historicalSync) {
+        this.logger.log('Historical sync is running. Skipping recent sync.');
+        return;
+      }
+
       await this.prismaService.syncControl.upsert({
         where: { name: 'order_recent' },
         create: {
@@ -487,14 +637,34 @@ export class KiotVietOrderService {
         },
       });
 
+      await this.prismaService.syncControl.upsert({
+        where: { name: 'order_recent_lark' },
+        create: {
+          name: 'order_recent_lark',
+          entities: ['order_lark'],
+          syncMode: 'recent',
+          isRunning: true,
+          status: 'in_progress',
+          startedAt: new Date(),
+        },
+        update: {
+          isRunning: true,
+          status: 'in_progress',
+          startedAt: new Date(),
+          error: null,
+        },
+      });
+
       const lastModifiedFrom = dayjs()
         .subtract(days, 'day')
         .format('YYYY-MM-DD');
 
-      this.logger.log(`Starting recent order sync for last ${days} days...`);
+      this.logger.log(`Starting recent order sync for last ${days} days`);
 
       let currentItem = 0;
       let totalProcessed = 0;
+      let totalLarkSuccess = 0;
+      let totalLarkFailed = 0;
       let hasMoreData = true;
 
       while (hasMoreData) {
@@ -505,13 +675,17 @@ export class KiotVietOrderService {
         });
 
         if (response.data && response.data.length > 0) {
-          const { created, updated } = await this.batchSaveOrders(
-            response.data,
-          );
+          const { created, updated, larkResult } =
+            await this.batchSaveOrdersWithLarkTracking(response.data);
           totalProcessed += created + updated;
 
+          if (larkResult) {
+            totalLarkSuccess += larkResult.success;
+            totalLarkFailed += larkResult.failed;
+          }
+
           this.logger.log(
-            `Order recent sync progress: ${totalProcessed} processed`,
+            `Recent sync progress: ${totalProcessed} orders processed, LarkBase: ${totalLarkSuccess} success, ${totalLarkFailed} failed`,
           );
         }
 
@@ -529,12 +703,26 @@ export class KiotVietOrderService {
         },
       });
 
+      await this.prismaService.syncControl.update({
+        where: { name: 'order_recent_lark' },
+        data: {
+          isRunning: false,
+          status: totalLarkFailed > 0 ? 'completed_with_errors' : 'completed',
+          completedAt: new Date(),
+          progress: { totalLarkSuccess, totalLarkFailed },
+          error:
+            totalLarkFailed > 0
+              ? `${totalLarkFailed} records failed to sync to LarkBase`
+              : null,
+        },
+      });
+
       this.logger.log(
-        `Order recent sync completed: ${totalProcessed} processed`,
+        `Recent sync completed: ${totalProcessed} orders processed, LarkBase: ${totalLarkSuccess} success, ${totalLarkFailed} failed`,
       );
     } catch (error) {
-      await this.prismaService.syncControl.update({
-        where: { name: 'order_recent' },
+      await this.prismaService.syncControl.updateMany({
+        where: { name: { in: ['order_recent', 'order_recent_lark'] } },
         data: {
           isRunning: false,
           status: 'failed',
@@ -543,7 +731,7 @@ export class KiotVietOrderService {
         },
       });
 
-      this.logger.error(`Order recent sync failed: ${error.message}`);
+      this.logger.error(`Recent sync failed: ${error.message}`);
       throw error;
     }
   }
@@ -570,8 +758,30 @@ export class KiotVietOrderService {
         },
       });
 
+      await this.prismaService.syncControl.upsert({
+        where: { name: 'order_historical_lark' },
+        create: {
+          name: 'order_historical_lark',
+          entities: ['order_lark'],
+          syncMode: 'historical',
+          isRunning: true,
+          isEnabled: true,
+          status: 'in_progress',
+          startedAt: new Date(),
+        },
+        update: {
+          isRunning: true,
+          status: 'in_progress',
+          startedAt: new Date(),
+          error: null,
+          progress: {},
+        },
+      });
+
       let currentItem = 0;
       let totalProcessed = 0;
+      let totalLarkSuccess = 0;
+      let totalLarkFailed = 0;
       let batchCount = 0;
       let hasMoreData = true;
       const orderBatch: any[] = [];
@@ -587,10 +797,19 @@ export class KiotVietOrderService {
         if (response.data && response.data.length > 0) {
           orderBatch.push(...response.data);
 
-          if (orderBatch.length >= this.BATCH_SIZE) {
-            const { created, updated } = await this.batchSaveOrders(orderBatch);
+          if (
+            orderBatch.length >= this.BATCH_SIZE ||
+            response.data.length < this.PAGE_SIZE
+          ) {
+            const { created, updated, larkResult } =
+              await this.batchSaveOrdersWithLarkTracking(orderBatch);
             totalProcessed += created + updated;
             batchCount++;
+
+            if (larkResult) {
+              totalLarkSuccess += larkResult.success;
+              totalLarkFailed += larkResult.failed;
+            }
 
             await this.prismaService.syncControl.update({
               where: { name: 'order_historical' },
@@ -603,8 +822,19 @@ export class KiotVietOrderService {
               },
             });
 
+            await this.prismaService.syncControl.update({
+              where: { name: 'order_historical_lark' },
+              data: {
+                progress: {
+                  totalLarkSuccess,
+                  totalLarkFailed,
+                  batchCount,
+                },
+              },
+            });
+
             this.logger.log(
-              `Order historical sync batch ${batchCount}: ${totalProcessed} orders processed`,
+              `Historical sync batch ${batchCount}: ${totalProcessed} orders processed, LarkBase: ${totalLarkSuccess} success, ${totalLarkFailed} failed`,
             );
             orderBatch.length = 0;
           }
@@ -612,13 +842,6 @@ export class KiotVietOrderService {
 
         hasMoreData = response.data && response.data.length === this.PAGE_SIZE;
         if (hasMoreData) currentItem += this.PAGE_SIZE;
-      }
-
-      // Process remaining orders in batch
-      if (orderBatch.length > 0) {
-        const { created, updated } = await this.batchSaveOrders(orderBatch);
-        totalProcessed += created + updated;
-        batchCount++;
       }
 
       await this.prismaService.syncControl.update({
@@ -632,12 +855,29 @@ export class KiotVietOrderService {
         },
       });
 
+      await this.prismaService.syncControl.update({
+        where: { name: 'order_historical_lark' },
+        data: {
+          isRunning: false,
+          isEnabled: false,
+          status: totalLarkFailed > 0 ? 'completed_with_errors' : 'completed',
+          completedAt: new Date(),
+          progress: { totalLarkSuccess, totalLarkFailed, batchCount },
+          error:
+            totalLarkFailed > 0
+              ? `${totalLarkFailed} records failed to sync to LarkBase`
+              : null,
+        },
+      });
+
       this.logger.log(
-        `Order historical sync completed: ${totalProcessed} orders processed`,
+        `Historical sync completed: ${totalProcessed} orders processed, LarkBase: ${totalLarkSuccess} success, ${totalLarkFailed} failed`,
       );
     } catch (error) {
-      await this.prismaService.syncControl.update({
-        where: { name: 'order_historical' },
+      await this.prismaService.syncControl.updateMany({
+        where: {
+          name: { in: ['order_historical', 'order_historical_lark'] },
+        },
         data: {
           isRunning: false,
           status: 'failed',
@@ -646,7 +886,7 @@ export class KiotVietOrderService {
         },
       });
 
-      this.logger.error(`Order historical sync failed: ${error.message}`);
+      this.logger.error(`Historical sync failed: ${error.message}`);
       throw error;
     }
   }

@@ -97,7 +97,6 @@ export class KiotVietInvoiceService {
         this.logger.error(
           `Failed to save invoice ${invoiceData.code}: ${error.message}`,
         );
-        // Continue processing other invoices instead of stopping
         continue;
       }
     }
@@ -276,11 +275,10 @@ export class KiotVietInvoiceService {
         this.logger.warn(
           `Branch ${invoiceData.branchId} not found for invoice ${invoiceData.code}. Updating invoice without branch reference.`,
         );
-        data.branch = { disconnect: true }; // Explicitly set to null
+        data.branch = { disconnect: true };
       }
     }
 
-    // Handle soldBy user - set to null if not found (FIXED: same as create)
     if (invoiceData.soldById) {
       const soldByUser = await this.prismaService.user.findFirst({
         where: { kiotVietId: BigInt(invoiceData.soldById) },
@@ -786,7 +784,6 @@ export class KiotVietInvoiceService {
     }
   }
 
-  // UPDATED: Recent sync with Lark Base integration
   async syncRecentInvoices(days: number = 7): Promise<void> {
     try {
       // Check if historical sync is running (like customer.service.ts)
@@ -840,6 +837,9 @@ export class KiotVietInvoiceService {
       const lastModifiedFrom = dayjs()
         .subtract(days, 'day')
         .format('YYYY-MM-DD');
+
+      this.logger.log(`Starting recent invoice sync for last ${days} days`);
+
       let currentItem = 0;
       let totalProcessed = 0;
       let totalLarkSuccess = 0;
@@ -872,7 +872,6 @@ export class KiotVietInvoiceService {
         if (hasMoreData) currentItem += this.PAGE_SIZE;
       }
 
-      // Update database sync control
       await this.prismaService.syncControl.update({
         where: { name: 'invoice_recent' },
         data: {
@@ -883,7 +882,6 @@ export class KiotVietInvoiceService {
         },
       });
 
-      // Update LarkBase sync control
       await this.prismaService.syncControl.update({
         where: { name: 'invoice_recent_lark' },
         data: {

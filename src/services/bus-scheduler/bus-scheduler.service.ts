@@ -14,11 +14,7 @@ import { KiotVietCustomerService } from '../kiot-viet/customer/customer.service'
 import { KiotVietProductService } from '../kiot-viet/product/product.service';
 import { KiotVietOrderService } from '../kiot-viet/order/order.service';
 import { KiotVietInvoiceService } from '../kiot-viet/invoice/invoice.service';
-import {
-  EntityStatus,
-  EntityStatusSummary,
-  BusStatusResponse,
-} from '../../types/sync.types';
+import { EntityStatus, EntityStatusSummary } from '../../types/sync.types';
 
 interface SyncEntity {
   name: string;
@@ -35,7 +31,6 @@ export class BusSchedulerService implements OnModuleInit {
   private isRunning = false;
   private readonly MAX_RETRIES = 2;
 
-  // Define sync entities in dependency order
   private readonly syncEntities: SyncEntity[] = [
     // Phase 1 - No Dependencies
     // {
@@ -112,7 +107,8 @@ export class BusSchedulerService implements OnModuleInit {
       service: 'orderService',
       syncMethod: 'syncHistoricalOrders',
       syncType: 'full',
-      dependencies: ['branch', 'customer', 'product', 'user', 'salechannel'],
+      // dependencies: ['branch', 'customer', 'product', 'user', 'salechannel'],
+      dependencies: ['customer', 'product'],
     },
 
     {
@@ -120,14 +116,15 @@ export class BusSchedulerService implements OnModuleInit {
       service: 'invoiceService',
       syncMethod: 'syncHistoricalInvoices',
       syncType: 'full',
-      dependencies: [
-        'branch',
-        'customer',
-        'product',
-        'user',
-        'order',
-        'salechannel',
-      ],
+      // dependencies: [
+      //   'branch',
+      //   'customer',
+      //   'product',
+      //   'user',
+      //   'order',
+      //   'salechannel',
+      // ],
+      dependencies: ['customer', 'product', 'order'],
     },
   ];
 

@@ -309,6 +309,7 @@ model Branch {
   @@index([kiotVietId])
   Cashflow Cashflow[]
   Invoice Invoice[]
+  Order Order[]
 }
 
 model User {
@@ -340,14 +341,17 @@ model Order {
   kiotVietId        BigInt             @unique
   code              String             @unique
   purchaseDate      DateTime
-  branchId          Int
-  branch            Branch             @relation("BranchOrders", fields: [branchId], references: [id])
+  branchId          Int?
+  branch            Branch?             @relation(fields: [branchId], references: [id])
   soldById          BigInt?
   soldBy            User?              @relation("OrderSoldBy", fields: [soldById], references: [kiotVietId])
   cashierId         BigInt?
   customerId        Int?
   customer          Customer?          @relation(fields: [customerId], references: [id])
+  totalCostOfGoods  Decimal            @default(0) @db.Decimal(15,2)
+  otherRevenue      Decimal            @default(0) @db.Decimal(15,2)
   total             Decimal            @db.Decimal(15, 2)
+  totalAfterDiscount Decimal           @default(0) @db.Decimal(15,2)
   totalPayment      Decimal            @db.Decimal(15, 2)
   discount          Decimal?           @db.Decimal(15, 2)
   discountRatio     Float?
@@ -376,6 +380,7 @@ model Order {
   @@index([soldById])
   @@index([saleChannelId])
   @@index([lastSyncedAt])
+  Branch Branch[] @relation("BranchOrders")
 }
 
 model OrderDetail {
