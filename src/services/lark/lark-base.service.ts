@@ -964,15 +964,15 @@ export class LarkBaseService {
       );
     }
     const tongThuKhac = Number(thuKhac || 0);
-    fields['Thu Khác'] = tongThuKhac;
+    fields['Thu Khác'] = tongThuKhac || 0;
 
     // Giảm Giá
     const giamGia = Number(orderData.discount || 0);
-    fields['Giảm Giá'] = giamGia;
+    fields['Giảm Giá'] = giamGia || 0;
 
     // Khách cần trả (Total)
     const khachCanTra = Number(orderData.total || 0);
-    fields['Khách Cần Trả'] = khachCanTra;
+    fields['Khách Cần Trả'] = khachCanTra || 0;
 
     // Khách Đã Trả
     if (
@@ -993,7 +993,7 @@ export class LarkBaseService {
     // Mã Hoá Đơn - from invoices array
     if (orderData.invoices && orderData.invoices.length > 0) {
       const invoiceCodes = orderData.invoices
-        .map((inv: any) => inv.invoiceCode)
+        .map((inv) => inv.invoiceCode)
         .join(', ');
       fields['Mã Hoá Đơn'] = invoiceCodes; // "HD076536, HD076536.01"
     }
