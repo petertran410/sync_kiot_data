@@ -968,9 +968,11 @@ export class LarkBaseService {
 
     // Giảm Giá
     const giamGia = Number(orderData.discount || 0);
+    fields['Giảm Giá'] = giamGia;
 
     // Khách cần trả (Total)
     const khachCanTra = Number(orderData.total || 0);
+    fields['Khách Cần Trả'] = khachCanTra;
 
     // Khách Đã Trả
     if (
