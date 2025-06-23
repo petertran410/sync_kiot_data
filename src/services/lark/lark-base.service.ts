@@ -368,7 +368,7 @@ export class LarkBaseService {
       }
 
       const existingRecords = new Map<string, string>();
-      const batchSize = 100;
+      const batchSize = 50;
       let totalChecked = 0;
       let totalFound = 0;
       let totalErrors = 0;
@@ -583,7 +583,7 @@ export class LarkBaseService {
     try {
       await this.getInvoiceTableFields();
 
-      const batchSize = 100;
+      const batchSize = 50;
       let totalSuccess = 0;
       let totalFailed = 0;
 
@@ -699,7 +699,7 @@ export class LarkBaseService {
       }
 
       const existingRecords = new Map<string, string>();
-      const batchSize = 100;
+      const batchSize = 50;
       let totalChecked = 0;
       let totalFound = 0;
       let totalErrors = 0;
@@ -902,7 +902,7 @@ export class LarkBaseService {
     try {
       await this.getCustomerTableFields();
 
-      const batchSize = 100;
+      const batchSize = 50;
       let totalSuccess = 0;
       let totalFailed = 0;
 
@@ -1134,7 +1134,7 @@ export class LarkBaseService {
       }
 
       const existingRecords = new Map<string, string>();
-      const batchSize = 100;
+      const batchSize = 50;
       let totalChecked = 0;
       let totalFound = 0;
       let totalErrors = 0;
@@ -1340,7 +1340,7 @@ export class LarkBaseService {
     try {
       await this.getOrderTableFields();
 
-      const batchSize = 100;
+      const batchSize = 50;
       let totalSuccess = 0;
       let totalFailed = 0;
 
