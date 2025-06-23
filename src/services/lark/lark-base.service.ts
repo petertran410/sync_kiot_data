@@ -358,13 +358,30 @@ export class LarkBaseService {
     kiotVietIds: string[],
   ): Promise<Map<string, string>> {
     try {
+      // Step 1: Verify kiotVietId field exists in LarkBase
+      const hasKiotVietIdField = await this.verifyKiotVietIdField('invoice');
+      if (!hasKiotVietIdField) {
+        this.logger.warn(
+          'Invoice: kiotVietId field not found in LarkBase - treating all records as new',
+        );
+        return new Map();
+      }
+
       const existingRecords = new Map<string, string>();
       const batchSize = 70;
+      let totalChecked = 0;
+      let totalFound = 0;
+      let totalErrors = 0;
+
+      this.logger.log(
+        `Invoice: Starting duplicate check for ${kiotVietIds.length} records`,
+      );
 
       for (let i = 0; i < kiotVietIds.length; i += batchSize) {
         const batch = kiotVietIds.slice(i, i + batchSize);
 
         for (const kiotVietIdStr of batch) {
+          totalChecked++;
           try {
             const kiotVietIdNum = Number(kiotVietIdStr);
 
@@ -392,22 +409,36 @@ export class LarkBaseService {
               const recordKiotVietId = record.fields?.['kiotVietId'];
               if (recordKiotVietId === kiotVietIdNum) {
                 existingRecords.set(kiotVietIdStr, record.record_id!);
+                totalFound++;
+                this.logger.debug(
+                  `Invoice: DUPLICATE found - kiotVietId=${kiotVietIdStr}, recordId=${record.record_id}`,
+                );
               }
+            } else {
+              this.logger.debug(
+                `Invoice: NEW record - kiotVietId=${kiotVietIdStr}`,
+              );
             }
           } catch (error) {
-            this.logger.debug(
-              `Error checking kiotVietId ${kiotVietIdStr}: ${error.message}`,
+            totalErrors++;
+            this.logger.warn(
+              `Invoice: Failed to check kiotVietId ${kiotVietIdStr}: ${error.message} - treating as NEW record`,
             );
+            // Continue processing instead of throwing - don't stop sync
           }
         }
       }
 
-      this.logger.log(`Found ${existingRecords.size} existing invoice records`);
+      this.logger.log(
+        `Invoice duplicate check completed: ${totalChecked} checked, ${totalFound} duplicates found, ${totalErrors} errors, ${totalChecked - totalFound} new records`,
+      );
+
       return existingRecords;
     } catch (error) {
       this.logger.error(
-        `Failed to get existing invoice records: ${error.message}`,
+        `Invoice: Critical error in duplicate checking: ${error.message} - treating all records as NEW`,
       );
+      // Return empty map instead of throwing - don't stop sync
       return new Map();
     }
   }
@@ -552,7 +583,7 @@ export class LarkBaseService {
     // try {
     //   await this.getInvoiceTableFields();
 
-    //   const batchSize = 70;
+    //   const batchSize = 100;
     //   let totalSuccess = 0;
     //   let totalFailed = 0;
 
@@ -658,13 +689,30 @@ export class LarkBaseService {
     kiotVietIds: string[],
   ): Promise<Map<string, string>> {
     try {
+      // Step 1: Verify kiotvietId field exists in LarkBase (note: customer uses 'kiotvietId', not 'kiotVietId')
+      const hasKiotVietIdField = await this.verifyKiotVietIdField('customer');
+      if (!hasKiotVietIdField) {
+        this.logger.warn(
+          'Customer: kiotvietId field not found in LarkBase - treating all records as new',
+        );
+        return new Map();
+      }
+
       const existingRecords = new Map<string, string>();
       const batchSize = 70;
+      let totalChecked = 0;
+      let totalFound = 0;
+      let totalErrors = 0;
+
+      this.logger.log(
+        `Customer: Starting duplicate check for ${kiotVietIds.length} records`,
+      );
 
       for (let i = 0; i < kiotVietIds.length; i += batchSize) {
         const batch = kiotVietIds.slice(i, i + batchSize);
 
         for (const kiotVietIdStr of batch) {
+          totalChecked++;
           try {
             const kiotVietIdNum = Number(kiotVietIdStr);
 
@@ -678,7 +726,7 @@ export class LarkBaseService {
                   conjunction: 'and',
                   conditions: [
                     {
-                      field_name: 'kiotvietId',
+                      field_name: 'kiotvietId', // Note: customer uses lowercase 'kiotvietId'
                       operator: 'is',
                       value: [kiotVietIdNum] as any,
                     },
@@ -689,30 +737,45 @@ export class LarkBaseService {
 
             if (response.data?.items && response.data.items.length > 0) {
               const record = response.data.items[0];
-              const recordKiotVietId =
-                record.fields?.['kiotvietId']?.toString();
-              const recordId = record.record_id;
-
-              if (recordKiotVietId && recordId) {
-                existingRecords.set(recordKiotVietId, recordId);
+              const recordKiotVietId = record.fields?.['kiotvietId'];
+              if (recordKiotVietId === kiotVietIdNum) {
+                existingRecords.set(kiotVietIdStr, record.record_id!);
+                totalFound++;
+                this.logger.debug(
+                  `Customer: DUPLICATE found - kiotvietId=${kiotVietIdStr}, recordId=${record.record_id}`,
+                );
               }
+            } else {
+              this.logger.debug(
+                `Customer: NEW record - kiotvietId=${kiotVietIdStr}`,
+              );
             }
-          } catch (searchError) {
+          } catch (error) {
+            totalErrors++;
             this.logger.warn(
-              `Failed to search for kiotVietId ${kiotVietIdStr}: ${searchError.message}`,
+              `Customer: Failed to check kiotvietId ${kiotVietIdStr}: ${error.message} - treating as NEW record`,
             );
+            // Continue processing instead of throwing - don't stop sync
           }
         }
 
+        // Add delay between batches to avoid rate limiting
         if (i + batchSize < kiotVietIds.length) {
           await new Promise((resolve) => setTimeout(resolve, 500));
         }
       }
 
+      this.logger.log(
+        `Customer duplicate check completed: ${totalChecked} checked, ${totalFound} duplicates found, ${totalErrors} errors, ${totalChecked - totalFound} new records`,
+      );
+
       return existingRecords;
     } catch (error) {
-      this.logger.error(`Failed to get existing records: ${error.message}`);
-      throw error;
+      this.logger.error(
+        `Customer: Critical error in duplicate checking: ${error.message} - treating all records as NEW`,
+      );
+      // Return empty map instead of throwing - don't stop sync
+      return new Map();
     }
   }
 
@@ -839,7 +902,7 @@ export class LarkBaseService {
     // try {
     //   await this.getCustomerTableFields();
 
-    //   const batchSize = 70;
+    //   const batchSize = 100;
     //   let totalSuccess = 0;
     //   let totalFailed = 0;
 
@@ -1060,13 +1123,30 @@ export class LarkBaseService {
     kiotVietIds: string[],
   ): Promise<Map<string, string>> {
     try {
+      // Step 1: Verify kiotVietId field exists in LarkBase
+      const hasKiotVietIdField = await this.verifyKiotVietIdField('order');
+      if (!hasKiotVietIdField) {
+        this.logger.warn(
+          'Order: kiotVietId field not found in LarkBase - treating all records as new',
+        );
+        return new Map();
+      }
+
       const existingRecords = new Map<string, string>();
       const batchSize = 70;
+      let totalChecked = 0;
+      let totalFound = 0;
+      let totalErrors = 0;
+
+      this.logger.log(
+        `Order: Starting duplicate check for ${kiotVietIds.length} records`,
+      );
 
       for (let i = 0; i < kiotVietIds.length; i += batchSize) {
         const batch = kiotVietIds.slice(i, i + batchSize);
 
         for (const kiotVietIdStr of batch) {
+          totalChecked++;
           try {
             const kiotVietIdNum = Number(kiotVietIdStr);
 
@@ -1094,22 +1174,36 @@ export class LarkBaseService {
               const recordKiotVietId = record.fields?.['kiotVietId'];
               if (recordKiotVietId === kiotVietIdNum) {
                 existingRecords.set(kiotVietIdStr, record.record_id!);
+                totalFound++;
+                this.logger.debug(
+                  `Order: DUPLICATE found - kiotVietId=${kiotVietIdStr}, recordId=${record.record_id}`,
+                );
               }
+            } else {
+              this.logger.debug(
+                `Order: NEW record - kiotVietId=${kiotVietIdStr}`,
+              );
             }
           } catch (error) {
-            this.logger.debug(
-              `Error checking kiotVietId ${kiotVietIdStr}: ${error.message}`,
+            totalErrors++;
+            this.logger.warn(
+              `Order: Failed to check kiotVietId ${kiotVietIdStr}: ${error.message} - treating as NEW record`,
             );
+            // Continue processing instead of throwing - don't stop sync
           }
         }
       }
 
-      this.logger.log(`Found ${existingRecords.size} existing order records`);
+      this.logger.log(
+        `Order duplicate check completed: ${totalChecked} checked, ${totalFound} duplicates found, ${totalErrors} errors, ${totalChecked - totalFound} new records`,
+      );
+
       return existingRecords;
     } catch (error) {
       this.logger.error(
-        `Failed to get existing order records: ${error.message}`,
+        `Order: Critical error in duplicate checking: ${error.message} - treating all records as NEW`,
       );
+      // Return empty map instead of throwing - don't stop sync
       return new Map();
     }
   }
@@ -1250,7 +1344,7 @@ export class LarkBaseService {
       let totalFailed = 0;
 
       this.logger.log(
-        `Starting Order LarkBase sync for ${ordersWithData.length} orders`,
+        `Order: Starting LarkBase sync for ${ordersWithData.length} orders`,
       );
 
       for (let i = 0; i < ordersWithData.length; i += batchSize) {
@@ -1267,8 +1361,20 @@ export class LarkBaseService {
         );
 
         this.logger.log(
-          `Order batch ${Math.floor(i / batchSize) + 1}: ${toCreate.length} to create, ${toUpdate.length} to update`,
+          `Order batch ${Math.floor(i / batchSize) + 1}: ${toCreate.length} NEW records to create, ${toUpdate.length} DUPLICATE records to update`,
         );
+
+        // Log specific records being created and updated
+        if (toCreate.length > 0) {
+          this.logger.debug(
+            `Order: Creating NEW records with kiotVietIds: ${toCreate.map((item) => item.orderData.id).join(', ')}`,
+          );
+        }
+        if (toUpdate.length > 0) {
+          this.logger.debug(
+            `Order: Updating DUPLICATE records with kiotVietIds: ${toUpdate.map((item) => item.orderData.id).join(', ')}`,
+          );
+        }
 
         const [createResult, updateResult] = await Promise.allSettled([
           toCreate.length > 0
@@ -1296,10 +1402,14 @@ export class LarkBaseService {
         totalFailed += createFailed + updateFailed;
 
         if (createResult.status === 'rejected') {
-          this.logger.error(`Create batch failed: ${createResult.reason}`);
+          this.logger.error(
+            `Order: Create batch failed: ${createResult.reason}`,
+          );
         }
         if (updateResult.status === 'rejected') {
-          this.logger.error(`Update batch failed: ${updateResult.reason}`);
+          this.logger.error(
+            `Order: Update batch failed: ${updateResult.reason}`,
+          );
         }
 
         if (i + batchSize < ordersWithData.length) {
@@ -1315,6 +1425,68 @@ export class LarkBaseService {
     } catch (error) {
       this.logger.error(`Order LarkBase sync failed: ${error.message}`);
       return { success: 0, failed: ordersWithData.length };
+    }
+  }
+
+  private async verifyKiotVietIdField(
+    entityType: 'customer' | 'order' | 'invoice',
+  ): Promise<boolean> {
+    try {
+      let baseToken: string;
+      let tableId: string;
+      let fieldName: string;
+
+      switch (entityType) {
+        case 'customer':
+          baseToken = this.customerBaseToken;
+          tableId = this.customerTableId;
+          fieldName = 'kiotvietId'; // Note: customer uses lowercase
+          break;
+        case 'order':
+          baseToken = this.orderBaseToken;
+          tableId = this.orderTableId;
+          fieldName = 'kiotVietId';
+          break;
+        case 'invoice':
+          baseToken = this.invoiceBaseToken;
+          tableId = this.invoiceTableId;
+          fieldName = 'kiotVietId';
+          break;
+      }
+
+      const response = await this.client.bitable.appTableField.list({
+        path: {
+          app_token: baseToken,
+          table_id: tableId,
+        },
+      });
+
+      if (response.data?.items) {
+        const hasField = response.data.items.some(
+          (field) => field.field_name === fieldName,
+        );
+        if (hasField) {
+          this.logger.debug(
+            `${entityType}: ${fieldName} field verified in LarkBase`,
+          );
+          return true;
+        } else {
+          this.logger.error(
+            `${entityType}: ${fieldName} field NOT FOUND in LarkBase! Available fields: ${response.data.items.map((f) => f.field_name).join(', ')}`,
+          );
+          return false;
+        }
+      }
+
+      this.logger.error(
+        `${entityType}: Could not retrieve field list from LarkBase`,
+      );
+      return false;
+    } catch (error) {
+      this.logger.error(
+        `${entityType}: Failed to verify ${entityType === 'customer' ? 'kiotvietId' : 'kiotVietId'} field: ${error.message}`,
+      );
+      return false;
     }
   }
 }
