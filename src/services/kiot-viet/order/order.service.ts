@@ -8,6 +8,17 @@ import { LarkBaseService } from '../../lark/lark-base.service';
 import { Prisma } from '@prisma/client';
 import * as dayjs from 'dayjs';
 
+interface OrderToCreate {
+  createData: Prisma.OrderCreateInput;
+  orderData: any;
+}
+
+interface OrderToUpdate {
+  id: number;
+  data: Prisma.OrderUpdateInput;
+  orderData: any;
+}
+
 @Injectable()
 export class KiotVietOrderService {
   private readonly logger = new Logger(KiotVietOrderService.name);
@@ -202,7 +213,6 @@ export class KiotVietOrderService {
     }
   }
 
-  // ===== DATABASE → LARKBASE SYNC METHODS =====
   async syncPendingToLarkBase(): Promise<{ success: number; failed: number }> {
     try {
       const pendingOrders = await this.prismaService.order.findMany({
@@ -230,8 +240,8 @@ export class KiotVietOrderService {
         `Syncing ${pendingOrders.length} pending orders to LarkBase`,
       );
 
-      const recordsToCreate = [];
-      const recordsToUpdate = [];
+      const recordsToCreate: typeof pendingOrders = [];
+      const recordsToUpdate: typeof pendingOrders = [];
 
       for (const order of pendingOrders) {
         if (order.larkRecordId) {
@@ -430,15 +440,9 @@ export class KiotVietOrderService {
   private async saveOrdersToDatabase(
     orders: any[],
   ): Promise<{ created: number; updated: number }> {
-    const ordersToCreate: Array<{
-      createData: Prisma.OrderCreateInput;
-      orderData: any;
-    }> = [];
-    const ordersToUpdate: Array<{
-      id: number;
-      data: Prisma.OrderUpdateInput;
-      orderData: any;
-    }> = [];
+    // Explicitly type the arrays
+    const ordersToCreate: OrderToCreate[] = [];
+    const ordersToUpdate: OrderToUpdate[] = [];
 
     for (const orderData of orders) {
       const existingOrder = await this.prismaService.order.findUnique({
@@ -467,15 +471,8 @@ export class KiotVietOrderService {
   }
 
   private async processDatabaseOperations(
-    ordersToCreate: Array<{
-      createData: Prisma.OrderCreateInput;
-      orderData: any;
-    }>,
-    ordersToUpdate: Array<{
-      id: number;
-      data: Prisma.OrderUpdateInput;
-      orderData: any;
-    }>,
+    ordersToCreate: OrderToCreate[],
+    ordersToUpdate: OrderToUpdate[],
   ) {
     let createdCount = 0;
     let updatedCount = 0;
@@ -523,7 +520,6 @@ export class KiotVietOrderService {
         kiotVietId: BigInt(orderData.id),
         code: orderData.code,
         purchaseDate: new Date(orderData.purchaseDate),
-        soldById: orderData.soldById ? BigInt(orderData.soldById) : null,
         cashierId: orderData.cashierId ? BigInt(orderData.cashierId) : null,
         totalCostOfGoods: orderData.totalCostOfGoods
           ? parseFloat(orderData.totalCostOfGoods)
@@ -555,6 +551,16 @@ export class KiotVietOrderService {
         lastSyncedAt: new Date(),
         larkSyncStatus: 'PENDING',
       };
+
+      // Handle soldBy relationship (not soldById)
+      if (orderData.soldById) {
+        const user = await this.prismaService.user.findFirst({
+          where: { kiotVietId: BigInt(orderData.soldById) },
+        });
+        if (user) {
+          data.soldBy = { connect: { id: user.id } };
+        }
+      }
 
       // Handle branch relationship
       if (orderData.branchId) {
@@ -601,7 +607,6 @@ export class KiotVietOrderService {
     const data: Prisma.OrderUpdateInput = {
       code: orderData.code,
       purchaseDate: new Date(orderData.purchaseDate),
-      soldById: orderData.soldById ? BigInt(orderData.soldById) : null,
       cashierId: orderData.cashierId ? BigInt(orderData.cashierId) : null,
       totalCostOfGoods: orderData.totalCostOfGoods
         ? parseFloat(orderData.totalCostOfGoods)
@@ -630,6 +635,16 @@ export class KiotVietOrderService {
       lastSyncedAt: new Date(),
       larkSyncStatus: 'PENDING',
     };
+
+    // Handle soldBy relationship (not soldById)
+    if (orderData.soldById) {
+      const user = await this.prismaService.user.findFirst({
+        where: { kiotVietId: BigInt(orderData.soldById) },
+      });
+      if (user) {
+        data.soldBy = { connect: { id: user.id } };
+      }
+    }
 
     // Handle relationships (same as create)
     if (orderData.branchId) {

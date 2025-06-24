@@ -1,5 +1,3 @@
-import { CustomerGroupRelation } from './../../../../node_modules/.prisma/client/index.d';
-// src/services/kiot-viet/customer/customer.service.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
@@ -8,6 +6,18 @@ import { KiotVietAuthService } from '../auth.service';
 import { LarkBaseService } from '../../lark/lark-base.service';
 import { Prisma } from '@prisma/client';
 import * as dayjs from 'dayjs';
+import { async } from 'rxjs';
+
+interface CustomerToCreate {
+  createData: Prisma.CustomerCreateInput;
+  groups: string | null;
+}
+
+interface CustomerToUpdate {
+  id: number;
+  data: Prisma.CustomerUpdateInput;
+  groups: string | null;
+}
 
 @Injectable()
 export class KiotVietCustomerService {
@@ -434,15 +444,9 @@ export class KiotVietCustomerService {
   private async saveCustomersToDatabase(
     customers: any[],
   ): Promise<{ created: number; updated: number }> {
-    const customersToCreate: Array<{
-      createData: Prisma.CustomerCreateInput;
-      groups: string | null;
-    }> = [];
-    const customersToUpdate: Array<{
-      id: number;
-      data: Prisma.CustomerUpdateInput;
-      groups: string | null;
-    }> = [];
+    // Explicitly type the arrays
+    const customersToCreate: CustomerToCreate[] = [];
+    const customersToUpdate: CustomerToUpdate[] = [];
 
     for (const customerData of customers) {
       const existingCustomer = await this.prismaService.customer.findUnique({
@@ -474,15 +478,8 @@ export class KiotVietCustomerService {
   }
 
   private async processDatabaseOperations(
-    customersToCreate: Array<{
-      createData: Prisma.CustomerCreateInput;
-      groups: string | null;
-    }>,
-    customersToUpdate: Array<{
-      id: number;
-      data: Prisma.CustomerUpdateInput;
-      groups: string | null;
-    }>,
+    customersToCreate: CustomerToCreate[],
+    customersToUpdate: CustomerToUpdate[],
   ) {
     let createdCount = 0;
     let updatedCount = 0;
@@ -561,11 +558,9 @@ export class KiotVietCustomerService {
         totalPoint: customerData.totalPoint || 0,
         rewardPoint: customerData.rewardPoint || 0,
         retailerId: customerData.retailerId || null,
-        branchId: customerData.branchId || null,
         type: customerData.type || null,
         isActive:
           customerData.isActive !== undefined ? customerData.isActive : true,
-        isLock: customerData.isLock !== undefined ? customerData.isLock : false,
         psidFacebook: customerData.psidFacebook
           ? BigInt(customerData.psidFacebook)
           : null,
@@ -579,7 +574,7 @@ export class KiotVietCustomerService {
         larkSyncStatus: 'PENDING',
       };
 
-      // Handle branch relationship
+      // Handle branch relationship (remove branchId)
       if (customerData.branchId) {
         const branch = await this.prismaService.branch.findFirst({
           where: { kiotVietId: customerData.branchId },
@@ -629,11 +624,9 @@ export class KiotVietCustomerService {
       totalPoint: customerData.totalPoint || 0,
       rewardPoint: customerData.rewardPoint || 0,
       retailerId: customerData.retailerId || null,
-      branchId: customerData.branchId || null,
       type: customerData.type || null,
       isActive:
         customerData.isActive !== undefined ? customerData.isActive : true,
-      isLock: customerData.isLock !== undefined ? customerData.isLock : false,
       psidFacebook: customerData.psidFacebook
         ? BigInt(customerData.psidFacebook)
         : null,
@@ -644,7 +637,7 @@ export class KiotVietCustomerService {
       larkSyncStatus: 'PENDING',
     };
 
-    // Handle branch relationship
+    // Handle branch relationship (remove branchId)
     if (customerData.branchId) {
       const branch = await this.prismaService.branch.findFirst({
         where: { kiotVietId: customerData.branchId },

@@ -8,6 +8,17 @@ import { LarkBaseService } from '../../lark/lark-base.service';
 import { Prisma } from '@prisma/client';
 import * as dayjs from 'dayjs';
 
+interface InvoiceToCreate {
+  createData: Prisma.InvoiceCreateInput;
+  invoiceData: any;
+}
+
+interface InvoiceToUpdate {
+  id: number;
+  data: Prisma.InvoiceUpdateInput;
+  invoiceData: any;
+}
+
 @Injectable()
 export class KiotVietInvoiceService {
   private readonly logger = new Logger(KiotVietInvoiceService.name);
@@ -194,7 +205,6 @@ export class KiotVietInvoiceService {
     }
   }
 
-  // ===== DATABASE → LARKBASE SYNC METHODS =====
   async syncPendingToLarkBase(): Promise<{ success: number; failed: number }> {
     try {
       const pendingInvoices = await this.prismaService.invoice.findMany({
@@ -222,8 +232,9 @@ export class KiotVietInvoiceService {
         `Syncing ${pendingInvoices.length} pending invoices to LarkBase`,
       );
 
-      const recordsToCreate = [];
-      const recordsToUpdate = [];
+      // Explicitly type the arrays
+      const recordsToCreate: typeof pendingInvoices = [];
+      const recordsToUpdate: typeof pendingInvoices = [];
 
       for (const invoice of pendingInvoices) {
         if (invoice.larkRecordId) {
@@ -423,15 +434,9 @@ export class KiotVietInvoiceService {
   private async saveInvoicesToDatabase(
     invoices: any[],
   ): Promise<{ created: number; updated: number }> {
-    const invoicesToCreate: Array<{
-      createData: Prisma.InvoiceCreateInput;
-      invoiceData: any;
-    }> = [];
-    const invoicesToUpdate: Array<{
-      id: number;
-      data: Prisma.InvoiceUpdateInput;
-      invoiceData: any;
-    }> = [];
+    // Explicitly type the arrays
+    const invoicesToCreate: InvoiceToCreate[] = [];
+    const invoicesToUpdate: InvoiceToUpdate[] = [];
 
     for (const invoiceData of invoices) {
       const existingInvoice = await this.prismaService.invoice.findUnique({
@@ -463,15 +468,8 @@ export class KiotVietInvoiceService {
   }
 
   private async processDatabaseOperations(
-    invoicesToCreate: Array<{
-      createData: Prisma.InvoiceCreateInput;
-      invoiceData: any;
-    }>,
-    invoicesToUpdate: Array<{
-      id: number;
-      data: Prisma.InvoiceUpdateInput;
-      invoiceData: any;
-    }>,
+    invoicesToCreate: InvoiceToCreate[],
+    invoicesToUpdate: InvoiceToUpdate[],
   ) {
     let createdCount = 0;
     let updatedCount = 0;
@@ -513,7 +511,6 @@ export class KiotVietInvoiceService {
 
     return { created: createdCount, updated: updatedCount };
   }
-
   private async prepareInvoiceCreateData(
     invoiceData: any,
   ): Promise<Prisma.InvoiceCreateInput | null> {
@@ -523,7 +520,6 @@ export class KiotVietInvoiceService {
         code: invoiceData.code,
         orderCode: invoiceData.orderCode || null,
         purchaseDate: new Date(invoiceData.purchaseDate),
-        soldById: invoiceData.soldById ? BigInt(invoiceData.soldById) : null,
         total: parseFloat(invoiceData.total),
         totalCostOfGoods: invoiceData.totalCostOfGoods
           ? parseFloat(invoiceData.totalCostOfGoods)
@@ -547,6 +543,16 @@ export class KiotVietInvoiceService {
         lastSyncedAt: new Date(),
         larkSyncStatus: 'PENDING',
       };
+
+      // Handle soldBy relationship (not soldById)
+      if (invoiceData.soldById) {
+        const user = await this.prismaService.user.findFirst({
+          where: { kiotVietId: BigInt(invoiceData.soldById) },
+        });
+        if (user) {
+          data.soldBy = { connect: { id: user.id } };
+        }
+      }
 
       // Handle branch relationship
       if (invoiceData.branchId) {
@@ -604,7 +610,6 @@ export class KiotVietInvoiceService {
       code: invoiceData.code,
       orderCode: invoiceData.orderCode || null,
       purchaseDate: new Date(invoiceData.purchaseDate),
-      soldById: invoiceData.soldById ? BigInt(invoiceData.soldById) : null,
       total: parseFloat(invoiceData.total),
       totalCostOfGoods: invoiceData.totalCostOfGoods
         ? parseFloat(invoiceData.totalCostOfGoods)
@@ -623,6 +628,16 @@ export class KiotVietInvoiceService {
       lastSyncedAt: new Date(),
       larkSyncStatus: 'PENDING',
     };
+
+    // Handle soldBy relationship (not soldById)
+    if (invoiceData.soldById) {
+      const user = await this.prismaService.user.findFirst({
+        where: { kiotVietId: BigInt(invoiceData.soldById) },
+      });
+      if (user) {
+        data.soldBy = { connect: { id: user.id } };
+      }
+    }
 
     // Handle relationships (same as create)
     if (invoiceData.branchId) {

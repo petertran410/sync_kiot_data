@@ -119,16 +119,9 @@ export class KiotVietSaleChannelService {
               isActive:
                 saleChannelData.isActivate !== undefined
                   ? saleChannelData.isActivate
-                  : true, // Fixed field name
+                  : true,
               position: saleChannelData.position || 0,
               retailerId: saleChannelData.retailerId || null,
-              createdBy: saleChannelData.createdBy
-                ? BigInt(saleChannelData.createdBy)
-                : null,
-              modifiedDate: saleChannelData.modifiedDate
-                ? new Date(saleChannelData.modifiedDate)
-                : new Date(),
-              lastSyncedAt: new Date(),
             },
           });
           updatedCount++;
@@ -140,19 +133,13 @@ export class KiotVietSaleChannelService {
               isActive:
                 saleChannelData.isActivate !== undefined
                   ? saleChannelData.isActivate
-                  : true, // Fixed field name
+                  : true,
               position: saleChannelData.position || 0,
               retailerId: saleChannelData.retailerId || null,
-              createdBy: saleChannelData.createdBy
-                ? BigInt(saleChannelData.createdBy)
-                : null,
+              // Remove createdBy as it doesn't exist in the model
               createdDate: saleChannelData.createdDate
                 ? new Date(saleChannelData.createdDate)
                 : new Date(),
-              modifiedDate: saleChannelData.modifiedDate
-                ? new Date(saleChannelData.modifiedDate)
-                : new Date(),
-              lastSyncedAt: new Date(),
             },
           });
           createdCount++;
