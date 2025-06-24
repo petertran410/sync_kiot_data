@@ -291,8 +291,6 @@ export class KiotVietInvoiceService {
       this.logger.log(
         `Recent sync completed: ${totalProcessed} invoices processed, ${duplicatesRemoved} duplicates removed`,
       );
-
-      await this.syncPendingToLarkBase();
     } catch (error) {
       await this.prismaService.syncControl.update({
         where: { name: 'invoice_recent' },
@@ -306,71 +304,6 @@ export class KiotVietInvoiceService {
 
       this.logger.error(`Recent sync failed: ${error.message}`);
       throw error;
-    }
-  }
-
-  async syncPendingToLarkBase(): Promise<{ success: number; failed: number }> {
-    try {
-      const pendingInvoices = await this.prismaService.invoice.findMany({
-        where: {
-          larkSyncStatus: 'PENDING',
-          larkSyncRetries: { lt: 3 },
-        },
-        include: {
-          branch: true,
-          customer: true,
-          soldBy: true,
-          order: true,
-          invoiceDelivery: true,
-          invoiceSurcharges: true,
-        },
-        take: 100,
-      });
-
-      if (pendingInvoices.length === 0) {
-        this.logger.log('No pending invoices to sync to LarkBase');
-        return { success: 0, failed: 0 };
-      }
-
-      this.logger.log(
-        `Syncing ${pendingInvoices.length} pending invoices to LarkBase`,
-      );
-
-      // Explicitly type the arrays
-      const recordsToCreate: typeof pendingInvoices = [];
-      const recordsToUpdate: typeof pendingInvoices = [];
-
-      for (const invoice of pendingInvoices) {
-        if (invoice.larkRecordId) {
-          recordsToUpdate.push(invoice);
-        } else {
-          recordsToCreate.push(invoice);
-        }
-      }
-
-      let totalSuccess = 0;
-      let totalFailed = 0;
-
-      if (recordsToCreate.length > 0) {
-        const createResult = await this.larkBaseCreateBatch(recordsToCreate);
-        totalSuccess += createResult.success;
-        totalFailed += createResult.failed;
-      }
-
-      if (recordsToUpdate.length > 0) {
-        const updateResult = await this.larkBaseUpdateBatch(recordsToUpdate);
-        totalSuccess += updateResult.success;
-        totalFailed += updateResult.failed;
-      }
-
-      this.logger.log(
-        `LarkBase sync completed: ${totalSuccess} success, ${totalFailed} failed`,
-      );
-
-      return { success: totalSuccess, failed: totalFailed };
-    } catch (error) {
-      this.logger.error(`LarkBase sync failed: ${error.message}`);
-      return { success: 0, failed: 0 };
     }
   }
 
@@ -413,58 +346,6 @@ export class KiotVietInvoiceService {
       return { success: response.success, failed: response.failed };
     } catch (error) {
       this.logger.error(`LarkBase create batch failed: ${error.message}`);
-
-      for (const invoice of invoices) {
-        await this.prismaService.invoice.update({
-          where: { id: invoice.id },
-          data: {
-            larkSyncStatus: 'FAILED',
-            larkSyncRetries: { increment: 1 },
-          },
-        });
-      }
-
-      return { success: 0, failed: invoices.length };
-    }
-  }
-
-  private async larkBaseUpdateBatch(
-    invoices: any[],
-  ): Promise<{ success: number; failed: number }> {
-    try {
-      const response =
-        await this.larkBaseService.directUpdateInvoices(invoices);
-
-      if (response.success > 0) {
-        const successfulInvoices = invoices.slice(0, response.success);
-        for (const invoice of successfulInvoices) {
-          await this.prismaService.invoice.update({
-            where: { id: invoice.id },
-            data: {
-              larkSyncStatus: 'SYNCED',
-              larkSyncedAt: new Date(),
-              larkSyncRetries: 0,
-            },
-          });
-        }
-      }
-
-      if (response.failed > 0) {
-        const failedInvoices = invoices.slice(response.success);
-        for (const invoice of failedInvoices) {
-          await this.prismaService.invoice.update({
-            where: { id: invoice.id },
-            data: {
-              larkSyncStatus: 'FAILED',
-              larkSyncRetries: { increment: 1 },
-            },
-          });
-        }
-      }
-
-      return { success: response.success, failed: response.failed };
-    } catch (error) {
-      this.logger.error(`LarkBase update batch failed: ${error.message}`);
 
       for (const invoice of invoices) {
         await this.prismaService.invoice.update({

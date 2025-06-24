@@ -91,12 +91,57 @@ export class LarkBaseService {
     });
   }
 
-  // ===== CUSTOMER DIRECT METHODS =====
   async directCreateCustomers(
     customers: any[],
   ): Promise<{ success: number; failed: number; records?: any[] }> {
     if (!customers.length) return { success: 0, failed: 0 };
 
+    try {
+      // Step 1: Check which records already exist in LarkBase
+      const { recordsToCreate, recordsToUpdate } =
+        await this.separateCustomersForUpsert(customers);
+
+      let totalSuccess = 0;
+      let totalFailed = 0;
+      let allRecords: any[] = [];
+
+      // Step 2: CREATE new records
+      if (recordsToCreate.length > 0) {
+        const createResult = await this.batchCreateCustomers(recordsToCreate);
+        totalSuccess += createResult.success;
+        totalFailed += createResult.failed;
+        if (createResult.records) {
+          allRecords.push(...createResult.records);
+        }
+      }
+
+      // Step 3: UPDATE existing records
+      if (recordsToUpdate.length > 0) {
+        const updateResult = await this.batchUpdateCustomers(recordsToUpdate);
+        totalSuccess += updateResult.success;
+        totalFailed += updateResult.failed;
+      }
+
+      this.logger.log(
+        `LarkBase customer UPSERT: ${recordsToCreate.length} created, ${recordsToUpdate.length} updated, ${totalSuccess} success, ${totalFailed} failed`,
+      );
+
+      return {
+        success: totalSuccess,
+        failed: totalFailed,
+        records: allRecords,
+      };
+    } catch (error) {
+      this.logger.error(`LarkBase customer UPSERT failed: ${error.message}`);
+      return { success: 0, failed: customers.length };
+    }
+  }
+
+  private async batchCreateCustomers(customers: any[]): Promise<{
+    success: number;
+    failed: number;
+    records?: any[];
+  }> {
     try {
       const records = customers
         .map((customer) => this.mapCustomerToLarkBase(customer))
@@ -118,10 +163,6 @@ export class LarkBaseService {
       const successCount = response.data?.records?.length || 0;
       const failedCount = customers.length - successCount;
 
-      this.logger.log(
-        `LarkBase customer direct create: ${successCount} success, ${failedCount} failed`,
-      );
-
       return {
         success: successCount,
         failed: failedCount,
@@ -129,17 +170,17 @@ export class LarkBaseService {
       };
     } catch (error) {
       this.logger.error(
-        `LarkBase customer direct create failed: ${error.message}`,
+        `LarkBase customer batch create failed: ${error.message}`,
       );
       return { success: 0, failed: customers.length };
     }
   }
 
-  async directUpdateCustomers(
-    customers: any[],
-  ): Promise<{ success: number; failed: number }> {
-    if (!customers.length) return { success: 0, failed: 0 };
-
+  // NEW: Batch update for existing records
+  private async batchUpdateCustomers(customers: any[]): Promise<{
+    success: number;
+    failed: number;
+  }> {
     try {
       const records = customers
         .filter((customer) => customer.larkRecordId)
@@ -163,25 +204,273 @@ export class LarkBaseService {
       const successCount = response.data?.records?.length || 0;
       const failedCount = customers.length - successCount;
 
-      this.logger.log(
-        `LarkBase customer direct update: ${successCount} success, ${failedCount} failed`,
-      );
-
       return { success: successCount, failed: failedCount };
     } catch (error) {
       this.logger.error(
-        `LarkBase customer direct update failed: ${error.message}`,
+        `LarkBase customer batch update failed: ${error.message}`,
       );
       return { success: 0, failed: customers.length };
     }
   }
 
-  // ===== ORDER DIRECT METHODS =====
+  private async separateCustomersForUpsert(customers: any[]): Promise<{
+    recordsToCreate: any[];
+    recordsToUpdate: any[];
+  }> {
+    const recordsToCreate: any[] = [];
+    const recordsToUpdate: any[] = [];
+
+    try {
+      // Get all kiotVietIds from incoming customers
+      const kiotVietIds = customers
+        .map((c) => c.id || c.kiotVietId)
+        .filter(Boolean);
+
+      // Query LarkBase to find existing records by kiotVietId
+      const existingRecords =
+        await this.findExistingCustomersByKiotVietId(kiotVietIds);
+
+      // Create lookup map of existing records
+      const existingRecordsMap = new Map();
+      existingRecords.forEach((record) => {
+        const kiotVietId = record.fields?.kiotvietId;
+        if (kiotVietId) {
+          existingRecordsMap.set(kiotVietId.toString(), record);
+        }
+      });
+
+      // Separate customers into create vs update
+      for (const customer of customers) {
+        const kiotVietId = (customer.id || customer.kiotVietId)?.toString();
+
+        if (kiotVietId && existingRecordsMap.has(kiotVietId)) {
+          // Record exists - add to update batch
+          const existingRecord = existingRecordsMap.get(kiotVietId);
+          recordsToUpdate.push({
+            ...customer,
+            larkRecordId: existingRecord.record_id,
+          });
+        } else {
+          // Record doesn't exist - add to create batch
+          recordsToCreate.push(customer);
+        }
+      }
+
+      this.logger.debug(
+        `Separated customers: ${recordsToCreate.length} to create, ${recordsToUpdate.length} to update`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Error separating customers for upsert: ${error.message}`,
+      );
+      // If error, default to create all (might cause duplicates but won't fail)
+      recordsToCreate.push(...customers);
+    }
+
+    return { recordsToCreate, recordsToUpdate };
+  }
+
+  private async findExistingCustomersByKiotVietId(
+    kiotVietIds: any[],
+  ): Promise<any[]> {
+    try {
+      const allRecords: any[] = [];
+      let hasMore = true;
+      let pageToken: string | undefined;
+
+      // Query LarkBase to find records with matching kiotVietIds
+      while (hasMore) {
+        const response = await this.client.bitable.appTableRecord.list({
+          path: {
+            app_token: this.customerBaseToken,
+            table_id: this.customerTableId,
+          },
+          params: {
+            page_size: 500,
+            page_token: pageToken,
+            // Note: LarkBase doesn't support complex WHERE queries directly
+            // So we fetch all and filter in memory (not ideal for large datasets)
+          },
+        });
+
+        if (response.data?.items) {
+          // Filter records that match our kiotVietIds
+          const matchingRecords = response.data.items.filter((record) => {
+            const recordKiotVietId = record.fields?.kiotvietId?.toString();
+            return (
+              recordKiotVietId &&
+              kiotVietIds.includes(parseInt(recordKiotVietId))
+            );
+          });
+
+          allRecords.push(...matchingRecords);
+        }
+
+        hasMore = response.data?.has_more || false;
+        pageToken = response.data?.page_token;
+      }
+
+      return allRecords;
+    } catch (error) {
+      this.logger.error(`Error finding existing customers: ${error.message}`);
+      return [];
+    }
+  }
+
   async directCreateOrders(
     orders: any[],
   ): Promise<{ success: number; failed: number; records?: any[] }> {
     if (!orders.length) return { success: 0, failed: 0 };
 
+    try {
+      // Step 1: Check which records already exist in LarkBase
+      const { recordsToCreate, recordsToUpdate } =
+        await this.separateOrdersForUpsert(orders);
+
+      let totalSuccess = 0;
+      let totalFailed = 0;
+      let allRecords: any[] = [];
+
+      // Step 2: CREATE new records
+      if (recordsToCreate.length > 0) {
+        const createResult = await this.batchCreateOrders(recordsToCreate);
+        totalSuccess += createResult.success;
+        totalFailed += createResult.failed;
+        if (createResult.records) {
+          allRecords.push(...createResult.records);
+        }
+      }
+
+      // Step 3: UPDATE existing records
+      if (recordsToUpdate.length > 0) {
+        const updateResult = await this.batchUpdateOrders(recordsToUpdate);
+        totalSuccess += updateResult.success;
+        totalFailed += updateResult.failed;
+      }
+
+      this.logger.log(
+        `LarkBase order UPSERT: ${recordsToCreate.length} created, ${recordsToUpdate.length} updated, ${totalSuccess} success, ${totalFailed} failed`,
+      );
+
+      return {
+        success: totalSuccess,
+        failed: totalFailed,
+        records: allRecords,
+      };
+    } catch (error) {
+      this.logger.error(`LarkBase order UPSERT failed: ${error.message}`);
+      return { success: 0, failed: orders.length };
+    }
+  }
+
+  // NEW: Check existing orders and separate create vs update
+  private async separateOrdersForUpsert(orders: any[]): Promise<{
+    recordsToCreate: any[];
+    recordsToUpdate: any[];
+  }> {
+    const recordsToCreate: any[] = [];
+    const recordsToUpdate: any[] = [];
+
+    try {
+      // Get all kiotVietIds from incoming orders
+      const kiotVietIds = orders
+        .map((o) => o.id || o.kiotVietId)
+        .filter(Boolean);
+
+      // Query LarkBase to find existing records by kiotVietId
+      const existingRecords =
+        await this.findExistingOrdersByKiotVietId(kiotVietIds);
+
+      // Create lookup map of existing records
+      const existingRecordsMap = new Map();
+      existingRecords.forEach((record) => {
+        const kiotVietId = record.fields?.kiotVietId;
+        if (kiotVietId) {
+          existingRecordsMap.set(kiotVietId.toString(), record);
+        }
+      });
+
+      // Separate orders into create vs update
+      for (const order of orders) {
+        const kiotVietId = (order.id || order.kiotVietId)?.toString();
+
+        if (kiotVietId && existingRecordsMap.has(kiotVietId)) {
+          // Record exists - add to update batch
+          const existingRecord = existingRecordsMap.get(kiotVietId);
+          recordsToUpdate.push({
+            ...order,
+            larkRecordId: existingRecord.record_id,
+          });
+        } else {
+          // Record doesn't exist - add to create batch
+          recordsToCreate.push(order);
+        }
+      }
+
+      this.logger.debug(
+        `Separated orders: ${recordsToCreate.length} to create, ${recordsToUpdate.length} to update`,
+      );
+    } catch (error) {
+      this.logger.error(`Error separating orders for upsert: ${error.message}`);
+      // If error, default to create all (might cause duplicates but won't fail)
+      recordsToCreate.push(...orders);
+    }
+
+    return { recordsToCreate, recordsToUpdate };
+  }
+
+  // NEW: Find existing orders by kiotVietId
+  private async findExistingOrdersByKiotVietId(
+    kiotVietIds: any[],
+  ): Promise<any[]> {
+    try {
+      const allRecords: any[] = [];
+      let hasMore = true;
+      let pageToken: string | undefined;
+
+      // Query LarkBase to find records with matching kiotVietIds
+      while (hasMore) {
+        const response = await this.client.bitable.appTableRecord.list({
+          path: {
+            app_token: this.orderBaseToken,
+            table_id: this.orderTableId,
+          },
+          params: {
+            page_size: 500,
+            page_token: pageToken,
+          },
+        });
+
+        if (response.data?.items) {
+          // Filter records that match our kiotVietIds
+          const matchingRecords = response.data.items.filter((record) => {
+            const recordKiotVietId = record.fields?.kiotVietId?.toString();
+            return (
+              recordKiotVietId &&
+              kiotVietIds.includes(parseInt(recordKiotVietId))
+            );
+          });
+
+          allRecords.push(...matchingRecords);
+        }
+
+        hasMore = response.data?.has_more || false;
+        pageToken = response.data?.page_token;
+      }
+
+      return allRecords;
+    } catch (error) {
+      this.logger.error(`Error finding existing orders: ${error.message}`);
+      return [];
+    }
+  }
+
+  // NEW: Batch create for new orders
+  private async batchCreateOrders(orders: any[]): Promise<{
+    success: number;
+    failed: number;
+    records?: any[];
+  }> {
     try {
       const records = orders
         .map((order) =>
@@ -210,28 +499,22 @@ export class LarkBaseService {
       const successCount = response.data?.records?.length || 0;
       const failedCount = orders.length - successCount;
 
-      this.logger.log(
-        `LarkBase order direct create: ${successCount} success, ${failedCount} failed`,
-      );
-
       return {
         success: successCount,
         failed: failedCount,
         records: response.data?.records,
       };
     } catch (error) {
-      this.logger.error(
-        `LarkBase order direct create failed: ${error.message}`,
-      );
+      this.logger.error(`LarkBase order batch create failed: ${error.message}`);
       return { success: 0, failed: orders.length };
     }
   }
 
-  async directUpdateOrders(
-    orders: any[],
-  ): Promise<{ success: number; failed: number }> {
-    if (!orders.length) return { success: 0, failed: 0 };
-
+  // NEW: Batch update for existing orders
+  private async batchUpdateOrders(orders: any[]): Promise<{
+    success: number;
+    failed: number;
+  }> {
     try {
       const records = orders
         .filter((order) => order.larkRecordId)
@@ -260,25 +543,169 @@ export class LarkBaseService {
       const successCount = response.data?.records?.length || 0;
       const failedCount = orders.length - successCount;
 
-      this.logger.log(
-        `LarkBase order direct update: ${successCount} success, ${failedCount} failed`,
-      );
-
       return { success: successCount, failed: failedCount };
     } catch (error) {
-      this.logger.error(
-        `LarkBase order direct update failed: ${error.message}`,
-      );
+      this.logger.error(`LarkBase order batch update failed: ${error.message}`);
       return { success: 0, failed: orders.length };
     }
   }
 
-  // ===== INVOICE DIRECT METHODS =====
   async directCreateInvoices(
     invoices: any[],
   ): Promise<{ success: number; failed: number; records?: any[] }> {
     if (!invoices.length) return { success: 0, failed: 0 };
 
+    try {
+      // Step 1: Check which records already exist in LarkBase
+      const { recordsToCreate, recordsToUpdate } =
+        await this.separateInvoicesForUpsert(invoices);
+
+      let totalSuccess = 0;
+      let totalFailed = 0;
+      let allRecords: any[] = [];
+
+      // Step 2: CREATE new records
+      if (recordsToCreate.length > 0) {
+        const createResult = await this.batchCreateInvoices(recordsToCreate);
+        totalSuccess += createResult.success;
+        totalFailed += createResult.failed;
+        if (createResult.records) {
+          allRecords.push(...createResult.records);
+        }
+      }
+
+      // Step 3: UPDATE existing records
+      if (recordsToUpdate.length > 0) {
+        const updateResult = await this.batchUpdateInvoices(recordsToUpdate);
+        totalSuccess += updateResult.success;
+        totalFailed += updateResult.failed;
+      }
+
+      this.logger.log(
+        `LarkBase invoice UPSERT: ${recordsToCreate.length} created, ${recordsToUpdate.length} updated, ${totalSuccess} success, ${totalFailed} failed`,
+      );
+
+      return {
+        success: totalSuccess,
+        failed: totalFailed,
+        records: allRecords,
+      };
+    } catch (error) {
+      this.logger.error(`LarkBase invoice UPSERT failed: ${error.message}`);
+      return { success: 0, failed: invoices.length };
+    }
+  }
+
+  // NEW: Check existing invoices and separate create vs update
+  private async separateInvoicesForUpsert(invoices: any[]): Promise<{
+    recordsToCreate: any[];
+    recordsToUpdate: any[];
+  }> {
+    const recordsToCreate: any[] = [];
+    const recordsToUpdate: any[] = [];
+
+    try {
+      // Get all kiotVietIds from incoming invoices
+      const kiotVietIds = invoices
+        .map((i) => i.id || i.kiotVietId)
+        .filter(Boolean);
+
+      // Query LarkBase to find existing records by kiotVietId
+      const existingRecords =
+        await this.findExistingInvoicesByKiotVietId(kiotVietIds);
+
+      // Create lookup map of existing records
+      const existingRecordsMap = new Map();
+      existingRecords.forEach((record) => {
+        const kiotVietId = record.fields?.kiotVietId;
+        if (kiotVietId) {
+          existingRecordsMap.set(kiotVietId.toString(), record);
+        }
+      });
+
+      // Separate invoices into create vs update
+      for (const invoice of invoices) {
+        const kiotVietId = (invoice.id || invoice.kiotVietId)?.toString();
+
+        if (kiotVietId && existingRecordsMap.has(kiotVietId)) {
+          // Record exists - add to update batch
+          const existingRecord = existingRecordsMap.get(kiotVietId);
+          recordsToUpdate.push({
+            ...invoice,
+            larkRecordId: existingRecord.record_id,
+          });
+        } else {
+          // Record doesn't exist - add to create batch
+          recordsToCreate.push(invoice);
+        }
+      }
+
+      this.logger.debug(
+        `Separated invoices: ${recordsToCreate.length} to create, ${recordsToUpdate.length} to update`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Error separating invoices for upsert: ${error.message}`,
+      );
+      // If error, default to create all (might cause duplicates but won't fail)
+      recordsToCreate.push(...invoices);
+    }
+
+    return { recordsToCreate, recordsToUpdate };
+  }
+
+  // NEW: Find existing invoices by kiotVietId
+  private async findExistingInvoicesByKiotVietId(
+    kiotVietIds: any[],
+  ): Promise<any[]> {
+    try {
+      const allRecords: any[] = [];
+      let hasMore = true;
+      let pageToken: string | undefined;
+
+      // Query LarkBase to find records with matching kiotVietIds
+      while (hasMore) {
+        const response = await this.client.bitable.appTableRecord.list({
+          path: {
+            app_token: this.invoiceBaseToken,
+            table_id: this.invoiceTableId,
+          },
+          params: {
+            page_size: 500,
+            page_token: pageToken,
+          },
+        });
+
+        if (response.data?.items) {
+          // Filter records that match our kiotVietIds
+          const matchingRecords = response.data.items.filter((record) => {
+            const recordKiotVietId = record.fields?.kiotVietId?.toString();
+            return (
+              recordKiotVietId &&
+              kiotVietIds.includes(parseInt(recordKiotVietId))
+            );
+          });
+
+          allRecords.push(...matchingRecords);
+        }
+
+        hasMore = response.data?.has_more || false;
+        pageToken = response.data?.page_token;
+      }
+
+      return allRecords;
+    } catch (error) {
+      this.logger.error(`Error finding existing invoices: ${error.message}`);
+      return [];
+    }
+  }
+
+  // NEW: Batch create for new invoices
+  private async batchCreateInvoices(invoices: any[]): Promise<{
+    success: number;
+    failed: number;
+    records?: any[];
+  }> {
     try {
       const records = invoices
         .map((invoice) =>
@@ -307,10 +734,6 @@ export class LarkBaseService {
       const successCount = response.data?.records?.length || 0;
       const failedCount = invoices.length - successCount;
 
-      this.logger.log(
-        `LarkBase invoice direct create: ${successCount} success, ${failedCount} failed`,
-      );
-
       return {
         success: successCount,
         failed: failedCount,
@@ -318,17 +741,17 @@ export class LarkBaseService {
       };
     } catch (error) {
       this.logger.error(
-        `LarkBase invoice direct create failed: ${error.message}`,
+        `LarkBase invoice batch create failed: ${error.message}`,
       );
       return { success: 0, failed: invoices.length };
     }
   }
 
-  async directUpdateInvoices(
-    invoices: any[],
-  ): Promise<{ success: number; failed: number }> {
-    if (!invoices.length) return { success: 0, failed: 0 };
-
+  // NEW: Batch update for existing invoices
+  private async batchUpdateInvoices(invoices: any[]): Promise<{
+    success: number;
+    failed: number;
+  }> {
     try {
       const records = invoices
         .filter((invoice) => invoice.larkRecordId)
@@ -357,14 +780,10 @@ export class LarkBaseService {
       const successCount = response.data?.records?.length || 0;
       const failedCount = invoices.length - successCount;
 
-      this.logger.log(
-        `LarkBase invoice direct update: ${successCount} success, ${failedCount} failed`,
-      );
-
       return { success: successCount, failed: failedCount };
     } catch (error) {
       this.logger.error(
-        `LarkBase invoice direct update failed: ${error.message}`,
+        `LarkBase invoice batch update failed: ${error.message}`,
       );
       return { success: 0, failed: invoices.length };
     }
