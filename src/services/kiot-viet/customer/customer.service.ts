@@ -1,43 +1,410 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { HttpService } from '@nestjs/axios';
-import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { KiotVietBranchService } from '../branch/branch.service';
+import { ConfigService } from '@nestjs/config';
+import { HttpService } from '@nestjs/axios';
 import { KiotVietAuthService } from '../auth.service';
-import { KiotVietCustomerGroupService } from '../customer-group/customer-group.service';
 import { LarkBaseService } from '../../lark/lark-base.service';
-import { firstValueFrom } from 'rxjs';
 import { Prisma } from '@prisma/client';
 import * as dayjs from 'dayjs';
+import { firstValueFrom } from 'rxjs';
 
 @Injectable()
 export class KiotVietCustomerService {
   private readonly logger = new Logger(KiotVietCustomerService.name);
-  private readonly baseUrl: string;
-  private readonly BATCH_SIZE = 500;
-  private readonly PAGE_SIZE = 100;
+  private readonly PAGE_SIZE = 50;
 
   constructor(
-    private readonly httpService: HttpService,
-    private readonly configService: ConfigService,
     private readonly prismaService: PrismaService,
+    private readonly configService: ConfigService,
+    private readonly httpService: HttpService,
     private readonly authService: KiotVietAuthService,
-    private readonly branchService: KiotVietBranchService,
-    private readonly customerGroupService: KiotVietCustomerGroupService,
     private readonly larkBaseService: LarkBaseService,
-  ) {
-    const baseUrl = this.configService.get<string>('KIOT_BASE_URL');
-    if (!baseUrl) {
-      throw new Error('KIOT_BASE_URL environment variable is not configured');
-    }
-    this.baseUrl = baseUrl;
+  ) {}
 
-    this.logger.debug(`HttpService injected: ${!!this.httpService}`);
-    this.logger.debug(`ConfigService injected: ${!!this.configService}`);
-    this.logger.debug(`PrismaService injected: ${!!this.prismaService}`);
-    this.logger.debug(`AuthService injected: ${!!this.authService}`);
-    this.logger.debug(`Base URL: ${this.baseUrl}`);
-    this.logger.debug(`LarkBaseService injected: ${!!this.larkBaseService}`);
+  // ===== STEP 1: KiotViet → Database (Enhanced) =====
+  async syncHistoricalCustomers(): Promise<void> {
+    try {
+      // Database sync control
+      await this.prismaService.syncControl.upsert({
+        where: { name: 'customer_historical' },
+        create: {
+          name: 'customer_historical',
+          entities: ['customer'],
+          syncMode: 'historical',
+          isRunning: true,
+          isEnabled: true,
+          status: 'in_progress',
+          startedAt: new Date(),
+        },
+        update: {
+          isRunning: true,
+          status: 'in_progress',
+          startedAt: new Date(),
+          error: null,
+          progress: {},
+        },
+      });
+
+      let currentItem = 0;
+      let totalProcessed = 0;
+      let hasMoreData = true;
+      let batchCount = 0;
+
+      while (hasMoreData) {
+        const response = await this.fetchCustomers({
+          currentItem,
+          pageSize: this.PAGE_SIZE,
+        });
+
+        if (response.data && response.data.length > 0) {
+          // Save to database AND mark for LarkBase sync
+          const { created, updated } = await this.saveCustomersToDatabase(
+            response.data,
+          );
+          totalProcessed += created + updated;
+
+          // Mark affected records for LarkBase sync
+          await this.markCustomersForLarkBaseSync(response.data);
+
+          this.logger.log(
+            `Historical sync batch ${++batchCount}: ${totalProcessed} customers processed`,
+          );
+        }
+
+        if (response.removedId && response.removedId.length > 0) {
+          await this.handleRemovedCustomers(response.removedId);
+        }
+
+        hasMoreData = response.data && response.data.length === this.PAGE_SIZE;
+        if (hasMoreData) currentItem += this.PAGE_SIZE;
+      }
+
+      const duplicatesRemoved = await this.removeDuplicateCustomers();
+
+      await this.prismaService.syncControl.update({
+        where: { name: 'customer_historical' },
+        data: {
+          isRunning: false,
+          isEnabled: false,
+          status: 'completed',
+          completedAt: new Date(),
+          progress: { totalProcessed, duplicatesRemoved, batchCount },
+        },
+      });
+
+      this.logger.log(
+        `Historical sync completed: ${totalProcessed} customers processed, ${duplicatesRemoved} duplicates removed`,
+      );
+
+      // STEP 2: Immediate Database → LarkBase sync
+      await this.syncPendingToLarkBase();
+    } catch (error) {
+      await this.prismaService.syncControl.update({
+        where: { name: 'customer_historical' },
+        data: {
+          isRunning: false,
+          status: 'failed',
+          completedAt: new Date(),
+          error: error.message,
+        },
+      });
+
+      this.logger.error(`Historical sync failed: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async syncRecentCustomers(days: number = 4): Promise<void> {
+    try {
+      const historicalSync = await this.prismaService.syncControl.findFirst({
+        where: { name: 'customer_historical', isRunning: true },
+      });
+
+      if (historicalSync) {
+        this.logger.log('Historical sync is running. Skipping recent sync.');
+        return;
+      }
+
+      await this.prismaService.syncControl.upsert({
+        where: { name: 'customer_recent' },
+        create: {
+          name: 'customer_recent',
+          entities: ['customer'],
+          syncMode: 'recent',
+          isRunning: true,
+          status: 'in_progress',
+          startedAt: new Date(),
+        },
+        update: {
+          isRunning: true,
+          status: 'in_progress',
+          startedAt: new Date(),
+          error: null,
+        },
+      });
+
+      const lastModifiedFrom = dayjs()
+        .subtract(days, 'day')
+        .format('YYYY-MM-DD');
+      let currentItem = 0;
+      let totalProcessed = 0;
+      let hasMoreData = true;
+
+      while (hasMoreData) {
+        const response = await this.fetchCustomers({
+          lastModifiedFrom,
+          currentItem,
+          pageSize: this.PAGE_SIZE,
+        });
+
+        if (response.data && response.data.length > 0) {
+          // Save to database AND mark for LarkBase sync
+          const { created, updated } = await this.saveCustomersToDatabase(
+            response.data,
+          );
+          totalProcessed += created + updated;
+
+          // Mark affected records for LarkBase sync
+          await this.markCustomersForLarkBaseSync(response.data);
+
+          this.logger.log(
+            `Recent sync progress: ${totalProcessed} customers processed`,
+          );
+        }
+
+        if (response.removedId && response.removedId.length > 0) {
+          await this.handleRemovedCustomers(response.removedId);
+        }
+
+        hasMoreData = response.data && response.data.length === this.PAGE_SIZE;
+        if (hasMoreData) currentItem += this.PAGE_SIZE;
+      }
+
+      const duplicatesRemoved = await this.removeDuplicateCustomers();
+
+      await this.prismaService.syncControl.update({
+        where: { name: 'customer_recent' },
+        data: {
+          isRunning: false,
+          status: 'completed',
+          completedAt: new Date(),
+          progress: { totalProcessed, duplicatesRemoved },
+        },
+      });
+
+      this.logger.log(
+        `Recent sync completed: ${totalProcessed} customers processed, ${duplicatesRemoved} duplicates removed`,
+      );
+
+      // STEP 2: Immediate Database → LarkBase sync
+      await this.syncPendingToLarkBase();
+    } catch (error) {
+      await this.prismaService.syncControl.update({
+        where: { name: 'customer_recent' },
+        data: {
+          isRunning: false,
+          status: 'failed',
+          completedAt: new Date(),
+          error: error.message,
+        },
+      });
+
+      this.logger.error(`Recent sync failed: ${error.message}`);
+      throw error;
+    }
+  }
+
+  // ===== NEW: Database → LarkBase Sync Methods =====
+  async syncPendingToLarkBase(): Promise<{ success: number; failed: number }> {
+    try {
+      const pendingCustomers = await this.prismaService.customer.findMany({
+        where: {
+          larkSyncStatus: 'PENDING',
+          larkSyncRetries: { lt: 3 }, // Max 3 retries
+        },
+        take: 100, // Process in batches
+      });
+
+      if (pendingCustomers.length === 0) {
+        this.logger.log('No pending customers to sync to LarkBase');
+        return { success: 0, failed: 0 };
+      }
+
+      this.logger.log(
+        `Syncing ${pendingCustomers.length} pending customers to LarkBase`,
+      );
+
+      const recordsToCreate = [];
+      const recordsToUpdate = [];
+
+      // Separate CREATE vs UPDATE based on larkRecordId
+      for (const customer of pendingCustomers) {
+        if (customer.larkRecordId) {
+          recordsToUpdate.push(customer); // Has LarkBase ID = UPDATE
+        } else {
+          recordsToCreate.push(customer); // No LarkBase ID = CREATE
+        }
+      }
+
+      let totalSuccess = 0;
+      let totalFailed = 0;
+
+      // Process CREATE and UPDATE separately
+      if (recordsToCreate.length > 0) {
+        const createResult = await this.larkBaseCreateBatch(recordsToCreate);
+        totalSuccess += createResult.success;
+        totalFailed += createResult.failed;
+      }
+
+      if (recordsToUpdate.length > 0) {
+        const updateResult = await this.larkBaseUpdateBatch(recordsToUpdate);
+        totalSuccess += updateResult.success;
+        totalFailed += updateResult.failed;
+      }
+
+      this.logger.log(
+        `LarkBase sync completed: ${totalSuccess} success, ${totalFailed} failed`,
+      );
+
+      return { success: totalSuccess, failed: totalFailed };
+    } catch (error) {
+      this.logger.error(`LarkBase sync failed: ${error.message}`);
+      return { success: 0, failed: 0 };
+    }
+  }
+
+  private async larkBaseCreateBatch(
+    customers: any[],
+  ): Promise<{ success: number; failed: number }> {
+    try {
+      const response =
+        await this.larkBaseService.directCreateCustomers(customers);
+
+      // Update local tracking with LarkBase record IDs
+      if (response.success > 0 && response.records) {
+        for (const [index, customer] of customers.entries()) {
+          if (response.records[index]) {
+            await this.prismaService.customer.update({
+              where: { id: customer.id },
+              data: {
+                larkRecordId: response.records[index].record_id,
+                larkSyncStatus: 'SYNCED',
+                larkSyncedAt: new Date(),
+                larkSyncRetries: 0,
+              },
+            });
+          }
+        }
+      }
+
+      // Mark failed records for retry
+      if (response.failed > 0) {
+        const failedCustomers = customers.slice(response.success);
+        for (const customer of failedCustomers) {
+          await this.prismaService.customer.update({
+            where: { id: customer.id },
+            data: {
+              larkSyncStatus: 'FAILED',
+              larkSyncRetries: { increment: 1 },
+            },
+          });
+        }
+      }
+
+      return { success: response.success, failed: response.failed };
+    } catch (error) {
+      this.logger.error(`LarkBase create batch failed: ${error.message}`);
+
+      // Mark all as failed
+      for (const customer of customers) {
+        await this.prismaService.customer.update({
+          where: { id: customer.id },
+          data: {
+            larkSyncStatus: 'FAILED',
+            larkSyncRetries: { increment: 1 },
+          },
+        });
+      }
+
+      return { success: 0, failed: customers.length };
+    }
+  }
+
+  private async larkBaseUpdateBatch(
+    customers: any[],
+  ): Promise<{ success: number; failed: number }> {
+    try {
+      const response =
+        await this.larkBaseService.directUpdateCustomers(customers);
+
+      // Mark successful updates
+      if (response.success > 0) {
+        const successfulCustomers = customers.slice(0, response.success);
+        for (const customer of successfulCustomers) {
+          await this.prismaService.customer.update({
+            where: { id: customer.id },
+            data: {
+              larkSyncStatus: 'SYNCED',
+              larkSyncedAt: new Date(),
+              larkSyncRetries: 0,
+            },
+          });
+        }
+      }
+
+      // Mark failed updates for retry
+      if (response.failed > 0) {
+        const failedCustomers = customers.slice(response.success);
+        for (const customer of failedCustomers) {
+          await this.prismaService.customer.update({
+            where: { id: customer.id },
+            data: {
+              larkSyncStatus: 'FAILED',
+              larkSyncRetries: { increment: 1 },
+            },
+          });
+        }
+      }
+
+      return { success: response.success, failed: response.failed };
+    } catch (error) {
+      this.logger.error(`LarkBase update batch failed: ${error.message}`);
+
+      // Mark all as failed
+      for (const customer of customers) {
+        await this.prismaService.customer.update({
+          where: { id: customer.id },
+          data: {
+            larkSyncStatus: 'FAILED',
+            larkSyncRetries: { increment: 1 },
+          },
+        });
+      }
+
+      return { success: 0, failed: customers.length };
+    }
+  }
+
+  private async markCustomersForLarkBaseSync(customers: any[]): Promise<void> {
+    try {
+      const kiotVietIds = customers.map((c) => BigInt(c.id));
+
+      await this.prismaService.customer.updateMany({
+        where: { kiotVietId: { in: kiotVietIds } },
+        data: {
+          larkSyncStatus: 'PENDING',
+          larkSyncRetries: 0,
+        },
+      });
+
+      this.logger.debug(
+        `Marked ${customers.length} customers for LarkBase sync`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to mark customers for LarkBase sync: ${error.message}`,
+      );
+    }
   }
 
   async fetchCustomers(params: {
@@ -679,172 +1046,6 @@ export class KiotVietCustomerService {
       });
 
       this.logger.error(`Recent sync failed: ${error.message}`);
-      throw error;
-    }
-  }
-
-  async syncHistoricalCustomers(): Promise<void> {
-    try {
-      // Database sync control
-      await this.prismaService.syncControl.upsert({
-        where: { name: 'customer_historical' },
-        create: {
-          name: 'customer_historical',
-          entities: ['customer'],
-          syncMode: 'historical',
-          isRunning: true,
-          isEnabled: true,
-          status: 'in_progress',
-          startedAt: new Date(),
-        },
-        update: {
-          isRunning: true,
-          status: 'in_progress',
-          startedAt: new Date(),
-          error: null,
-          progress: {},
-        },
-      });
-
-      // LarkBase sync control
-      await this.prismaService.syncControl.upsert({
-        where: { name: 'customer_historical_lark' },
-        create: {
-          name: 'customer_historical_lark',
-          entities: ['customer_lark'],
-          syncMode: 'historical',
-          isRunning: true,
-          isEnabled: true,
-          status: 'in_progress',
-          startedAt: new Date(),
-        },
-        update: {
-          isRunning: true,
-          status: 'in_progress',
-          startedAt: new Date(),
-          error: null,
-          progress: {},
-        },
-      });
-
-      let currentItem = 0;
-      let totalProcessed = 0;
-      let totalLarkSuccess = 0;
-      let totalLarkFailed = 0;
-      let batchCount = 0;
-      let hasMoreData = true;
-      const customerBatch: any[] = [];
-
-      this.logger.log('Starting historical customer sync...');
-
-      while (hasMoreData) {
-        const response = await this.fetchCustomers({
-          currentItem,
-          pageSize: this.PAGE_SIZE,
-        });
-
-        if (response.data && response.data.length > 0) {
-          customerBatch.push(...response.data);
-
-          if (
-            customerBatch.length >= this.BATCH_SIZE ||
-            response.data.length < this.PAGE_SIZE
-          ) {
-            const { created, updated, larkResult } =
-              await this.batchSaveCustomersWithLarkTracking(customerBatch);
-            totalProcessed += created + updated;
-            batchCount++;
-
-            if (larkResult) {
-              totalLarkSuccess += larkResult.success;
-              totalLarkFailed += larkResult.failed;
-            }
-
-            await this.prismaService.syncControl.update({
-              where: { name: 'customer_historical' },
-              data: {
-                progress: {
-                  totalProcessed,
-                  batchCount,
-                  lastProcessedItem: currentItem + response.data.length,
-                },
-              },
-            });
-
-            await this.prismaService.syncControl.update({
-              where: { name: 'customer_historical_lark' },
-              data: {
-                progress: {
-                  totalLarkSuccess,
-                  totalLarkFailed,
-                  batchCount,
-                },
-              },
-            });
-
-            this.logger.log(
-              `Historical sync batch ${batchCount}: ${totalProcessed} customers processed, LarkBase: ${totalLarkSuccess} success, ${totalLarkFailed} failed`,
-            );
-            customerBatch.length = 0;
-          }
-        }
-
-        if (response.removedId && response.removedId.length > 0) {
-          await this.handleRemovedCustomers(response.removedId);
-        }
-
-        hasMoreData = response.data && response.data.length === this.PAGE_SIZE;
-        if (hasMoreData) currentItem += this.PAGE_SIZE;
-      }
-
-      this.logger.log('Removing duplicates...');
-      const duplicatesRemoved = await this.removeDuplicateCustomers();
-
-      // Update database sync control
-      await this.prismaService.syncControl.update({
-        where: { name: 'customer_historical' },
-        data: {
-          isRunning: false,
-          isEnabled: false,
-          status: 'completed',
-          completedAt: new Date(),
-          progress: { totalProcessed, duplicatesRemoved, batchCount },
-        },
-      });
-
-      // Update LarkBase sync control
-      await this.prismaService.syncControl.update({
-        where: { name: 'customer_historical_lark' },
-        data: {
-          isRunning: false,
-          isEnabled: false,
-          status: totalLarkFailed > 0 ? 'completed_with_errors' : 'completed',
-          completedAt: new Date(),
-          progress: { totalLarkSuccess, totalLarkFailed, batchCount },
-          error:
-            totalLarkFailed > 0
-              ? `${totalLarkFailed} records failed to sync to LarkBase`
-              : null,
-        },
-      });
-
-      this.logger.log(
-        `Historical sync completed: ${totalProcessed} customers processed, ${duplicatesRemoved} duplicates removed, LarkBase: ${totalLarkSuccess} success, ${totalLarkFailed} failed`,
-      );
-    } catch (error) {
-      await this.prismaService.syncControl.updateMany({
-        where: {
-          name: { in: ['customer_historical', 'customer_historical_lark'] },
-        },
-        data: {
-          isRunning: false,
-          status: 'failed',
-          completedAt: new Date(),
-          error: error.message,
-        },
-      });
-
-      this.logger.error(`Historical sync failed: ${error.message}`);
       throw error;
     }
   }

@@ -205,52 +205,54 @@ model ProductFormula {
 }
 
 model Customer {
-  id               Int                   @id @default(autoincrement())
-  kiotVietId       BigInt                @unique
-  code             String                @unique
-  name             String
-  type             Int?
-  gender           Boolean?
-  birthDate        DateTime?
-  contactNumber    String?
-  address          String?
-  locationName     String?
-  wardName         String?
-  email            String?
-  organization     String?
-  taxCode          String?
-  comments         String?               @db.Text
-  debt             Decimal?              @db.Decimal(15, 2)
-  totalInvoiced    Decimal?              @db.Decimal(15, 2)
-  totalPoint       Float?
-  totalRevenue     Decimal?              @db.Decimal(15, 2)
-  rewardPoint      BigInt?
-  psidFacebook     BigInt?
-  retailerId       Int?
+  id                Int                @id @default(autoincrement())
+  kiotVietId        BigInt             @unique
+  code              String             @unique
+  name              String
+  type              Int?
+  gender            Boolean?
+  birthDate         DateTime?
+  contactNumber     String?
+  address           String?
+  locationName      String?
+  wardName          String?
+  email             String?
+  organization      String?
+  comments          String?            @db.Text
+  taxCode           String?
+  debt              Decimal?           @db.Decimal(15, 2)
+  totalInvoiced     Decimal?           @db.Decimal(15, 2)
+  totalInvoicedWithoutReturn Decimal? @db.Decimal(15, 2)
+  totalPoint        Float?
+  totalRevenue      Decimal?           @db.Decimal(15, 2)
+  rewardPoint       BigInt?
+  psidFacebook      BigInt?
+  isActive          Boolean            @default(true)
+  retailerId        Int?
   branchId         Int?
   branch           Branch?               @relation(fields: [branchId], references: [id])
-  isActive         Boolean               @default(true)
-  createdDate      DateTime              @default(now())
-  modifiedDate     DateTime              @updatedAt
-  lastSyncedAt     DateTime              @default(now())
+  createdDate       DateTime           @default(now())
+  modifiedDate      DateTime           @updatedAt
+  lastSyncedAt      DateTime           @default(now())
   
-  larkRecordId     String?
-  larkSyncStatus   LarkSyncStatus         @default(PENDING)
-  larkSyncedAt     DateTime?
-  larkSyncRetries  Int                    @default(0)
-
-  customerGroups   CustomerGroupRelation[]
-  orders           Order[]
-  invoices         Invoice[]
-  returns          Return[]
-
+  // NEW: LarkBase sync tracking
+  larkRecordId      String?
+  larkSyncStatus    LarkSyncStatus     @default(PENDING)
+  larkSyncedAt      DateTime?
+  larkSyncRetries   Int                @default(0)
+  
+  orders            Order[]
+  invoices          Invoice[]
+  
+  @@index([kiotVietId])
   @@index([code])
-  @@index([contactNumber])
-  @@index([branchId])
   @@index([lastSyncedAt])
   @@index([larkSyncStatus])
-  @@index([modifiedDate])
+  @@index([branchId])
+  CustomerGroupRelation CustomerGroupRelation[]
+  Return Return[]
 }
+
 
 model CustomerGroup {
   id                Int                   @id @default(autoincrement())

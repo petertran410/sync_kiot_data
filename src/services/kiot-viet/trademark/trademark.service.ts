@@ -1,82 +1,123 @@
 // src/services/kiot-viet/trademark/trademark.service.ts
 import { Injectable, Logger } from '@nestjs/common';
-import { HttpService } from '@nestjs/axios';
-import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { ConfigService } from '@nestjs/config';
+import { HttpService } from '@nestjs/axios';
 import { KiotVietAuthService } from '../auth.service';
-import { firstValueFrom } from 'rxjs';
-import { Prisma } from '@prisma/client';
 
 @Injectable()
 export class KiotVietTradeMarkService {
   private readonly logger = new Logger(KiotVietTradeMarkService.name);
-  private readonly baseUrl: string;
-  private readonly PAGE_SIZE = 100;
 
   constructor(
-    private readonly httpService: HttpService,
-    private readonly configService: ConfigService,
     private readonly prismaService: PrismaService,
+    private readonly configService: ConfigService,
+    private readonly httpService: HttpService,
     private readonly authService: KiotVietAuthService,
-  ) {
-    const baseUrl = this.configService.get<string>('KIOT_BASE_URL');
-    if (!baseUrl) {
-      throw new Error('KIOT_BASE_URL environment variable is not configured');
+  ) {}
+
+  async syncTradeMarks(): Promise<void> {
+    try {
+      await this.prismaService.syncControl.upsert({
+        where: { name: 'trademark_historical' },
+        create: {
+          name: 'trademark_historical',
+          entities: ['trademark'],
+          syncMode: 'historical',
+          isRunning: true,
+          status: 'in_progress',
+          startedAt: new Date(),
+        },
+        update: {
+          isRunning: true,
+          status: 'in_progress',
+          startedAt: new Date(),
+          error: null,
+        },
+      });
+
+      const response = await this.fetchTradeMarks();
+      let totalProcessed = 0;
+
+      if (response.data && response.data.length > 0) {
+        const { created, updated } = await this.saveTradeMarksToDatabase(
+          response.data,
+        );
+        totalProcessed = created + updated;
+      }
+
+      await this.prismaService.syncControl.update({
+        where: { name: 'trademark_historical' },
+        data: {
+          isRunning: false,
+          status: 'completed',
+          completedAt: new Date(),
+          progress: { totalProcessed },
+        },
+      });
+
+      this.logger.log(
+        `Trademark sync completed: ${totalProcessed} trademarks processed`,
+      );
+    } catch (error) {
+      await this.prismaService.syncControl.update({
+        where: { name: 'trademark_historical' },
+        data: {
+          isRunning: false,
+          status: 'failed',
+          completedAt: new Date(),
+          error: error.message,
+        },
+      });
+
+      this.logger.error(`Trademark sync failed: ${error.message}`);
+      throw error;
     }
-    this.baseUrl = baseUrl;
   }
 
-  async fetchTradeMarks(params: {
-    lastModifiedFrom?: string;
-    currentItem?: number;
-    pageSize?: number;
-  }) {
+  private async fetchTradeMarks(): Promise<any> {
     try {
-      const headers = await this.authService.getRequestHeaders();
-      const { data } = await firstValueFrom(
-        this.httpService.get(`${this.baseUrl}/trademark`, {
-          headers,
-          params: {
-            ...params,
-            orderBy: 'modifiedDate',
-            orderDirection: 'DESC',
+      const accessToken = await this.authService.getAccessToken();
+      const baseUrl = this.configService.get<string>('KIOT_BASE_URL');
+
+      const url = `${baseUrl}/trademarks`;
+
+      const response = await this.httpService
+        .get(url, {
+          headers: {
+            Retailer: this.configService.get<string>('KIOT_SHOP_NAME'),
+            Authorization: `Bearer ${accessToken}`,
           },
-        }),
-      );
-      return data;
+        })
+        .toPromise();
+
+      return response.data;
     } catch (error) {
       this.logger.error(`Failed to fetch trademarks: ${error.message}`);
       throw error;
     }
   }
 
-  private async batchSaveTradeMarks(tradeMarks: any[]) {
-    if (!tradeMarks || tradeMarks.length === 0)
-      return { created: 0, updated: 0 };
-
-    const kiotVietIds = tradeMarks.map((t) => t.tradeMarkId);
-    const existingTradeMarks = await this.prismaService.tradeMark.findMany({
-      where: { kiotVietId: { in: kiotVietIds } },
-      select: { kiotVietId: true, id: true },
-    });
-
-    const existingMap = new Map<number, number>(
-      existingTradeMarks.map((t) => [t.kiotVietId, t.id]),
-    );
-
+  private async saveTradeMarksToDatabase(
+    tradeMarks: any[],
+  ): Promise<{ created: number; updated: number }> {
     let createdCount = 0;
     let updatedCount = 0;
 
     for (const tradeMarkData of tradeMarks) {
       try {
-        const existingId = existingMap.get(tradeMarkData.tradeMarkId);
+        const existingTradeMark = await this.prismaService.tradeMark.findUnique(
+          {
+            where: { kiotVietId: tradeMarkData.id },
+          },
+        );
 
-        if (existingId) {
+        if (existingTradeMark) {
           await this.prismaService.tradeMark.update({
-            where: { id: existingId },
+            where: { id: existingTradeMark.id },
             data: {
-              name: tradeMarkData.tradeMarkName,
-              retailerId: tradeMarkData.retailerId,
+              name: tradeMarkData.name,
+              retailerId: tradeMarkData.retailerId || null,
               modifiedDate: tradeMarkData.modifiedDate
                 ? new Date(tradeMarkData.modifiedDate)
                 : new Date(),
@@ -87,9 +128,9 @@ export class KiotVietTradeMarkService {
         } else {
           await this.prismaService.tradeMark.create({
             data: {
-              kiotVietId: tradeMarkData.tradeMarkId,
-              name: tradeMarkData.tradeMarkName,
-              retailerId: tradeMarkData.retailerId,
+              kiotVietId: tradeMarkData.id,
+              name: tradeMarkData.name,
+              retailerId: tradeMarkData.retailerId || null,
               createdDate: tradeMarkData.createdDate
                 ? new Date(tradeMarkData.createdDate)
                 : new Date(),
@@ -103,83 +144,11 @@ export class KiotVietTradeMarkService {
         }
       } catch (error) {
         this.logger.error(
-          `Failed to save trademark ${tradeMarkData.tradeMarkName}: ${error.message}`,
+          `Failed to save trademark ${tradeMarkData.id}: ${error.message}`,
         );
       }
     }
 
     return { created: createdCount, updated: updatedCount };
-  }
-
-  async syncTradeMarks(): Promise<void> {
-    try {
-      await this.prismaService.syncControl.upsert({
-        where: { name: 'trademark_sync' },
-        create: {
-          name: 'trademark_sync',
-          entities: ['trademark'],
-          syncMode: 'recent',
-          isRunning: true,
-          status: 'in_progress',
-          startedAt: new Date(),
-        },
-        update: {
-          isRunning: true,
-          status: 'in_progress',
-          startedAt: new Date(),
-          error: null,
-        },
-      });
-
-      let currentItem = 0;
-      let totalProcessed = 0;
-      let hasMoreData = true;
-
-      while (hasMoreData) {
-        const response = await this.fetchTradeMarks({
-          currentItem,
-          pageSize: this.PAGE_SIZE,
-        });
-
-        if (response.data && response.data.length > 0) {
-          const { created, updated } = await this.batchSaveTradeMarks(
-            response.data,
-          );
-          totalProcessed += created + updated;
-
-          this.logger.log(
-            `TradeMark sync progress: ${totalProcessed} processed`,
-          );
-        }
-
-        hasMoreData = response.data && response.data.length === this.PAGE_SIZE;
-        if (hasMoreData) currentItem += this.PAGE_SIZE;
-      }
-
-      await this.prismaService.syncControl.update({
-        where: { name: 'trademark_sync' },
-        data: {
-          isRunning: false,
-          status: 'completed',
-          completedAt: new Date(),
-          progress: { totalProcessed },
-        },
-      });
-
-      this.logger.log(`TradeMark sync completed: ${totalProcessed} processed`);
-    } catch (error) {
-      await this.prismaService.syncControl.update({
-        where: { name: 'trademark_sync' },
-        data: {
-          isRunning: false,
-          status: 'failed',
-          completedAt: new Date(),
-          error: error.message,
-        },
-      });
-
-      this.logger.error(`TradeMark sync failed: ${error.message}`);
-      throw error;
-    }
   }
 }

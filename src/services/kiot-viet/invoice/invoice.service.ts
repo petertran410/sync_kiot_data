@@ -1,634 +1,28 @@
 // src/services/kiot-viet/invoice/invoice.service.ts
 import { Injectable, Logger } from '@nestjs/common';
-import { HttpService } from '@nestjs/axios';
-import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { ConfigService } from '@nestjs/config';
+import { HttpService } from '@nestjs/axios';
 import { KiotVietAuthService } from '../auth.service';
 import { LarkBaseService } from '../../lark/lark-base.service';
-import { firstValueFrom } from 'rxjs';
 import { Prisma } from '@prisma/client';
 import * as dayjs from 'dayjs';
-
-interface EnrichedInvoiceData {
-  invoiceData: any;
-  branchName: string | null;
-  customerName: string | null;
-  userName: string | null;
-}
 
 @Injectable()
 export class KiotVietInvoiceService {
   private readonly logger = new Logger(KiotVietInvoiceService.name);
-  private readonly baseUrl: string;
-  private readonly BATCH_SIZE = 500;
-  private readonly PAGE_SIZE = 100;
+  private readonly PAGE_SIZE = 50;
 
   constructor(
-    private readonly httpService: HttpService,
-    private readonly configService: ConfigService,
     private readonly prismaService: PrismaService,
+    private readonly configService: ConfigService,
+    private readonly httpService: HttpService,
     private readonly authService: KiotVietAuthService,
     private readonly larkBaseService: LarkBaseService,
-  ) {
-    const baseUrl = this.configService.get<string>('KIOT_BASE_URL');
-    if (!baseUrl) {
-      throw new Error('KIOT_BASE_URL environment variable is not configured');
-    }
-    this.baseUrl = baseUrl;
-  }
-
-  async fetchInvoices(params: {
-    lastModifiedFrom?: string;
-    currentItem?: number;
-    pageSize?: number;
-  }) {
-    try {
-      const headers = await this.authService.getRequestHeaders();
-      const { data } = await firstValueFrom(
-        this.httpService.get(`${this.baseUrl}/invoices`, {
-          headers,
-          params: {
-            ...params,
-            includePayment: true,
-            includeInvoiceDelivery: true,
-            includeRemoveIds: true,
-            SaleChannel: true,
-            orderBy: 'modifiedDate',
-            orderDirection: 'DESC',
-          },
-        }),
-      );
-      return data;
-    } catch (error) {
-      this.logger.error(`Failed to fetch invoices: ${error.message}`);
-      throw error;
-    }
-  }
-
-  private async batchSaveInvoices(invoices: any[]) {
-    if (!invoices || invoices.length === 0) return { created: 0, updated: 0 };
-
-    const kiotVietIds = invoices.map((i) => BigInt(i.id));
-    const existingInvoices = await this.prismaService.invoice.findMany({
-      where: { kiotVietId: { in: kiotVietIds } },
-      select: { kiotVietId: true, id: true },
-    });
-
-    const existingMap = new Map<string, number>(
-      existingInvoices.map((i) => [i.kiotVietId.toString(), i.id]),
-    );
-
-    let createdCount = 0;
-    let updatedCount = 0;
-
-    for (const invoiceData of invoices) {
-      try {
-        const kiotVietId = BigInt(invoiceData.id);
-        const existingId = existingMap.get(kiotVietId.toString());
-
-        if (existingId) {
-          await this.updateInvoice(existingId, invoiceData);
-          updatedCount++;
-        } else {
-          await this.createInvoice(invoiceData);
-          createdCount++;
-        }
-      } catch (error) {
-        this.logger.error(
-          `Failed to save invoice ${invoiceData.code}: ${error.message}`,
-        );
-        continue;
-      }
-    }
-
-    return { created: createdCount, updated: updatedCount };
-  }
-
-  private async createInvoice(invoiceData: any) {
-    const invoice = await this.prismaService.invoice.create({
-      data: await this.prepareInvoiceCreateData(invoiceData),
-    });
-
-    await this.handleInvoiceRelations(invoice.id, invoiceData);
-  }
-
-  private async updateInvoice(invoiceId: number, invoiceData: any) {
-    await this.prismaService.invoice.update({
-      where: { id: invoiceId },
-      data: await this.prepareInvoiceUpdateData(invoiceData),
-    });
-
-    await this.handleInvoiceRelations(invoiceId, invoiceData);
-  }
-
-  private missingBranches = new Set<number>();
-
-  private async handleMissingBranch(branchId: number, invoiceCode: string) {
-    if (!this.missingBranches.has(branchId)) {
-      this.missingBranches.add(branchId);
-      this.logger.warn(
-        `New missing branch detected: ${branchId} (first seen in invoice ${invoiceCode})`,
-      );
-    }
-  }
-
-  private async prepareInvoiceCreateData(
-    invoiceData: any,
-  ): Promise<Prisma.InvoiceCreateInput> {
-    const total = invoiceData.total || 0;
-    const discount = invoiceData.discount || 0;
-    const totalCostOfGoods = total + discount || 0;
-
-    const data: Prisma.InvoiceCreateInput = {
-      kiotVietId: BigInt(invoiceData.id),
-      code: invoiceData.code,
-      orderCode: invoiceData.orderCode || null,
-      purchaseDate: new Date(invoiceData.purchaseDate),
-      total: new Prisma.Decimal(invoiceData.total || 0),
-      totalCostOfGoods: new Prisma.Decimal(totalCostOfGoods || 0),
-      totalPayment: new Prisma.Decimal(invoiceData.totalPayment || 0),
-      discount: invoiceData.discount
-        ? new Prisma.Decimal(invoiceData.discount)
-        : null,
-      discountRatio: invoiceData.discountRatio || null,
-      status: invoiceData.status,
-      description: invoiceData.description || null,
-      usingCod: invoiceData.usingCod || false,
-      isApplyVoucher: invoiceData.isApplyVoucher || false,
-      retailerId: invoiceData.retailerId || null,
-      modifiedDate: invoiceData.modifiedDate
-        ? new Date(invoiceData.modifiedDate)
-        : new Date(),
-      lastSyncedAt: new Date(),
-    };
-
-    if (invoiceData.branchId) {
-      const branch = await this.prismaService.branch.findFirst({
-        where: { kiotVietId: invoiceData.branchId },
-      });
-
-      if (branch) {
-        data.branch = { connect: { id: branch.id } };
-      } else {
-        await this.handleMissingBranch(invoiceData.branchId, invoiceData.code);
-        this.logger.warn(
-          `Branch ${invoiceData.branchId} not found for invoice ${invoiceData.code}. Creating invoice without branch reference.`,
-        );
-      }
-    }
-
-    if (invoiceData.soldById) {
-      const soldByUser = await this.prismaService.user.findFirst({
-        where: { kiotVietId: BigInt(invoiceData.soldById) },
-      });
-
-      if (soldByUser) {
-        data.soldBy = { connect: { kiotVietId: BigInt(invoiceData.soldById) } };
-      } else {
-        this.logger.warn(
-          `User with kiotVietId ${invoiceData.soldById} not found for invoice ${invoiceData.code}. Creating invoice without soldBy reference.`,
-        );
-      }
-    }
-
-    if (invoiceData.customerId) {
-      const customer = await this.prismaService.customer.findFirst({
-        where: { kiotVietId: BigInt(invoiceData.customerId) },
-      });
-      if (customer) {
-        data.customer = { connect: { id: customer.id } };
-      } else {
-        this.logger.warn(
-          `Customer with kiotVietId ${invoiceData.customerId} not found for invoice ${invoiceData.code}`,
-        );
-      }
-    }
-
-    if (invoiceData.orderId) {
-      const order = await this.prismaService.order.findFirst({
-        where: { kiotVietId: BigInt(invoiceData.orderId) },
-      });
-      if (order) {
-        data.order = { connect: { id: order.id } };
-      } else {
-        this.logger.warn(
-          `Order with kiotVietId ${invoiceData.orderId} not found for invoice ${invoiceData.code}`,
-        );
-      }
-    }
-
-    if (invoiceData.saleChannelId) {
-      const saleChannel = await this.prismaService.saleChannel.findFirst({
-        where: { kiotVietId: invoiceData.saleChannelId },
-      });
-      if (saleChannel) {
-        data.saleChannel = { connect: { id: saleChannel.id } };
-      } else {
-        this.logger.warn(
-          `Sale channel with kiotVietId ${invoiceData.saleChannelId} not found for invoice ${invoiceData.code}`,
-        );
-      }
-    }
-
-    return data;
-  }
-
-  private async prepareInvoiceUpdateData(
-    invoiceData: any,
-  ): Promise<Prisma.InvoiceUpdateInput> {
-    const total = invoiceData.total || 0;
-    const discount = invoiceData.discount || 0;
-    const totalCostOfGoods = total + discount || 0;
-
-    const data: Prisma.InvoiceUpdateInput = {
-      code: invoiceData.code,
-      orderCode: invoiceData.orderCode || null,
-      purchaseDate: new Date(invoiceData.purchaseDate),
-      total: new Prisma.Decimal(invoiceData.total || 0),
-      totalCostOfGoods: new Prisma.Decimal(totalCostOfGoods || 0),
-      totalPayment: new Prisma.Decimal(invoiceData.totalPayment || 0),
-      discount: invoiceData.discount
-        ? new Prisma.Decimal(invoiceData.discount)
-        : null,
-      discountRatio: invoiceData.discountRatio || null,
-      status: invoiceData.status,
-      description: invoiceData.description || null,
-      usingCod: invoiceData.usingCod || false,
-      isApplyVoucher: invoiceData.isApplyVoucher || false,
-      retailerId: invoiceData.retailerId || null,
-      modifiedDate: invoiceData.modifiedDate
-        ? new Date(invoiceData.modifiedDate)
-        : new Date(),
-      lastSyncedAt: new Date(),
-    };
-
-    // Handle branch - set to null if not found (FIXED: same as create)
-    if (invoiceData.branchId) {
-      const branch = await this.prismaService.branch.findFirst({
-        where: { kiotVietId: invoiceData.branchId },
-      });
-
-      if (branch) {
-        data.branch = { connect: { id: branch.id } };
-      } else {
-        await this.handleMissingBranch(invoiceData.branchId, invoiceData.code);
-        this.logger.warn(
-          `Branch ${invoiceData.branchId} not found for invoice ${invoiceData.code}. Updating invoice without branch reference.`,
-        );
-        data.branch = { disconnect: true };
-      }
-    }
-
-    if (invoiceData.soldById) {
-      const soldByUser = await this.prismaService.user.findFirst({
-        where: { kiotVietId: BigInt(invoiceData.soldById) },
-      });
-
-      if (soldByUser) {
-        data.soldBy = { connect: { kiotVietId: BigInt(invoiceData.soldById) } };
-      } else {
-        this.logger.warn(
-          `User with kiotVietId ${invoiceData.soldById} not found for invoice ${invoiceData.code}. Updating invoice without soldBy reference.`,
-        );
-        data.soldBy = { disconnect: true }; // Explicitly set to null
-      }
-    }
-
-    // Handle other relationships (existing logic)
-    if (invoiceData.customerId) {
-      const customer = await this.prismaService.customer.findFirst({
-        where: { kiotVietId: BigInt(invoiceData.customerId) },
-      });
-      if (customer) {
-        data.customer = { connect: { id: customer.id } };
-      }
-    }
-
-    if (invoiceData.orderId) {
-      const order = await this.prismaService.order.findFirst({
-        where: { kiotVietId: BigInt(invoiceData.orderId) },
-      });
-      if (order) {
-        data.order = { connect: { id: order.id } };
-      }
-    }
-
-    if (invoiceData.saleChannelId) {
-      const saleChannel = await this.prismaService.saleChannel.findFirst({
-        where: { kiotVietId: invoiceData.saleChannelId },
-      });
-      if (saleChannel) {
-        data.saleChannel = { connect: { id: saleChannel.id } };
-      }
-    }
-
-    return data;
-  }
-
-  async reportMissingBranches() {
-    if (this.missingBranches.size > 0) {
-      this.logger.warn(
-        `Total missing branches: ${this.missingBranches.size}`,
-        Array.from(this.missingBranches),
-      );
-    }
-  }
-
-  private async handleInvoiceRelations(invoiceId: number, invoiceData: any) {
-    if (invoiceData.payments && invoiceData.payments.length > 0) {
-      for (const payment of invoiceData.payments) {
-        try {
-          const paymentData: any = {
-            kiotVietId: payment.id ? BigInt(payment.id) : null,
-            invoice: { connect: { id: invoiceId } },
-            code: payment.code,
-            amount: new Prisma.Decimal(payment.amount || 0),
-            method: payment.method,
-            status: payment.status,
-            transDate: payment.transDate
-              ? new Date(payment.transDate)
-              : new Date(),
-            bankAccountInfo: payment.bankAccount,
-            description: payment.description || null,
-          };
-
-          // Handle bankAccount relationship
-          if (payment.accountId) {
-            const bankAccount = await this.prismaService.bankAccount.findFirst({
-              where: { kiotVietId: payment.accountId },
-            });
-            if (bankAccount) {
-              paymentData.bankAccount = { connect: { id: bankAccount.id } };
-            }
-          }
-
-          if (payment.id) {
-            await this.prismaService.payment.upsert({
-              where: { kiotVietId: BigInt(payment.id) },
-              create: paymentData,
-              update: {
-                code: payment.code,
-                amount: new Prisma.Decimal(payment.amount || 0),
-                method: payment.method,
-                status: payment.status,
-                transDate: payment.transDate
-                  ? new Date(payment.transDate)
-                  : new Date(),
-                bankAccountInfo: payment.bankAccount,
-                description: payment.description || null,
-              },
-            });
-          } else {
-            await this.prismaService.payment.create({
-              data: paymentData,
-            });
-          }
-        } catch (error) {
-          this.logger.error(`Failed to save payment: ${error.message}`);
-        }
-      }
-    }
-
-    if (invoiceData.invoiceDelivery) {
-      const delivery = invoiceData.invoiceDelivery;
-      try {
-        await this.prismaService.invoiceDelivery.upsert({
-          where: { invoiceId },
-          create: {
-            kiotVietId: delivery.id ? BigInt(delivery.id) : null,
-            invoice: { connect: { id: invoiceId } },
-            deliveryCode: delivery.deliveryCode,
-            status: delivery.status,
-            type: delivery.type,
-            price: delivery.price ? new Prisma.Decimal(delivery.price) : null,
-            receiver: delivery.receiver,
-            contactNumber: delivery.contactNumber,
-            address: delivery.address,
-            locationId: delivery.locationId,
-            locationName: delivery.locationName,
-            wardName: delivery.wardName,
-            usingPriceCod: delivery.usingPriceCod || false,
-            priceCodPayment: delivery.priceCodPayment
-              ? new Prisma.Decimal(delivery.priceCodPayment)
-              : null,
-            weight: delivery.weight,
-            length: delivery.length,
-            width: delivery.width,
-            height: delivery.height,
-            partnerDeliveryId: delivery.partnerDeliveryId
-              ? BigInt(delivery.partnerDeliveryId)
-              : null,
-          },
-          update: {
-            deliveryCode: delivery.deliveryCode,
-            status: delivery.status,
-            type: delivery.type,
-            price: delivery.price ? new Prisma.Decimal(delivery.price) : null,
-            receiver: delivery.receiver,
-            contactNumber: delivery.contactNumber,
-            address: delivery.address,
-            locationId: delivery.locationId,
-            locationName: delivery.locationName,
-            wardName: delivery.wardName,
-            usingPriceCod: delivery.usingPriceCod || false,
-            priceCodPayment: delivery.priceCodPayment
-              ? new Prisma.Decimal(delivery.priceCodPayment)
-              : null,
-            weight: delivery.weight,
-            length: delivery.length,
-            width: delivery.width,
-            height: delivery.height,
-            partnerDeliveryId: delivery.partnerDeliveryId
-              ? BigInt(delivery.partnerDeliveryId)
-              : null,
-          },
-        });
-      } catch (error) {
-        this.logger.error(`Failed to save invoice delivery: ${error.message}`);
-      }
-    }
-
-    await this.handleDetailEntities(invoiceId, invoiceData.id);
-  }
-
-  private async handleDetailEntities(
-    invoiceId: number,
-    kiotVietInvoiceId: number,
-  ) {
-    try {
-      const detailData = await this.fetchInvoiceDetail(kiotVietInvoiceId);
-
-      if (!detailData) return;
-
-      if (detailData.invoiceDetails && detailData.invoiceDetails.length > 0) {
-        await this.prismaService.invoiceDetail.deleteMany({
-          where: { invoiceId },
-        });
-
-        for (const detail of detailData.invoiceDetails) {
-          const product = await this.prismaService.product.findFirst({
-            where: { kiotVietId: BigInt(detail.productId) },
-          });
-
-          if (product) {
-            const quantity = detail.quantity || 0;
-            const price = detail.price || 0;
-            const discount = detail.discount || 0;
-            const subTotal = (price - discount) * quantity;
-
-            await this.prismaService.invoiceDetail.create({
-              data: {
-                kiotVietId: detail.id ? BigInt(detail.id) : null,
-                invoice: { connect: { id: invoiceId } },
-                product: { connect: { id: product.id } },
-                quantity: quantity,
-                price: new Prisma.Decimal(price),
-                discount: discount ? new Prisma.Decimal(discount) : null,
-                discountRatio: detail.discountRatio,
-                note: detail.note,
-                serialNumbers: detail.serialNumbers,
-                subTotal: new Prisma.Decimal(subTotal || 0),
-              },
-            });
-          }
-        }
-      }
-
-      // Handle InvoiceSurcharges
-      if (
-        detailData.invoiceOrderSurcharges &&
-        detailData.invoiceOrderSurcharges.length > 0
-      ) {
-        await this.prismaService.invoiceSurcharge.deleteMany({
-          where: { invoiceId },
-        });
-
-        for (const surcharge of detailData.invoiceOrderSurcharges) {
-          const surchargeRef = surcharge.surchargeId
-            ? await this.prismaService.surcharge.findFirst({
-                where: { kiotVietId: surcharge.surchargeId },
-              })
-            : null;
-
-          await this.prismaService.invoiceSurcharge.create({
-            data: {
-              kiotVietId: surcharge.id ? BigInt(surcharge.id) : null,
-              invoice: { connect: { id: invoiceId } },
-              surcharge: surchargeRef
-                ? { connect: { id: surchargeRef.id } }
-                : undefined,
-              surchargeName: surcharge.surchargeName,
-              surValue: surcharge.surValue
-                ? new Prisma.Decimal(surcharge.surValue)
-                : null,
-              price: surcharge.price
-                ? new Prisma.Decimal(surcharge.price)
-                : null,
-              createdDate: surcharge.createdDate
-                ? new Date(surcharge.createdDate)
-                : new Date(),
-            },
-          });
-        }
-      }
-    } catch (error) {
-      this.logger.error(
-        `Failed to handle detail entities for invoice ${kiotVietInvoiceId}: ${error.message}`,
-      );
-    }
-  }
-
-  private async batchSaveInvoicesWithLarkTracking(invoices: any[]): Promise<{
-    created: number;
-    updated: number;
-    larkResult: { success: number; failed: number };
-  }> {
-    if (!invoices || invoices.length === 0) {
-      return { created: 0, updated: 0, larkResult: { success: 0, failed: 0 } };
-    }
-
-    // 1. Save to database (existing logic)
-    const { created, updated } = await this.batchSaveInvoices(invoices);
-
-    // 2. Prepare data for Lark Base sync
-    const invoicesWithEnrichedData =
-      await this.enrichInvoicesForLarkBase(invoices);
-
-    // 3. Sync to Lark Base
-    const larkResult = await this.larkBaseService.syncInvoicesToLarkBase(
-      invoicesWithEnrichedData,
-    );
-
-    return { created, updated, larkResult };
-  }
-
-  private async enrichInvoicesForLarkBase(
-    invoices: any[],
-  ): Promise<EnrichedInvoiceData[]> {
-    const enrichedInvoices: EnrichedInvoiceData[] = [];
-
-    for (const invoiceData of invoices) {
-      let branchName: string | null = null;
-      let customerName: string | null = null;
-      let userName: string | null = null;
-
-      if (invoiceData.branchId) {
-        const branch = await this.prismaService.branch.findFirst({
-          where: { kiotVietId: invoiceData.branchId },
-          select: { name: true },
-        });
-        branchName = branch?.name || null;
-      }
-
-      // Get customer name from customerId
-      if (invoiceData.customerId) {
-        const customer = await this.prismaService.customer.findFirst({
-          where: { kiotVietId: BigInt(invoiceData.customerId) },
-          select: { name: true },
-        });
-        customerName = customer?.name || null;
-      }
-
-      if (invoiceData.soldById) {
-        const user = await this.prismaService.user.findFirst({
-          where: { kiotVietId: BigInt(invoiceData.soldById) },
-          select: { givenName: true },
-        });
-        userName = user?.givenName || null;
-      }
-
-      // FIXED: Properly typed object
-      enrichedInvoices.push({
-        invoiceData,
-        branchName,
-        customerName,
-        userName,
-      });
-    }
-
-    return enrichedInvoices;
-  }
-
-  async fetchInvoiceDetail(invoiceId: number) {
-    try {
-      const headers = await this.authService.getRequestHeaders();
-      const { data } = await firstValueFrom(
-        this.httpService.get(`${this.baseUrl}/invoices/${invoiceId}`, {
-          headers,
-        }),
-      );
-      return data;
-    } catch (error) {
-      this.logger.error(
-        `Failed to fetch invoice detail ${invoiceId}: ${error.message}`,
-      );
-      return null;
-    }
-  }
+  ) {}
 
   async syncHistoricalInvoices(): Promise<void> {
     try {
-      // Database sync control
       await this.prismaService.syncControl.upsert({
         where: { name: 'invoice_historical' },
         create: {
@@ -649,36 +43,10 @@ export class KiotVietInvoiceService {
         },
       });
 
-      // LarkBase sync control
-      await this.prismaService.syncControl.upsert({
-        where: { name: 'invoice_historical_lark' },
-        create: {
-          name: 'invoice_historical_lark',
-          entities: ['invoice_lark'],
-          syncMode: 'historical',
-          isRunning: true,
-          isEnabled: true,
-          status: 'in_progress',
-          startedAt: new Date(),
-        },
-        update: {
-          isRunning: true,
-          status: 'in_progress',
-          startedAt: new Date(),
-          error: null,
-          progress: {},
-        },
-      });
-
       let currentItem = 0;
       let totalProcessed = 0;
-      let totalLarkSuccess = 0;
-      let totalLarkFailed = 0;
-      let batchCount = 0;
       let hasMoreData = true;
-      const invoiceBatch: any[] = [];
-
-      this.logger.log('Starting historical invoice sync...');
+      let batchCount = 0;
 
       while (hasMoreData) {
         const response = await this.fetchInvoices({
@@ -687,56 +55,22 @@ export class KiotVietInvoiceService {
         });
 
         if (response.data && response.data.length > 0) {
-          invoiceBatch.push(...response.data);
+          const { created, updated } = await this.saveInvoicesToDatabase(
+            response.data,
+          );
+          totalProcessed += created + updated;
 
-          if (
-            invoiceBatch.length >= this.BATCH_SIZE ||
-            response.data.length < this.PAGE_SIZE
-          ) {
-            const { created, updated, larkResult } =
-              await this.batchSaveInvoicesWithLarkTracking(invoiceBatch);
-            totalProcessed += created + updated;
-            batchCount++;
+          await this.markInvoicesForLarkBaseSync(response.data);
 
-            if (larkResult) {
-              totalLarkSuccess += larkResult.success;
-              totalLarkFailed += larkResult.failed;
-            }
-
-            await this.prismaService.syncControl.update({
-              where: { name: 'invoice_historical' },
-              data: {
-                progress: {
-                  totalProcessed,
-                  batchCount,
-                  lastProcessedItem: currentItem + response.data.length,
-                },
-              },
-            });
-
-            await this.prismaService.syncControl.update({
-              where: { name: 'invoice_historical_lark' },
-              data: {
-                progress: {
-                  totalLarkSuccess,
-                  totalLarkFailed,
-                  batchCount,
-                },
-              },
-            });
-
-            this.logger.log(
-              `Historical sync batch ${batchCount}: ${totalProcessed} invoices processed, LarkBase: ${totalLarkSuccess} success, ${totalLarkFailed} failed`,
-            );
-            invoiceBatch.length = 0;
-          }
+          this.logger.log(
+            `Historical sync batch ${++batchCount}: ${totalProcessed} invoices processed`,
+          );
         }
 
         hasMoreData = response.data && response.data.length === this.PAGE_SIZE;
         if (hasMoreData) currentItem += this.PAGE_SIZE;
       }
 
-      // Update database sync control
       await this.prismaService.syncControl.update({
         where: { name: 'invoice_historical' },
         data: {
@@ -748,29 +82,14 @@ export class KiotVietInvoiceService {
         },
       });
 
-      await this.prismaService.syncControl.update({
-        where: { name: 'invoice_historical_lark' },
-        data: {
-          isRunning: false,
-          isEnabled: false,
-          status: totalLarkFailed > 0 ? 'completed_with_errors' : 'completed',
-          completedAt: new Date(),
-          progress: { totalLarkSuccess, totalLarkFailed, batchCount },
-          error:
-            totalLarkFailed > 0
-              ? `${totalLarkFailed} records failed to sync to LarkBase`
-              : null,
-        },
-      });
-
       this.logger.log(
-        `Historical sync completed: ${totalProcessed} invoices processed, LarkBase: ${totalLarkSuccess} success, ${totalLarkFailed} failed`,
+        `Historical sync completed: ${totalProcessed} invoices processed`,
       );
+
+      await this.syncPendingToLarkBase();
     } catch (error) {
-      await this.prismaService.syncControl.updateMany({
-        where: {
-          name: { in: ['invoice_historical', 'invoice_historical_lark'] },
-        },
+      await this.prismaService.syncControl.update({
+        where: { name: 'invoice_historical' },
         data: {
           isRunning: false,
           status: 'failed',
@@ -786,7 +105,6 @@ export class KiotVietInvoiceService {
 
   async syncRecentInvoices(days: number = 4): Promise<void> {
     try {
-      // Check if historical sync is running (like customer.service.ts)
       const historicalSync = await this.prismaService.syncControl.findFirst({
         where: { name: 'invoice_historical', isRunning: true },
       });
@@ -796,7 +114,6 @@ export class KiotVietInvoiceService {
         return;
       }
 
-      // Database sync control
       await this.prismaService.syncControl.upsert({
         where: { name: 'invoice_recent' },
         create: {
@@ -815,35 +132,11 @@ export class KiotVietInvoiceService {
         },
       });
 
-      // LarkBase sync control
-      await this.prismaService.syncControl.upsert({
-        where: { name: 'invoice_recent_lark' },
-        create: {
-          name: 'invoice_recent_lark',
-          entities: ['invoice_lark'],
-          syncMode: 'recent',
-          isRunning: true,
-          status: 'in_progress',
-          startedAt: new Date(),
-        },
-        update: {
-          isRunning: true,
-          status: 'in_progress',
-          startedAt: new Date(),
-          error: null,
-        },
-      });
-
       const lastModifiedFrom = dayjs()
         .subtract(days, 'day')
         .format('YYYY-MM-DD');
-
-      this.logger.log(`Starting recent invoice sync for last ${days} days`);
-
       let currentItem = 0;
       let totalProcessed = 0;
-      let totalLarkSuccess = 0;
-      let totalLarkFailed = 0;
       let hasMoreData = true;
 
       while (hasMoreData) {
@@ -854,17 +147,15 @@ export class KiotVietInvoiceService {
         });
 
         if (response.data && response.data.length > 0) {
-          const { created, updated, larkResult } =
-            await this.batchSaveInvoicesWithLarkTracking(response.data);
+          const { created, updated } = await this.saveInvoicesToDatabase(
+            response.data,
+          );
           totalProcessed += created + updated;
 
-          if (larkResult) {
-            totalLarkSuccess += larkResult.success;
-            totalLarkFailed += larkResult.failed;
-          }
+          await this.markInvoicesForLarkBaseSync(response.data);
 
           this.logger.log(
-            `Recent sync progress: ${totalProcessed} invoices processed, LarkBase: ${totalLarkSuccess} success, ${totalLarkFailed} failed`,
+            `Recent sync progress: ${totalProcessed} invoices processed`,
           );
         }
 
@@ -882,26 +173,14 @@ export class KiotVietInvoiceService {
         },
       });
 
-      await this.prismaService.syncControl.update({
-        where: { name: 'invoice_recent_lark' },
-        data: {
-          isRunning: false,
-          status: totalLarkFailed > 0 ? 'completed_with_errors' : 'completed',
-          completedAt: new Date(),
-          progress: { totalLarkSuccess, totalLarkFailed },
-          error:
-            totalLarkFailed > 0
-              ? `${totalLarkFailed} records failed to sync to LarkBase`
-              : null,
-        },
-      });
-
       this.logger.log(
-        `Recent sync completed: ${totalProcessed} invoices processed, LarkBase: ${totalLarkSuccess} success, ${totalLarkFailed} failed`,
+        `Recent sync completed: ${totalProcessed} invoices processed`,
       );
+
+      await this.syncPendingToLarkBase();
     } catch (error) {
-      await this.prismaService.syncControl.updateMany({
-        where: { name: { in: ['invoice_recent', 'invoice_recent_lark'] } },
+      await this.prismaService.syncControl.update({
+        where: { name: 'invoice_recent' },
         data: {
           isRunning: false,
           status: 'failed',
@@ -912,6 +191,672 @@ export class KiotVietInvoiceService {
 
       this.logger.error(`Recent sync failed: ${error.message}`);
       throw error;
+    }
+  }
+
+  // ===== DATABASE → LARKBASE SYNC METHODS =====
+  async syncPendingToLarkBase(): Promise<{ success: number; failed: number }> {
+    try {
+      const pendingInvoices = await this.prismaService.invoice.findMany({
+        where: {
+          larkSyncStatus: 'PENDING',
+          larkSyncRetries: { lt: 3 },
+        },
+        include: {
+          branch: true,
+          customer: true,
+          soldBy: true,
+          order: true,
+          invoiceDelivery: true,
+          invoiceSurcharges: true,
+        },
+        take: 100,
+      });
+
+      if (pendingInvoices.length === 0) {
+        this.logger.log('No pending invoices to sync to LarkBase');
+        return { success: 0, failed: 0 };
+      }
+
+      this.logger.log(
+        `Syncing ${pendingInvoices.length} pending invoices to LarkBase`,
+      );
+
+      const recordsToCreate = [];
+      const recordsToUpdate = [];
+
+      for (const invoice of pendingInvoices) {
+        if (invoice.larkRecordId) {
+          recordsToUpdate.push(invoice);
+        } else {
+          recordsToCreate.push(invoice);
+        }
+      }
+
+      let totalSuccess = 0;
+      let totalFailed = 0;
+
+      if (recordsToCreate.length > 0) {
+        const createResult = await this.larkBaseCreateBatch(recordsToCreate);
+        totalSuccess += createResult.success;
+        totalFailed += createResult.failed;
+      }
+
+      if (recordsToUpdate.length > 0) {
+        const updateResult = await this.larkBaseUpdateBatch(recordsToUpdate);
+        totalSuccess += updateResult.success;
+        totalFailed += updateResult.failed;
+      }
+
+      this.logger.log(
+        `LarkBase sync completed: ${totalSuccess} success, ${totalFailed} failed`,
+      );
+
+      return { success: totalSuccess, failed: totalFailed };
+    } catch (error) {
+      this.logger.error(`LarkBase sync failed: ${error.message}`);
+      return { success: 0, failed: 0 };
+    }
+  }
+
+  private async larkBaseCreateBatch(
+    invoices: any[],
+  ): Promise<{ success: number; failed: number }> {
+    try {
+      const response =
+        await this.larkBaseService.directCreateInvoices(invoices);
+
+      if (response.success > 0 && response.records) {
+        for (const [index, invoice] of invoices.entries()) {
+          if (response.records[index]) {
+            await this.prismaService.invoice.update({
+              where: { id: invoice.id },
+              data: {
+                larkRecordId: response.records[index].record_id,
+                larkSyncStatus: 'SYNCED',
+                larkSyncedAt: new Date(),
+                larkSyncRetries: 0,
+              },
+            });
+          }
+        }
+      }
+
+      if (response.failed > 0) {
+        const failedInvoices = invoices.slice(response.success);
+        for (const invoice of failedInvoices) {
+          await this.prismaService.invoice.update({
+            where: { id: invoice.id },
+            data: {
+              larkSyncStatus: 'FAILED',
+              larkSyncRetries: { increment: 1 },
+            },
+          });
+        }
+      }
+
+      return { success: response.success, failed: response.failed };
+    } catch (error) {
+      this.logger.error(`LarkBase create batch failed: ${error.message}`);
+
+      for (const invoice of invoices) {
+        await this.prismaService.invoice.update({
+          where: { id: invoice.id },
+          data: {
+            larkSyncStatus: 'FAILED',
+            larkSyncRetries: { increment: 1 },
+          },
+        });
+      }
+
+      return { success: 0, failed: invoices.length };
+    }
+  }
+
+  private async larkBaseUpdateBatch(
+    invoices: any[],
+  ): Promise<{ success: number; failed: number }> {
+    try {
+      const response =
+        await this.larkBaseService.directUpdateInvoices(invoices);
+
+      if (response.success > 0) {
+        const successfulInvoices = invoices.slice(0, response.success);
+        for (const invoice of successfulInvoices) {
+          await this.prismaService.invoice.update({
+            where: { id: invoice.id },
+            data: {
+              larkSyncStatus: 'SYNCED',
+              larkSyncedAt: new Date(),
+              larkSyncRetries: 0,
+            },
+          });
+        }
+      }
+
+      if (response.failed > 0) {
+        const failedInvoices = invoices.slice(response.success);
+        for (const invoice of failedInvoices) {
+          await this.prismaService.invoice.update({
+            where: { id: invoice.id },
+            data: {
+              larkSyncStatus: 'FAILED',
+              larkSyncRetries: { increment: 1 },
+            },
+          });
+        }
+      }
+
+      return { success: response.success, failed: response.failed };
+    } catch (error) {
+      this.logger.error(`LarkBase update batch failed: ${error.message}`);
+
+      for (const invoice of invoices) {
+        await this.prismaService.invoice.update({
+          where: { id: invoice.id },
+          data: {
+            larkSyncStatus: 'FAILED',
+            larkSyncRetries: { increment: 1 },
+          },
+        });
+      }
+
+      return { success: 0, failed: invoices.length };
+    }
+  }
+
+  private async markInvoicesForLarkBaseSync(invoices: any[]): Promise<void> {
+    try {
+      const kiotVietIds = invoices.map((i) => BigInt(i.id));
+
+      await this.prismaService.invoice.updateMany({
+        where: { kiotVietId: { in: kiotVietIds } },
+        data: {
+          larkSyncStatus: 'PENDING',
+          larkSyncRetries: 0,
+        },
+      });
+
+      this.logger.debug(`Marked ${invoices.length} invoices for LarkBase sync`);
+    } catch (error) {
+      this.logger.error(
+        `Failed to mark invoices for LarkBase sync: ${error.message}`,
+      );
+    }
+  }
+
+  // ===== EXISTING METHODS (COMPLETE IMPLEMENTATION) =====
+  private async fetchInvoices(params: any): Promise<any> {
+    try {
+      const accessToken = await this.authService.getAccessToken();
+      const baseUrl = this.configService.get<string>('KIOT_BASE_URL');
+
+      const queryParams = new URLSearchParams();
+      if (params.currentItem !== undefined) {
+        queryParams.append('currentItem', params.currentItem.toString());
+      }
+      if (params.pageSize) {
+        queryParams.append('pageSize', params.pageSize.toString());
+      }
+      if (params.lastModifiedFrom) {
+        queryParams.append('lastModifiedFrom', params.lastModifiedFrom);
+      }
+      queryParams.append('includeInvoiceSurcharge', 'true');
+
+      const url = `${baseUrl}/invoices?${queryParams.toString()}`;
+
+      const response = await this.httpService
+        .get(url, {
+          headers: {
+            Retailer: this.configService.get<string>('KIOT_SHOP_NAME'),
+            Authorization: `Bearer ${accessToken}`,
+          },
+        })
+        .toPromise();
+
+      return response.data;
+    } catch (error) {
+      this.logger.error(`Failed to fetch invoices: ${error.message}`);
+      throw error;
+    }
+  }
+
+  private async saveInvoicesToDatabase(
+    invoices: any[],
+  ): Promise<{ created: number; updated: number }> {
+    const invoicesToCreate = [];
+    const invoicesToUpdate = [];
+
+    for (const invoiceData of invoices) {
+      const existingInvoice = await this.prismaService.invoice.findUnique({
+        where: { kiotVietId: BigInt(invoiceData.id) },
+      });
+
+      if (existingInvoice) {
+        const updateData = await this.prepareInvoiceUpdateData(invoiceData);
+        invoicesToUpdate.push({
+          id: existingInvoice.id,
+          data: updateData,
+          invoiceData: invoiceData,
+        });
+      } else {
+        const createData = await this.prepareInvoiceCreateData(invoiceData);
+        if (createData) {
+          invoicesToCreate.push({
+            createData: createData,
+            invoiceData: invoiceData,
+          });
+        }
+      }
+    }
+
+    return await this.processDatabaseOperations(
+      invoicesToCreate,
+      invoicesToUpdate,
+    );
+  }
+
+  private async processDatabaseOperations(
+    invoicesToCreate: Array<{
+      createData: Prisma.InvoiceCreateInput;
+      invoiceData: any;
+    }>,
+    invoicesToUpdate: Array<{
+      id: number;
+      data: Prisma.InvoiceUpdateInput;
+      invoiceData: any;
+    }>,
+  ) {
+    let createdCount = 0;
+    let updatedCount = 0;
+
+    // Create invoices
+    for (const invoiceToCreate of invoicesToCreate) {
+      try {
+        const invoice = await this.prismaService.invoice.create({
+          data: invoiceToCreate.createData,
+        });
+
+        await this.handleInvoiceRelations(
+          invoice.id,
+          invoiceToCreate.invoiceData,
+        );
+        createdCount++;
+      } catch (error) {
+        this.logger.error(`Failed to create invoice: ${error.message}`);
+      }
+    }
+
+    // Update invoices
+    for (const invoiceToUpdate of invoicesToUpdate) {
+      try {
+        await this.prismaService.invoice.update({
+          where: { id: invoiceToUpdate.id },
+          data: invoiceToUpdate.data,
+        });
+
+        await this.handleInvoiceRelations(
+          invoiceToUpdate.id,
+          invoiceToUpdate.invoiceData,
+        );
+        updatedCount++;
+      } catch (error) {
+        this.logger.error(`Failed to update invoice: ${error.message}`);
+      }
+    }
+
+    return { created: createdCount, updated: updatedCount };
+  }
+
+  private async prepareInvoiceCreateData(
+    invoiceData: any,
+  ): Promise<Prisma.InvoiceCreateInput | null> {
+    try {
+      const data: Prisma.InvoiceCreateInput = {
+        kiotVietId: BigInt(invoiceData.id),
+        code: invoiceData.code,
+        orderCode: invoiceData.orderCode || null,
+        orderId: null, // Will be set below
+        purchaseDate: new Date(invoiceData.purchaseDate),
+        branchId: invoiceData.branchId || null,
+        soldById: invoiceData.soldById ? BigInt(invoiceData.soldById) : null,
+        customerId: null, // Will be set below
+        total: parseFloat(invoiceData.total),
+        totalCostOfGoods: invoiceData.totalCostOfGoods
+          ? parseFloat(invoiceData.totalCostOfGoods)
+          : 0,
+        totalPayment: parseFloat(invoiceData.totalPayment),
+        discount: invoiceData.discount
+          ? parseFloat(invoiceData.discount)
+          : null,
+        discountRatio: invoiceData.discountRatio || null,
+        status: invoiceData.status,
+        description: invoiceData.description || null,
+        usingCod: invoiceData.usingCod || false,
+        saleChannelId: invoiceData.saleChannelId || null,
+        isApplyVoucher: invoiceData.isApplyVoucher || false,
+        retailerId: invoiceData.retailerId || null,
+        createdDate: invoiceData.createdDate
+          ? new Date(invoiceData.createdDate)
+          : new Date(),
+        modifiedDate: invoiceData.modifiedDate
+          ? new Date(invoiceData.modifiedDate)
+          : new Date(),
+        lastSyncedAt: new Date(),
+        larkSyncStatus: 'PENDING',
+      };
+
+      // Handle branch relationship
+      if (invoiceData.branchId) {
+        const branch = await this.prismaService.branch.findFirst({
+          where: { kiotVietId: invoiceData.branchId },
+        });
+        if (branch) {
+          data.branch = { connect: { id: branch.id } };
+        }
+      }
+
+      // Handle customer relationship
+      if (invoiceData.customerId) {
+        const customer = await this.prismaService.customer.findFirst({
+          where: { kiotVietId: BigInt(invoiceData.customerId) },
+        });
+        if (customer) {
+          data.customer = { connect: { id: customer.id } };
+        }
+      }
+
+      // Handle order relationship
+      if (invoiceData.orderId) {
+        const order = await this.prismaService.order.findFirst({
+          where: { kiotVietId: BigInt(invoiceData.orderId) },
+        });
+        if (order) {
+          data.order = { connect: { id: order.id } };
+        }
+      }
+
+      // Handle sale channel relationship
+      if (invoiceData.saleChannelId) {
+        const saleChannel = await this.prismaService.saleChannel.findFirst({
+          where: { kiotVietId: invoiceData.saleChannelId },
+        });
+        if (saleChannel) {
+          data.saleChannel = { connect: { id: saleChannel.id } };
+        }
+      }
+
+      return data;
+    } catch (error) {
+      this.logger.error(
+        `Failed to prepare invoice create data: ${error.message}`,
+      );
+      return null;
+    }
+  }
+
+  private async prepareInvoiceUpdateData(
+    invoiceData: any,
+  ): Promise<Prisma.InvoiceUpdateInput> {
+    const data: Prisma.InvoiceUpdateInput = {
+      code: invoiceData.code,
+      orderCode: invoiceData.orderCode || null,
+      purchaseDate: new Date(invoiceData.purchaseDate),
+      branchId: invoiceData.branchId || null,
+      soldById: invoiceData.soldById ? BigInt(invoiceData.soldById) : null,
+      total: parseFloat(invoiceData.total),
+      totalCostOfGoods: invoiceData.totalCostOfGoods
+        ? parseFloat(invoiceData.totalCostOfGoods)
+        : 0,
+      totalPayment: parseFloat(invoiceData.totalPayment),
+      discount: invoiceData.discount ? parseFloat(invoiceData.discount) : null,
+      discountRatio: invoiceData.discountRatio || null,
+      status: invoiceData.status,
+      description: invoiceData.description || null,
+      usingCod: invoiceData.usingCod || false,
+      saleChannelId: invoiceData.saleChannelId || null,
+      isApplyVoucher: invoiceData.isApplyVoucher || false,
+      retailerId: invoiceData.retailerId || null,
+      modifiedDate: invoiceData.modifiedDate
+        ? new Date(invoiceData.modifiedDate)
+        : new Date(),
+      lastSyncedAt: new Date(),
+      larkSyncStatus: 'PENDING',
+    };
+
+    // Handle relationships (same as create)
+    if (invoiceData.branchId) {
+      const branch = await this.prismaService.branch.findFirst({
+        where: { kiotVietId: invoiceData.branchId },
+      });
+      if (branch) {
+        data.branch = { connect: { id: branch.id } };
+      }
+    }
+
+    if (invoiceData.customerId) {
+      const customer = await this.prismaService.customer.findFirst({
+        where: { kiotVietId: BigInt(invoiceData.customerId) },
+      });
+      if (customer) {
+        data.customer = { connect: { id: customer.id } };
+      }
+    }
+
+    if (invoiceData.orderId) {
+      const order = await this.prismaService.order.findFirst({
+        where: { kiotVietId: BigInt(invoiceData.orderId) },
+      });
+      if (order) {
+        data.order = { connect: { id: order.id } };
+      }
+    }
+
+    if (invoiceData.saleChannelId) {
+      const saleChannel = await this.prismaService.saleChannel.findFirst({
+        where: { kiotVietId: invoiceData.saleChannelId },
+      });
+      if (saleChannel) {
+        data.saleChannel = { connect: { id: saleChannel.id } };
+      }
+    }
+
+    return data;
+  }
+
+  private async handleInvoiceRelations(
+    invoiceId: number,
+    invoiceData: any,
+  ): Promise<void> {
+    // Handle invoice details
+    if (invoiceData.invoiceDetails && invoiceData.invoiceDetails.length > 0) {
+      await this.prismaService.invoiceDetail.deleteMany({
+        where: { invoiceId },
+      });
+
+      for (const detail of invoiceData.invoiceDetails) {
+        try {
+          const product = await this.prismaService.product.findFirst({
+            where: { kiotVietId: BigInt(detail.productId) },
+          });
+
+          if (product) {
+            await this.prismaService.invoiceDetail.create({
+              data: {
+                kiotVietId: detail.kiotVietId
+                  ? BigInt(detail.kiotVietId)
+                  : null,
+                invoiceId,
+                productId: product.id,
+                quantity: parseFloat(detail.quantity),
+                price: parseFloat(detail.price),
+                discount: detail.discount ? parseFloat(detail.discount) : null,
+                discountRatio: detail.discountRatio || null,
+                note: detail.note || null,
+                serialNumbers: detail.serialNumbers || null,
+                subTotal: parseFloat(detail.subTotal || 0),
+              },
+            });
+          }
+        } catch (error) {
+          this.logger.error(
+            `Failed to create invoice detail: ${error.message}`,
+          );
+        }
+      }
+    }
+
+    // Handle invoice delivery
+    if (invoiceData.invoiceDelivery) {
+      await this.prismaService.invoiceDelivery.deleteMany({
+        where: { invoiceId },
+      });
+
+      try {
+        await this.prismaService.invoiceDelivery.create({
+          data: {
+            kiotVietId: invoiceData.invoiceDelivery.kiotVietId
+              ? BigInt(invoiceData.invoiceDelivery.kiotVietId)
+              : null,
+            invoiceId,
+            deliveryCode: invoiceData.invoiceDelivery.deliveryCode || null,
+            status: invoiceData.invoiceDelivery.status,
+            type: invoiceData.invoiceDelivery.type || null,
+            price: invoiceData.invoiceDelivery.price
+              ? parseFloat(invoiceData.invoiceDelivery.price)
+              : null,
+            receiver: invoiceData.invoiceDelivery.receiver || null,
+            contactNumber: invoiceData.invoiceDelivery.contactNumber || null,
+            address: invoiceData.invoiceDelivery.address || null,
+            locationId: invoiceData.invoiceDelivery.locationId || null,
+            locationName: invoiceData.invoiceDelivery.locationName || null,
+            wardName: invoiceData.invoiceDelivery.wardName || null,
+            usingPriceCod: invoiceData.invoiceDelivery.usingPriceCod || false,
+            priceCodPayment: invoiceData.invoiceDelivery.priceCodPayment
+              ? parseFloat(invoiceData.invoiceDelivery.priceCodPayment)
+              : null,
+            weight: invoiceData.invoiceDelivery.weight || null,
+            length: invoiceData.invoiceDelivery.length || null,
+            width: invoiceData.invoiceDelivery.width || null,
+            height: invoiceData.invoiceDelivery.height || null,
+            partnerDeliveryId: invoiceData.invoiceDelivery.partnerDeliveryId
+              ? BigInt(invoiceData.invoiceDelivery.partnerDeliveryId)
+              : null,
+          },
+        });
+      } catch (error) {
+        this.logger.error(
+          `Failed to create invoice delivery: ${error.message}`,
+        );
+      }
+    }
+
+    // Handle invoice surcharges
+    if (
+      invoiceData.invoiceSurcharges &&
+      invoiceData.invoiceSurcharges.length > 0
+    ) {
+      await this.prismaService.invoiceSurcharge.deleteMany({
+        where: { invoiceId },
+      });
+
+      for (const surcharge of invoiceData.invoiceSurcharges) {
+        try {
+          const surchargeRecord = await this.prismaService.surcharge.findFirst({
+            where: { kiotVietId: surcharge.surchargeId },
+          });
+
+          await this.prismaService.invoiceSurcharge.create({
+            data: {
+              kiotVietId: surcharge.kiotVietId
+                ? BigInt(surcharge.kiotVietId)
+                : null,
+              invoiceId,
+              surchargeId: surchargeRecord?.id || null,
+              surchargeName: surcharge.surchargeName || null,
+              surValue: surcharge.surValue
+                ? parseFloat(surcharge.surValue)
+                : null,
+              price: surcharge.price ? parseFloat(surcharge.price) : null,
+              createdDate: surcharge.createdDate
+                ? new Date(surcharge.createdDate)
+                : new Date(),
+            },
+          });
+        } catch (error) {
+          this.logger.error(
+            `Failed to create invoice surcharge: ${error.message}`,
+          );
+        }
+      }
+    }
+
+    // Handle payments
+    if (invoiceData.payments && invoiceData.payments.length > 0) {
+      await this.prismaService.payment.deleteMany({
+        where: { invoiceId },
+      });
+
+      for (const payment of invoiceData.payments) {
+        try {
+          const bankAccount = payment.accountId
+            ? await this.prismaService.bankAccount.findFirst({
+                where: { kiotVietId: payment.accountId },
+              })
+            : null;
+
+          await this.prismaService.payment.create({
+            data: {
+              kiotVietId: payment.kiotVietId
+                ? BigInt(payment.kiotVietId)
+                : null,
+              code: payment.code || null,
+              amount: parseFloat(payment.amount),
+              method: payment.method,
+              status: payment.status || null,
+              transDate: new Date(payment.transDate),
+              accountId: bankAccount?.id || null,
+              bankAccountInfo: payment.bankAccount || null,
+              invoiceId,
+              description: payment.description || null,
+            },
+          });
+        } catch (error) {
+          this.logger.error(`Failed to create payment: ${error.message}`);
+        }
+      }
+    }
+  }
+
+  async checkAndRunAppropriateSync(): Promise<void> {
+    const historicalSync = await this.prismaService.syncControl.findFirst({
+      where: { name: 'invoice_historical' },
+    });
+
+    if (!historicalSync) {
+      this.logger.log(
+        'No historical sync record found. Starting full historical sync...',
+      );
+      await this.syncHistoricalInvoices();
+      return;
+    }
+
+    if (historicalSync?.isEnabled && historicalSync?.isRunning) {
+      this.logger.log(
+        'System restart detected: Historical sync was running, resuming...',
+      );
+      await this.syncHistoricalInvoices();
+    } else if (historicalSync?.isEnabled && !historicalSync?.isRunning) {
+      this.logger.log(
+        'System restart detected: Historical sync enabled, starting...',
+      );
+      await this.syncHistoricalInvoices();
+    } else if (historicalSync?.status === 'completed') {
+      this.logger.log('Historical sync completed. Running recent sync...');
+      await this.syncRecentInvoices();
+    } else {
+      this.logger.log('System restart detected: Running recent sync...');
+      await this.syncRecentInvoices();
     }
   }
 }
