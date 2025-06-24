@@ -222,7 +222,6 @@ model Customer {
   taxCode           String?
   debt              Decimal?           @db.Decimal(15, 2)
   totalInvoiced     Decimal?           @db.Decimal(15, 2)
-  totalInvoicedWithoutReturn Decimal? @db.Decimal(15, 2)
   totalPoint        Float?
   totalRevenue      Decimal?           @db.Decimal(15, 2)
   rewardPoint       BigInt?

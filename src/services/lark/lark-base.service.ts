@@ -833,7 +833,7 @@ export class LarkBaseService {
       customerData.totalInvoiced !== null &&
       customerData.totalInvoiced !== undefined
     ) {
-      fields['Tổng Bán'] = Number(customerData.totalInvoiced);
+      fields['Tổng Bán'] = Number(customerData.totalInvoiced || 0);
     }
 
     // Tổng Doanh Thu
@@ -841,7 +841,7 @@ export class LarkBaseService {
       customerData.totalRevenue !== null &&
       customerData.totalRevenue !== undefined
     ) {
-      fields['Tổng Doanh Thu'] = Number(customerData.totalRevenue);
+      fields['Tổng Doanh Thu'] = Number(customerData.totalRevenue || 0);
     }
 
     // Điểm Hiện Tại

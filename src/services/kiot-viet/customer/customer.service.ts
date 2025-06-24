@@ -358,9 +358,6 @@ export class KiotVietCustomerService {
         totalInvoiced: customerData.totalInvoiced
           ? parseFloat(customerData.totalInvoiced)
           : 0,
-        totalInvoicedWithoutReturn: customerData.totalInvoicedWithoutReturn
-          ? parseFloat(customerData.totalInvoicedWithoutReturn)
-          : 0,
         totalRevenue: customerData.totalRevenue
           ? parseFloat(customerData.totalRevenue)
           : 0,
@@ -423,9 +420,6 @@ export class KiotVietCustomerService {
       debt: customerData.debt ? parseFloat(customerData.debt) : 0,
       totalInvoiced: customerData.totalInvoiced
         ? parseFloat(customerData.totalInvoiced)
-        : 0,
-      totalInvoicedWithoutReturn: customerData.totalInvoicedWithoutReturn
-        ? parseFloat(customerData.totalInvoicedWithoutReturn)
         : 0,
       totalRevenue: customerData.totalRevenue
         ? parseFloat(customerData.totalRevenue)
