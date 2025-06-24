@@ -209,8 +209,8 @@ model Customer {
   kiotVietId       BigInt                @unique
   code             String                @unique
   name             String
-  type             Int?                  // 0: Individual, 1: Company
-  gender           Boolean?              // true: male, false: female
+  type             Int?
+  gender           Boolean?
   birthDate        DateTime?
   contactNumber    String?
   address          String?
@@ -234,6 +234,11 @@ model Customer {
   modifiedDate     DateTime              @updatedAt
   lastSyncedAt     DateTime              @default(now())
   
+  larkRecordId     String?
+  larkSyncStatus   LarkSyncStatus         @default(PENDING)
+  larkSyncedAt     DateTime?
+  larkSyncRetries  Int                    @default(0)
+
   customerGroups   CustomerGroupRelation[]
   orders           Order[]
   invoices         Invoice[]
@@ -243,6 +248,8 @@ model Customer {
   @@index([contactNumber])
   @@index([branchId])
   @@index([lastSyncedAt])
+  @@index([larkSyncStatus])
+  @@index([modifiedDate])
 }
 
 model CustomerGroup {
@@ -366,6 +373,10 @@ model Order {
   createdDate       DateTime           @default(now())
   modifiedDate      DateTime           @updatedAt
   lastSyncedAt      DateTime           @default(now())
+  larkRecordId      String?
+  larkSyncStatus    LarkSyncStatus     @default(PENDING)
+  larkSyncedAt      DateTime?
+  larkSyncRetries   Int                @default(0)
   
   orderDetails      OrderDetail[]
   orderDelivery     OrderDelivery?
@@ -380,6 +391,7 @@ model Order {
   @@index([soldById])
   @@index([saleChannelId])
   @@index([lastSyncedAt])
+  @@index([larkSyncStatus])
   Branch Branch[] @relation("BranchOrders")
 }
 
@@ -469,6 +481,11 @@ model Invoice {
   createdDate       DateTime           @default(now())
   modifiedDate      DateTime           @updatedAt
   lastSyncedAt      DateTime           @default(now())
+
+  larkRecordId      String?
+  larkSyncStatus    LarkSyncStatus     @default(PENDING)
+  larkSyncedAt      DateTime?
+  larkSyncRetries   Int                @default(0)
   
   invoiceDetails    InvoiceDetail[]
   invoiceDelivery   InvoiceDelivery?
@@ -484,6 +501,7 @@ model Invoice {
   @@index([soldById])
   @@index([saleChannelId])
   @@index([lastSyncedAt])
+  @@index([larkSyncStatus])
   Branch Branch[] @relation("BranchInvoices")
 }
 
@@ -1137,4 +1155,11 @@ model SyncControl {
   updatedAt         DateTime  @updatedAt
 
   @@index([isRunning, status])
+}
+
+enum LarkSyncStatus {
+  PENDING
+  SYNCED 
+  FAILED
+  SKIP
 }
