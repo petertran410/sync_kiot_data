@@ -464,14 +464,6 @@ export class LarkBaseService {
 
       if (!records.length) return { success: 0, failed: 0 };
 
-      this.logger.debug(
-        `Attempting to create ${records.length} invoice records in LarkBase`,
-      );
-      this.logger.debug(
-        'Sample invoice record:',
-        JSON.stringify(records[0], null, 2),
-      );
-
       const response = await this.client.bitable.appTableRecord.batchCreate({
         path: {
           app_token: this.invoiceBaseToken,
@@ -546,7 +538,7 @@ export class LarkBaseService {
         .filter(
           (record): record is { record_id: string; fields: any } =>
             record !== null && record.fields['Mã Hoá Đơn'],
-        ); // FIXED: Type guard to ensure non-null records
+        );
 
       if (!records.length) return { success: 0, failed: 0 };
 
@@ -561,9 +553,6 @@ export class LarkBaseService {
       const successCount = response.data?.records?.length || 0;
       const failedCount = records.length - successCount;
 
-      this.logger.log(
-        `Invoice LarkBase batch update: ${successCount} success, ${failedCount} failed`,
-      );
       return { success: successCount, failed: failedCount };
     } catch (error) {
       this.logger.error(
