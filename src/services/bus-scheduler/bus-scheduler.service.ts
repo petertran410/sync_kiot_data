@@ -2,6 +2,15 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ScheduleUtils } from '../../utils/schedule.utils';
+import {
+  SYNC_ENTITIES_CONFIG,
+  getEntitiesBySchedule,
+  SyncEntityConfig,
+  ScheduleType,
+} from '../../config/sync-schedule.config';
+
+// Import all your services
 import { KiotVietBranchService } from '../kiot-viet/branch/branch.service';
 import { KiotVietCustomerGroupService } from '../kiot-viet/customer-group/customer-group.service';
 import { KiotVietTradeMarkService } from '../kiot-viet/trademark/trademark.service';
@@ -16,6 +25,7 @@ import { KiotVietOrderService } from '../kiot-viet/order/order.service';
 import { KiotVietInvoiceService } from '../kiot-viet/invoice/invoice.service';
 import { EntityStatus, EntityStatusSummary } from '../../types/sync.types';
 
+// Legacy interfaces for backward compatibility
 interface SyncEntity {
   name: string;
   service: any;
@@ -25,111 +35,50 @@ interface SyncEntity {
   retryCount?: number;
 }
 
+export interface SyncResult {
+  entityName: string;
+  success: boolean;
+  duration: number;
+  error?: string;
+}
+
+export interface SyncCycleResult {
+  schedule: ScheduleType;
+  totalEntities: number;
+  successful: number;
+  failed: number;
+  results: SyncResult[];
+  duration: number;
+  startTime: Date;
+  endTime: Date;
+}
+
 @Injectable()
 export class BusSchedulerService implements OnModuleInit {
   private readonly logger = new Logger(BusSchedulerService.name);
   private isRunning = false;
+  private currentSyncType: ScheduleType | 'manual' | null = null;
+  private currentSyncStartTime: Date | null = null;
+  private isRunning15Min = false;
+  private isRunningWeekend = false;
+
   private readonly MAX_RETRIES = 2;
+  private readonly MAX_CONCURRENT = 3;
 
-  private readonly syncEntities: SyncEntity[] = [
-    // Phase 1 - No Dependencies
-    // {
-    //   name: 'branch',
-    //   service: 'branchService',
-    //   syncMethod: 'syncBranches',
-    //   syncType: 'simple',
-    // },
-    {
-      name: 'customergroup',
-      service: 'customerGroupService',
-      syncMethod: 'syncCustomerGroups',
-      syncType: 'simple',
-    },
-    {
-      name: 'trademark',
-      service: 'tradeMarkService',
-      syncMethod: 'syncTradeMarks',
-      syncType: 'simple',
-    },
-    // {
-    //   name: 'user',
-    //   service: 'userService',
-    //   syncMethod: 'syncHistoricalUsers',
-    //   syncType: 'full',
-    // },
-    // {
-    //   name: 'salechannel',
-    //   service: 'saleChannelService',
-    //   syncMethod: 'syncSaleChannels',
-    //   syncType: 'simple',
-    // },
-    // {
-    //   name: 'surcharge',
-    //   service: 'surchargeService',
-    //   syncMethod: 'syncSurcharges',
-    //   syncType: 'simple',
-    // },
-    // {
-    //   name: 'bankaccount',
-    //   service: 'bankAccountService',
-    //   syncMethod: 'syncBankAccounts',
-    //   syncType: 'simple',
-    // },
-
-    // Phase 2 - Basic Dependencies
-    {
-      name: 'category',
-      service: 'categoryService',
-      syncMethod: 'syncCategories',
-      syncType: 'simple',
-      dependencies: [],
-    },
-    {
-      name: 'customer',
-      service: 'customerService',
-      syncMethod: 'syncHistoricalCustomers',
-      syncType: 'full',
-      dependencies: ['branch', 'customergroup'],
-    },
-
-    // Phase 3 - Complex Dependencies
-    {
-      name: 'product',
-      service: 'productService',
-      syncMethod: 'syncHistoricalProducts',
-      syncType: 'full',
-      dependencies: ['category', 'trademark'],
-    },
-
-    // Phase 4 - Transaction Dependencies
-    {
-      name: 'order',
-      service: 'orderService',
-      syncMethod: 'syncHistoricalOrders',
-      syncType: 'full',
-      // dependencies: ['branch', 'customer', 'product', 'user', 'salechannel'],
-      dependencies: ['customer', 'product'],
-    },
-
-    {
-      name: 'invoice',
-      service: 'invoiceService',
-      syncMethod: 'syncHistoricalInvoices',
-      syncType: 'full',
-      // dependencies: [
-      //   'branch',
-      //   'customer',
-      //   'product',
-      //   'user',
-      //   'order',
-      //   'salechannel',
-      // ],
-      dependencies: ['customer', 'product', 'order'],
-    },
-  ];
+  private readonly syncEntities: SyncEntity[] = SYNC_ENTITIES_CONFIG.map(
+    (config) => ({
+      name: config.name,
+      service: config.service,
+      syncMethod: config.syncMethod,
+      syncType: config.syncType,
+      dependencies: config.dependencies,
+      retryCount: config.retryCount,
+    }),
+  );
 
   constructor(
     private readonly prismaService: PrismaService,
+    // Inject all services
     private readonly branchService: KiotVietBranchService,
     private readonly customerGroupService: KiotVietCustomerGroupService,
     private readonly tradeMarkService: KiotVietTradeMarkService,
@@ -146,8 +95,9 @@ export class BusSchedulerService implements OnModuleInit {
 
   async onModuleInit() {
     this.logger.log(
-      'BusSchedulerService initialized, checking for startup sync...',
+      '🚌 Enhanced Bus Scheduler initialized with MUTUAL EXCLUSION!',
     );
+    ScheduleUtils.logScheduleStatus(this.logger);
 
     setTimeout(async () => {
       try {
@@ -155,49 +105,448 @@ export class BusSchedulerService implements OnModuleInit {
       } catch (error) {
         this.logger.error(`Startup sync check failed: ${error.message}`);
       }
-    }, 2000);
+    }, 3000);
   }
 
-  @Cron('0 */15 * * * *')
+  /**
+   * Every 15 minutes - High frequency entities
+   */
+  @Cron('0 */15 * * * *') // Every 15 minutes
   async handleScheduledSync() {
+    await this.handleEvery15MinutesSync();
+  }
+
+  async handleEvery15MinutesSync() {
+    // ===== MUTUAL EXCLUSION CHECK =====
     if (this.isRunning) {
-      this.logger.log('Bus scheduler already running, skipping scheduled sync');
+      this.logger.log(
+        `⏸️  15-minute sync BLOCKED - ${this.currentSyncType} sync is running (started at ${this.currentSyncStartTime?.toISOString()})`,
+      );
       return;
     }
 
-    try {
-      await this.runSyncCycle();
-    } catch (error) {
-      this.logger.error(`Scheduled sync cycle failed: ${error.message}`);
-    }
+    const entities = getEntitiesBySchedule('every_15_minutes');
+    await this.runSyncCycle('every_15_minutes', entities);
   }
 
-  private async checkAndRunStartupSync(): Promise<void> {
-    this.logger.log('Checking if startup sync is needed...');
-
-    const needsHistoricalSync = await this.checkForMissingHistoricalSyncs();
-
-    if (needsHistoricalSync.length > 0) {
+  /**
+   * Weekend sync - Saturday 6 AM and Sunday 6 AM
+   */
+  @Cron('0 0 6 * * 0,6') // Sunday and Saturday at 6 AM
+  async handleWeekendSync() {
+    // ===== MUTUAL EXCLUSION CHECK =====
+    if (this.isRunning) {
       this.logger.log(
-        `Found entities needing historical sync: ${needsHistoricalSync.join(', ')}`,
+        `⏸️  Weekend sync BLOCKED - ${this.currentSyncType} sync is running (started at ${this.currentSyncStartTime?.toISOString()})`,
       );
-      await this.runSyncCycle();
-    } else {
-      this.logger.log('No historical sync needed, running recent sync cycle');
-      await this.runSyncCycle();
+      return;
+    }
+
+    if (!ScheduleUtils.isWeekendVietnamTime()) {
+      this.logger.log('Not weekend time in Vietnam, skipping weekend sync');
+      return;
+    }
+
+    const entities = getEntitiesBySchedule('weekends');
+    await this.runSyncCycle('weekends', entities);
+  }
+
+  /**
+   * Manual trigger for any schedule type
+   */
+  async triggerSync(scheduleType: ScheduleType): Promise<SyncCycleResult> {
+    // ===== MUTUAL EXCLUSION CHECK =====
+    if (this.isRunning) {
+      throw new Error(
+        `Cannot trigger ${scheduleType} sync - ${this.currentSyncType} sync is already running (started at ${this.currentSyncStartTime?.toISOString()})`,
+      );
+    }
+
+    const entities = getEntitiesBySchedule(scheduleType);
+    return await this.runSyncCycle(scheduleType, entities);
+  }
+
+  /**
+   * Main sync cycle execution (Enhanced version)
+   */
+  private async runSyncCycle(
+    scheduleType: ScheduleType,
+    entities: SyncEntityConfig[],
+  ): Promise<SyncCycleResult> {
+    const startTime = new Date();
+
+    // ===== ACQUIRE GLOBAL LOCK =====
+    if (this.isRunning) {
+      throw new Error(
+        `Sync cycle already running: ${this.currentSyncType} (started at ${this.currentSyncStartTime?.toISOString()})`,
+      );
+    }
+
+    this.isRunning = true;
+    this.currentSyncType = scheduleType;
+    this.currentSyncStartTime = startTime;
+
+    try {
+      this.logger.log(
+        `🔒 ACQUIRED LOCK: Starting ${scheduleType} sync cycle with ${entities.length} entities`,
+      );
+      this.logger.log(
+        `🚫 ALL OTHER SYNCS BLOCKED until ${scheduleType} sync completes`,
+      );
+
+      // Create sync control record
+      await this.prismaService.syncControl.upsert({
+        where: { name: `bus_scheduler_${scheduleType}` },
+        create: {
+          name: `bus_scheduler_${scheduleType}`,
+          entities: entities.map((e) => e.name),
+          syncMode: scheduleType,
+          isRunning: true,
+          status: 'in_progress',
+          startedAt: startTime,
+          progress: { stage: 'starting', totalEntities: entities.length },
+        },
+        update: {
+          isRunning: true,
+          status: 'in_progress',
+          startedAt: startTime,
+          progress: { stage: 'restarted', totalEntities: entities.length },
+          error: null,
+        },
+      });
+
+      // Legacy bus_scheduler_cycle for backward compatibility
+      await this.prismaService.syncControl.upsert({
+        where: { name: 'bus_scheduler_cycle' },
+        create: {
+          name: 'bus_scheduler_cycle',
+          entities: entities.map((e) => e.name),
+          syncMode: 'cycle',
+          isRunning: true,
+          status: 'in_progress',
+          startedAt: startTime,
+          progress: {
+            currentEntity: `${scheduleType}_sync`,
+            completed: [],
+            failed: [],
+            syncType: scheduleType,
+          },
+        },
+        update: {
+          isRunning: true,
+          status: 'in_progress',
+          startedAt: startTime,
+          progress: {
+            currentEntity: `${scheduleType}_sync`,
+            completed: [],
+            failed: [],
+            syncType: scheduleType,
+          },
+          error: null,
+        },
+      });
+
+      // Process entities with concurrency control
+      const results = await this.processEntitiesWithDependencies(
+        entities,
+        scheduleType,
+      );
+
+      const endTime = new Date();
+      const duration = endTime.getTime() - startTime.getTime();
+      const successful = results.filter((r) => r.success).length;
+      const failed = results.filter((r) => !r.success).length;
+
+      // Update final status
+      const finalStatus = failed > 0 ? 'completed_with_errors' : 'completed';
+      await this.prismaService.syncControl.update({
+        where: { name: `bus_scheduler_${scheduleType}` },
+        data: {
+          isRunning: false,
+          status: finalStatus,
+          completedAt: endTime,
+          progress: {
+            stage: 'completed',
+            totalEntities: entities.length,
+            successful,
+            failed,
+            duration,
+          },
+          error: failed > 0 ? `${failed} entities failed to sync` : null,
+        },
+      });
+
+      // Update legacy bus_scheduler_cycle
+      await this.prismaService.syncControl.update({
+        where: { name: 'bus_scheduler_cycle' },
+        data: {
+          isRunning: false,
+          status: finalStatus,
+          completedAt: endTime,
+          progress: {
+            currentEntity: 'completed',
+            completed: results
+              .filter((r) => r.success)
+              .map((r) => r.entityName),
+            failed: results.filter((r) => !r.success).map((r) => r.entityName),
+            syncType: scheduleType,
+          },
+          error: failed > 0 ? `${failed} entities failed to sync` : null,
+        },
+      });
+
+      const cycleResult: SyncCycleResult = {
+        schedule: scheduleType,
+        totalEntities: entities.length,
+        successful,
+        failed,
+        results,
+        duration,
+        startTime,
+        endTime,
+      };
+
+      this.logger.log(
+        `🏁 ${scheduleType} sync cycle completed: ${successful}/${entities.length} successful (${duration}ms)`,
+      );
+
+      return cycleResult;
+    } catch (error) {
+      this.logger.error(
+        `❌ ${scheduleType} sync cycle failed: ${error.message}`,
+      );
+
+      await this.prismaService.syncControl.update({
+        where: { name: `bus_scheduler_${scheduleType}` },
+        data: {
+          isRunning: false,
+          status: 'failed',
+          completedAt: new Date(),
+          error: error.message,
+        },
+      });
+
+      await this.prismaService.syncControl.update({
+        where: { name: 'bus_scheduler_cycle' },
+        data: {
+          isRunning: false,
+          status: 'failed',
+          completedAt: new Date(),
+          error: error.message,
+        },
+      });
+
+      throw error;
+    } finally {
+      // ===== RELEASE GLOBAL LOCK =====
+      this.isRunning = false;
+      this.currentSyncType = null;
+      this.currentSyncStartTime = null;
+      this.logger.log(
+        `🔓 LOCK RELEASED: ${scheduleType} sync completed - other syncs can now proceed`,
+      );
     }
   }
 
-  private async checkForMissingHistoricalSyncs(): Promise<string[]> {
-    const needsHistorical: string[] = [];
+  /**
+   * Process entities respecting dependencies and concurrency limits
+   */
+  private async processEntitiesWithDependencies(
+    entities: SyncEntityConfig[],
+    scheduleType: ScheduleType,
+  ): Promise<SyncResult[]> {
+    const results: SyncResult[] = [];
+    const completed = new Set<string>();
+    const pending = [...entities];
 
-    for (const entity of this.syncEntities) {
+    while (pending.length > 0) {
+      // Find entities ready to process (dependencies satisfied)
+      const ready = pending.filter((entity) => {
+        return (
+          !entity.dependencies ||
+          entity.dependencies.every((dep) => completed.has(dep))
+        );
+      });
+
+      if (ready.length === 0) {
+        // Circular dependency or missing dependency
+        const remaining = pending.map((e) => e.name).join(', ');
+        this.logger.error(
+          `Circular dependency detected or missing dependencies for: ${remaining}`,
+        );
+        break;
+      }
+
+      // Process ready entities with concurrency control
+      const batch = ready.slice(0, this.MAX_CONCURRENT);
+      const batchPromises = batch.map((entity) =>
+        this.syncSingleEntity(entity, scheduleType),
+      );
+
+      const batchResults = await Promise.allSettled(batchPromises);
+
+      // Process results
+      batchResults.forEach((result, index) => {
+        const entity = batch[index];
+        if (result.status === 'fulfilled') {
+          results.push(result.value);
+          if (result.value.success) {
+            completed.add(entity.name);
+          }
+        } else {
+          results.push({
+            entityName: entity.name,
+            success: false,
+            duration: 0,
+            error: result.reason?.message || 'Unknown error',
+          });
+        }
+
+        // Remove from pending
+        const index2 = pending.findIndex((e) => e.name === entity.name);
+        if (index2 !== -1) {
+          pending.splice(index2, 1);
+        }
+      });
+
+      // Small delay between batches
+      if (pending.length > 0) {
+        await this.delay(1000);
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Sync a single entity
+   */
+  private async syncSingleEntity(
+    entity: SyncEntityConfig,
+    scheduleType: ScheduleType,
+  ): Promise<SyncResult> {
+    const startTime = Date.now();
+
+    try {
+      this.logger.log(`🔄 Starting ${entity.name} sync (${scheduleType})`);
+
+      const service = this[entity.service];
+      if (!service) {
+        throw new Error(`Service ${entity.service} not found`);
+      }
+
+      // Execute sync method
       if (entity.syncType === 'full') {
         const historicalSync = await this.prismaService.syncControl.findFirst({
-          where: {
-            name: `${entity.name}_historical`,
-            status: 'completed',
-          },
+          where: { name: `${entity.name}_historical`, status: 'completed' },
+        });
+
+        if (!historicalSync) {
+          this.logger.log(`Running historical sync for ${entity.name}`);
+          await service[entity.syncMethod]();
+        } else {
+          this.logger.log(`Running recent sync for ${entity.name}`);
+          const recentMethod = entity.syncMethod.replace(
+            'Historical',
+            'Recent',
+          );
+          if (service[recentMethod]) {
+            await service[recentMethod](7);
+          } else {
+            this.logger.warn(
+              `Recent method ${recentMethod} not found for ${entity.name}`,
+            );
+            await service[entity.syncMethod]();
+          }
+        }
+      } else {
+        await service[entity.syncMethod]();
+      }
+
+      const duration = Date.now() - startTime;
+      this.logger.log(`✅ ${entity.name} sync completed (${duration}ms)`);
+
+      return {
+        entityName: entity.name,
+        success: true,
+        duration,
+      };
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      this.logger.error(
+        `❌ ${entity.name} sync failed: ${error.message} (${duration}ms)`,
+      );
+
+      return {
+        entityName: entity.name,
+        success: false,
+        duration,
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Check and run startup sync
+   */
+  private async checkAndRunStartupSync(): Promise<void> {
+    this.logger.log('Checking startup sync requirements...');
+
+    // Check if any historical syncs are incomplete
+    const allEntities = SYNC_ENTITIES_CONFIG.filter(
+      (e) => e.schedule !== 'disabled',
+    );
+    const needsHistorical =
+      await this.checkForMissingHistoricalSyncs(allEntities);
+
+    if (needsHistorical.length > 0) {
+      this.logger.log(
+        `Found entities needing historical sync: ${needsHistorical.join(', ')}`,
+      );
+
+      // Trigger appropriate sync cycles
+      const every15minEntities = needsHistorical.filter((name) => {
+        const entity = SYNC_ENTITIES_CONFIG.find((e) => e.name === name);
+        return entity?.schedule === 'every_15_minutes';
+      });
+
+      const weekendEntities = needsHistorical.filter((name) => {
+        const entity = SYNC_ENTITIES_CONFIG.find((e) => e.name === name);
+        return entity?.schedule === 'weekends';
+      });
+
+      if (every15minEntities.length > 0) {
+        await this.runSyncCycle(
+          'every_15_minutes',
+          SYNC_ENTITIES_CONFIG.filter((e) =>
+            every15minEntities.includes(e.name),
+          ),
+        );
+      }
+
+      if (weekendEntities.length > 0) {
+        this.logger.log(
+          `Weekend entities need sync but will wait for weekend: ${weekendEntities.join(', ')}`,
+        );
+      }
+    } else {
+      this.logger.log('All historical syncs completed, running regular cycle');
+      await this.runSyncCycle(
+        'every_15_minutes',
+        getEntitiesBySchedule('every_15_minutes'),
+      );
+    }
+  }
+
+  private async checkForMissingHistoricalSyncs(
+    entities: SyncEntityConfig[],
+  ): Promise<string[]> {
+    const needsHistorical: string[] = [];
+
+    for (const entity of entities) {
+      if (entity.syncType === 'full') {
+        const historicalSync = await this.prismaService.syncControl.findFirst({
+          where: { name: `${entity.name}_historical`, status: 'completed' },
         });
 
         if (!historicalSync) {
@@ -209,206 +558,11 @@ export class BusSchedulerService implements OnModuleInit {
     return needsHistorical;
   }
 
-  private async runSyncCycle(): Promise<void> {
-    if (this.isRunning) {
-      this.logger.log('Sync cycle already running, skipping');
-      return;
-    }
+  // ===== LEGACY METHODS FOR BACKWARD COMPATIBILITY =====
 
-    try {
-      this.isRunning = true;
-
-      await this.prismaService.syncControl.upsert({
-        where: { name: 'bus_scheduler_cycle' },
-        create: {
-          name: 'bus_scheduler_cycle',
-          entities: this.syncEntities.map((e) => e.name),
-          syncMode: 'cycle',
-          isRunning: true,
-          status: 'in_progress',
-          startedAt: new Date(),
-          progress: { currentEntity: null, completed: [], failed: [] },
-        },
-        update: {
-          isRunning: true,
-          status: 'in_progress',
-          startedAt: new Date(),
-          progress: { currentEntity: null, completed: [], failed: [] },
-          error: null,
-        },
-      });
-
-      this.logger.log('Starting bus scheduler sync cycle...');
-
-      const completed: string[] = [];
-      const failed: string[] = [];
-
-      for (const entity of this.syncEntities) {
-        await this.updateBusCycleProgress(entity.name, completed, failed);
-
-        try {
-          await this.syncEntity(entity);
-          completed.push(entity.name);
-          this.logger.log(`✅ ${entity.name} sync completed`);
-        } catch (error) {
-          failed.push(entity.name);
-          this.logger.error(`❌ ${entity.name} sync failed: ${error.message}`);
-        }
-      }
-
-      const finalStatus =
-        failed.length > 0 ? 'completed_with_errors' : 'completed';
-      const finalError =
-        failed.length > 0 ? `Failed entities: ${failed.join(', ')}` : null;
-
-      await this.prismaService.syncControl.update({
-        where: { name: 'bus_scheduler_cycle' },
-        data: {
-          isRunning: false,
-          status: finalStatus,
-          completedAt: new Date(),
-          progress: {
-            currentEntity: null,
-            completed,
-            failed,
-            totalEntities: this.syncEntities.length,
-            completedCount: completed.length,
-            failedCount: failed.length,
-          },
-          error: finalError,
-        },
-      });
-
-      this.logger.log(
-        `Bus scheduler cycle completed: ${completed.length} successful, ${failed.length} failed`,
-      );
-
-      if (failed.length > 0) {
-        this.logger.warn(`Failed entities: ${failed.join(', ')}`);
-      }
-    } catch (error) {
-      await this.prismaService.syncControl.update({
-        where: { name: 'bus_scheduler_cycle' },
-        data: {
-          isRunning: false,
-          status: 'failed',
-          completedAt: new Date(),
-          error: error.message,
-        },
-      });
-
-      this.logger.error(`Bus scheduler cycle failed: ${error.message}`);
-      throw error;
-    } finally {
-      this.isRunning = false;
-    }
-  }
-
-  private async updateBusCycleProgress(
-    currentEntity: string,
-    completed: string[],
-    failed: string[],
-  ) {
-    await this.prismaService.syncControl.update({
-      where: { name: 'bus_scheduler_cycle' },
-      data: {
-        progress: {
-          currentEntity,
-          completed,
-          failed,
-          totalEntities: this.syncEntities.length,
-          completedCount: completed.length,
-          failedCount: failed.length,
-        },
-      },
-    });
-  }
-
-  private async syncEntity(entity: SyncEntity): Promise<void> {
-    this.logger.log(`Starting ${entity.name} sync...`);
-
-    let retryCount = 0;
-    let lastError: Error | null = null;
-
-    while (retryCount <= this.MAX_RETRIES) {
-      try {
-        await this.executeSyncMethod(entity);
-        return;
-      } catch (error) {
-        lastError = error;
-        retryCount++;
-
-        if (retryCount <= this.MAX_RETRIES) {
-          this.logger.warn(
-            `${entity.name} sync failed (attempt ${retryCount}/${this.MAX_RETRIES + 1}), retrying: ${error.message}`,
-          );
-          await this.delay(1000 * retryCount);
-        }
-      }
-    }
-
-    throw new Error(
-      `${entity.name} sync failed after ${this.MAX_RETRIES + 1} attempts. Last error: ${lastError?.message}`,
-    );
-  }
-
-  private async executeSyncMethod(entity: SyncEntity): Promise<void> {
-    const service = this[entity.service];
-
-    if (!service) {
-      throw new Error(
-        `Service ${entity.service} not found for entity ${entity.name}`,
-      );
-    }
-
-    if (entity.syncType === 'full') {
-      const historicalSync = await this.prismaService.syncControl.findFirst({
-        where: {
-          name: `${entity.name}_historical`,
-          status: 'completed',
-        },
-      });
-
-      if (!historicalSync) {
-        this.logger.log(`Running historical sync for ${entity.name}`);
-        await service[entity.syncMethod]();
-      } else {
-        this.logger.log(`Running recent sync for ${entity.name}`);
-        const recentMethod = entity.syncMethod.replace('Historical', 'Recent');
-        if (service[recentMethod]) {
-          await service[recentMethod](7);
-        } else {
-          this.logger.warn(
-            `Recent sync method ${recentMethod} not found for ${entity.name}`,
-          );
-        }
-      }
-    } else {
-      this.logger.log(`Running simple sync for ${entity.name}`);
-      await service[entity.syncMethod]();
-    }
-  }
-
-  private delay(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-  }
-
-  async manualSyncEntity(entityName: string): Promise<void> {
-    if (this.isRunning) {
-      throw new Error(
-        'Bus scheduler is currently running, cannot run manual sync. Use forceHistoricalSyncEntity to override.',
-      );
-    }
-
-    const entity = this.syncEntities.find((e) => e.name === entityName);
-    if (!entity) {
-      throw new Error(`Entity ${entityName} not found`);
-    }
-
-    this.logger.log(`Manual sync requested for ${entityName}`);
-    await this.syncEntity(entity);
-  }
-
+  /**
+   * Legacy method for backward compatibility
+   */
   async getBusStatus(): Promise<{
     busScheduler: any;
     entities: EntityStatusSummary[];
@@ -465,13 +619,104 @@ export class BusSchedulerService implements OnModuleInit {
     return {
       busScheduler: busControl,
       entities: entityStatuses,
-      isRunning: this.isRunning,
+      isRunning: this.isRunning15Min || this.isRunningWeekend,
     };
   }
 
+  /**
+   * Legacy method for backward compatibility
+   */
+  async manualSyncEntity(entityName: string): Promise<void> {
+    // ===== MUTUAL EXCLUSION CHECK =====
+    if (this.isRunning) {
+      throw new Error(
+        `Cannot manually sync ${entityName} - ${this.currentSyncType} sync is already running (started at ${this.currentSyncStartTime?.toISOString()})`,
+      );
+    }
+
+    const entity = SYNC_ENTITIES_CONFIG.find((e) => e.name === entityName);
+    if (!entity) {
+      throw new Error(`Entity ${entityName} not found`);
+    }
+
+    if (entity.schedule === 'disabled') {
+      throw new Error(`Entity ${entityName} is disabled`);
+    }
+
+    // Set lock for manual sync
+    this.isRunning = true;
+    this.currentSyncType = 'manual';
+    this.currentSyncStartTime = new Date();
+
+    try {
+      this.logger.log(
+        `🔒 Manual sync requested for ${entityName} - blocking other syncs`,
+      );
+      await this.syncSingleEntity(entity, 'manual' as ScheduleType);
+    } finally {
+      this.isRunning = false;
+      this.currentSyncType = null;
+      this.currentSyncStartTime = null;
+      this.logger.log(
+        `🔓 Manual sync completed for ${entityName} - other syncs can now proceed`,
+      );
+    }
+  }
+
+  /**
+   * Legacy method
+   */
+  async syncEntity(entity: SyncEntity): Promise<void> {
+    const config = SYNC_ENTITIES_CONFIG.find((e) => e.name === entity.name);
+    if (config) {
+      await this.syncSingleEntity(config, 'manual' as ScheduleType);
+    } else {
+      await this.executeSyncMethod(entity);
+    }
+  }
+
+  private async executeSyncMethod(entity: SyncEntity): Promise<void> {
+    const service = this[entity.service];
+
+    if (!service) {
+      throw new Error(
+        `Service ${entity.service} not found for entity ${entity.name}`,
+      );
+    }
+
+    if (entity.syncType === 'full') {
+      const historicalSync = await this.prismaService.syncControl.findFirst({
+        where: { name: `${entity.name}_historical`, status: 'completed' },
+      });
+
+      if (!historicalSync) {
+        this.logger.log(`Running historical sync for ${entity.name}`);
+        await service[entity.syncMethod]();
+      } else {
+        this.logger.log(`Running recent sync for ${entity.name}`);
+        const recentMethod = entity.syncMethod.replace('Historical', 'Recent');
+        if (service[recentMethod]) {
+          await service[recentMethod](7);
+        } else {
+          this.logger.warn(
+            `Recent sync method ${recentMethod} not found for ${entity.name}`,
+          );
+        }
+      }
+    } else {
+      this.logger.log(`Running simple sync for ${entity.name}`);
+      await service[entity.syncMethod]();
+    }
+  }
+
+  /**
+   * Legacy methods
+   */
   async stopBusScheduler(): Promise<void> {
     this.logger.log('Stop requested for bus scheduler');
     this.isRunning = false;
+    this.isRunning15Min = false;
+    this.isRunningWeekend = false;
   }
 
   async forceResetBusScheduler(): Promise<void> {
@@ -487,6 +732,8 @@ export class BusSchedulerService implements OnModuleInit {
     });
 
     this.isRunning = false;
+    this.isRunning15Min = false;
+    this.isRunningWeekend = false;
     this.logger.log('Bus scheduler force reset completed');
   }
 
@@ -495,10 +742,6 @@ export class BusSchedulerService implements OnModuleInit {
     if (!entity) {
       throw new Error(`Entity ${entityName} not found`);
     }
-
-    this.logger.log(
-      `Entity found: ${entity.name}, service: ${entity.service}, method: ${entity.syncMethod}`,
-    );
 
     if (entity.syncType !== 'full') {
       throw new Error(`Entity ${entityName} does not support historical sync`);
@@ -533,52 +776,81 @@ export class BusSchedulerService implements OnModuleInit {
         },
       });
 
-      // Force run historical sync
       const service = this[entity.service];
-      this.logger.log(
-        `Service resolved: ${!!service} - ${service?.constructor?.name || 'undefined'}`,
-      );
       if (!service) {
         throw new Error(
           `Service ${entity.service} not found for entity ${entityName}`,
         );
       }
 
-      this.logger.log(`Method exists: ${!!service[entity.syncMethod]}`);
-
-      this.logger.log(`Running forced historical sync for ${entityName}`);
       await service[entity.syncMethod]();
-
-      // Mark as completed
-      await this.prismaService.syncControl.update({
-        where: { name: `${entityName}_historical` },
-        data: {
-          status: 'completed',
-          isRunning: false,
-          completedAt: new Date(),
-          progress: { stage: 'completed', forced: true },
-        },
-      });
-
-      this.logger.log(`✅ Forced historical sync completed for ${entityName}`);
-    } catch (error) {
-      await this.prismaService.syncControl.update({
-        where: { name: `${entityName}_historical` },
-        data: {
-          status: 'failed',
-          isRunning: false,
-          error: error.message,
-          progress: { stage: 'failed', forced: true },
-        },
-      });
-
-      this.logger.error(
-        `❌ Forced historical sync failed for ${entityName}: ${error.message}`,
-      );
-      throw error;
     } finally {
-      // Restore original running state
       this.isRunning = wasRunning;
     }
+  }
+
+  // ===== NEW ENHANCED METHODS =====
+
+  /**
+   * Get enhanced sync status
+   */
+  async getEnhancedSyncStatus() {
+    const controls = await this.prismaService.syncControl.findMany({
+      where: {
+        name: {
+          in: [
+            'bus_scheduler_every_15_minutes',
+            'bus_scheduler_weekends',
+            'bus_scheduler_cycle',
+            ...SYNC_ENTITIES_CONFIG.map((e) => `${e.name}_historical`),
+            ...SYNC_ENTITIES_CONFIG.map((e) => `${e.name}_recent`),
+          ],
+        },
+      },
+      orderBy: { name: 'asc' },
+    });
+
+    return {
+      // Lock status
+      isLocked: this.isRunning,
+      currentSyncType: this.currentSyncType,
+      currentSyncStartTime: this.currentSyncStartTime,
+      lockDuration: this.currentSyncStartTime
+        ? Date.now() - this.currentSyncStartTime.getTime()
+        : null,
+
+      // Schedule info
+      isWeekend: ScheduleUtils.isWeekendVietnamTime(),
+      nextWeekend: ScheduleUtils.getNextWeekendInfo(),
+
+      // Entities and controls
+      controls,
+      configuredEntities: SYNC_ENTITIES_CONFIG,
+
+      // Next sync predictions
+      nextScheduledSyncs: this.getNextScheduledSyncs(),
+    };
+  }
+
+  private getNextScheduledSyncs() {
+    const now = new Date();
+    const currentMinutes = now.getMinutes();
+    const minutesUntilNext15 = 15 - (currentMinutes % 15);
+
+    const next15MinSync = new Date(
+      now.getTime() + minutesUntilNext15 * 60 * 1000,
+    );
+    const nextWeekendInfo = ScheduleUtils.getNextWeekendInfo();
+
+    return {
+      next15MinuteSync: next15MinSync,
+      nextWeekendSync: nextWeekendInfo.nextSunday,
+      willNext15MinBeBlocked: this.isRunning,
+      willNextWeekendBeBlocked: this.isRunning,
+    };
+  }
+
+  private delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }
