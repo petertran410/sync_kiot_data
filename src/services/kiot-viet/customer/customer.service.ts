@@ -548,7 +548,7 @@ export class KiotVietCustomerService {
     return { created: createdCount, updated: updatedCount, larkResult };
   }
 
-  async syncRecentCustomers(days: number = 7): Promise<void> {
+  async syncRecentCustomers(days: number = 4): Promise<void> {
     try {
       const historicalSync = await this.prismaService.syncControl.findFirst({
         where: { name: 'customer_historical', isRunning: true },

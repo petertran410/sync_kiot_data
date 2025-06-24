@@ -784,7 +784,7 @@ export class KiotVietInvoiceService {
     }
   }
 
-  async syncRecentInvoices(days: number = 7): Promise<void> {
+  async syncRecentInvoices(days: number = 4): Promise<void> {
     try {
       // Check if historical sync is running (like customer.service.ts)
       const historicalSync = await this.prismaService.syncControl.findFirst({

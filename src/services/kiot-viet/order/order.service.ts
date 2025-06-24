@@ -661,7 +661,7 @@ export class KiotVietOrderService {
     return enrichedOrders;
   }
 
-  async syncRecentOrders(days: number = 7): Promise<void> {
+  async syncRecentOrders(days: number = 4): Promise<void> {
     try {
       const historicalSync = await this.prismaService.syncControl.findFirst({
         where: { name: 'order_historical', isRunning: true },
