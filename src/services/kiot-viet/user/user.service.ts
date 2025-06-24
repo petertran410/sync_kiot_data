@@ -114,7 +114,7 @@ export class KiotVietUserService {
         })
         .toPromise();
 
-      return response.data;
+      return response?.data;
     } catch (error) {
       this.logger.error(`Failed to fetch users: ${error.message}`);
       throw error;

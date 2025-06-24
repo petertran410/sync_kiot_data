@@ -385,7 +385,6 @@ export class KiotVietInvoiceService {
     }
   }
 
-  // ===== EXISTING METHODS (COMPLETE IMPLEMENTATION) =====
   private async fetchInvoices(params: any): Promise<any> {
     try {
       const accessToken = await this.authService.getAccessToken();
@@ -414,7 +413,7 @@ export class KiotVietInvoiceService {
         })
         .toPromise();
 
-      return response.data;
+      return response?.data;
     } catch (error) {
       this.logger.error(`Failed to fetch invoices: ${error.message}`);
       throw error;
@@ -424,8 +423,15 @@ export class KiotVietInvoiceService {
   private async saveInvoicesToDatabase(
     invoices: any[],
   ): Promise<{ created: number; updated: number }> {
-    const invoicesToCreate = [];
-    const invoicesToUpdate = [];
+    const invoicesToCreate: Array<{
+      createData: Prisma.InvoiceCreateInput;
+      invoiceData: any;
+    }> = [];
+    const invoicesToUpdate: Array<{
+      id: number;
+      data: Prisma.InvoiceUpdateInput;
+      invoiceData: any;
+    }> = [];
 
     for (const invoiceData of invoices) {
       const existingInvoice = await this.prismaService.invoice.findUnique({
@@ -516,11 +522,8 @@ export class KiotVietInvoiceService {
         kiotVietId: BigInt(invoiceData.id),
         code: invoiceData.code,
         orderCode: invoiceData.orderCode || null,
-        orderId: null, // Will be set below
         purchaseDate: new Date(invoiceData.purchaseDate),
-        branchId: invoiceData.branchId || null,
         soldById: invoiceData.soldById ? BigInt(invoiceData.soldById) : null,
-        customerId: null, // Will be set below
         total: parseFloat(invoiceData.total),
         totalCostOfGoods: invoiceData.totalCostOfGoods
           ? parseFloat(invoiceData.totalCostOfGoods)
@@ -533,7 +536,6 @@ export class KiotVietInvoiceService {
         status: invoiceData.status,
         description: invoiceData.description || null,
         usingCod: invoiceData.usingCod || false,
-        saleChannelId: invoiceData.saleChannelId || null,
         isApplyVoucher: invoiceData.isApplyVoucher || false,
         retailerId: invoiceData.retailerId || null,
         createdDate: invoiceData.createdDate
@@ -602,7 +604,6 @@ export class KiotVietInvoiceService {
       code: invoiceData.code,
       orderCode: invoiceData.orderCode || null,
       purchaseDate: new Date(invoiceData.purchaseDate),
-      branchId: invoiceData.branchId || null,
       soldById: invoiceData.soldById ? BigInt(invoiceData.soldById) : null,
       total: parseFloat(invoiceData.total),
       totalCostOfGoods: invoiceData.totalCostOfGoods
@@ -614,7 +615,6 @@ export class KiotVietInvoiceService {
       status: invoiceData.status,
       description: invoiceData.description || null,
       usingCod: invoiceData.usingCod || false,
-      saleChannelId: invoiceData.saleChannelId || null,
       isApplyVoucher: invoiceData.isApplyVoucher || false,
       retailerId: invoiceData.retailerId || null,
       modifiedDate: invoiceData.modifiedDate

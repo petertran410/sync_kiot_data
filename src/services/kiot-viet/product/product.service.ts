@@ -116,7 +116,7 @@ export class KiotVietProductService {
         })
         .toPromise();
 
-      return response.data;
+      return response?.data;
     } catch (error) {
       this.logger.error(`Failed to fetch products: ${error.message}`);
       throw error;
@@ -174,8 +174,6 @@ export class KiotVietProductService {
         code: productData.code,
         name: productData.name,
         fullName: productData.fullName || productData.name,
-        categoryId: null, // Will be set below
-        masterProductId: null, // Will be set below
         allowsSale:
           productData.allowsSale !== undefined ? productData.allowsSale : true,
         hasVariants: productData.hasVariants || false,
@@ -360,7 +358,7 @@ export class KiotVietProductService {
           await this.prismaService.productImage.create({
             data: {
               productId,
-              image: image.image,
+              imageUrl: image.image,
             },
           });
         } catch (error) {

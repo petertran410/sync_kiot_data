@@ -91,7 +91,7 @@ export class KiotVietBankAccountService {
         })
         .toPromise();
 
-      return response.data;
+      return response?.data;
     } catch (error) {
       this.logger.error(`Failed to fetch bank accounts: ${error.message}`);
       throw error;
@@ -119,10 +119,6 @@ export class KiotVietBankAccountService {
               accountNumber: bankAccountData.accountNumber || null,
               description: bankAccountData.description || null,
               retailerId: bankAccountData.retailerId || null,
-              isActive:
-                bankAccountData.isActive !== undefined
-                  ? bankAccountData.isActive
-                  : true,
               modifiedDate: bankAccountData.modifiedDate
                 ? new Date(bankAccountData.modifiedDate)
                 : new Date(),
@@ -137,10 +133,6 @@ export class KiotVietBankAccountService {
               accountNumber: bankAccountData.accountNumber || null,
               description: bankAccountData.description || null,
               retailerId: bankAccountData.retailerId || null,
-              isActive:
-                bankAccountData.isActive !== undefined
-                  ? bankAccountData.isActive
-                  : true,
               createdDate: bankAccountData.createdDate
                 ? new Date(bankAccountData.createdDate)
                 : new Date(),

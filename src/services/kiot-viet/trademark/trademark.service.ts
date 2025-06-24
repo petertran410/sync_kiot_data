@@ -91,7 +91,7 @@ export class KiotVietTradeMarkService {
         })
         .toPromise();
 
-      return response.data;
+      return response?.data;
     } catch (error) {
       this.logger.error(`Failed to fetch trademarks: ${error.message}`);
       throw error;

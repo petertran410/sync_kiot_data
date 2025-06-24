@@ -91,7 +91,7 @@ export class KiotVietSaleChannelService {
         })
         .toPromise();
 
-      return response.data;
+      return response?.data;
     } catch (error) {
       this.logger.error(`Failed to fetch sale channels: ${error.message}`);
       throw error;
@@ -116,10 +116,10 @@ export class KiotVietSaleChannelService {
             where: { id: existingSaleChannel.id },
             data: {
               name: saleChannelData.name,
-              isActivate:
+              isActive:
                 saleChannelData.isActivate !== undefined
                   ? saleChannelData.isActivate
-                  : true,
+                  : true, // Fixed field name
               position: saleChannelData.position || 0,
               retailerId: saleChannelData.retailerId || null,
               createdBy: saleChannelData.createdBy
@@ -137,10 +137,10 @@ export class KiotVietSaleChannelService {
             data: {
               kiotVietId: saleChannelData.id,
               name: saleChannelData.name,
-              isActivate:
+              isActive:
                 saleChannelData.isActivate !== undefined
                   ? saleChannelData.isActivate
-                  : true,
+                  : true, // Fixed field name
               position: saleChannelData.position || 0,
               retailerId: saleChannelData.retailerId || null,
               createdBy: saleChannelData.createdBy

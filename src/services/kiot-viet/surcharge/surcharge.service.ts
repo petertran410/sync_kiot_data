@@ -91,7 +91,7 @@ export class KiotVietSurchargeService {
         })
         .toPromise();
 
-      return response.data;
+      return response?.data;
     } catch (error) {
       this.logger.error(`Failed to fetch surcharges: ${error.message}`);
       throw error;

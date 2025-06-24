@@ -391,7 +391,6 @@ export class KiotVietOrderService {
     }
   }
 
-  // ===== EXISTING METHODS (COMPLETE IMPLEMENTATION) =====
   private async fetchOrders(params: any): Promise<any> {
     try {
       const accessToken = await this.authService.getAccessToken();
@@ -421,7 +420,7 @@ export class KiotVietOrderService {
         })
         .toPromise();
 
-      return response.data;
+      return response?.data;
     } catch (error) {
       this.logger.error(`Failed to fetch orders: ${error.message}`);
       throw error;
@@ -431,8 +430,15 @@ export class KiotVietOrderService {
   private async saveOrdersToDatabase(
     orders: any[],
   ): Promise<{ created: number; updated: number }> {
-    const ordersToCreate = [];
-    const ordersToUpdate = [];
+    const ordersToCreate: Array<{
+      createData: Prisma.OrderCreateInput;
+      orderData: any;
+    }> = [];
+    const ordersToUpdate: Array<{
+      id: number;
+      data: Prisma.OrderUpdateInput;
+      orderData: any;
+    }> = [];
 
     for (const orderData of orders) {
       const existingOrder = await this.prismaService.order.findUnique({
@@ -517,10 +523,8 @@ export class KiotVietOrderService {
         kiotVietId: BigInt(orderData.id),
         code: orderData.code,
         purchaseDate: new Date(orderData.purchaseDate),
-        branchId: orderData.branchId || null,
         soldById: orderData.soldById ? BigInt(orderData.soldById) : null,
         cashierId: orderData.cashierId ? BigInt(orderData.cashierId) : null,
-        customerId: null, // Will be set below
         totalCostOfGoods: orderData.totalCostOfGoods
           ? parseFloat(orderData.totalCostOfGoods)
           : 0,
@@ -537,7 +541,6 @@ export class KiotVietOrderService {
         status: orderData.status,
         description: orderData.description || null,
         usingCod: orderData.usingCod || false,
-        saleChannelId: orderData.saleChannelId || null,
         expectedDelivery: orderData.expectedDelivery
           ? new Date(orderData.expectedDelivery)
           : null,
@@ -598,7 +601,6 @@ export class KiotVietOrderService {
     const data: Prisma.OrderUpdateInput = {
       code: orderData.code,
       purchaseDate: new Date(orderData.purchaseDate),
-      branchId: orderData.branchId || null,
       soldById: orderData.soldById ? BigInt(orderData.soldById) : null,
       cashierId: orderData.cashierId ? BigInt(orderData.cashierId) : null,
       totalCostOfGoods: orderData.totalCostOfGoods
@@ -617,7 +619,6 @@ export class KiotVietOrderService {
       status: orderData.status,
       description: orderData.description || null,
       usingCod: orderData.usingCod || false,
-      saleChannelId: orderData.saleChannelId || null,
       expectedDelivery: orderData.expectedDelivery
         ? new Date(orderData.expectedDelivery)
         : null,

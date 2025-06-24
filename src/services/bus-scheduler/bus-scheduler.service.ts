@@ -97,6 +97,55 @@ export class BusSchedulerService implements OnModuleInit {
     await this.runSyncCycle('weekends', entities);
   }
 
+  async getBusStatus(): Promise<any> {
+    return this.getEnhancedSyncStatus();
+  }
+
+  async stopBusScheduler(): Promise<void> {
+    if (this.isRunning) {
+      this.logger.warn('Force stopping bus scheduler...');
+      this.isRunning = false;
+      this.currentSyncType = null;
+      this.currentSyncStartTime = null;
+    }
+  }
+
+  async forceResetBusScheduler(): Promise<void> {
+    // Reset all running sync controls
+    await this.prismaService.syncControl.updateMany({
+      where: { isRunning: true },
+      data: {
+        isRunning: false,
+        status: 'failed',
+        error: 'Force reset by user',
+        completedAt: new Date(),
+      },
+    });
+
+    this.isRunning = false;
+    this.currentSyncType = null;
+    this.currentSyncStartTime = null;
+
+    this.logger.log('Bus scheduler force reset completed');
+  }
+
+  async forceHistoricalSyncEntity(entityName: string): Promise<void> {
+    // Reset the entity's historical sync
+    await this.prismaService.syncControl.updateMany({
+      where: { name: `${entityName}_historical` },
+      data: {
+        isRunning: false,
+        isEnabled: true,
+        status: 'idle',
+        error: null,
+        completedAt: null,
+      },
+    });
+
+    // Start the sync
+    await this.manualSyncEntity(entityName);
+  }
+
   /**
    * Enhanced sync cycle with LarkBase phase
    */

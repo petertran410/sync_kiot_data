@@ -1,3 +1,5 @@
+import { CustomerGroupRelation } from './../../../../node_modules/.prisma/client/index.d';
+// src/services/kiot-viet/customer/customer.service.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
@@ -6,7 +8,6 @@ import { KiotVietAuthService } from '../auth.service';
 import { LarkBaseService } from '../../lark/lark-base.service';
 import { Prisma } from '@prisma/client';
 import * as dayjs from 'dayjs';
-import { firstValueFrom } from 'rxjs';
 
 @Injectable()
 export class KiotVietCustomerService {
@@ -21,10 +22,8 @@ export class KiotVietCustomerService {
     private readonly larkBaseService: LarkBaseService,
   ) {}
 
-  // ===== STEP 1: KiotViet → Database (Enhanced) =====
   async syncHistoricalCustomers(): Promise<void> {
     try {
-      // Database sync control
       await this.prismaService.syncControl.upsert({
         where: { name: 'customer_historical' },
         create: {
@@ -57,13 +56,11 @@ export class KiotVietCustomerService {
         });
 
         if (response.data && response.data.length > 0) {
-          // Save to database AND mark for LarkBase sync
           const { created, updated } = await this.saveCustomersToDatabase(
             response.data,
           );
           totalProcessed += created + updated;
 
-          // Mark affected records for LarkBase sync
           await this.markCustomersForLarkBaseSync(response.data);
 
           this.logger.log(
@@ -96,7 +93,6 @@ export class KiotVietCustomerService {
         `Historical sync completed: ${totalProcessed} customers processed, ${duplicatesRemoved} duplicates removed`,
       );
 
-      // STEP 2: Immediate Database → LarkBase sync
       await this.syncPendingToLarkBase();
     } catch (error) {
       await this.prismaService.syncControl.update({
@@ -158,13 +154,11 @@ export class KiotVietCustomerService {
         });
 
         if (response.data && response.data.length > 0) {
-          // Save to database AND mark for LarkBase sync
           const { created, updated } = await this.saveCustomersToDatabase(
             response.data,
           );
           totalProcessed += created + updated;
 
-          // Mark affected records for LarkBase sync
           await this.markCustomersForLarkBaseSync(response.data);
 
           this.logger.log(
@@ -196,7 +190,6 @@ export class KiotVietCustomerService {
         `Recent sync completed: ${totalProcessed} customers processed, ${duplicatesRemoved} duplicates removed`,
       );
 
-      // STEP 2: Immediate Database → LarkBase sync
       await this.syncPendingToLarkBase();
     } catch (error) {
       await this.prismaService.syncControl.update({
@@ -214,15 +207,18 @@ export class KiotVietCustomerService {
     }
   }
 
-  // ===== NEW: Database → LarkBase Sync Methods =====
+  // ===== DATABASE → LARKBASE SYNC METHODS =====
   async syncPendingToLarkBase(): Promise<{ success: number; failed: number }> {
     try {
       const pendingCustomers = await this.prismaService.customer.findMany({
         where: {
           larkSyncStatus: 'PENDING',
-          larkSyncRetries: { lt: 3 }, // Max 3 retries
+          larkSyncRetries: { lt: 3 },
         },
-        take: 100, // Process in batches
+        include: {
+          branch: true,
+        },
+        take: 100,
       });
 
       if (pendingCustomers.length === 0) {
@@ -234,22 +230,20 @@ export class KiotVietCustomerService {
         `Syncing ${pendingCustomers.length} pending customers to LarkBase`,
       );
 
-      const recordsToCreate = [];
-      const recordsToUpdate = [];
+      const recordsToCreate: any[] = [];
+      const recordsToUpdate: any[] = [];
 
-      // Separate CREATE vs UPDATE based on larkRecordId
       for (const customer of pendingCustomers) {
         if (customer.larkRecordId) {
-          recordsToUpdate.push(customer); // Has LarkBase ID = UPDATE
+          recordsToUpdate.push(customer);
         } else {
-          recordsToCreate.push(customer); // No LarkBase ID = CREATE
+          recordsToCreate.push(customer);
         }
       }
 
       let totalSuccess = 0;
       let totalFailed = 0;
 
-      // Process CREATE and UPDATE separately
       if (recordsToCreate.length > 0) {
         const createResult = await this.larkBaseCreateBatch(recordsToCreate);
         totalSuccess += createResult.success;
@@ -280,7 +274,6 @@ export class KiotVietCustomerService {
       const response =
         await this.larkBaseService.directCreateCustomers(customers);
 
-      // Update local tracking with LarkBase record IDs
       if (response.success > 0 && response.records) {
         for (const [index, customer] of customers.entries()) {
           if (response.records[index]) {
@@ -297,7 +290,6 @@ export class KiotVietCustomerService {
         }
       }
 
-      // Mark failed records for retry
       if (response.failed > 0) {
         const failedCustomers = customers.slice(response.success);
         for (const customer of failedCustomers) {
@@ -315,7 +307,6 @@ export class KiotVietCustomerService {
     } catch (error) {
       this.logger.error(`LarkBase create batch failed: ${error.message}`);
 
-      // Mark all as failed
       for (const customer of customers) {
         await this.prismaService.customer.update({
           where: { id: customer.id },
@@ -337,7 +328,6 @@ export class KiotVietCustomerService {
       const response =
         await this.larkBaseService.directUpdateCustomers(customers);
 
-      // Mark successful updates
       if (response.success > 0) {
         const successfulCustomers = customers.slice(0, response.success);
         for (const customer of successfulCustomers) {
@@ -352,7 +342,6 @@ export class KiotVietCustomerService {
         }
       }
 
-      // Mark failed updates for retry
       if (response.failed > 0) {
         const failedCustomers = customers.slice(response.success);
         for (const customer of failedCustomers) {
@@ -370,7 +359,6 @@ export class KiotVietCustomerService {
     } catch (error) {
       this.logger.error(`LarkBase update batch failed: ${error.message}`);
 
-      // Mark all as failed
       for (const customer of customers) {
         await this.prismaService.customer.update({
           where: { id: customer.id },
@@ -387,7 +375,7 @@ export class KiotVietCustomerService {
 
   private async markCustomersForLarkBaseSync(customers: any[]): Promise<void> {
     try {
-      const kiotVietIds = customers.map((c) => BigInt(c.id));
+      const kiotVietIds = customers.map((c: any) => BigInt(c.id));
 
       await this.prismaService.customer.updateMany({
         where: { kiotVietId: { in: kiotVietIds } },
@@ -407,117 +395,45 @@ export class KiotVietCustomerService {
     }
   }
 
-  async fetchCustomers(params: {
-    lastModifiedFrom?: string;
-    currentItem?: number;
-    pageSize?: number;
-  }) {
+  // ===== EXISTING METHODS (COMPLETE IMPLEMENTATION) =====
+  private async fetchCustomers(params: any): Promise<any> {
     try {
-      if (!this.httpService) {
-        throw new Error('HttpService is not available');
+      const accessToken = await this.authService.getAccessToken();
+      const baseUrl = this.configService.get<string>('KIOT_BASE_URL');
+
+      const queryParams = new URLSearchParams();
+      if (params.currentItem !== undefined) {
+        queryParams.append('currentItem', params.currentItem.toString());
       }
-
-      if (!this.authService) {
-        throw new Error('AuthService is not available');
+      if (params.pageSize) {
+        queryParams.append('pageSize', params.pageSize.toString());
       }
-
-      if (!this.baseUrl) {
-        throw new Error('Base URL is not configured');
+      if (params.lastModifiedFrom) {
+        queryParams.append('lastModifiedFrom', params.lastModifiedFrom);
       }
+      queryParams.append('includeRemove', 'true');
 
-      this.logger.debug('Getting request headers...');
-      const headers = await this.authService.getRequestHeaders();
+      const url = `${baseUrl}/customers?${queryParams.toString()}`;
 
-      this.logger.debug('Making HTTP request to KiotViet API...');
-      const { data } = await firstValueFrom(
-        this.httpService.get(`${this.baseUrl}/customers`, {
-          headers,
-          params: {
-            ...params,
-            includeRemoveIds: true,
-            includeTotal: true,
-            includeCustomerGroup: true,
-            includeCustomerSocial: true,
-            orderBy: 'createdDate',
-            orderDirection: 'DESC',
+      const response = await this.httpService
+        .get(url, {
+          headers: {
+            Retailer: this.configService.get<string>('KIOT_SHOP_NAME'),
+            Authorization: `Bearer ${accessToken}`,
           },
-        }),
-      );
-      return data;
+        })
+        .toPromise();
+
+      return response?.data;
     } catch (error) {
       this.logger.error(`Failed to fetch customers: ${error.message}`);
-      this.logger.error(`Error stack: ${error.stack}`);
       throw error;
     }
   }
 
-  private async handleCustomerGroups(
-    customerId: number,
-    groupsString: string | null,
-  ): Promise<void> {
-    if (!groupsString) return;
-
-    try {
-      const groupNames = groupsString.split('|').filter((name) => name.trim());
-
-      if (groupNames.length === 0) return;
-
-      const existingGroups = await this.prismaService.customerGroup.findMany({
-        where: { name: { in: groupNames } },
-      });
-
-      for (const group of existingGroups) {
-        try {
-          await this.prismaService.customerGroupRelation.upsert({
-            where: {
-              customerId_customerGroupId: {
-                customerId: customerId,
-                customerGroupId: group.id,
-              },
-            },
-            create: {
-              customerId: customerId,
-              customerGroupId: group.id,
-            },
-            update: {},
-          });
-        } catch (error) {
-          this.logger.debug(
-            `Customer group relation already exists: Customer ${customerId}, Group ${group.id}`,
-          );
-        }
-      }
-
-      const foundGroupNames = existingGroups.map((g) => g.name);
-      const missingGroups = groupNames.filter(
-        (name) => !foundGroupNames.includes(name),
-      );
-      if (missingGroups.length > 0) {
-        this.logger.warn(
-          `Customer groups not found: ${missingGroups.join(', ')}`,
-        );
-      }
-    } catch (error) {
-      this.logger.error(
-        `Failed to handle customer groups for customer ${customerId}: ${error.message}`,
-      );
-    }
-  }
-
-  async batchSaveCustomers(customers: any[]) {
-    if (!customers || customers.length === 0) return { created: 0, updated: 0 };
-
-    const kiotVietIds = customers.map((c) => BigInt(c.id));
-
-    const existingCustomers = await this.prismaService.customer.findMany({
-      where: { kiotVietId: { in: kiotVietIds } },
-      select: { kiotVietId: true, id: true },
-    });
-
-    const existingMap = new Map<string, number>(
-      existingCustomers.map((c) => [c.kiotVietId.toString(), c.id]),
-    );
-
+  private async saveCustomersToDatabase(
+    customers: any[],
+  ): Promise<{ created: number; updated: number }> {
     const customersToCreate: Array<{
       createData: Prisma.CustomerCreateInput;
       groups: string | null;
@@ -529,13 +445,15 @@ export class KiotVietCustomerService {
     }> = [];
 
     for (const customerData of customers) {
-      const kiotVietId = BigInt(customerData.id);
-      const existingId = existingMap.get(kiotVietId.toString());
+      const existingCustomer = await this.prismaService.customer.findUnique({
+        where: { kiotVietId: BigInt(customerData.id) },
+      });
 
-      if (existingId) {
+      if (existingCustomer) {
+        const updateData = await this.prepareCustomerUpdateData(customerData);
         customersToUpdate.push({
-          id: existingId,
-          data: await this.prepareCustomerUpdateData(customerData),
+          id: existingCustomer.id,
+          data: updateData,
           groups: customerData.groups || null,
         });
       } else {
@@ -549,35 +467,10 @@ export class KiotVietCustomerService {
       }
     }
 
-    let createdCount = 0;
-    let updatedCount = 0;
-
-    // Process database and LarkBase in parallel
-    const [dbResult, larkResult] = await Promise.allSettled([
-      // Database operations
-      this.processDatabaseOperations(customersToCreate, customersToUpdate),
-      // LarkBase operations
-      this.larkBaseService.syncCustomersToLarkBase(customers),
-    ]);
-
-    // Handle database results
-    if (dbResult.status === 'fulfilled') {
-      createdCount = dbResult.value.created;
-      updatedCount = dbResult.value.updated;
-    } else {
-      this.logger.error(`Database sync failed: ${dbResult.reason}`);
-      throw dbResult.reason;
-    }
-
-    // Handle LarkBase results
-    if (larkResult.status === 'rejected') {
-      this.logger.error(`LarkBase sync failed: ${larkResult.reason}`);
-      // Continue execution, don't throw - as per requirement
-    } else {
-      this.logger.log('LarkBase sync completed successfully');
-    }
-
-    return { created: createdCount, updated: updatedCount };
+    return await this.processDatabaseOperations(
+      customersToCreate,
+      customersToUpdate,
+    );
   }
 
   private async processDatabaseOperations(
@@ -594,129 +487,115 @@ export class KiotVietCustomerService {
     let createdCount = 0;
     let updatedCount = 0;
 
-    if (customersToCreate.length > 0) {
-      for (const { createData, groups } of customersToCreate) {
-        try {
-          const createdCustomer = await this.prismaService.customer.create({
-            data: createData,
-          });
+    // Create customers
+    for (const customerToCreate of customersToCreate) {
+      try {
+        const customer = await this.prismaService.customer.create({
+          data: customerToCreate.createData,
+        });
 
-          if (groups) {
-            await this.handleCustomerGroups(createdCustomer.id, groups);
-          }
-
-          createdCount++;
-        } catch (error) {
-          this.logger.error(
-            `Failed to create customer ${createData.code}: ${error.message}`,
-          );
+        if (customerToCreate.groups) {
+          await this.handleCustomerGroups(customer.id, customerToCreate.groups);
         }
+
+        createdCount++;
+      } catch (error) {
+        this.logger.error(`Failed to create customer: ${error.message}`);
       }
     }
 
-    if (customersToUpdate.length > 0) {
-      for (const { id, data, groups } of customersToUpdate) {
-        try {
-          await this.prismaService.customer.update({
-            where: { id },
-            data,
-          });
+    // Update customers
+    for (const customerToUpdate of customersToUpdate) {
+      try {
+        await this.prismaService.customer.update({
+          where: { id: customerToUpdate.id },
+          data: customerToUpdate.data,
+        });
 
-          if (groups) {
-            await this.prismaService.customerGroupRelation.deleteMany({
-              where: { customerId: id },
-            });
-
-            await this.handleCustomerGroups(id, groups);
-          }
-
-          updatedCount++;
-        } catch (error) {
-          this.logger.error(
-            `Failed to update customer ${id}: ${error.message}`,
+        if (customerToUpdate.groups) {
+          await this.handleCustomerGroups(
+            customerToUpdate.id,
+            customerToUpdate.groups,
           );
         }
+
+        updatedCount++;
+      } catch (error) {
+        this.logger.error(`Failed to update customer: ${error.message}`);
       }
     }
 
     return { created: createdCount, updated: updatedCount };
   }
 
-  private convertToLocalTime(dateString: string): Date {
-    if (!dateString) return new Date();
-
-    const date = new Date(dateString);
-    return date;
-  }
-
   private async prepareCustomerCreateData(
     customerData: any,
   ): Promise<Prisma.CustomerCreateInput | null> {
-    const data: Prisma.CustomerCreateInput = {
-      kiotVietId: BigInt(customerData.id),
-      code: customerData.code,
-      name: customerData.name,
-      type: customerData.type || 0,
-      gender: customerData.gender,
-      birthDate: customerData.birthDate
-        ? this.convertToLocalTime(customerData.birthDate)
-        : null,
-      contactNumber: customerData.contactNumber,
-      address: customerData.address,
-      locationName: customerData.locationName,
-      wardName: customerData.wardName,
-      email: customerData.email,
-      organization: customerData.organization,
-      taxCode: customerData.taxCode,
-      comments: customerData.comments,
-      debt: customerData.debt ? new Prisma.Decimal(customerData.debt) : null,
-      totalInvoiced: customerData.totalInvoiced
-        ? new Prisma.Decimal(customerData.totalInvoiced)
-        : null,
-      totalPoint: customerData.totalPoint || null,
-      totalRevenue: customerData.totalRevenue
-        ? new Prisma.Decimal(customerData.totalRevenue)
-        : null,
-      rewardPoint: customerData.rewardPoint
-        ? BigInt(customerData.rewardPoint)
-        : null,
-      psidFacebook: customerData.psidFacebook
-        ? BigInt(customerData.psidFacebook)
-        : null,
-      retailerId: customerData.retailerId,
-      isActive: true,
-      createdDate: customerData.createdDate
-        ? this.convertToLocalTime(customerData.createdDate)
-        : new Date(),
-      modifiedDate: customerData.modifiedDate
-        ? this.convertToLocalTime(customerData.modifiedDate)
-        : new Date(),
-      lastSyncedAt: new Date(),
-    };
+    try {
+      const data: Prisma.CustomerCreateInput = {
+        kiotVietId: BigInt(customerData.id),
+        code: customerData.code,
+        name: customerData.name,
+        gender: customerData.gender,
+        birthDate: customerData.birthDate
+          ? new Date(customerData.birthDate)
+          : null,
+        contactNumber: customerData.contactNumber || null,
+        address: customerData.address || null,
+        locationName: customerData.locationName || null,
+        wardName: customerData.wardName || null,
+        email: customerData.email || null,
+        organization: customerData.organization || null,
+        taxCode: customerData.taxCode || null,
+        comments: customerData.comments || null,
+        debt: customerData.debt ? parseFloat(customerData.debt) : 0,
+        totalInvoiced: customerData.totalInvoiced
+          ? parseFloat(customerData.totalInvoiced)
+          : 0,
+        totalInvoicedWithoutReturn: customerData.totalInvoicedWithoutReturn
+          ? parseFloat(customerData.totalInvoicedWithoutReturn)
+          : 0,
+        totalRevenue: customerData.totalRevenue
+          ? parseFloat(customerData.totalRevenue)
+          : 0,
+        totalPoint: customerData.totalPoint || 0,
+        rewardPoint: customerData.rewardPoint || 0,
+        retailerId: customerData.retailerId || null,
+        branchId: customerData.branchId || null,
+        type: customerData.type || null,
+        isActive:
+          customerData.isActive !== undefined ? customerData.isActive : true,
+        isLock: customerData.isLock !== undefined ? customerData.isLock : false,
+        psidFacebook: customerData.psidFacebook
+          ? BigInt(customerData.psidFacebook)
+          : null,
+        createdDate: customerData.createdDate
+          ? new Date(customerData.createdDate)
+          : new Date(),
+        modifiedDate: customerData.modifiedDate
+          ? new Date(customerData.modifiedDate)
+          : new Date(),
+        lastSyncedAt: new Date(),
+        larkSyncStatus: 'PENDING',
+      };
 
-    if (customerData.branchId) {
-      try {
-        const branchExists = await this.prismaService.branch.findFirst({
+      // Handle branch relationship
+      if (customerData.branchId) {
+        const branch = await this.prismaService.branch.findFirst({
           where: { kiotVietId: customerData.branchId },
         });
-
-        if (branchExists) {
-          data.branch = {
-            connect: { kiotVietId: customerData.branchId },
-          };
-        } else {
-          this.logger.warn(
-            `Branch with kiotVietId ${customerData.branchId} not found for customer ${customerData.code}`,
-          );
+        if (branch) {
+          data.branch = { connect: { id: branch.id } };
         }
-      } catch (error) {
-        this.logger.error(
-          `Error checking branch for customer ${customerData.code}: ${error.message}`,
-        );
       }
-    }
 
-    return data;
+      return data;
+    } catch (error) {
+      this.logger.error(
+        `Failed to prepare customer create data: ${error.message}`,
+      );
+      return null;
+    }
   }
 
   private async prepareCustomerUpdateData(
@@ -725,348 +604,148 @@ export class KiotVietCustomerService {
     const data: Prisma.CustomerUpdateInput = {
       code: customerData.code,
       name: customerData.name,
-      type: customerData.type,
       gender: customerData.gender,
       birthDate: customerData.birthDate
-        ? this.convertToLocalTime(customerData.birthDate)
+        ? new Date(customerData.birthDate)
         : null,
-      contactNumber: customerData.contactNumber,
-      address: customerData.address,
-      locationName: customerData.locationName,
-      wardName: customerData.wardName,
-      email: customerData.email,
-      organization: customerData.organization,
-      taxCode: customerData.taxCode,
-      comments: customerData.comments,
-      debt: customerData.debt ? new Prisma.Decimal(customerData.debt) : null,
+      contactNumber: customerData.contactNumber || null,
+      address: customerData.address || null,
+      locationName: customerData.locationName || null,
+      wardName: customerData.wardName || null,
+      email: customerData.email || null,
+      organization: customerData.organization || null,
+      taxCode: customerData.taxCode || null,
+      comments: customerData.comments || null,
+      debt: customerData.debt ? parseFloat(customerData.debt) : 0,
       totalInvoiced: customerData.totalInvoiced
-        ? new Prisma.Decimal(customerData.totalInvoiced)
-        : null,
-      totalPoint: customerData.totalPoint,
+        ? parseFloat(customerData.totalInvoiced)
+        : 0,
+      totalInvoicedWithoutReturn: customerData.totalInvoicedWithoutReturn
+        ? parseFloat(customerData.totalInvoicedWithoutReturn)
+        : 0,
       totalRevenue: customerData.totalRevenue
-        ? new Prisma.Decimal(customerData.totalRevenue)
-        : null,
-      rewardPoint: customerData.rewardPoint
-        ? BigInt(customerData.rewardPoint)
-        : null,
+        ? parseFloat(customerData.totalRevenue)
+        : 0,
+      totalPoint: customerData.totalPoint || 0,
+      rewardPoint: customerData.rewardPoint || 0,
+      retailerId: customerData.retailerId || null,
+      branchId: customerData.branchId || null,
+      type: customerData.type || null,
+      isActive:
+        customerData.isActive !== undefined ? customerData.isActive : true,
+      isLock: customerData.isLock !== undefined ? customerData.isLock : false,
       psidFacebook: customerData.psidFacebook
         ? BigInt(customerData.psidFacebook)
         : null,
-      retailerId: customerData.retailerId,
-      isActive: true,
       modifiedDate: customerData.modifiedDate
-        ? this.convertToLocalTime(customerData.modifiedDate)
+        ? new Date(customerData.modifiedDate)
         : new Date(),
       lastSyncedAt: new Date(),
+      larkSyncStatus: 'PENDING',
     };
 
+    // Handle branch relationship
     if (customerData.branchId) {
-      try {
-        const branchExists = await this.prismaService.branch.findFirst({
-          where: { kiotVietId: customerData.branchId },
-        });
-
-        if (branchExists) {
-          data.branch = {
-            connect: { kiotVietId: customerData.branchId },
-          };
-        } else {
-          this.logger.debug(
-            `Branch ${customerData.branchId} not found for customer ${customerData.code} - skipping branch relationship`,
-          );
-        }
-      } catch (error) {
-        this.logger.error(
-          `Error checking branch for customer ${customerData.code}: ${error.message}`,
-        );
+      const branch = await this.prismaService.branch.findFirst({
+        where: { kiotVietId: customerData.branchId },
+      });
+      if (branch) {
+        data.branch = { connect: { id: branch.id } };
       }
     }
 
     return data;
   }
 
-  async handleRemovedCustomers(removedIds: number[]) {
-    if (!removedIds || removedIds.length === 0) return 0;
-
+  private async handleCustomerGroups(
+    customerId: number,
+    groupsString: string,
+  ): Promise<void> {
     try {
-      const result = await this.prismaService.customer.updateMany({
-        where: { kiotVietId: { in: removedIds.map((id) => BigInt(id)) } },
-        data: { isActive: false, lastSyncedAt: new Date() },
+      // Remove existing group associations
+      await this.prismaService.customerGroupRelation.deleteMany({
+        where: { customerId },
       });
 
-      this.logger.log(`Marked ${result.count} customers as inactive`);
-      return result.count;
+      if (!groupsString) return;
+
+      const groupIds = groupsString.split(',').map((id) => parseInt(id.trim()));
+
+      for (const groupId of groupIds) {
+        const group = await this.prismaService.customerGroup.findFirst({
+          where: { kiotVietId: groupId },
+        });
+
+        if (group) {
+          await this.prismaService.customerGroupRelation.create({
+            data: {
+              customerId,
+              customerGroupId: group.id,
+            },
+          });
+        }
+      }
     } catch (error) {
-      this.logger.error(`Failed to handle removed customers: ${error.message}`);
-      throw error;
+      this.logger.error(`Failed to handle customer groups: ${error.message}`);
     }
   }
 
-  async removeDuplicateCustomers(): Promise<number> {
+  private async handleRemovedCustomers(removedIds: number[]): Promise<void> {
     try {
-      const duplicates = await this.prismaService.$queryRaw<
-        Array<{ kiotVietId: bigint; count: number }>
-      >`
-        SELECT "kiotVietId", COUNT(*) as count 
-        FROM "Customer" 
-        GROUP BY "kiotVietId" 
+      for (const removedId of removedIds) {
+        await this.prismaService.customer.updateMany({
+          where: { kiotVietId: BigInt(removedId) },
+          data: { isActive: false },
+        });
+      }
+      this.logger.log(`Marked ${removedIds.length} customers as inactive`);
+    } catch (error) {
+      this.logger.error(`Failed to handle removed customers: ${error.message}`);
+    }
+  }
+
+  private async removeDuplicateCustomers(): Promise<number> {
+    try {
+      const duplicates = await this.prismaService.$queryRaw`
+        SELECT kiot_viet_id, MIN(id) as keep_id
+        FROM "Customer"
+        GROUP BY kiot_viet_id
         HAVING COUNT(*) > 1
       `;
 
-      let totalRemoved = 0;
+      let removedCount = 0;
 
-      for (const dup of duplicates) {
-        const records = await this.prismaService.customer.findMany({
-          where: { kiotVietId: dup.kiotVietId },
-          orderBy: { lastSyncedAt: 'desc' },
+      for (const duplicate of duplicates as any[]) {
+        const duplicateCustomers = await this.prismaService.customer.findMany({
+          where: { kiotVietId: duplicate.kiot_viet_id },
+          orderBy: { id: 'asc' },
         });
 
-        if (records.length > 1) {
-          const idsToRemove = records.slice(1).map((r) => r.id);
-          await this.prismaService.customer.deleteMany({
-            where: { id: { in: idsToRemove } },
+        // Keep the first one, delete the rest
+        for (let i = 1; i < duplicateCustomers.length; i++) {
+          await this.prismaService.customer.delete({
+            where: { id: duplicateCustomers[i].id },
           });
-          totalRemoved += idsToRemove.length;
+          removedCount++;
         }
       }
 
-      this.logger.log(`Removed ${totalRemoved} duplicate customer records`);
-      return totalRemoved;
+      if (removedCount > 0) {
+        this.logger.log(`Removed ${removedCount} duplicate customers`);
+      }
+
+      return removedCount;
     } catch (error) {
-      this.logger.error(`Failed to remove duplicates: ${error.message}`);
-      throw error;
-    }
-  }
-
-  async batchSaveCustomersWithLarkTracking(customers: any[]) {
-    if (!customers || customers.length === 0)
-      return { created: 0, updated: 0, larkResult: null };
-
-    const kiotVietIds = customers.map((c) => BigInt(c.id));
-
-    const existingCustomers = await this.prismaService.customer.findMany({
-      where: { kiotVietId: { in: kiotVietIds } },
-      select: { kiotVietId: true, id: true },
-    });
-
-    const existingMap = new Map<string, number>(
-      existingCustomers.map((c) => [c.kiotVietId.toString(), c.id]),
-    );
-
-    const customersToCreate: Array<{
-      createData: Prisma.CustomerCreateInput;
-      groups: string | null;
-    }> = [];
-    const customersToUpdate: Array<{
-      id: number;
-      data: Prisma.CustomerUpdateInput;
-      groups: string | null;
-    }> = [];
-
-    for (const customerData of customers) {
-      const kiotVietId = BigInt(customerData.id);
-      const existingId = existingMap.get(kiotVietId.toString());
-
-      if (existingId) {
-        customersToUpdate.push({
-          id: existingId,
-          data: await this.prepareCustomerUpdateData(customerData),
-          groups: customerData.groups || null,
-        });
-      } else {
-        const createData = await this.prepareCustomerCreateData(customerData);
-        if (createData) {
-          customersToCreate.push({
-            createData: createData,
-            groups: customerData.groups || null,
-          });
-        }
-      }
-    }
-
-    let createdCount = 0;
-    let updatedCount = 0;
-    let larkResult: any;
-
-    // Process database and LarkBase in parallel
-    const [dbResult, larkResultSettled] = await Promise.allSettled([
-      this.processDatabaseOperations(customersToCreate, customersToUpdate),
-      this.larkBaseService.syncCustomersToLarkBase(customers),
-    ]);
-
-    // Handle database results
-    if (dbResult.status === 'fulfilled') {
-      createdCount = dbResult.value.created;
-      updatedCount = dbResult.value.updated;
-    } else {
-      this.logger.error(`Database sync failed: ${dbResult.reason}`);
-      throw dbResult.reason;
-    }
-
-    // Handle LarkBase results
-    if (larkResultSettled.status === 'rejected') {
-      this.logger.error(`LarkBase sync failed: ${larkResultSettled.reason}`);
-      larkResult = { success: 0, failed: customers.length };
-    } else {
-      this.logger.log('LarkBase sync completed successfully');
-      larkResult = larkResultSettled.value;
-    }
-
-    return { created: createdCount, updated: updatedCount, larkResult };
-  }
-
-  async syncRecentCustomers(days: number = 4): Promise<void> {
-    try {
-      const historicalSync = await this.prismaService.syncControl.findFirst({
-        where: { name: 'customer_historical', isRunning: true },
-      });
-
-      if (historicalSync) {
-        this.logger.log('Historical sync is running. Skipping recent sync.');
-        return;
-      }
-
-      // Database sync control
-      await this.prismaService.syncControl.upsert({
-        where: { name: 'customer_recent' },
-        create: {
-          name: 'customer_recent',
-          entities: ['customer'],
-          syncMode: 'recent',
-          isRunning: true,
-          status: 'in_progress',
-          startedAt: new Date(),
-        },
-        update: {
-          isRunning: true,
-          status: 'in_progress',
-          startedAt: new Date(),
-          error: null,
-        },
-      });
-
-      // LarkBase sync control
-      await this.prismaService.syncControl.upsert({
-        where: { name: 'customer_recent_lark' },
-        create: {
-          name: 'customer_recent_lark',
-          entities: ['customer_lark'],
-          syncMode: 'recent',
-          isRunning: true,
-          status: 'in_progress',
-          startedAt: new Date(),
-        },
-        update: {
-          isRunning: true,
-          status: 'in_progress',
-          startedAt: new Date(),
-          error: null,
-        },
-      });
-
-      const lastModifiedFrom = dayjs()
-        .subtract(days, 'day')
-        .format('YYYY-MM-DD');
-      let currentItem = 0;
-      let totalProcessed = 0;
-      let totalLarkSuccess = 0;
-      let totalLarkFailed = 0;
-      let hasMoreData = true;
-
-      while (hasMoreData) {
-        const response = await this.fetchCustomers({
-          lastModifiedFrom,
-          currentItem,
-          pageSize: this.PAGE_SIZE,
-        });
-
-        if (response.data && response.data.length > 0) {
-          const { created, updated, larkResult } =
-            await this.batchSaveCustomersWithLarkTracking(response.data);
-          totalProcessed += created + updated;
-
-          if (larkResult) {
-            totalLarkSuccess += larkResult.success;
-            totalLarkFailed += larkResult.failed;
-          }
-
-          this.logger.log(
-            `Recent sync progress: ${totalProcessed} customers processed, LarkBase: ${totalLarkSuccess} success, ${totalLarkFailed} failed`,
-          );
-        }
-
-        if (response.removedId && response.removedId.length > 0) {
-          await this.handleRemovedCustomers(response.removedId);
-        }
-
-        hasMoreData = response.data && response.data.length === this.PAGE_SIZE;
-        if (hasMoreData) currentItem += this.PAGE_SIZE;
-      }
-
-      const duplicatesRemoved = await this.removeDuplicateCustomers();
-
-      // Update database sync control
-      await this.prismaService.syncControl.update({
-        where: { name: 'customer_recent' },
-        data: {
-          isRunning: false,
-          status: 'completed',
-          completedAt: new Date(),
-          progress: { totalProcessed, duplicatesRemoved },
-        },
-      });
-
-      // Update LarkBase sync control
-      await this.prismaService.syncControl.update({
-        where: { name: 'customer_recent_lark' },
-        data: {
-          isRunning: false,
-          status: totalLarkFailed > 0 ? 'completed_with_errors' : 'completed',
-          completedAt: new Date(),
-          progress: { totalLarkSuccess, totalLarkFailed },
-          error:
-            totalLarkFailed > 0
-              ? `${totalLarkFailed} records failed to sync to LarkBase`
-              : null,
-        },
-      });
-
-      this.logger.log(
-        `Recent sync completed: ${totalProcessed} customers processed, ${duplicatesRemoved} duplicates removed, LarkBase: ${totalLarkSuccess} success, ${totalLarkFailed} failed`,
+      this.logger.error(
+        `Failed to remove duplicate customers: ${error.message}`,
       );
-    } catch (error) {
-      await this.prismaService.syncControl.updateMany({
-        where: { name: { in: ['customer_recent', 'customer_recent_lark'] } },
-        data: {
-          isRunning: false,
-          status: 'failed',
-          completedAt: new Date(),
-          error: error.message,
-        },
-      });
-
-      this.logger.error(`Recent sync failed: ${error.message}`);
-      throw error;
+      return 0;
     }
   }
 
   async checkAndRunAppropriateSync(): Promise<void> {
-    // First sync branches
-    this.logger.log('Syncing branches first...');
-    try {
-      await this.branchService.syncBranches();
-    } catch (error) {
-      this.logger.warn(`Branch sync failed, continuing: ${error.message}`);
-    }
-
-    this.logger.log('Syncing customer groups...');
-    try {
-      await this.customerGroupService.syncCustomerGroups();
-    } catch (error) {
-      this.logger.warn(
-        `Customer group sync failed, continuing: ${error.message}`,
-      );
-    }
+    // Sync branches and customer groups are handled by the bus scheduler now
+    // This method can focus on customer-specific logic
 
     const historicalSync = await this.prismaService.syncControl.findFirst({
       where: { name: 'customer_historical' },
