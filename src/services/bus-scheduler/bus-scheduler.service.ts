@@ -132,7 +132,7 @@ export class BusSchedulerService implements OnModuleInit {
   /**
    * Weekend sync - Saturday 6 AM and Sunday 6 AM
    */
-  @Cron('0 0 6 * * 0,6') // Sunday and Saturday at 6 AM
+  @Cron('0 0 6 * * 0') // Sunday at 6 AM
   async handleWeekendSync() {
     // ===== MUTUAL EXCLUSION CHECK =====
     if (this.isRunning) {

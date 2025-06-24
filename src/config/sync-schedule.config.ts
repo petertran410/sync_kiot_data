@@ -57,12 +57,29 @@ export const SYNC_ENTITIES_CONFIG: SyncEntityConfig[] = [
     description: 'Bank account sync runs on weekends only',
   },
   {
+    name: 'category',
+    service: 'categoryService',
+    syncMethod: 'syncCategories',
+    syncType: 'simple',
+    schedule: 'weekends',
+    dependencies: [],
+    description: 'Category sync runs on weekends only',
+  },
+  {
     name: 'product',
     service: 'productService',
     syncMethod: 'syncHistoricalProducts',
     syncType: 'full',
     schedule: 'weekends',
     description: 'Product sync runs on weekends only',
+  },
+  {
+    name: 'trademark',
+    service: 'tradeMarkService',
+    syncMethod: 'syncTradeMarks',
+    syncType: 'simple',
+    schedule: 'weekends',
+    description: 'Trademark sync runs on weekends only',
   },
 
   // === EVERY 15 MINUTES ENTITIES ===
@@ -73,23 +90,6 @@ export const SYNC_ENTITIES_CONFIG: SyncEntityConfig[] = [
     syncType: 'simple',
     schedule: 'every_15_minutes',
     description: 'Customer group sync every 15 minutes',
-  },
-  {
-    name: 'trademark',
-    service: 'tradeMarkService',
-    syncMethod: 'syncTradeMarks',
-    syncType: 'simple',
-    schedule: 'every_15_minutes',
-    description: 'Trademark sync every 15 minutes',
-  },
-  {
-    name: 'category',
-    service: 'categoryService',
-    syncMethod: 'syncCategories',
-    syncType: 'simple',
-    schedule: 'every_15_minutes',
-    dependencies: [],
-    description: 'Category sync every 15 minutes',
   },
   {
     name: 'customer',
