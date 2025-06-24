@@ -71,7 +71,8 @@ export class KiotVietOrderService {
           );
           totalProcessed += created + updated;
 
-          await this.markOrdersForLarkBaseSync(response.data);
+          // IMMEDIATE LarkBase sync
+          await this.syncOrdersToLarkBaseImmediate(response.data);
 
           this.logger.log(
             `Historical sync batch ${++batchCount}: ${totalProcessed} orders processed`,
@@ -86,6 +87,9 @@ export class KiotVietOrderService {
         if (hasMoreData) currentItem += this.PAGE_SIZE;
       }
 
+      const duplicatesRemoved = await this.removeDuplicateOrders();
+
+      // Mark historical sync as COMPLETED and DISABLED
       await this.prismaService.syncControl.update({
         where: { name: 'order_historical' },
         data: {
@@ -93,15 +97,13 @@ export class KiotVietOrderService {
           isEnabled: false,
           status: 'completed',
           completedAt: new Date(),
-          progress: { totalProcessed, batchCount },
+          progress: { totalProcessed, duplicatesRemoved, batchCount },
         },
       });
 
       this.logger.log(
-        `Historical sync completed: ${totalProcessed} orders processed`,
+        `Historical sync completed: ${totalProcessed} orders processed, ${duplicatesRemoved} duplicates removed`,
       );
-
-      await this.syncPendingToLarkBase();
     } catch (error) {
       await this.prismaService.syncControl.update({
         where: { name: 'order_historical' },
@@ -115,6 +117,41 @@ export class KiotVietOrderService {
 
       this.logger.error(`Historical sync failed: ${error.message}`);
       throw error;
+    }
+  }
+
+  private async syncOrdersToLarkBaseImmediate(orders: any[]): Promise<void> {
+    if (!orders || orders.length === 0) return;
+
+    try {
+      // Fetch related data for proper mapping
+      const ordersWithRelations = await Promise.all(
+        orders.map(async (order) => {
+          const dbOrder = await this.prismaService.order.findFirst({
+            where: { kiotVietId: BigInt(order.id) },
+            include: {
+              branch: true,
+              customer: true,
+              soldBy: true,
+              invoices: true,
+              orderDelivery: true,
+              orderSurcharges: true,
+            },
+          });
+          return dbOrder || order;
+        }),
+      );
+
+      const result =
+        await this.larkBaseService.directCreateOrders(ordersWithRelations);
+
+      this.logger.debug(
+        `LarkBase immediate sync: ${result.success} success, ${result.failed} failed`,
+      );
+    } catch (error) {
+      this.logger.error(`LarkBase immediate sync failed: ${error.message}`);
+
+      return error;
     }
   }
 
@@ -167,7 +204,7 @@ export class KiotVietOrderService {
           );
           totalProcessed += created + updated;
 
-          await this.markOrdersForLarkBaseSync(response.data);
+          await this.syncOrdersToLarkBaseImmediate(response.data);
 
           this.logger.log(
             `Recent sync progress: ${totalProcessed} orders processed`,
@@ -182,21 +219,21 @@ export class KiotVietOrderService {
         if (hasMoreData) currentItem += this.PAGE_SIZE;
       }
 
+      const duplicatesRemoved = await this.removeDuplicateOrders();
+
       await this.prismaService.syncControl.update({
         where: { name: 'order_recent' },
         data: {
           isRunning: false,
           status: 'completed',
           completedAt: new Date(),
-          progress: { totalProcessed },
+          progress: { totalProcessed, duplicatesRemoved },
         },
       });
 
       this.logger.log(
-        `Recent sync completed: ${totalProcessed} orders processed`,
+        `Recent sync completed: ${totalProcessed} orders processed, ${duplicatesRemoved} duplicates removed`,
       );
-
-      await this.syncPendingToLarkBase();
     } catch (error) {
       await this.prismaService.syncControl.update({
         where: { name: 'order_recent' },
@@ -210,194 +247,6 @@ export class KiotVietOrderService {
 
       this.logger.error(`Recent sync failed: ${error.message}`);
       throw error;
-    }
-  }
-
-  async syncPendingToLarkBase(): Promise<{ success: number; failed: number }> {
-    try {
-      const pendingOrders = await this.prismaService.order.findMany({
-        where: {
-          larkSyncStatus: 'PENDING',
-          larkSyncRetries: { lt: 3 },
-        },
-        include: {
-          branch: true,
-          customer: true,
-          soldBy: true,
-          invoices: true,
-          orderDelivery: true,
-          orderSurcharges: true,
-        },
-        take: 100,
-      });
-
-      if (pendingOrders.length === 0) {
-        this.logger.log('No pending orders to sync to LarkBase');
-        return { success: 0, failed: 0 };
-      }
-
-      this.logger.log(
-        `Syncing ${pendingOrders.length} pending orders to LarkBase`,
-      );
-
-      const recordsToCreate: typeof pendingOrders = [];
-      const recordsToUpdate: typeof pendingOrders = [];
-
-      for (const order of pendingOrders) {
-        if (order.larkRecordId) {
-          recordsToUpdate.push(order);
-        } else {
-          recordsToCreate.push(order);
-        }
-      }
-
-      let totalSuccess = 0;
-      let totalFailed = 0;
-
-      if (recordsToCreate.length > 0) {
-        const createResult = await this.larkBaseCreateBatch(recordsToCreate);
-        totalSuccess += createResult.success;
-        totalFailed += createResult.failed;
-      }
-
-      if (recordsToUpdate.length > 0) {
-        const updateResult = await this.larkBaseUpdateBatch(recordsToUpdate);
-        totalSuccess += updateResult.success;
-        totalFailed += updateResult.failed;
-      }
-
-      this.logger.log(
-        `LarkBase sync completed: ${totalSuccess} success, ${totalFailed} failed`,
-      );
-
-      return { success: totalSuccess, failed: totalFailed };
-    } catch (error) {
-      this.logger.error(`LarkBase sync failed: ${error.message}`);
-      return { success: 0, failed: 0 };
-    }
-  }
-
-  private async larkBaseCreateBatch(
-    orders: any[],
-  ): Promise<{ success: number; failed: number }> {
-    try {
-      const response = await this.larkBaseService.directCreateOrders(orders);
-
-      if (response.success > 0 && response.records) {
-        for (const [index, order] of orders.entries()) {
-          if (response.records[index]) {
-            await this.prismaService.order.update({
-              where: { id: order.id },
-              data: {
-                larkRecordId: response.records[index].record_id,
-                larkSyncStatus: 'SYNCED',
-                larkSyncedAt: new Date(),
-                larkSyncRetries: 0,
-              },
-            });
-          }
-        }
-      }
-
-      if (response.failed > 0) {
-        const failedOrders = orders.slice(response.success);
-        for (const order of failedOrders) {
-          await this.prismaService.order.update({
-            where: { id: order.id },
-            data: {
-              larkSyncStatus: 'FAILED',
-              larkSyncRetries: { increment: 1 },
-            },
-          });
-        }
-      }
-
-      return { success: response.success, failed: response.failed };
-    } catch (error) {
-      this.logger.error(`LarkBase create batch failed: ${error.message}`);
-
-      for (const order of orders) {
-        await this.prismaService.order.update({
-          where: { id: order.id },
-          data: {
-            larkSyncStatus: 'FAILED',
-            larkSyncRetries: { increment: 1 },
-          },
-        });
-      }
-
-      return { success: 0, failed: orders.length };
-    }
-  }
-
-  private async larkBaseUpdateBatch(
-    orders: any[],
-  ): Promise<{ success: number; failed: number }> {
-    try {
-      const response = await this.larkBaseService.directUpdateOrders(orders);
-
-      if (response.success > 0) {
-        const successfulOrders = orders.slice(0, response.success);
-        for (const order of successfulOrders) {
-          await this.prismaService.order.update({
-            where: { id: order.id },
-            data: {
-              larkSyncStatus: 'SYNCED',
-              larkSyncedAt: new Date(),
-              larkSyncRetries: 0,
-            },
-          });
-        }
-      }
-
-      if (response.failed > 0) {
-        const failedOrders = orders.slice(response.success);
-        for (const order of failedOrders) {
-          await this.prismaService.order.update({
-            where: { id: order.id },
-            data: {
-              larkSyncStatus: 'FAILED',
-              larkSyncRetries: { increment: 1 },
-            },
-          });
-        }
-      }
-
-      return { success: response.success, failed: response.failed };
-    } catch (error) {
-      this.logger.error(`LarkBase update batch failed: ${error.message}`);
-
-      for (const order of orders) {
-        await this.prismaService.order.update({
-          where: { id: order.id },
-          data: {
-            larkSyncStatus: 'FAILED',
-            larkSyncRetries: { increment: 1 },
-          },
-        });
-      }
-
-      return { success: 0, failed: orders.length };
-    }
-  }
-
-  private async markOrdersForLarkBaseSync(orders: any[]): Promise<void> {
-    try {
-      const kiotVietIds = orders.map((o) => BigInt(o.id));
-
-      await this.prismaService.order.updateMany({
-        where: { kiotVietId: { in: kiotVietIds } },
-        data: {
-          larkSyncStatus: 'PENDING',
-          larkSyncRetries: 0,
-        },
-      });
-
-      this.logger.debug(`Marked ${orders.length} orders for LarkBase sync`);
-    } catch (error) {
-      this.logger.error(
-        `Failed to mark orders for LarkBase sync: ${error.message}`,
-      );
     }
   }
 
@@ -510,6 +359,43 @@ export class KiotVietOrderService {
     }
 
     return { created: createdCount, updated: updatedCount };
+  }
+
+  private async removeDuplicateOrders(): Promise<number> {
+    try {
+      const duplicates = await this.prismaService.$queryRaw`
+        SELECT kiotVietId, MIN(id) as keep_id
+        FROM "Order"
+        GROUP BY kiotVietId
+        HAVING COUNT(*) > 1
+      `;
+
+      let removedCount = 0;
+
+      for (const duplicate of duplicates as any[]) {
+        const duplicateOrders = await this.prismaService.order.findMany({
+          where: { kiotVietId: duplicate.kiotVietId },
+          orderBy: { id: 'asc' },
+        });
+
+        // Keep the first one, delete the rest
+        for (let i = 1; i < duplicateOrders.length; i++) {
+          await this.prismaService.order.delete({
+            where: { id: duplicateOrders[i].id },
+          });
+          removedCount++;
+        }
+      }
+
+      if (removedCount > 0) {
+        this.logger.log(`Removed ${removedCount} duplicate orders`);
+      }
+
+      return removedCount;
+    } catch (error) {
+      this.logger.error(`Failed to remove duplicate orders: ${error.message}`);
+      return 0;
+    }
   }
 
   private async prepareOrderCreateData(
@@ -834,7 +720,7 @@ export class KiotVietOrderService {
       for (const removedId of removedIds) {
         await this.prismaService.order.updateMany({
           where: { kiotVietId: BigInt(removedId) },
-          data: { status: 2 }, // Assuming 2 means cancelled
+          data: { status: 2 },
         });
       }
       this.logger.log(`Marked ${removedIds.length} orders as cancelled`);
@@ -856,22 +742,28 @@ export class KiotVietOrderService {
       return;
     }
 
-    if (historicalSync?.isEnabled && historicalSync?.isRunning) {
-      this.logger.log(
-        'System restart detected: Historical sync was running, resuming...',
-      );
-      await this.syncHistoricalOrders();
-    } else if (historicalSync?.isEnabled && !historicalSync?.isRunning) {
-      this.logger.log(
-        'System restart detected: Historical sync enabled, starting...',
-      );
-      await this.syncHistoricalOrders();
-    } else if (historicalSync?.status === 'completed') {
+    // If historical sync is completed and disabled, run recent sync
+    if (historicalSync.status === 'completed' && !historicalSync.isEnabled) {
       this.logger.log('Historical sync completed. Running recent sync...');
       await this.syncRecentOrders();
-    } else {
-      this.logger.log('System restart detected: Running recent sync...');
-      await this.syncRecentOrders();
+      return;
     }
+
+    // If historical sync is enabled but not running, start it
+    if (historicalSync.isEnabled && !historicalSync.isRunning) {
+      this.logger.log('Starting historical sync...');
+      await this.syncHistoricalOrders();
+      return;
+    }
+
+    // If historical sync is running, skip
+    if (historicalSync.isRunning) {
+      this.logger.log('Historical sync is already running. Skipping...');
+      return;
+    }
+
+    // Default to recent sync
+    this.logger.log('Running recent sync...');
+    await this.syncRecentOrders();
   }
 }

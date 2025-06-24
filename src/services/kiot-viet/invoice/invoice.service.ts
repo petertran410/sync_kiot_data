@@ -71,17 +71,25 @@ export class KiotVietInvoiceService {
           );
           totalProcessed += created + updated;
 
-          await this.markInvoicesForLarkBaseSync(response.data);
+          // IMMEDIATE LarkBase sync
+          await this.syncInvoicesToLarkBaseImmediate(response.data);
 
           this.logger.log(
             `Historical sync batch ${++batchCount}: ${totalProcessed} invoices processed`,
           );
         }
 
+        if (response.removedId && response.removedId.length > 0) {
+          await this.handleRemovedInvoices(response.removedId);
+        }
+
         hasMoreData = response.data && response.data.length === this.PAGE_SIZE;
         if (hasMoreData) currentItem += this.PAGE_SIZE;
       }
 
+      const duplicatesRemoved = await this.removeDuplicateInvoices();
+
+      // Mark historical sync as COMPLETED and DISABLED
       await this.prismaService.syncControl.update({
         where: { name: 'invoice_historical' },
         data: {
@@ -89,15 +97,13 @@ export class KiotVietInvoiceService {
           isEnabled: false,
           status: 'completed',
           completedAt: new Date(),
-          progress: { totalProcessed, batchCount },
+          progress: { totalProcessed, duplicatesRemoved, batchCount },
         },
       });
 
       this.logger.log(
         `Historical sync completed: ${totalProcessed} invoices processed`,
       );
-
-      await this.syncPendingToLarkBase();
     } catch (error) {
       await this.prismaService.syncControl.update({
         where: { name: 'invoice_historical' },
@@ -111,6 +117,98 @@ export class KiotVietInvoiceService {
 
       this.logger.error(`Historical sync failed: ${error.message}`);
       throw error;
+    }
+  }
+
+  private async handleRemovedInvoices(removedIds: number[]): Promise<void> {
+    try {
+      for (const removedId of removedIds) {
+        await this.prismaService.invoice.updateMany({
+          where: { kiotVietId: BigInt(removedId) },
+          data: { status: 2 },
+        });
+      }
+      this.logger.log(`Marked ${removedIds.length} invoices as cancelled`);
+    } catch (error) {
+      this.logger.error(`Failed to handle removed invoices: ${error.message}`);
+    }
+  }
+
+  private async removeDuplicateInvoices(): Promise<number> {
+    try {
+      const duplicates = await this.prismaService.$queryRaw`
+        SELECT kiotVietId, MIN(id) as keep_id
+        FROM "Invoice"
+        GROUP BY kiotVietId
+        HAVING COUNT(*) > 1
+      `;
+
+      let removedCount = 0;
+
+      for (const duplicate of duplicates as any[]) {
+        const duplicateInvoices = await this.prismaService.invoice.findMany({
+          where: { kiotVietId: duplicate.kiotVietId },
+          orderBy: { id: 'asc' },
+        });
+
+        // Keep the first one, delete the rest
+        for (let i = 1; i < duplicateInvoices.length; i++) {
+          await this.prismaService.invoice.delete({
+            where: { id: duplicateInvoices[i].id },
+          });
+          removedCount++;
+        }
+      }
+
+      if (removedCount > 0) {
+        this.logger.log(`Removed ${removedCount} duplicate invoices`);
+      }
+
+      return removedCount;
+    } catch (error) {
+      this.logger.error(
+        `Failed to remove duplicate invoices: ${error.message}`,
+      );
+      return 0;
+    }
+  }
+
+  // ADD: Immediate LarkBase sync method
+  private async syncInvoicesToLarkBaseImmediate(
+    invoices: any[],
+  ): Promise<void> {
+    if (!invoices || invoices.length === 0) return;
+
+    try {
+      // Fetch related data for proper mapping
+      const invoicesWithRelations = await Promise.all(
+        invoices.map(async (invoice) => {
+          const dbInvoice = await this.prismaService.invoice.findFirst({
+            where: { kiotVietId: BigInt(invoice.id) },
+            include: {
+              branch: true,
+              customer: true,
+              soldBy: true,
+              order: true,
+              invoiceDelivery: true,
+              invoiceSurcharges: true,
+            },
+          });
+          return dbInvoice || invoice;
+        }),
+      );
+
+      const result = await this.larkBaseService.directCreateInvoices(
+        invoicesWithRelations,
+      );
+
+      this.logger.debug(
+        `LarkBase immediate sync: ${result.success} success, ${result.failed} failed`,
+      );
+    } catch (error) {
+      this.logger.error(`LarkBase immediate sync failed: ${error.message}`);
+
+      return error;
     }
   }
 
@@ -170,9 +268,15 @@ export class KiotVietInvoiceService {
           );
         }
 
+        if (response.removedId && response.removedId.length > 0) {
+          await this.handleRemovedInvoices(response.removedId);
+        }
+
         hasMoreData = response.data && response.data.length === this.PAGE_SIZE;
         if (hasMoreData) currentItem += this.PAGE_SIZE;
       }
+
+      const duplicatesRemoved = await this.removeDuplicateInvoices();
 
       await this.prismaService.syncControl.update({
         where: { name: 'invoice_recent' },
@@ -180,12 +284,12 @@ export class KiotVietInvoiceService {
           isRunning: false,
           status: 'completed',
           completedAt: new Date(),
-          progress: { totalProcessed },
+          progress: { totalProcessed, duplicatesRemoved },
         },
       });
 
       this.logger.log(
-        `Recent sync completed: ${totalProcessed} invoices processed`,
+        `Recent sync completed: ${totalProcessed} invoices processed, ${duplicatesRemoved} duplicates removed`,
       );
 
       await this.syncPendingToLarkBase();
@@ -856,22 +960,28 @@ export class KiotVietInvoiceService {
       return;
     }
 
-    if (historicalSync?.isEnabled && historicalSync?.isRunning) {
-      this.logger.log(
-        'System restart detected: Historical sync was running, resuming...',
-      );
-      await this.syncHistoricalInvoices();
-    } else if (historicalSync?.isEnabled && !historicalSync?.isRunning) {
-      this.logger.log(
-        'System restart detected: Historical sync enabled, starting...',
-      );
-      await this.syncHistoricalInvoices();
-    } else if (historicalSync?.status === 'completed') {
+    // If historical sync is completed and disabled, run recent sync
+    if (historicalSync.status === 'completed' && !historicalSync.isEnabled) {
       this.logger.log('Historical sync completed. Running recent sync...');
       await this.syncRecentInvoices();
-    } else {
-      this.logger.log('System restart detected: Running recent sync...');
-      await this.syncRecentInvoices();
+      return;
     }
+
+    // If historical sync is enabled but not running, start it
+    if (historicalSync.isEnabled && !historicalSync.isRunning) {
+      this.logger.log('Starting historical sync...');
+      await this.syncHistoricalInvoices();
+      return;
+    }
+
+    // If historical sync is running, skip
+    if (historicalSync.isRunning) {
+      this.logger.log('Historical sync is already running. Skipping...');
+      return;
+    }
+
+    // Default to recent sync
+    this.logger.log('Running recent sync...');
+    await this.syncRecentInvoices();
   }
 }

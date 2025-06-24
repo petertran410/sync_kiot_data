@@ -29,7 +29,7 @@ export const SYNC_ENTITIES_CONFIG: SyncEntityConfig[] = [
   {
     name: 'customer',
     service: 'customerService',
-    syncMethod: 'syncHistoricalCustomers',
+    syncMethod: 'checkAndRunAppropriateSync',
     syncType: 'full',
     schedule: 'every_15_minutes',
     dependencies: ['customergroup'],
@@ -41,7 +41,7 @@ export const SYNC_ENTITIES_CONFIG: SyncEntityConfig[] = [
   {
     name: 'order',
     service: 'orderService',
-    syncMethod: 'syncHistoricalOrders',
+    syncMethod: 'checkAndRunAppropriateSync',
     syncType: 'full',
     schedule: 'every_15_minutes',
     dependencies: ['customer'],
@@ -53,7 +53,7 @@ export const SYNC_ENTITIES_CONFIG: SyncEntityConfig[] = [
   {
     name: 'invoice',
     service: 'invoiceService',
-    syncMethod: 'syncHistoricalInvoices',
+    syncMethod: 'checkAndRunAppropriateSync',
     syncType: 'full',
     schedule: 'every_15_minutes',
     dependencies: ['customer', 'order'],

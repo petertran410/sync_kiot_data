@@ -162,13 +162,11 @@ export class BusSchedulerService implements OnModuleInit {
         `🚀 Starting ${scheduleType} sync cycle with ${entities.length} entities`,
       );
 
-      // PHASE 1: KiotViet → Database (sequential processing)
+      // SINGLE PHASE: KiotViet → Database → LarkBase (immediate)
       for (const entityConfig of entities) {
         await this.syncSingleEntity(entityConfig);
+        // No separate LarkBase phase needed - it's done immediately in each service
       }
-
-      // PHASE 2: Database → LarkBase (for entities that need it)
-      await this.runLarkBaseSyncPhase(entities);
 
       this.logger.log(`✅ ${scheduleType} sync cycle completed successfully`);
     } catch (error) {
@@ -180,66 +178,6 @@ export class BusSchedulerService implements OnModuleInit {
       this.isRunning = false;
       this.currentSyncType = null;
       this.currentSyncStartTime = null;
-    }
-  }
-
-  /**
-   * LarkBase sync phase
-   */
-  private async runLarkBaseSyncPhase(
-    entities: SyncEntityConfig[],
-  ): Promise<void> {
-    const larkBaseEntities = entities.filter((e) => e.hasLarkBaseSync);
-
-    if (larkBaseEntities.length === 0) {
-      this.logger.log('📋 No entities require LarkBase sync');
-      return;
-    }
-
-    this.logger.log(
-      `📤 Starting LarkBase sync for ${larkBaseEntities.length} entities`,
-    );
-
-    for (const entityConfig of larkBaseEntities) {
-      try {
-        await this.syncEntityToLarkBase(entityConfig);
-      } catch (error) {
-        this.logger.error(
-          `❌ LarkBase sync failed for ${entityConfig.name}: ${error.message}`,
-        );
-        // Continue with other entities - don't fail the whole cycle
-      }
-    }
-
-    this.logger.log('📤 LarkBase sync phase completed');
-  }
-
-  private async syncEntityToLarkBase(
-    entityConfig: SyncEntityConfig,
-  ): Promise<void> {
-    const startTime = Date.now();
-
-    try {
-      const service = this.getServiceInstance(entityConfig.service);
-
-      if (service && typeof service.syncPendingToLarkBase === 'function') {
-        const result = await service.syncPendingToLarkBase();
-
-        const duration = Date.now() - startTime;
-        this.logger.log(
-          `✅ LarkBase sync completed for ${entityConfig.name}: ${result.success} success, ${result.failed} failed (${duration}ms)`,
-        );
-      } else {
-        this.logger.warn(
-          `⚠️  Service ${entityConfig.service} does not implement syncPendingToLarkBase method`,
-        );
-      }
-    } catch (error) {
-      const duration = Date.now() - startTime;
-      this.logger.error(
-        `❌ LarkBase sync failed for ${entityConfig.name}: ${error.message} (${duration}ms)`,
-      );
-      throw error;
     }
   }
 
@@ -347,14 +285,10 @@ export class BusSchedulerService implements OnModuleInit {
     try {
       // Phase 1: KiotViet → Database
       await this.syncSingleEntity(entityConfig);
-
-      // Phase 2: Database → LarkBase (if needed)
-      if (entityConfig.hasLarkBaseSync) {
-        await this.syncEntityToLarkBase(entityConfig);
-      }
     } finally {
       this.isRunning = false;
       this.currentSyncType = null;
+      this.currentSyncStartTime = null;
     }
   }
 
