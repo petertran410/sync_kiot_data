@@ -820,7 +820,7 @@ export class LarkBaseService {
 
     // kiotvietId (IMPORTANT for deduplication)
     if (customerData.id || customerData.kiotVietId) {
-      fields['kiotvietId'] = Number(customerData.id || customerData.kiotVietId);
+      fields['kiotVietId'] = Number(customerData.id || customerData.kiotVietId);
     }
 
     // Nợ Hiện Tại
