@@ -7,7 +7,6 @@ import { AppService } from './app.service';
 import { PrismaModule } from './prisma/prisma.module';
 import { KiotVietModule } from './services/kiot-viet/kiot-viet.module';
 import { SyncModule } from './sync/sync.module';
-import { BusSchedulerModule } from './services/bus-scheduler/bus-scheduler.module';
 
 @Module({
   imports: [
@@ -16,7 +15,6 @@ import { BusSchedulerModule } from './services/bus-scheduler/bus-scheduler.modul
     PrismaModule,
     KiotVietModule,
     SyncModule,
-    BusSchedulerModule,
   ],
   controllers: [AppController],
   providers: [AppService],

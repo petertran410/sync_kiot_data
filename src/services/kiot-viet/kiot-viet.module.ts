@@ -14,8 +14,6 @@ import { KiotVietSurchargeService } from './surcharge/surcharge.service';
 import { KiotVietBankAccountService } from './bank-account/bank-account.service';
 import { KiotVietCategoryService } from './category/category.service';
 import { KiotVietProductService } from './product/product.service';
-import { KiotVietOrderService } from './order/order.service';
-import { KiotVietInvoiceService } from './invoice/invoice.service';
 import { LarkModule } from '../lark/lark.module';
 
 @Module({
@@ -40,8 +38,6 @@ import { LarkModule } from '../lark/lark.module';
     KiotVietBankAccountService,
     KiotVietCategoryService,
     KiotVietProductService,
-    KiotVietOrderService,
-    KiotVietInvoiceService,
   ],
   exports: [
     KiotVietAuthService,
@@ -55,8 +51,6 @@ import { LarkModule } from '../lark/lark.module';
     KiotVietBankAccountService,
     KiotVietCategoryService,
     KiotVietProductService,
-    KiotVietOrderService,
-    KiotVietInvoiceService,
   ],
 })
 export class KiotVietModule {}
