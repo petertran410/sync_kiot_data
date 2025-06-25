@@ -91,6 +91,7 @@ export class LarkBaseService {
     });
   }
 
+  // ===== CUSTOMERS UPSERT METHODS =====
   async directCreateCustomers(
     customers: any[],
   ): Promise<{ success: number; failed: number; records?: any[] }> {
@@ -139,182 +140,6 @@ export class LarkBaseService {
     }
   }
 
-  private async batchCreateCustomers(customers: any[]): Promise<{
-    success: number;
-    failed: number;
-    records?: any[];
-  }> {
-    try {
-      const records = customers
-        .map((customer) => this.mapCustomerToLarkBase(customer))
-        .filter((record) => record.fields['Tên Khách Hàng'])
-        .map((record) => ({ fields: record.fields }));
-
-      if (!records.length) {
-        return { success: 0, failed: customers.length };
-      }
-
-      const response = await this.client.bitable.appTableRecord.batchCreate({
-        path: {
-          app_token: this.customerBaseToken,
-          table_id: this.customerTableId,
-        },
-        data: { records },
-      });
-
-      const successCount = response.data?.records?.length || 0;
-      const failedCount = customers.length - successCount;
-
-      return {
-        success: successCount,
-        failed: failedCount,
-        records: response.data?.records,
-      };
-    } catch (error) {
-      this.logger.error(
-        `LarkBase customer batch create failed: ${error.message}`,
-      );
-      return { success: 0, failed: customers.length };
-    }
-  }
-
-  async deleteDuplicateCustomers(): Promise<{
-    deleted: number;
-    remaining: number;
-  }> {
-    try {
-      this.logger.log('🔍 Scanning LarkBase for duplicate customers...');
-
-      const allRecords = await this.getAllCustomerRecords();
-      const duplicates = this.findDuplicatesByKiotVietId(allRecords);
-
-      let deletedCount = 0;
-
-      for (const [kiotVietId, records] of duplicates) {
-        // Keep first record, delete the rest
-        const toDelete = records.slice(1);
-
-        if (toDelete.length > 0) {
-          const recordIds = toDelete
-            .map((r) => r.record_id)
-            .filter((id): id is string => typeof id === 'string'); // Type guard
-
-          if (recordIds.length > 0) {
-            await this.batchDeleteCustomers(recordIds);
-            deletedCount += recordIds.length;
-            this.logger.debug(
-              `Deleted ${recordIds.length} duplicates for kiotVietId: ${kiotVietId}`,
-            );
-          }
-        }
-      }
-
-      this.logger.log(
-        `🧹 Cleanup complete: ${deletedCount} duplicates removed, ${allRecords.length - deletedCount} remaining`,
-      );
-      return {
-        deleted: deletedCount,
-        remaining: allRecords.length - deletedCount,
-      };
-    } catch (error) {
-      this.logger.error(`Delete duplicates failed: ${error.message}`);
-      throw error;
-    }
-  }
-
-  private async getAllCustomerRecords(): Promise<any[]> {
-    const allRecords: any[] = [];
-    let hasMore = true;
-    let pageToken: string | undefined;
-
-    while (hasMore) {
-      const response = await this.client.bitable.appTableRecord.list({
-        path: {
-          app_token: this.customerBaseToken,
-          table_id: this.customerTableId,
-        },
-        params: { page_size: 500, page_token: pageToken },
-      });
-
-      if (response.data?.items) {
-        allRecords.push(...response.data.items);
-      }
-
-      hasMore = response.data?.has_more || false;
-      pageToken = response.data?.page_token;
-    }
-
-    return allRecords;
-  }
-
-  private findDuplicatesByKiotVietId(records: any[]): Map<string, any[]> {
-    const grouped = new Map<string, any[]>();
-
-    records.forEach((record) => {
-      const kiotVietId = record.fields?.kiotVietId?.toString();
-      if (kiotVietId) {
-        if (!grouped.has(kiotVietId)) {
-          grouped.set(kiotVietId, []);
-        }
-        grouped.get(kiotVietId)!.push(record);
-      }
-    });
-
-    // Return only groups with duplicates
-    return new Map([...grouped].filter(([_, records]) => records.length > 1));
-  }
-
-  private async batchDeleteCustomers(recordIds: string[]): Promise<void> {
-    const batchSize = 500;
-    for (let i = 0; i < recordIds.length; i += batchSize) {
-      const batch = recordIds.slice(i, i + batchSize);
-
-      await this.client.bitable.appTableRecord.batchDelete({
-        path: {
-          app_token: this.customerBaseToken,
-          table_id: this.customerTableId,
-        },
-        data: { records: batch },
-      });
-    }
-  }
-
-  private async batchUpdateCustomers(customers: any[]): Promise<{
-    success: number;
-    failed: number;
-  }> {
-    try {
-      const records = customers
-        .filter((customer) => customer.larkRecordId)
-        .map((customer) => ({
-          record_id: customer.larkRecordId,
-          fields: this.mapCustomerToLarkBase(customer).fields,
-        }));
-
-      if (!records.length) {
-        return { success: 0, failed: customers.length };
-      }
-
-      const response = await this.client.bitable.appTableRecord.batchUpdate({
-        path: {
-          app_token: this.customerBaseToken,
-          table_id: this.customerTableId,
-        },
-        data: { records },
-      });
-
-      const successCount = response.data?.records?.length || 0;
-      const failedCount = customers.length - successCount;
-
-      return { success: successCount, failed: failedCount };
-    } catch (error) {
-      this.logger.error(
-        `LarkBase customer batch update failed: ${error.message}`,
-      );
-      return { success: 0, failed: customers.length };
-    }
-  }
-
   private async separateCustomersForUpsert(customers: any[]): Promise<{
     recordsToCreate: any[];
     recordsToUpdate: any[];
@@ -323,37 +148,57 @@ export class LarkBaseService {
     const recordsToUpdate: any[] = [];
 
     try {
+      // Get all kiotVietIds from incoming customers
       const kiotVietIds = customers
         .map((c) => c.id || c.kiotVietId)
         .filter(Boolean);
-      const existingRecordsMap =
-        await this.getExistingRecordsByKiotVietId(kiotVietIds);
 
+      // Query LarkBase to find existing records by kiotVietId
+      const existingRecords =
+        await this.findExistingCustomersByKiotVietId(kiotVietIds);
+
+      // Create lookup map of existing records
+      const existingRecordsMap = new Map();
+      existingRecords.forEach((record) => {
+        const kiotVietId = record.fields?.kiotVietId;
+        if (kiotVietId) {
+          existingRecordsMap.set(kiotVietId.toString(), record);
+        }
+      });
+
+      // Separate customers into create vs update
       for (const customer of customers) {
         const kiotVietId = (customer.id || customer.kiotVietId)?.toString();
 
         if (kiotVietId && existingRecordsMap.has(kiotVietId)) {
+          // Record exists - add to update batch
+          const existingRecord = existingRecordsMap.get(kiotVietId);
           recordsToUpdate.push({
             ...customer,
-            larkRecordId: existingRecordsMap.get(kiotVietId),
+            larkRecordId: existingRecord.record_id,
           });
         } else {
+          // Record doesn't exist - add to create batch
           recordsToCreate.push(customer);
         }
       }
 
       this.logger.debug(
-        `Split: ${recordsToCreate.length} create, ${recordsToUpdate.length} update`,
+        `Separated customers: ${recordsToCreate.length} to create, ${recordsToUpdate.length} to update`,
       );
     } catch (error) {
-      this.logger.error(`Error separating records: ${error.message}`);
+      this.logger.error(
+        `Error separating customers for upsert: ${error.message}`,
+      );
+      // If error, default to create all (might cause duplicates but won't fail)
       recordsToCreate.push(...customers);
     }
 
     return { recordsToCreate, recordsToUpdate };
   }
 
-  private async getExistingRecordsByKiotVietId(
+  // ✅ FIXED: Moved page_size and page_token to params
+  private async buildExistingRecordMap(
     kiotVietIds: any[],
   ): Promise<Map<string, string>> {
     const recordMap = new Map<string, string>();
@@ -381,14 +226,15 @@ export class LarkBaseService {
           data: {
             filter,
             automatic_fields: false,
-            page_size: 500,
-            page_token: pageToken,
+          },
+          params: {
+            page_size: 500, // ✅ FIXED: Moved to params
+            page_token: pageToken, // ✅ FIXED: Moved to params
           },
         });
 
         if (response.data?.items) {
           response.data.items.forEach((record) => {
-            // FIXED: Error 3 & 4 - Type guards for undefined
             const kiotVietId = record.fields?.kiotVietId?.toString();
             const recordId = record.record_id;
 
@@ -405,7 +251,6 @@ export class LarkBaseService {
       this.logger.warn(
         `Search failed, falling back to list scan: ${error.message}`,
       );
-      // FIXED: Error 5 - Implement fallback method
       return this.listAllAndFilter(kiotVietIds);
     }
 
@@ -461,7 +306,6 @@ export class LarkBaseService {
       let hasMore = true;
       let pageToken: string | undefined;
 
-      // Query LarkBase to find records with matching kiotVietIds
       while (hasMore) {
         const response = await this.client.bitable.appTableRecord.list({
           path: {
@@ -471,15 +315,12 @@ export class LarkBaseService {
           params: {
             page_size: 500,
             page_token: pageToken,
-            // Note: LarkBase doesn't support complex WHERE queries directly
-            // So we fetch all and filter in memory (not ideal for large datasets)
           },
         });
 
         if (response.data?.items) {
-          // Filter records that match our kiotVietIds
           const matchingRecords = response.data.items.filter((record) => {
-            const recordKiotVietId = record.fields?.kiotvietId?.toString();
+            const recordKiotVietId = record.fields?.kiotVietId?.toString();
             return (
               recordKiotVietId &&
               kiotVietIds.includes(parseInt(recordKiotVietId))
@@ -500,53 +341,127 @@ export class LarkBaseService {
     }
   }
 
+  private async batchCreateCustomers(customers: any[]): Promise<{
+    success: number;
+    failed: number;
+    records?: any[];
+  }> {
+    try {
+      const records = customers
+        .map((customer) => this.mapCustomerToLarkBase(customer))
+        .filter((record) => record.fields['Tên Khách Hàng'])
+        .map((record) => ({ fields: record.fields }));
+
+      if (!records.length) {
+        return { success: 0, failed: customers.length };
+      }
+
+      const response = await this.client.bitable.appTableRecord.batchCreate({
+        path: {
+          app_token: this.customerBaseToken,
+          table_id: this.customerTableId,
+        },
+        data: { records },
+      });
+
+      const successCount = response.data?.records?.length || 0;
+      const failedCount = customers.length - successCount;
+
+      return {
+        success: successCount,
+        failed: failedCount,
+        records: response.data?.records,
+      };
+    } catch (error) {
+      this.logger.error(
+        `LarkBase customer batch create failed: ${error.message}`,
+      );
+      return { success: 0, failed: customers.length };
+    }
+  }
+
+  private async batchUpdateCustomers(customers: any[]): Promise<{
+    success: number;
+    failed: number;
+  }> {
+    try {
+      const records = customers
+        .filter((customer) => customer.larkRecordId)
+        .map((customer) => ({
+          record_id: customer.larkRecordId,
+          fields: this.mapCustomerToLarkBase(customer).fields,
+        }));
+
+      if (!records.length) {
+        return { success: 0, failed: customers.length };
+      }
+
+      const response = await this.client.bitable.appTableRecord.batchUpdate({
+        path: {
+          app_token: this.customerBaseToken,
+          table_id: this.customerTableId,
+        },
+        data: { records },
+      });
+
+      const successCount = response.data?.records?.length || 0;
+      const failedCount = customers.length - successCount;
+
+      return { success: successCount, failed: failedCount };
+    } catch (error) {
+      this.logger.error(
+        `LarkBase customer batch update failed: ${error.message}`,
+      );
+      return { success: 0, failed: customers.length };
+    }
+  }
+
+  // ===== ORDERS UPSERT METHODS =====
   async directCreateOrders(
     orders: any[],
   ): Promise<{ success: number; failed: number; records?: any[] }> {
     if (!orders.length) return { success: 0, failed: 0 };
 
     try {
-      // Step 1: Check which records already exist in LarkBase
-      const { recordsToCreate, recordsToUpdate } =
-        await this.separateOrdersForUpsert(orders);
-
       let totalSuccess = 0;
       let totalFailed = 0;
       let allRecords: any[] = [];
 
-      // Step 2: CREATE new records
-      if (recordsToCreate.length > 0) {
-        const createResult = await this.batchCreateOrders(recordsToCreate);
-        totalSuccess += createResult.success;
-        totalFailed += createResult.failed;
-        if (createResult.records) {
-          allRecords.push(...createResult.records);
+      const batchSize = 100;
+      for (let i = 0; i < orders.length; i += batchSize) {
+        const batch = orders.slice(i, i + batchSize);
+
+        const { recordsToCreate, recordsToUpdate } =
+          await this.separateOrdersForUpsert(batch);
+
+        if (recordsToCreate.length > 0) {
+          const createResult = await this.batchCreateOrders(recordsToCreate);
+          totalSuccess += createResult.success;
+          totalFailed += createResult.failed;
+          if (createResult.records) allRecords.push(...createResult.records);
+        }
+
+        if (recordsToUpdate.length > 0) {
+          const updateResult = await this.batchUpdateOrders(recordsToUpdate);
+          totalSuccess += updateResult.success;
+          totalFailed += updateResult.failed;
         }
       }
 
-      // Step 3: UPDATE existing records
-      if (recordsToUpdate.length > 0) {
-        const updateResult = await this.batchUpdateOrders(recordsToUpdate);
-        totalSuccess += updateResult.success;
-        totalFailed += updateResult.failed;
-      }
-
       this.logger.log(
-        `LarkBase order UPSERT: ${recordsToCreate.length} created, ${recordsToUpdate.length} updated, ${totalSuccess} success, ${totalFailed} failed`,
+        `Order UPSERT: ${totalSuccess} success, ${totalFailed} failed`,
       );
-
       return {
         success: totalSuccess,
         failed: totalFailed,
         records: allRecords,
       };
     } catch (error) {
-      this.logger.error(`LarkBase order UPSERT failed: ${error.message}`);
+      this.logger.error(`Order UPSERT failed: ${error.message}`);
       return { success: 0, failed: orders.length };
     }
   }
 
-  // NEW: Check existing orders and separate create vs update
   private async separateOrdersForUpsert(orders: any[]): Promise<{
     recordsToCreate: any[];
     recordsToUpdate: any[];
@@ -555,16 +470,13 @@ export class LarkBaseService {
     const recordsToUpdate: any[] = [];
 
     try {
-      // Get all kiotVietIds from incoming orders
       const kiotVietIds = orders
         .map((o) => o.id || o.kiotVietId)
         .filter(Boolean);
 
-      // Query LarkBase to find existing records by kiotVietId
       const existingRecords =
         await this.findExistingOrdersByKiotVietId(kiotVietIds);
 
-      // Create lookup map of existing records
       const existingRecordsMap = new Map();
       existingRecords.forEach((record) => {
         const kiotVietId = record.fields?.kiotVietId;
@@ -573,19 +485,16 @@ export class LarkBaseService {
         }
       });
 
-      // Separate orders into create vs update
       for (const order of orders) {
         const kiotVietId = (order.id || order.kiotVietId)?.toString();
 
         if (kiotVietId && existingRecordsMap.has(kiotVietId)) {
-          // Record exists - add to update batch
           const existingRecord = existingRecordsMap.get(kiotVietId);
           recordsToUpdate.push({
             ...order,
             larkRecordId: existingRecord.record_id,
           });
         } else {
-          // Record doesn't exist - add to create batch
           recordsToCreate.push(order);
         }
       }
@@ -595,14 +504,12 @@ export class LarkBaseService {
       );
     } catch (error) {
       this.logger.error(`Error separating orders for upsert: ${error.message}`);
-      // If error, default to create all (might cause duplicates but won't fail)
       recordsToCreate.push(...orders);
     }
 
     return { recordsToCreate, recordsToUpdate };
   }
 
-  // NEW: Find existing orders by kiotVietId
   private async findExistingOrdersByKiotVietId(
     kiotVietIds: any[],
   ): Promise<any[]> {
@@ -611,7 +518,6 @@ export class LarkBaseService {
       let hasMore = true;
       let pageToken: string | undefined;
 
-      // Query LarkBase to find records with matching kiotVietIds
       while (hasMore) {
         const response = await this.client.bitable.appTableRecord.list({
           path: {
@@ -625,7 +531,6 @@ export class LarkBaseService {
         });
 
         if (response.data?.items) {
-          // Filter records that match our kiotVietIds
           const matchingRecords = response.data.items.filter((record) => {
             const recordKiotVietId = record.fields?.kiotVietId?.toString();
             return (
@@ -648,7 +553,6 @@ export class LarkBaseService {
     }
   }
 
-  // NEW: Batch create for new orders
   private async batchCreateOrders(orders: any[]): Promise<{
     success: number;
     failed: number;
@@ -693,7 +597,6 @@ export class LarkBaseService {
     }
   }
 
-  // NEW: Batch update for existing orders
   private async batchUpdateOrders(orders: any[]): Promise<{
     success: number;
     failed: number;
@@ -733,53 +636,52 @@ export class LarkBaseService {
     }
   }
 
+  // ===== INVOICES UPSERT METHODS =====
   async directCreateInvoices(
     invoices: any[],
   ): Promise<{ success: number; failed: number; records?: any[] }> {
     if (!invoices.length) return { success: 0, failed: 0 };
 
     try {
-      // Step 1: Check which records already exist in LarkBase
-      const { recordsToCreate, recordsToUpdate } =
-        await this.separateInvoicesForUpsert(invoices);
-
       let totalSuccess = 0;
       let totalFailed = 0;
       let allRecords: any[] = [];
 
-      // Step 2: CREATE new records
-      if (recordsToCreate.length > 0) {
-        const createResult = await this.batchCreateInvoices(recordsToCreate);
-        totalSuccess += createResult.success;
-        totalFailed += createResult.failed;
-        if (createResult.records) {
-          allRecords.push(...createResult.records);
+      const batchSize = 100;
+      for (let i = 0; i < invoices.length; i += batchSize) {
+        const batch = invoices.slice(i, i + batchSize);
+
+        const { recordsToCreate, recordsToUpdate } =
+          await this.separateInvoicesForUpsert(batch);
+
+        if (recordsToCreate.length > 0) {
+          const createResult = await this.batchCreateInvoices(recordsToCreate);
+          totalSuccess += createResult.success;
+          totalFailed += createResult.failed;
+          if (createResult.records) allRecords.push(...createResult.records);
+        }
+
+        if (recordsToUpdate.length > 0) {
+          const updateResult = await this.batchUpdateInvoices(recordsToUpdate);
+          totalSuccess += updateResult.success;
+          totalFailed += updateResult.failed;
         }
       }
 
-      // Step 3: UPDATE existing records
-      if (recordsToUpdate.length > 0) {
-        const updateResult = await this.batchUpdateInvoices(recordsToUpdate);
-        totalSuccess += updateResult.success;
-        totalFailed += updateResult.failed;
-      }
-
       this.logger.log(
-        `LarkBase invoice UPSERT: ${recordsToCreate.length} created, ${recordsToUpdate.length} updated, ${totalSuccess} success, ${totalFailed} failed`,
+        `Invoice UPSERT: ${totalSuccess} success, ${totalFailed} failed`,
       );
-
       return {
         success: totalSuccess,
         failed: totalFailed,
         records: allRecords,
       };
     } catch (error) {
-      this.logger.error(`LarkBase invoice UPSERT failed: ${error.message}`);
+      this.logger.error(`Invoice UPSERT failed: ${error.message}`);
       return { success: 0, failed: invoices.length };
     }
   }
 
-  // NEW: Check existing invoices and separate create vs update
   private async separateInvoicesForUpsert(invoices: any[]): Promise<{
     recordsToCreate: any[];
     recordsToUpdate: any[];
@@ -788,16 +690,13 @@ export class LarkBaseService {
     const recordsToUpdate: any[] = [];
 
     try {
-      // Get all kiotVietIds from incoming invoices
       const kiotVietIds = invoices
         .map((i) => i.id || i.kiotVietId)
         .filter(Boolean);
 
-      // Query LarkBase to find existing records by kiotVietId
       const existingRecords =
         await this.findExistingInvoicesByKiotVietId(kiotVietIds);
 
-      // Create lookup map of existing records
       const existingRecordsMap = new Map();
       existingRecords.forEach((record) => {
         const kiotVietId = record.fields?.kiotVietId;
@@ -806,19 +705,16 @@ export class LarkBaseService {
         }
       });
 
-      // Separate invoices into create vs update
       for (const invoice of invoices) {
         const kiotVietId = (invoice.id || invoice.kiotVietId)?.toString();
 
         if (kiotVietId && existingRecordsMap.has(kiotVietId)) {
-          // Record exists - add to update batch
           const existingRecord = existingRecordsMap.get(kiotVietId);
           recordsToUpdate.push({
             ...invoice,
             larkRecordId: existingRecord.record_id,
           });
         } else {
-          // Record doesn't exist - add to create batch
           recordsToCreate.push(invoice);
         }
       }
@@ -830,14 +726,12 @@ export class LarkBaseService {
       this.logger.error(
         `Error separating invoices for upsert: ${error.message}`,
       );
-      // If error, default to create all (might cause duplicates but won't fail)
       recordsToCreate.push(...invoices);
     }
 
     return { recordsToCreate, recordsToUpdate };
   }
 
-  // NEW: Find existing invoices by kiotVietId
   private async findExistingInvoicesByKiotVietId(
     kiotVietIds: any[],
   ): Promise<any[]> {
@@ -846,7 +740,6 @@ export class LarkBaseService {
       let hasMore = true;
       let pageToken: string | undefined;
 
-      // Query LarkBase to find records with matching kiotVietIds
       while (hasMore) {
         const response = await this.client.bitable.appTableRecord.list({
           path: {
@@ -860,7 +753,6 @@ export class LarkBaseService {
         });
 
         if (response.data?.items) {
-          // Filter records that match our kiotVietIds
           const matchingRecords = response.data.items.filter((record) => {
             const recordKiotVietId = record.fields?.kiotVietId?.toString();
             return (
@@ -883,7 +775,6 @@ export class LarkBaseService {
     }
   }
 
-  // NEW: Batch create for new invoices
   private async batchCreateInvoices(invoices: any[]): Promise<{
     success: number;
     failed: number;
@@ -899,7 +790,7 @@ export class LarkBaseService {
             invoice.soldBy?.userName || null,
           ),
         )
-        .filter((record) => record.fields['Mã Hoá Đơn'])
+        .filter((record) => record.fields['Mã Hóa Đơn'])
         .map((record) => ({ fields: record.fields }));
 
       if (!records.length) {
@@ -930,7 +821,6 @@ export class LarkBaseService {
     }
   }
 
-  // NEW: Batch update for existing invoices
   private async batchUpdateInvoices(invoices: any[]): Promise<{
     success: number;
     failed: number;
@@ -972,7 +862,129 @@ export class LarkBaseService {
     }
   }
 
-  // ===== CUSTOMER MAPPING (Based on Khách Hàng.rtf) =====
+  // ===== DUPLICATE CLEANUP METHODS =====
+  async deleteDuplicateCustomers(): Promise<{
+    deleted: number;
+    remaining: number;
+  }> {
+    try {
+      this.logger.log('🔍 Scanning LarkBase for duplicate customers...');
+
+      const allRecords = await this.getAllCustomerRecords();
+      const duplicates = this.findDuplicatesByKiotVietId(allRecords);
+
+      let deletedCount = 0;
+
+      for (const [kiotVietId, records] of duplicates) {
+        // Keep first record, delete the rest
+        const toDelete = records.slice(1);
+
+        if (toDelete.length > 0) {
+          const recordIds = toDelete
+            .map((r) => r.record_id)
+            .filter((id): id is string => typeof id === 'string');
+
+          if (recordIds.length > 0) {
+            await this.batchDeleteCustomers(recordIds);
+            deletedCount += recordIds.length;
+            this.logger.debug(
+              `Deleted ${recordIds.length} duplicates for kiotVietId: ${kiotVietId}`,
+            );
+          }
+        }
+      }
+
+      this.logger.log(
+        `🧹 Cleanup complete: ${deletedCount} duplicates removed, ${allRecords.length - deletedCount} remaining`,
+      );
+
+      return {
+        deleted: deletedCount,
+        remaining: allRecords.length - deletedCount,
+      };
+    } catch (error) {
+      this.logger.error(`Duplicate cleanup failed: ${error.message}`);
+      throw error;
+    }
+  }
+
+  private async getAllCustomerRecords(): Promise<any[]> {
+    const allRecords: any[] = [];
+    let hasMore = true;
+    let pageToken: string | undefined;
+
+    while (hasMore) {
+      const response = await this.client.bitable.appTableRecord.list({
+        path: {
+          app_token: this.customerBaseToken,
+          table_id: this.customerTableId,
+        },
+        params: {
+          page_size: 500,
+          page_token: pageToken,
+        },
+      });
+
+      if (response.data?.items) {
+        allRecords.push(...response.data.items);
+      }
+
+      hasMore = response.data?.has_more || false;
+      pageToken = response.data?.page_token;
+    }
+
+    return allRecords;
+  }
+
+  private findDuplicatesByKiotVietId(records: any[]): Map<string, any[]> {
+    const kiotVietIdMap = new Map<string, any[]>();
+
+    records.forEach((record) => {
+      const kiotVietId = record.fields?.kiotVietId?.toString();
+      if (kiotVietId) {
+        if (!kiotVietIdMap.has(kiotVietId)) {
+          kiotVietIdMap.set(kiotVietId, []);
+        }
+        kiotVietIdMap.get(kiotVietId)!.push(record);
+      }
+    });
+
+    // Filter to only return groups with duplicates (more than 1 record)
+    const duplicates = new Map<string, any[]>();
+    for (const [kiotVietId, recordList] of kiotVietIdMap) {
+      if (recordList.length > 1) {
+        duplicates.set(kiotVietId, recordList);
+      }
+    }
+
+    return duplicates;
+  }
+
+  private async batchDeleteCustomers(recordIds: string[]): Promise<void> {
+    if (!recordIds.length) return;
+
+    try {
+      const batchSize = 500;
+      for (let i = 0; i < recordIds.length; i += batchSize) {
+        const batchIds = recordIds.slice(i, i + batchSize);
+
+        await this.client.bitable.appTableRecord.batchDelete({
+          path: {
+            app_token: this.customerBaseToken,
+            table_id: this.customerTableId,
+          },
+          data: {
+            records: batchIds,
+          },
+        });
+      }
+    } catch (error) {
+      this.logger.error(`Batch delete failed: ${error.message}`);
+      throw error;
+    }
+  }
+
+  // ===== MAPPING METHODS =====
   private mapCustomerToLarkBase(customerData: any): any {
     const fields: any = {};
 
@@ -991,19 +1003,14 @@ export class LarkBaseService {
       fields['Số Điện Thoại'] = customerData.contactNumber;
     }
 
-    // Email của Khách Hàng
-    if (customerData.email) {
-      fields['Email của Khách Hàng'] = customerData.email;
-    }
-
-    // Địa Chỉ Khách Hàng
+    // Địa Chỉ
     if (customerData.address) {
-      fields['Địa Chỉ Khách Hàng'] = customerData.address;
+      fields['Địa Chỉ'] = customerData.address;
     }
 
-    // kiotvietId (IMPORTANT for deduplication)
-    if (customerData.id || customerData.kiotVietId) {
-      fields['kiotVietId'] = Number(customerData.id || customerData.kiotVietId);
+    // Email
+    if (customerData.email) {
+      fields['Email'] = customerData.email;
     }
 
     // Nợ Hiện Tại
@@ -1011,41 +1018,12 @@ export class LarkBaseService {
       fields['Nợ Hiện Tại'] = Number(customerData.debt);
     }
 
-    // Tổng Bán
+    // Tổng Bán (totalInvoiced) - ✅ Now properly mapped from KiotViet API
     if (
       customerData.totalInvoiced !== null &&
       customerData.totalInvoiced !== undefined
     ) {
-      fields['Tổng Bán'] = Number(customerData.totalInvoiced || 0);
-    }
-
-    // Tổng Doanh Thu
-    if (
-      customerData.totalRevenue !== null &&
-      customerData.totalRevenue !== undefined
-    ) {
-      fields['Tổng Doanh Thu'] = Number(customerData.totalRevenue || 0);
-    }
-
-    // Điểm Hiện Tại
-    if (
-      customerData.rewardPoint !== null &&
-      customerData.rewardPoint !== undefined
-    ) {
-      fields['Điểm Hiện Tại'] = Number(customerData.rewardPoint);
-    }
-
-    // Tổng Điểm
-    if (
-      customerData.totalPoint !== null &&
-      customerData.totalPoint !== undefined
-    ) {
-      fields['Tổng Điểm'] = Number(customerData.totalPoint);
-    }
-
-    // Công Ty
-    if (customerData.organization) {
-      fields['Công Ty'] = customerData.organization;
+      fields['Tổng Bán'] = Number(customerData.totalInvoiced);
     }
 
     // Ghi Chú
@@ -1053,55 +1031,26 @@ export class LarkBaseService {
       fields['Ghi Chú'] = customerData.comments;
     }
 
-    // Id Cửa Hàng
-    if (customerData.retailerId) {
-      fields['Id Cửa Hàng'] = customerData.retailerId.toString();
-    }
-
-    // Thời Gian Tạo
+    // Ngày Tạo
     if (customerData.createdDate) {
       const vietnamDate = new Date(customerData.createdDate + '+07:00');
-      fields['Thời Gian Tạo'] = vietnamDate.getTime();
+      fields['Ngày Tạo'] = vietnamDate.getTime();
     }
 
-    // Thời Gian Cập Nhật
+    // Ngày Cập Nhật
     if (customerData.modifiedDate) {
       const vietnamDate = new Date(customerData.modifiedDate + '+07:00');
-      fields['Thời Gian Cập Nhật'] = vietnamDate.getTime();
+      fields['Ngày Cập Nhật'] = vietnamDate.getTime();
     }
 
-    // Giới Tính (Single Select)
-    if (customerData.gender !== null && customerData.gender !== undefined) {
-      fields['Giới Tính'] = customerData.gender ? 'Nam' : 'Nữ';
-    }
-
-    // Khu Vực
-    if (customerData.locationName) {
-      fields['Khu Vực'] = customerData.locationName;
-    }
-
-    // Phường xã
-    if (customerData.wardName) {
-      fields['Phường xã'] = customerData.wardName;
-    }
-
-    // Mã Số Thuế
-    if (customerData.taxCode) {
-      fields['Mã Số Thuế'] = customerData.taxCode;
-    }
-
-    // Facebook Khách Hàng
-    if (
-      customerData.psidFacebook !== null &&
-      customerData.psidFacebook !== undefined
-    ) {
-      fields['Facebook Khách Hàng'] = Number(customerData.psidFacebook);
+    // kiotVietId (IMPORTANT for deduplication)
+    if (customerData.id || customerData.kiotVietId) {
+      fields['kiotVietId'] = Number(customerData.id || customerData.kiotVietId);
     }
 
     return { fields };
   }
 
-  // ===== ORDER MAPPING (Based on Đơn Hàng.rtf) =====
   private mapOrderToLarkBase(
     orderData: any,
     branchName?: string | null,
@@ -1115,7 +1064,7 @@ export class LarkBaseService {
       fields['Mã Đặt Hàng'] = orderData.code;
     }
 
-    // Chi Nhánh - mapped from branchName
+    // Chi Nhánh
     if (branchName) {
       fields['Chi Nhánh'] = branchName;
     }
@@ -1156,60 +1105,16 @@ export class LarkBaseService {
         statusMap[orderData.status] || 'Không xác định';
     }
 
-    // Thu Khác (from surcharges)
-    let thuKhac = 0;
-    if (orderData.orderSurcharges && orderData.orderSurcharges.length > 0) {
-      thuKhac = orderData.orderSurcharges.reduce((sum: any, surcharge: any) => {
-        return sum + Number(surcharge.price || 0);
-      }, 0);
-    }
-    fields['Thu Khác'] = Number(thuKhac || 0);
-
-    // Giảm Giá
-    const giamGia = Number(orderData.discount || 0);
-    fields['Giảm Giá'] = giamGia;
-
-    // Tổng Tiền Hàng = Khách cần trả + Giảm giá - Thu khác
-    const khachCanTra = Number(orderData.total || 0);
-    const tongTienHang = khachCanTra + giamGia - thuKhac;
-    fields['Tổng Tiền Hàng'] = tongTienHang;
-
-    // Tổng Sau Giảm Giá = Tổng tiền hàng - Giảm giá
-    const tongSauGiamGia = tongTienHang - giamGia;
-    fields['Tổng Sau Giảm Giá'] = tongSauGiamGia;
-
-    // Mã Hoá Đơn (from related invoices)
-    if (orderData.invoices && orderData.invoices.length > 0) {
-      const invoiceCodes = orderData.invoices.map((inv) => inv.code).join(', ');
-      fields['Mã Hoá Đơn'] = invoiceCodes;
-    }
-
-    // Ghi Chú
-    if (orderData.description) {
-      fields['Ghi Chú'] = orderData.description;
-    }
-
-    // Ngày Mua
-    if (orderData.purchaseDate) {
-      const vietnamDate = new Date(orderData.purchaseDate + '+07:00');
-      fields['Ngày Mua'] = vietnamDate.getTime();
-    }
-
-    // Ngày Tạo Đơn
+    // Ngày Tạo
     if (orderData.createdDate) {
       const vietnamDate = new Date(orderData.createdDate + '+07:00');
-      fields['Ngày Tạo Đơn'] = vietnamDate.getTime();
+      fields['Ngày Tạo'] = vietnamDate.getTime();
     }
 
     // Ngày Cập Nhật
     if (orderData.modifiedDate) {
       const vietnamDate = new Date(orderData.modifiedDate + '+07:00');
       fields['Ngày Cập Nhật'] = vietnamDate.getTime();
-    }
-
-    // Số Điện Thoại (from orderDelivery)
-    if (orderData.orderDelivery && orderData.orderDelivery.contactNumber) {
-      fields['Số Điện Thoại'] = orderData.orderDelivery.contactNumber;
     }
 
     // kiotVietId (IMPORTANT for deduplication)
@@ -1220,7 +1125,6 @@ export class LarkBaseService {
     return { fields };
   }
 
-  // ===== INVOICE MAPPING (Based on Hoá Đơn.rtf) =====
   private mapInvoiceToLarkBase(
     invoiceData: any,
     branchName?: string | null,
@@ -1229,20 +1133,9 @@ export class LarkBaseService {
   ): any {
     const fields: any = {};
 
-    // Primary field - Mã Hoá Đơn (REQUIRED)
+    // Primary field - Mã Hóa Đơn (REQUIRED)
     if (invoiceData.code) {
-      fields['Mã Hoá Đơn'] = invoiceData.code;
-    }
-
-    // Mã Đơn Hàng
-    if (invoiceData.orderCode) {
-      fields['Mã Đơn Hàng'] = invoiceData.orderCode;
-    }
-
-    // Ngày Mua
-    if (invoiceData.purchaseDate) {
-      const vietnamDate = new Date(invoiceData.purchaseDate + '+07:00');
-      fields['Ngày Mua'] = vietnamDate.getTime();
+      fields['Mã Hóa Đơn'] = invoiceData.code;
     }
 
     // Chi Nhánh
@@ -1255,17 +1148,17 @@ export class LarkBaseService {
       fields['Tên Khách Hàng'] = customerName;
     }
 
-    // Người Bán
+    // Người bán
     if (userName) {
-      fields['Người Bán'] = userName;
+      fields['Người bán'] = userName;
     }
 
-    // Tổng Sau Giảm Giá
+    // Khách Cần Trả
     if (invoiceData.total !== null && invoiceData.total !== undefined) {
-      fields['Tổng Sau Giảm Giá'] = Number(invoiceData.total);
+      fields['Khách Cần Trả'] = Number(invoiceData.total);
     }
 
-    // Tổng Tiền Hàng (calculate total before discount)
+    // Tổng Tiền Hàng
     if (invoiceData.total !== null && invoiceData.total !== undefined) {
       const total = Number(invoiceData.total);
       const discount = Number(invoiceData.discount || 0);
@@ -1284,14 +1177,6 @@ export class LarkBaseService {
     // Discount
     if (invoiceData.discount !== null && invoiceData.discount !== undefined) {
       fields['Discount'] = Number(invoiceData.discount);
-    }
-
-    // Mức Độ Giảm Giá
-    if (
-      invoiceData.discountRatio !== null &&
-      invoiceData.discountRatio !== undefined
-    ) {
-      fields['Mức Độ Giảm Giá'] = Number(invoiceData.discountRatio);
     }
 
     // Ghi Chú
