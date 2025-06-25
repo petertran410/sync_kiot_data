@@ -8,7 +8,6 @@ import { PrismaModule } from './prisma/prisma.module';
 import { KiotVietModule } from './services/kiot-viet/kiot-viet.module';
 import { SyncModule } from './sync/sync.module';
 import { BusSchedulerModule } from './services/bus-scheduler/bus-scheduler.module';
-import { SyncController } from './controllers/sync.controller';
 
 @Module({
   imports: [
@@ -19,7 +18,7 @@ import { SyncController } from './controllers/sync.controller';
     SyncModule,
     BusSchedulerModule,
   ],
-  controllers: [AppController, SyncController],
+  controllers: [AppController],
   providers: [AppService],
 })
 export class AppModule {}
