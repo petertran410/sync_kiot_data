@@ -6,29 +6,38 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { LarkAuthService } from '../auth/lark-auth.service';
 import { firstValueFrom } from 'rxjs';
 
-// LarkBase Field IDs from "Khách Hàng.rtf"
+// ✅ SOLUTION: Use FIELD NAMES instead of Field IDs for better reliability
 const LARK_CUSTOMER_FIELDS = {
-  PRIMARY_NAME: 'fld71g8Gci', // Tên Khách Hàng (primary) - from .env
-  CUSTOMER_CODE: 'fld29zIB9D', // Mã Khách Hàng
-  PHONE_NUMBER: 'fldHo79lXi', // Số Điện Thoại
-  STORE_ID: 'fld6M0YzOE', // Id Cửa Hàng
-  COMPANY: 'fldUubtChK', // Công Ty
-  EMAIL: 'fldRXGBAzC', // Email của Khách Hàng
-  ADDRESS: 'fld17QvTM6', // Địa Chỉ Khách Hàng
-  CURRENT_DEBT: 'fldEBifOyt', // Nợ Hiện Tại
-  TAX_CODE: 'fldCDKr4yC', // Mã Số Thuế
-  TOTAL_POINTS: 'fld9zfi74R', // Tổng Điểm
-  TOTAL_REVENUE: 'fldStZEptP', // Tổng Doanh Thu
-  GENDER: 'fldLa1obN8', // Giới Tính (select)
-  WARD_NAME: 'fldU0Vru4a', // Phường xã
-  CURRENT_POINTS: 'fldujW0cpW', // Điểm Hiện Tại
-  KIOTVIET_ID: 'fldNewKiotVietId', // ⭐ Need to create this field in LarkBase
+  // Core fields (using Vietnamese field names from LarkBase)
+  PRIMARY_NAME: 'Tên Khách Hàng', // Primary field
+  CUSTOMER_CODE: 'Mã Khách Hàng',
+  PHONE_NUMBER: 'Số Điện Thoại',
+  STORE_ID: 'Id Cửa Hàng',
+  COMPANY: 'Công Ty',
+  EMAIL: 'Email của Khách Hàng',
+  ADDRESS: 'Địa Chỉ Khách Hàng',
+  CURRENT_DEBT: 'Nợ Hiện Tại',
+  TAX_CODE: 'Mã Số Thuế',
+  TOTAL_POINTS: 'Tổng Điểm',
+  TOTAL_REVENUE: 'Tổng Doanh Thu',
+  GENDER: 'Giới Tính',
+  WARD_NAME: 'Phường xã',
+  CURRENT_POINTS: 'Điểm Hiện Tại',
+
+  // ✅ New fields
+  KIOTVIET_ID: 'kiotVietId',
+  TOTAL_INVOICED: 'Tổng Bán',
+  COMMENTS: 'Ghi Chú',
+  MODIFIED_DATE: 'Thời Gian Cập Nhật',
+  CREATED_DATE: 'Thời Gian Tạo',
+  FACEBOOK_ID: 'Facebook Khách Hàng',
+  LOCATION_NAME: 'Khu Vực',
 } as const;
 
-// ✅ CORRECT: Use actual LarkBase option IDs
+// ✅ Gender options (using Vietnamese option names)
 const GENDER_OPTIONS = {
-  MALE: 'optUmkTfdd', // Nam option ID
-  FEMALE: 'optcf5ndAC', // Nữ option ID
+  MALE: 'Nam',
+  FEMALE: 'Nữ',
 } as const;
 
 interface LarkBaseRecord {
@@ -110,20 +119,9 @@ export class LarkCustomerSyncService {
             await new Promise((resolve) => setTimeout(resolve, 200));
           }
         } catch (error) {
-          this.logger.error(
-            `❌ Batch ${i + 1} failed completely: ${error.message}`,
-          );
+          this.logger.error(`❌ Batch ${i + 1} failed: ${error.message}`);
           failedCount += batch.length;
-
-          // STOP on batch failure to prevent data duplication
-          throw new Error(`Batch ${i + 1} failed: ${error.message}`);
         }
-      }
-
-      if (failedCount > 0) {
-        throw new Error(
-          `LarkBase sync partially failed: ${syncedCount} synced, ${failedCount} failed`,
-        );
       }
 
       this.logger.log(
@@ -139,26 +137,41 @@ export class LarkCustomerSyncService {
   // BATCH PROCESSING
   // ============================================================================
 
+  private createBatches<T>(items: T[], batchSize: number): T[][] {
+    const batches: T[][] = [];
+    for (let i = 0; i < items.length; i += batchSize) {
+      batches.push(items.slice(i, i + batchSize));
+    }
+    return batches;
+  }
+
   private async processBatch(
     customers: any[],
   ): Promise<{ successCount: number; failedCount: number }> {
-    let successCount = 0;
-    let failedCount = 0;
-
     const createRecords: LarkBaseRecord[] = [];
     const updateRecords: Array<{ recordId: string; record: LarkBaseRecord }> =
       [];
+    let successCount = 0;
+    let failedCount = 0;
 
+    // Process each customer in the batch
     for (const customer of customers) {
       try {
+        this.logger.debug(
+          `🔍 Processing customer: ${customer.code} (KiotViet ID: ${customer.kiotVietId})`,
+        );
+
         const larkRecord = this.mapCustomerToLarkBase(customer);
 
         if (customer.larkRecordId) {
-          // Strategy 1: Use existing larkRecordId mapping
+          // Strategy 1: Update existing record
           updateRecords.push({
             recordId: customer.larkRecordId,
             record: larkRecord,
           });
+          this.logger.debug(
+            `📝 Will update existing LarkBase record for customer ${customer.code}`,
+          );
         } else {
           // Strategy 2: Check if record exists by kiotVietId
           const existingRecord = await this.findLarkRecordByKiotVietId(
@@ -166,24 +179,27 @@ export class LarkCustomerSyncService {
           );
 
           if (existingRecord) {
-            // Found existing record, update it and save larkRecordId
+            // Found existing record, update it
             updateRecords.push({
               recordId: existingRecord.record_id,
               record: larkRecord,
             });
 
-            // Update database with found larkRecordId
+            // Update our database with the found larkRecordId
             await this.prismaService.customer.update({
               where: { id: customer.id },
               data: { larkRecordId: existingRecord.record_id },
             });
 
-            this.logger.log(
-              `🔍 Found existing LarkBase record for customer ${customer.code}`,
+            this.logger.debug(
+              `🔄 Found and will update existing LarkBase record for customer ${customer.code}`,
             );
           } else {
             // Strategy 3: Create new record
             createRecords.push(larkRecord);
+            this.logger.debug(
+              `➕ Will create new LarkBase record for customer ${customer.code}`,
+            );
           }
         }
       } catch (error) {
@@ -194,7 +210,37 @@ export class LarkCustomerSyncService {
       }
     }
 
-    // Execute operations...
+    // Execute batch operations
+    try {
+      // Execute CREATE operations
+      if (createRecords.length > 0) {
+        this.logger.log(
+          `📤 Creating ${createRecords.length} new LarkBase records...`,
+        );
+        const createdRecords = await this.batchCreateRecords(createRecords);
+
+        // Update database with new larkRecordIds
+        await this.updateCustomersWithLarkRecordIds(
+          customers.filter((c) => !c.larkRecordId),
+          createdRecords,
+        );
+
+        successCount += createdRecords.length;
+      }
+
+      // Execute UPDATE operations
+      if (updateRecords.length > 0) {
+        this.logger.log(
+          `📤 Updating ${updateRecords.length} existing LarkBase records...`,
+        );
+        await this.batchUpdateRecords(updateRecords);
+        successCount += updateRecords.length;
+      }
+    } catch (error) {
+      this.logger.error(`❌ Batch operation failed: ${error.message}`);
+      failedCount += createRecords.length + updateRecords.length;
+    }
+
     return { successCount, failedCount };
   }
 
@@ -204,7 +250,7 @@ export class LarkCustomerSyncService {
     try {
       const headers = await this.larkAuthService.getCustomerHeaders();
 
-      // Search for existing record with matching kiotVietId
+      // ✅ FIXED: Use field name for search instead of field ID
       const response = await firstValueFrom(
         this.httpService.post(
           `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/search`,
@@ -213,7 +259,7 @@ export class LarkCustomerSyncService {
               conjunction: 'and',
               conditions: [
                 {
-                  field_name: LARK_CUSTOMER_FIELDS.KIOTVIET_ID,
+                  field_name: LARK_CUSTOMER_FIELDS.KIOTVIET_ID, // Using field name: 'kiotVietId'
                   operator: 'is',
                   value: [Number(kiotVietId)],
                 },
@@ -322,23 +368,25 @@ export class LarkCustomerSyncService {
       if (result.code !== 0) {
         throw new Error(`LarkBase UPDATE failed: ${result.msg}`);
       }
+
+      this.logger.log(
+        `✅ Updated ${updateRecords.length} LarkBase records successfully`,
+      );
     } catch (error) {
-      this.logger.error(`LarkBase batch UPDATE error: ${error.message}`);
+      this.logger.error(`❌ LarkBase batch UPDATE error: ${error.message}`);
       throw error;
     }
   }
 
   // ============================================================================
-  // FIELD MAPPING: Database → LarkBase
+  // ✅ ENHANCED FIELD MAPPING: Database → LarkBase (Using Field Names)
   // ============================================================================
 
   private mapCustomerToLarkBase(customer: any): LarkBaseRecord {
     try {
       const fields: Record<string, any> = {};
 
-      if (customer.kiotVietId) {
-        fields[LARK_CUSTOMER_FIELDS.KIOTVIET_ID] = Number(customer.kiotVietId);
-      }
+      // ✅ CORE FIELDS (using field names)
 
       // Required primary field
       if (customer.name) {
@@ -402,12 +450,66 @@ export class LarkCustomerSyncService {
         );
       }
 
-      // Gender select field
+      // Gender select field (using option names)
       if (customer.gender !== null && customer.gender !== undefined) {
         fields[LARK_CUSTOMER_FIELDS.GENDER] = customer.gender
           ? GENDER_OPTIONS.MALE
           : GENDER_OPTIONS.FEMALE;
       }
+
+      // ✅ KiotViet ID
+      if (customer.kiotVietId) {
+        fields[LARK_CUSTOMER_FIELDS.KIOTVIET_ID] = Number(customer.kiotVietId);
+      }
+
+      // ✅ NEW: Additional fields mapping
+
+      // Total Invoiced (Tổng Bán)
+      if (
+        customer.totalInvoiced !== null &&
+        customer.totalInvoiced !== undefined
+      ) {
+        fields[LARK_CUSTOMER_FIELDS.TOTAL_INVOICED] = Number(
+          customer.totalInvoiced,
+        );
+      }
+
+      // Comments (Ghi Chú)
+      if (customer.comments) {
+        fields[LARK_CUSTOMER_FIELDS.COMMENTS] = customer.comments;
+      }
+
+      // Location Name (Khu Vực)
+      if (customer.locationName) {
+        fields[LARK_CUSTOMER_FIELDS.LOCATION_NAME] = customer.locationName;
+      }
+
+      // Facebook ID (Facebook Khách Hàng)
+      if (
+        customer.psidFacebook !== null &&
+        customer.psidFacebook !== undefined
+      ) {
+        fields[LARK_CUSTOMER_FIELDS.FACEBOOK_ID] = Number(
+          customer.psidFacebook,
+        );
+      }
+
+      // Dates - Convert to ISO format for LarkBase
+      if (customer.createdDate) {
+        fields[LARK_CUSTOMER_FIELDS.CREATED_DATE] = new Date(
+          customer.createdDate,
+        ).getTime();
+      }
+
+      if (customer.modifiedDate) {
+        fields[LARK_CUSTOMER_FIELDS.MODIFIED_DATE] = new Date(
+          customer.modifiedDate,
+        ).getTime();
+      }
+
+      this.logger.debug(
+        `📋 Mapped customer ${customer.code} to LarkBase fields: ${Object.keys(fields).length} fields`,
+      );
 
       return { fields };
     } catch (error) {
@@ -460,109 +562,28 @@ export class LarkCustomerSyncService {
     }
   }
 
-  private async updateCustomersSyncStatus(
-    customerIds: number[],
-    status: 'SYNCED' | 'FAILED',
+  private async updateFailedCustomers(
+    customers: any[],
+    error: string,
   ): Promise<void> {
     try {
+      const customerIds = customers.map((c) => c.id);
+
       await this.prismaService.customer.updateMany({
         where: { id: { in: customerIds } },
         data: {
-          larkSyncStatus: status,
-          larkSyncedAt: new Date(),
-          ...(status === 'SYNCED' && { larkSyncRetries: 0 }),
+          larkSyncStatus: 'FAILED',
+          larkSyncRetries: { increment: 1 },
         },
       });
 
       this.logger.log(
-        `📝 Updated ${customerIds.length} customers sync status to ${status}`,
+        `📝 Updated ${customers.length} customers as failed sync`,
       );
-    } catch (error) {
+    } catch (updateError) {
       this.logger.error(
-        `Failed to update customers sync status: ${error.message}`,
+        `Failed to update failed customer status: ${updateError.message}`,
       );
-      throw error;
-    }
-  }
-
-  // ============================================================================
-  // UTILITY METHODS
-  // ============================================================================
-
-  private createBatches<T>(items: T[], batchSize: number): T[][] {
-    const batches: T[][] = [];
-    for (let i = 0; i < items.length; i += batchSize) {
-      batches.push(items.slice(i, i + batchSize));
-    }
-    return batches;
-  }
-
-  // ============================================================================
-  // DELETE SUPPORT (for future delete operations)
-  // ============================================================================
-
-  async deleteCustomersFromLarkBase(customerIds: number[]): Promise<void> {
-    try {
-      // Get customers with larkRecordId
-      const customers = await this.prismaService.customer.findMany({
-        where: {
-          id: { in: customerIds },
-          larkRecordId: { not: null },
-        },
-        select: { id: true, larkRecordId: true, code: true },
-      });
-
-      if (customers.length === 0) {
-        this.logger.log('📋 No customers with LarkBase records to delete');
-        return;
-      }
-
-      const recordIds = customers
-        .map((c) => c.larkRecordId)
-        .filter((id) => id !== null);
-
-      if (recordIds.length > 0) {
-        await this.batchDeleteRecords(recordIds);
-
-        // Update database
-        await this.prismaService.customer.deleteMany({
-          where: { id: { in: customerIds } },
-        });
-
-        this.logger.log(
-          `🗑️ Deleted ${customers.length} customers from LarkBase and database`,
-        );
-      }
-    } catch (error) {
-      this.logger.error(
-        `❌ Failed to delete customers from LarkBase: ${error.message}`,
-      );
-      throw error;
-    }
-  }
-
-  private async batchDeleteRecords(recordIds: string[]): Promise<void> {
-    try {
-      const headers = await this.larkAuthService.getCustomerHeaders();
-
-      const response = await firstValueFrom(
-        this.httpService.post(
-          `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/batch_delete`,
-          {
-            records: recordIds,
-          },
-          { headers },
-        ),
-      );
-
-      const result: LarkBatchResponse = response.data;
-
-      if (result.code !== 0) {
-        throw new Error(`LarkBase DELETE failed: ${result.msg}`);
-      }
-    } catch (error) {
-      this.logger.error(`LarkBase batch DELETE error: ${error.message}`);
-      throw error;
     }
   }
 }
