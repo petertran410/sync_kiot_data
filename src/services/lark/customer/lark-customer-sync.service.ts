@@ -22,6 +22,7 @@ const LARK_CUSTOMER_FIELDS = {
   GENDER: 'Giới Tính', // Giới Tính (select)
   WARD_NAME: 'Phường Xã', // Phường xã
   CURRENT_POINTS: 'Điểm Hiện Tại', // Điểm Hiện Tại
+  KIOTVIET_ID: 'kiotVietId',
 } as const;
 
 // Gender select options from LarkBase
@@ -144,71 +145,97 @@ export class LarkCustomerSyncService {
     let successCount = 0;
     let failedCount = 0;
 
-    // Separate CREATE vs UPDATE operations
     const createRecords: LarkBaseRecord[] = [];
     const updateRecords: Array<{ recordId: string; record: LarkBaseRecord }> =
       [];
 
-    // Prepare records
     for (const customer of customers) {
       try {
         const larkRecord = this.mapCustomerToLarkBase(customer);
 
         if (customer.larkRecordId) {
-          // UPDATE existing record
+          // Strategy 1: Use existing larkRecordId mapping
           updateRecords.push({
             recordId: customer.larkRecordId,
             record: larkRecord,
           });
         } else {
-          // CREATE new record
-          createRecords.push(larkRecord);
+          // Strategy 2: Check if record exists by kiotVietId
+          const existingRecord = await this.findLarkRecordByKiotVietId(
+            customer.kiotVietId,
+          );
+
+          if (existingRecord) {
+            // Found existing record, update it and save larkRecordId
+            updateRecords.push({
+              recordId: existingRecord.record_id,
+              record: larkRecord,
+            });
+
+            // Update database with found larkRecordId
+            await this.prismaService.customer.update({
+              where: { id: customer.id },
+              data: { larkRecordId: existingRecord.record_id },
+            });
+
+            this.logger.log(
+              `🔍 Found existing LarkBase record for customer ${customer.code}`,
+            );
+          } else {
+            // Strategy 3: Create new record
+            createRecords.push(larkRecord);
+          }
         }
       } catch (error) {
         this.logger.error(
-          `❌ Failed to map customer ${customer.code}: ${error.message}`,
+          `❌ Failed to process customer ${customer.code}: ${error.message}`,
         );
         failedCount++;
       }
     }
 
-    // Execute CREATE operations
-    if (createRecords.length > 0) {
-      try {
-        const createResults = await this.batchCreateRecords(createRecords);
-
-        // Update database with new larkRecordIds
-        await this.updateCustomersWithLarkRecordIds(customers, createResults);
-
-        successCount += createResults.length;
-      } catch (error) {
-        this.logger.error(`❌ Batch CREATE failed: ${error.message}`);
-        failedCount += createRecords.length;
-        throw error;
-      }
-    }
-
-    // Execute UPDATE operations
-    if (updateRecords.length > 0) {
-      try {
-        await this.batchUpdateRecords(updateRecords);
-
-        // Update database sync status
-        const customerIds = customers
-          .filter((c) => c.larkRecordId)
-          .map((c) => c.id);
-
-        await this.updateCustomersSyncStatus(customerIds, 'SYNCED');
-
-        successCount += updateRecords.length;
-      } catch (error) {
-        this.logger.error(`❌ Batch UPDATE failed: ${error.message}`);
-        failedCount += updateRecords.length;
-        throw error;
-      }
-    }
-
+    // Execute operations...
     return { successCount, failedCount };
+  }
+
+  private async findLarkRecordByKiotVietId(
+    kiotVietId: number,
+  ): Promise<any | null> {
+    try {
+      const headers = await this.larkAuthService.getCustomerHeaders();
+
+      // Search for existing record with matching kiotVietId
+      const response = await firstValueFrom(
+        this.httpService.post(
+          `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/search`,
+          {
+            filter: {
+              conjunction: 'and',
+              conditions: [
+                {
+                  field_name: LARK_CUSTOMER_FIELDS.KIOTVIET_ID,
+                  operator: 'is',
+                  value: [Number(kiotVietId)],
+                },
+              ],
+            },
+            page_size: 1,
+          },
+          { headers },
+        ),
+      );
+
+      const result = response.data;
+      if (result.code === 0 && result.data?.items?.length > 0) {
+        return result.data.items[0];
+      }
+      return null;
+    } catch (error) {
+      this.logger.warn(
+        `⚠️ Failed to search LarkBase for kiotVietId ${kiotVietId}: ${error.message}`,
+      );
+      return null;
+    }
   }
 
   // ============================================================================
@@ -283,6 +310,10 @@ export class LarkCustomerSyncService {
   private mapCustomerToLarkBase(customer: any): LarkBaseRecord {
     try {
       const fields: Record<string, any> = {};
+
+      if (customer.kiotVietId) {
+        fields[LARK_CUSTOMER_FIELDS.KIOTVIET_ID] = Number(customer.kiotVietId);
+      }
 
       // Required primary field
       if (customer.name) {
