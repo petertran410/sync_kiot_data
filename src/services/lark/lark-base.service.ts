@@ -183,6 +183,8 @@ export class LarkBaseService {
     remaining: number;
   }> {
     try {
+      this.logger.log('🔍 Scanning LarkBase for duplicate customers...');
+
       const allRecords = await this.getAllCustomerRecords();
       const duplicates = this.findDuplicatesByKiotVietId(allRecords);
 
@@ -193,11 +195,23 @@ export class LarkBaseService {
         const toDelete = records.slice(1);
 
         if (toDelete.length > 0) {
-          await this.batchDeleteCustomers(toDelete.map((r) => r.record_id));
-          deletedCount += toDelete.length;
+          const recordIds = toDelete
+            .map((r) => r.record_id)
+            .filter((id): id is string => typeof id === 'string'); // Type guard
+
+          if (recordIds.length > 0) {
+            await this.batchDeleteCustomers(recordIds);
+            deletedCount += recordIds.length;
+            this.logger.debug(
+              `Deleted ${recordIds.length} duplicates for kiotVietId: ${kiotVietId}`,
+            );
+          }
         }
       }
 
+      this.logger.log(
+        `🧹 Cleanup complete: ${deletedCount} duplicates removed, ${allRecords.length - deletedCount} remaining`,
+      );
       return {
         deleted: deletedCount,
         remaining: allRecords.length - deletedCount,
@@ -260,12 +274,11 @@ export class LarkBaseService {
           app_token: this.customerBaseToken,
           table_id: this.customerTableId,
         },
-        data: { records: batch.map((id) => ({ record_id: id })) },
+        data: { records: batch },
       });
     }
   }
 
-  // NEW: Batch update for existing records
   private async batchUpdateCustomers(customers: any[]): Promise<{
     success: number;
     failed: number;
@@ -345,10 +358,17 @@ export class LarkBaseService {
   ): Promise<Map<string, string>> {
     const recordMap = new Map<string, string>();
 
-    // Use filter query for better performance
-    const filter = `AND(${kiotVietIds.map((id) => `kiotVietId=${id}`).join(',')})`;
-
     try {
+      // FIXED: Use proper filter structure
+      const filter = {
+        conjunction: 'or' as const,
+        conditions: kiotVietIds.map((id) => ({
+          field_name: 'kiotVietId',
+          operator: 'is' as const,
+          value: [id.toString()],
+        })),
+      };
+
       let hasMore = true;
       let pageToken: string | undefined;
 
@@ -368,9 +388,12 @@ export class LarkBaseService {
 
         if (response.data?.items) {
           response.data.items.forEach((record) => {
+            // FIXED: Error 3 & 4 - Type guards for undefined
             const kiotVietId = record.fields?.kiotVietId?.toString();
-            if (kiotVietId) {
-              recordMap.set(kiotVietId, record.record_id);
+            const recordId = record.record_id;
+
+            if (kiotVietId && recordId) {
+              recordMap.set(kiotVietId, recordId);
             }
           });
         }
@@ -380,10 +403,51 @@ export class LarkBaseService {
       }
     } catch (error) {
       this.logger.warn(
-        `Filter search failed, falling back to scan: ${error.message}`,
+        `Search failed, falling back to list scan: ${error.message}`,
       );
-      // Fallback to previous method if filter fails
-      return this.fallbackGetExistingRecords(kiotVietIds);
+      // FIXED: Error 5 - Implement fallback method
+      return this.listAllAndFilter(kiotVietIds);
+    }
+
+    return recordMap;
+  }
+
+  private async listAllAndFilter(
+    kiotVietIds: any[],
+  ): Promise<Map<string, string>> {
+    const recordMap = new Map<string, string>();
+    let hasMore = true;
+    let pageToken: string | undefined;
+
+    while (hasMore) {
+      const response = await this.client.bitable.appTableRecord.list({
+        path: {
+          app_token: this.customerBaseToken,
+          table_id: this.customerTableId,
+        },
+        params: {
+          page_size: 500,
+          page_token: pageToken,
+        },
+      });
+
+      if (response.data?.items) {
+        response.data.items.forEach((record) => {
+          const kiotVietId = record.fields?.kiotVietId?.toString();
+          const recordId = record.record_id;
+
+          if (
+            kiotVietId &&
+            recordId &&
+            kiotVietIds.includes(parseInt(kiotVietId))
+          ) {
+            recordMap.set(kiotVietId, recordId);
+          }
+        });
+      }
+
+      hasMore = response.data?.has_more || false;
+      pageToken = response.data?.page_token;
     }
 
     return recordMap;
