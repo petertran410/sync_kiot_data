@@ -102,7 +102,6 @@ export class KiotVietCustomerService {
     const syncName = 'customer_historical';
 
     try {
-      // Update tracking: start sync
       await this.updateSyncControl(syncName, {
         isRunning: true,
         status: 'running',
@@ -115,64 +114,228 @@ export class KiotVietCustomerService {
       let currentItem = 0;
       let processedCount = 0;
       let totalCustomers = 0;
+      let consecutiveEmptyPages = 0;
+      let lastValidTotal = 0;
+
+      // ✅ SAFE COMPLETION DETECTION
+      const MAX_CONSECUTIVE_EMPTY_PAGES = 3; // Allow 3 empty pages before stopping
+      const MIN_EXPECTED_CUSTOMERS = 10; // Minimum customers expected in system
 
       while (true) {
         this.logger.log(
           `📄 Fetching customers page: ${Math.floor(currentItem / this.PAGE_SIZE) + 1}`,
         );
 
-        // Step 1: Get basic customer list (Hybrid approach)
-        const customerListResponse = await this.fetchCustomersList({
-          currentItem,
-          pageSize: this.PAGE_SIZE,
-          orderBy: 'createdDate',
-          orderDirection: 'DESC',
-          includeTotal: true,
-          includeCustomerGroup: true,
-          includeCustomerSocial: true,
-        });
+        try {
+          const customerListResponse = await this.fetchCustomersList({
+            currentItem,
+            pageSize: this.PAGE_SIZE,
+            orderBy: 'createdDate',
+            orderDirection: 'DESC',
+            includeTotal: true,
+            includeCustomerGroup: true,
+            includeCustomerSocial: true,
+          });
 
-        if (
-          !customerListResponse.data ||
-          customerListResponse.data.length === 0
-        ) {
-          this.logger.log('📋 No more customers to process');
-          break;
+          // ✅ VALIDATION 1: Check response structure
+          if (!customerListResponse) {
+            this.logger.warn('⚠️ Received null response from KiotViet API');
+            consecutiveEmptyPages++;
+
+            if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
+              this.logger.error(
+                `❌ Received ${MAX_CONSECUTIVE_EMPTY_PAGES} consecutive empty responses. Possible API issue.`,
+              );
+              throw new Error(
+                `API returned consecutive empty responses. Sync may be incomplete.`,
+              );
+            }
+
+            // Wait and retry
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+            continue;
+          }
+
+          // ✅ VALIDATION 2: Update total customer count if valid
+          if (customerListResponse.total && customerListResponse.total > 0) {
+            lastValidTotal = customerListResponse.total;
+            totalCustomers = lastValidTotal;
+          }
+
+          // ✅ VALIDATION 3: Check for empty data
+          if (
+            !customerListResponse.data ||
+            customerListResponse.data.length === 0
+          ) {
+            consecutiveEmptyPages++;
+
+            this.logger.warn(
+              `⚠️ Empty page ${Math.floor(currentItem / this.PAGE_SIZE) + 1}. ` +
+                `Consecutive empty pages: ${consecutiveEmptyPages}/${MAX_CONSECUTIVE_EMPTY_PAGES}`,
+            );
+
+            // ✅ SAFE STOPPING CONDITIONS
+            const conditions = {
+              hasValidTotal: lastValidTotal > 0,
+              reachedOrExceededTotal: processedCount >= lastValidTotal,
+              hasMinimumData: processedCount >= MIN_EXPECTED_CUSTOMERS,
+              maxEmptyPages:
+                consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES,
+            };
+
+            this.logger.log(
+              `📊 Completion check: ${JSON.stringify(conditions, null, 2)}`,
+            );
+
+            // Stop if we have valid total and reached it
+            if (conditions.hasValidTotal && conditions.reachedOrExceededTotal) {
+              this.logger.log(
+                `✅ Reached expected total: ${processedCount}/${lastValidTotal} customers processed`,
+              );
+              break;
+            }
+
+            // Stop if we hit max empty pages and have reasonable data
+            if (conditions.maxEmptyPages && conditions.hasMinimumData) {
+              if (conditions.hasValidTotal) {
+                this.logger.warn(
+                  `⚠️ Stopping with potential incomplete data: ${processedCount}/${lastValidTotal} customers processed`,
+                );
+              } else {
+                this.logger.log(
+                  `✅ Completed sync: ${processedCount} customers processed (no total available)`,
+                );
+              }
+              break;
+            }
+
+            // Continue if we haven't met stopping conditions
+            if (consecutiveEmptyPages < MAX_CONSECUTIVE_EMPTY_PAGES) {
+              currentItem += this.PAGE_SIZE;
+              await new Promise((resolve) => setTimeout(resolve, 1000));
+              continue;
+            }
+
+            // Fatal: too many empty pages without reasonable data
+            throw new Error(
+              `Sync incomplete: Only ${processedCount} customers processed. ` +
+                `Expected ${lastValidTotal || 'unknown'}. Multiple empty API responses.`,
+            );
+          }
+
+          // ✅ VALIDATION 4: Reset empty page counter on successful data
+          consecutiveEmptyPages = 0;
+
+          this.logger.log(
+            `📊 Processing ${customerListResponse.data.length} customers ` +
+              `(Processed: ${processedCount}/${totalCustomers || 'unknown'})`,
+          );
+
+          // ✅ VALIDATION 5: Check for duplicate/overlapping data
+          const currentPageIds = customerListResponse.data.map((c) => c.id);
+          const duplicateCheck = await this.prismaService.customer.findMany({
+            where: { kiotVietId: { in: currentPageIds } },
+            select: { kiotVietId: true },
+          });
+
+          if (duplicateCheck.length === customerListResponse.data.length) {
+            this.logger.warn(
+              `⚠️ All customers in current page already exist. Possible pagination overlap.`,
+            );
+
+            // Skip this page but continue (might be pagination issue)
+            currentItem += this.PAGE_SIZE;
+            continue;
+          }
+
+          // Process customers normally
+          const customersWithDetails = await this.enrichCustomersWithDetails(
+            customerListResponse.data,
+          );
+
+          const savedCustomers =
+            await this.saveCustomersToDatabase(customersWithDetails);
+          await this.syncCustomersToLarkBase(savedCustomers);
+
+          processedCount += customersWithDetails.length;
+          currentItem += this.PAGE_SIZE;
+
+          // ✅ VALIDATION 6: Progress validation
+          this.logger.log(
+            `✅ Progress: ${processedCount}/${totalCustomers || 'unknown'} customers ` +
+              `(${totalCustomers ? Math.round((processedCount / totalCustomers) * 100) : '?'}%)`,
+          );
+
+          // ✅ VALIDATION 7: Auto-stop if we've exceeded expected total
+          if (totalCustomers > 0 && processedCount >= totalCustomers) {
+            this.logger.log(
+              `✅ Completed: Processed ${processedCount}/${totalCustomers} customers`,
+            );
+            break;
+          }
+        } catch (apiError) {
+          this.logger.error(
+            `❌ API error on page ${Math.floor(currentItem / this.PAGE_SIZE) + 1}: ${apiError.message}`,
+          );
+
+          consecutiveEmptyPages++;
+
+          if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
+            throw new Error(
+              `Multiple API failures during sync. Processed ${processedCount}/${totalCustomers || 'unknown'} customers. ` +
+                `Last error: ${apiError.message}`,
+            );
+          }
+
+          // Wait before retry
+          await new Promise((resolve) => setTimeout(resolve, 5000));
+          continue;
         }
-
-        totalCustomers = customerListResponse.total || totalCustomers;
-        this.logger.log(
-          `📊 Processing ${customerListResponse.data.length} customers (Total: ${totalCustomers})`,
-        );
-
-        // Step 2: Get full details for each customer (Hybrid approach)
-        const customersWithDetails = await this.enrichCustomersWithDetails(
-          customerListResponse.data,
-        );
-
-        // Step 3: Save to database
-        const savedCustomers =
-          await this.saveCustomersToDatabase(customersWithDetails);
-
-        // Step 4: Sync to LarkBase
-        await this.syncCustomersToLarkBase(savedCustomers);
-
-        processedCount += customersWithDetails.length;
-        currentItem += this.PAGE_SIZE;
-
-        this.logger.log(
-          `✅ Processed ${processedCount}/${totalCustomers} customers`,
-        );
       }
 
-      // Update tracking: complete
-      await this.updateSyncControl(syncName, {
-        isRunning: false,
-        isEnabled: false, // Disable after completion
-        status: 'completed',
-        completedAt: new Date(),
-        lastRunAt: new Date(),
-      });
+      // ✅ FINAL VALIDATION
+      const finalValidation = {
+        processedCount,
+        expectedTotal: totalCustomers,
+        isComplete:
+          totalCustomers > 0
+            ? processedCount >= totalCustomers * 0.95
+            : processedCount >= MIN_EXPECTED_CUSTOMERS,
+        completionRate:
+          totalCustomers > 0
+            ? Math.round((processedCount / totalCustomers) * 100)
+            : null,
+      };
+
+      this.logger.log(
+        `📊 Final validation: ${JSON.stringify(finalValidation, null, 2)}`,
+      );
+
+      if (!finalValidation.isComplete) {
+        this.logger.warn(
+          `⚠️ Sync may be incomplete: ${processedCount}/${totalCustomers || 'unknown'} customers processed`,
+        );
+
+        // Don't throw error, but mark as potentially incomplete
+        await this.updateSyncControl(syncName, {
+          isRunning: false,
+          isEnabled: false,
+          status: 'completed_with_warnings',
+          completedAt: new Date(),
+          lastRunAt: new Date(),
+          progress: finalValidation,
+        });
+      } else {
+        // Mark as successfully completed
+        await this.updateSyncControl(syncName, {
+          isRunning: false,
+          isEnabled: false,
+          status: 'completed',
+          completedAt: new Date(),
+          lastRunAt: new Date(),
+          progress: finalValidation,
+        });
+      }
 
       // Enable recent sync
       await this.updateSyncControl('customer_recent', {
@@ -181,16 +344,17 @@ export class KiotVietCustomerService {
       });
 
       this.logger.log(
-        `🎉 Historical customer sync completed: ${processedCount} customers processed`,
+        `🎉 Historical customer sync finished: ${processedCount} customers processed ` +
+          `(${finalValidation.completionRate || '?'}% completion rate)`,
       );
     } catch (error) {
       this.logger.error(`❌ Historical customer sync failed: ${error.message}`);
 
-      // Update tracking: failed
       await this.updateSyncControl(syncName, {
         isRunning: false,
         status: 'failed',
         error: error.message,
+        progress: { processedCount, expectedTotal: totalCustomers },
       });
 
       throw error;
