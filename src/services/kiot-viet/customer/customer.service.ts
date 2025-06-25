@@ -396,8 +396,38 @@ export class KiotVietCustomerService {
   async saveCustomersToDatabase(customers: KiotVietCustomer[]): Promise<any[]> {
     const savedCustomers: any[] = [];
 
+    // ⭐ OPTIMIZATION: Pre-load all branch mappings
+    const branchMappings = new Map<number, number>(); // KiotViet ID → Internal ID
+
+    const allBranches = await this.prismaService.branch.findMany({
+      select: { id: true, kiotVietId: true },
+    });
+
+    for (const branch of allBranches) {
+      branchMappings.set(branch.kiotVietId, branch.id);
+    }
+
+    this.logger.debug(`📋 Loaded ${branchMappings.size} branch mappings`);
+
     for (const customerData of customers) {
       try {
+        // ⭐ FAST LOOKUP: Use cached mapping
+        let internalBranchId: any = null;
+
+        if (
+          customerData.branchId &&
+          branchMappings.has(customerData.branchId)
+        ) {
+          internalBranchId = branchMappings.get(customerData.branchId);
+          this.logger.debug(
+            `✅ Mapped branchId: KiotViet ${customerData.branchId} → DB ${internalBranchId}`,
+          );
+        } else if (customerData.branchId) {
+          this.logger.warn(
+            `⚠️ Branch ${customerData.branchId} not found for customer ${customerData.code}`,
+          );
+        }
+
         const customer = await this.prismaService.customer.upsert({
           where: { kiotVietId: customerData.id },
           create: {
@@ -434,7 +464,7 @@ export class KiotVietCustomerService {
               ? BigInt(customerData.psidFacebook)
               : null,
             retailerId: customerData.retailerId,
-            branchId: customerData.branchId,
+            branchId: internalBranchId, // ⭐ Use mapped internal ID
             createdDate: customerData.createdDate
               ? new Date(customerData.createdDate)
               : new Date(),
@@ -476,12 +506,11 @@ export class KiotVietCustomerService {
               ? BigInt(customerData.psidFacebook)
               : null,
             retailerId: customerData.retailerId,
-            branchId: customerData.branchId,
+            branchId: internalBranchId, // ⭐ Use mapped internal ID
             modifiedDate: customerData.modifiedDate
               ? new Date(customerData.modifiedDate)
               : new Date(),
             lastSyncedAt: new Date(),
-            // Keep existing larkRecordId and reset sync status
             larkSyncStatus: 'PENDING',
           },
         });

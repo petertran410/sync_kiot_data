@@ -8,26 +8,26 @@ import { firstValueFrom } from 'rxjs';
 
 // LarkBase Field IDs from "Khách Hàng.rtf"
 const LARK_CUSTOMER_FIELDS = {
-  PRIMARY_NAME: 'fld71g8Gci', // Tên Khách Hàng (primary)
-  CUSTOMER_CODE: 'fld29zIB9D', // Mã Khách Hàng
-  PHONE_NUMBER: 'fldHo79lXi', // Số Điện Thoại
-  STORE_ID: 'fld6M0YzOE', // Id Cửa Hàng
-  COMPANY: 'fldUubtChK', // Công Ty
-  EMAIL: 'fldRXGBAzC', // Email của Khách Hàng
-  ADDRESS: 'fld17QvTM6', // Địa Chỉ Khách Hàng
-  CURRENT_DEBT: 'fldEBifOyt', // Nợ Hiện Tại
-  TAX_CODE: 'fldCDKr4yC', // Mã Số Thuế
-  TOTAL_POINTS: 'fld9zfi74R', // Tổng Điểm
-  TOTAL_REVENUE: 'fldStZEptP', // Tổng Doanh Thu
-  GENDER: 'fldLa1obN8', // Giới Tính (select)
-  WARD_NAME: 'fldU0Vru4a', // Phường xã
-  CURRENT_POINTS: 'fldujW0cpW', // Điểm Hiện Tại
+  PRIMARY_NAME: 'Tên Khách Hàng', // Tên Khách Hàng (primary)
+  CUSTOMER_CODE: 'Mã Khách Hàng', // Mã Khách Hàng
+  PHONE_NUMBER: 'Số Điện Thoại', // Số Điện Thoại
+  STORE_ID: 'Id Cửa Hàng', // Id Cửa Hàng
+  COMPANY: 'Công Ty', // Công Ty
+  EMAIL: 'Email của Khách Hàng', // Email của Khách Hàng
+  ADDRESS: 'Địa Chỉ Khách Hàng', // Địa Chỉ Khách Hàng
+  CURRENT_DEBT: 'Nợ Hiện Tại', // Nợ Hiện Tại
+  TAX_CODE: 'Mã Số Thuế', // Mã Số Thuế
+  TOTAL_POINTS: 'Tổng Điểm', // Tổng Điểm
+  TOTAL_REVENUE: 'Tổng Doanh Thu', // Tổng Doanh Thu
+  GENDER: 'Giới Tính', // Giới Tính (select)
+  WARD_NAME: 'Phường Xã', // Phường xã
+  CURRENT_POINTS: 'Điểm Hiện Tại', // Điểm Hiện Tại
 } as const;
 
 // Gender select options from LarkBase
 const GENDER_OPTIONS = {
-  MALE: 'optUmkTfdd', // Nam
-  FEMALE: 'optcf5ndAC', // Nữ
+  MALE: 'Nam', // Nam
+  FEMALE: 'Nữ', // Nữ
 } as const;
 
 interface LarkBaseRecord {
