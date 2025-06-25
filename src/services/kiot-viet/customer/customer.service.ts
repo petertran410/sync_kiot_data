@@ -50,46 +50,39 @@ export class KiotVietCustomerService {
           status: 'in_progress',
           startedAt: new Date(),
           error: null,
-          progress: {},
         },
       });
 
       let currentItem = 0;
       let totalProcessed = 0;
-      let hasMoreData = true;
       let batchCount = 0;
 
-      while (hasMoreData) {
+      while (true) {
         const response = await this.fetchCustomers({
           currentItem,
           pageSize: this.PAGE_SIZE,
         });
 
-        if (response.data && response.data.length > 0) {
-          const { created, updated } = await this.saveCustomersToDatabase(
-            response.data,
-          );
-          totalProcessed += created + updated;
+        if (!response.data || response.data.length === 0) break;
 
-          // IMMEDIATE LarkBase sync - no more delayed batch sync
-          await this.syncCustomersToLarkBaseImmediate(response.data);
+        // Database UPSERT
+        const { created, updated } = await this.saveCustomersToDatabase(
+          response.data,
+        );
+        totalProcessed += created + updated;
 
-          this.logger.log(
-            `Historical sync batch ${++batchCount}: ${totalProcessed} customers processed`,
-          );
-        }
+        // IMMEDIATE LarkBase UPSERT (not delayed)
+        await this.larkBaseService.directCreateCustomers(response.data);
 
-        if (response.removedId && response.removedId.length > 0) {
-          await this.handleRemovedCustomers(response.removedId);
-        }
+        this.logger.log(
+          `Historical batch ${++batchCount}: ${totalProcessed} processed`,
+        );
 
-        hasMoreData = response.data && response.data.length === this.PAGE_SIZE;
-        if (hasMoreData) currentItem += this.PAGE_SIZE;
+        if (response.data.length < this.PAGE_SIZE) break;
+        currentItem += this.PAGE_SIZE;
       }
 
-      const duplicatesRemoved = await this.removeDuplicateCustomers();
-
-      // Mark historical sync as COMPLETED and DISABLED
+      // Mark as completed and disabled
       await this.prismaService.syncControl.update({
         where: { name: 'customer_historical' },
         data: {
@@ -97,25 +90,18 @@ export class KiotVietCustomerService {
           isEnabled: false,
           status: 'completed',
           completedAt: new Date(),
-          progress: { totalProcessed, duplicatesRemoved, batchCount },
+          progress: { totalProcessed, batchCount },
         },
       });
 
       this.logger.log(
-        `Historical sync completed: ${totalProcessed} customers processed, ${duplicatesRemoved} duplicates removed`,
+        `✅ Historical sync completed: ${totalProcessed} customers`,
       );
     } catch (error) {
       await this.prismaService.syncControl.update({
         where: { name: 'customer_historical' },
-        data: {
-          isRunning: false,
-          status: 'failed',
-          completedAt: new Date(),
-          error: error.message,
-        },
+        data: { isRunning: false, status: 'failed', error: error.message },
       });
-
-      this.logger.error(`Historical sync failed: ${error.message}`);
       throw error;
     }
   }
@@ -540,6 +526,7 @@ export class KiotVietCustomerService {
   }
 
   async checkAndRunAppropriateSync(): Promise<void> {
+    await this.checkAndCleanDuplicates();
     const historicalSync = await this.prismaService.syncControl.findFirst({
       where: { name: 'customer_historical' },
     });
@@ -575,6 +562,24 @@ export class KiotVietCustomerService {
     // Default to recent sync
     this.logger.log('Running recent sync...');
     await this.syncRecentCustomers();
+  }
+
+  private async checkAndCleanDuplicates(): Promise<void> {
+    try {
+      this.logger.log('🔍 Checking for LarkBase duplicates...');
+      const result = await this.larkBaseService.deleteDuplicateCustomers();
+
+      if (result.deleted > 0) {
+        this.logger.log(
+          `🧹 Cleaned ${result.deleted} duplicate customers from LarkBase`,
+        );
+      } else {
+        this.logger.log('✅ No duplicates found in LarkBase');
+      }
+    } catch (error) {
+      this.logger.error(`Duplicate check failed: ${error.message}`);
+      // Continue with sync even if cleanup fails
+    }
   }
 
   // NEW: Immediate LarkBase sync method

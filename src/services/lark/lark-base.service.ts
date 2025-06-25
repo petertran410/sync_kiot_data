@@ -97,42 +97,44 @@ export class LarkBaseService {
     if (!customers.length) return { success: 0, failed: 0 };
 
     try {
-      // Step 1: Check which records already exist in LarkBase
-      const { recordsToCreate, recordsToUpdate } =
-        await this.separateCustomersForUpsert(customers);
-
       let totalSuccess = 0;
       let totalFailed = 0;
       let allRecords: any[] = [];
 
-      // Step 2: CREATE new records
-      if (recordsToCreate.length > 0) {
-        const createResult = await this.batchCreateCustomers(recordsToCreate);
-        totalSuccess += createResult.success;
-        totalFailed += createResult.failed;
-        if (createResult.records) {
-          allRecords.push(...createResult.records);
+      // Process in smaller batches to avoid API limits
+      const batchSize = 100;
+      for (let i = 0; i < customers.length; i += batchSize) {
+        const batch = customers.slice(i, i + batchSize);
+
+        const { recordsToCreate, recordsToUpdate } =
+          await this.separateCustomersForUpsert(batch);
+
+        // CREATE new records
+        if (recordsToCreate.length > 0) {
+          const createResult = await this.batchCreateCustomers(recordsToCreate);
+          totalSuccess += createResult.success;
+          totalFailed += createResult.failed;
+          if (createResult.records) allRecords.push(...createResult.records);
+        }
+
+        // UPDATE existing records
+        if (recordsToUpdate.length > 0) {
+          const updateResult = await this.batchUpdateCustomers(recordsToUpdate);
+          totalSuccess += updateResult.success;
+          totalFailed += updateResult.failed;
         }
       }
 
-      // Step 3: UPDATE existing records
-      if (recordsToUpdate.length > 0) {
-        const updateResult = await this.batchUpdateCustomers(recordsToUpdate);
-        totalSuccess += updateResult.success;
-        totalFailed += updateResult.failed;
-      }
-
       this.logger.log(
-        `LarkBase customer UPSERT: ${recordsToCreate.length} created, ${recordsToUpdate.length} updated, ${totalSuccess} success, ${totalFailed} failed`,
+        `Customer UPSERT: ${totalSuccess} success, ${totalFailed} failed`,
       );
-
       return {
         success: totalSuccess,
         failed: totalFailed,
         records: allRecords,
       };
     } catch (error) {
-      this.logger.error(`LarkBase customer UPSERT failed: ${error.message}`);
+      this.logger.error(`Customer UPSERT failed: ${error.message}`);
       return { success: 0, failed: customers.length };
     }
   }
@@ -173,6 +175,93 @@ export class LarkBaseService {
         `LarkBase customer batch create failed: ${error.message}`,
       );
       return { success: 0, failed: customers.length };
+    }
+  }
+
+  async deleteDuplicateCustomers(): Promise<{
+    deleted: number;
+    remaining: number;
+  }> {
+    try {
+      const allRecords = await this.getAllCustomerRecords();
+      const duplicates = this.findDuplicatesByKiotVietId(allRecords);
+
+      let deletedCount = 0;
+
+      for (const [kiotVietId, records] of duplicates) {
+        // Keep first record, delete the rest
+        const toDelete = records.slice(1);
+
+        if (toDelete.length > 0) {
+          await this.batchDeleteCustomers(toDelete.map((r) => r.record_id));
+          deletedCount += toDelete.length;
+        }
+      }
+
+      return {
+        deleted: deletedCount,
+        remaining: allRecords.length - deletedCount,
+      };
+    } catch (error) {
+      this.logger.error(`Delete duplicates failed: ${error.message}`);
+      throw error;
+    }
+  }
+
+  private async getAllCustomerRecords(): Promise<any[]> {
+    const allRecords: any[] = [];
+    let hasMore = true;
+    let pageToken: string | undefined;
+
+    while (hasMore) {
+      const response = await this.client.bitable.appTableRecord.list({
+        path: {
+          app_token: this.customerBaseToken,
+          table_id: this.customerTableId,
+        },
+        params: { page_size: 500, page_token: pageToken },
+      });
+
+      if (response.data?.items) {
+        allRecords.push(...response.data.items);
+      }
+
+      hasMore = response.data?.has_more || false;
+      pageToken = response.data?.page_token;
+    }
+
+    return allRecords;
+  }
+
+  private findDuplicatesByKiotVietId(records: any[]): Map<string, any[]> {
+    const grouped = new Map<string, any[]>();
+
+    records.forEach((record) => {
+      const kiotVietId = record.fields?.kiotVietId?.toString();
+      if (kiotVietId) {
+        if (!grouped.has(kiotVietId)) {
+          grouped.set(kiotVietId, []);
+        }
+        grouped.get(kiotVietId)!.push(record);
+      }
+    });
+
+    // Return only groups with duplicates
+    return new Map([...grouped].filter(([_, records]) => records.length > 1));
+  }
+
+  private async batchDeleteCustomers(recordIds: string[]): Promise<void> {
+    const batchSize = 500;
+    for (let i = 0; i < recordIds.length; i += batchSize) {
+      const batch = recordIds.slice(i, i + batchSize);
+
+      await this.client.bitable.appTableRecord.batchDelete({
+        path: {
+          app_token: this.customerBaseToken,
+          table_id: this.customerTableId,
+        },
+        data: { records: batch.map((id) => ({ record_id: id })) },
+      });
     }
   }
 
@@ -221,53 +310,83 @@ export class LarkBaseService {
     const recordsToUpdate: any[] = [];
 
     try {
-      // Get all kiotVietIds from incoming customers
       const kiotVietIds = customers
         .map((c) => c.id || c.kiotVietId)
         .filter(Boolean);
+      const existingRecordsMap =
+        await this.getExistingRecordsByKiotVietId(kiotVietIds);
 
-      // Query LarkBase to find existing records by kiotVietId
-      const existingRecords =
-        await this.findExistingCustomersByKiotVietId(kiotVietIds);
-
-      // Create lookup map of existing records
-      const existingRecordsMap = new Map();
-      existingRecords.forEach((record) => {
-        const kiotVietId = record.fields?.kiotvietId;
-        if (kiotVietId) {
-          existingRecordsMap.set(kiotVietId.toString(), record);
-        }
-      });
-
-      // Separate customers into create vs update
       for (const customer of customers) {
         const kiotVietId = (customer.id || customer.kiotVietId)?.toString();
 
         if (kiotVietId && existingRecordsMap.has(kiotVietId)) {
-          // Record exists - add to update batch
-          const existingRecord = existingRecordsMap.get(kiotVietId);
           recordsToUpdate.push({
             ...customer,
-            larkRecordId: existingRecord.record_id,
+            larkRecordId: existingRecordsMap.get(kiotVietId),
           });
         } else {
-          // Record doesn't exist - add to create batch
           recordsToCreate.push(customer);
         }
       }
 
       this.logger.debug(
-        `Separated customers: ${recordsToCreate.length} to create, ${recordsToUpdate.length} to update`,
+        `Split: ${recordsToCreate.length} create, ${recordsToUpdate.length} update`,
       );
     } catch (error) {
-      this.logger.error(
-        `Error separating customers for upsert: ${error.message}`,
-      );
-      // If error, default to create all (might cause duplicates but won't fail)
+      this.logger.error(`Error separating records: ${error.message}`);
       recordsToCreate.push(...customers);
     }
 
     return { recordsToCreate, recordsToUpdate };
+  }
+
+  private async getExistingRecordsByKiotVietId(
+    kiotVietIds: any[],
+  ): Promise<Map<string, string>> {
+    const recordMap = new Map<string, string>();
+
+    // Use filter query for better performance
+    const filter = `AND(${kiotVietIds.map((id) => `kiotVietId=${id}`).join(',')})`;
+
+    try {
+      let hasMore = true;
+      let pageToken: string | undefined;
+
+      while (hasMore) {
+        const response = await this.client.bitable.appTableRecord.search({
+          path: {
+            app_token: this.customerBaseToken,
+            table_id: this.customerTableId,
+          },
+          data: {
+            filter,
+            automatic_fields: false,
+            page_size: 500,
+            page_token: pageToken,
+          },
+        });
+
+        if (response.data?.items) {
+          response.data.items.forEach((record) => {
+            const kiotVietId = record.fields?.kiotVietId?.toString();
+            if (kiotVietId) {
+              recordMap.set(kiotVietId, record.record_id);
+            }
+          });
+        }
+
+        hasMore = response.data?.has_more || false;
+        pageToken = response.data?.page_token;
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Filter search failed, falling back to scan: ${error.message}`,
+      );
+      // Fallback to previous method if filter fails
+      return this.fallbackGetExistingRecords(kiotVietIds);
+    }
+
+    return recordMap;
   }
 
   private async findExistingCustomersByKiotVietId(

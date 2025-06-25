@@ -5,12 +5,14 @@ import { PrismaService } from '../prisma/prisma.service';
 import { BusStatusResponse } from '../types/sync.types';
 import { ScheduleType } from '../config/sync-schedule.config';
 import { ScheduleUtils } from '../utils/schedule.utils';
+import { LarkBaseService } from 'src/services/lark/lark-base.service';
 
 @Controller('sync')
 export class SyncController {
   constructor(
     private readonly busSchedulerService: BusSchedulerService,
     private readonly prismaService: PrismaService,
+    private readonly larkBaseService: LarkBaseService,
   ) {}
 
   // ===== LEGACY ENDPOINTS (Backward Compatibility) =====
@@ -166,6 +168,27 @@ export class SyncController {
     } catch (error) {
       return {
         message: `15-minute sync failed: ${error.message}`,
+        error: error.message,
+      };
+    }
+  }
+
+  @Post('cleanup/duplicates')
+  async cleanupDuplicates() {
+    try {
+      const result = await this.larkBaseService.deleteDuplicateCustomers();
+
+      // Run recent sync after cleanup
+      await this.busSchedulerService.manualSyncEntity('customer');
+
+      return {
+        message: 'Duplicates cleaned successfully',
+        deleted: result.deleted,
+        remaining: result.remaining,
+      };
+    } catch (error) {
+      return {
+        message: `Cleanup failed: ${error.message}`,
         error: error.message,
       };
     }
