@@ -1,151 +1,135 @@
 // src/config/sync-schedule.config.ts
-export type ScheduleType = 'every_15_minutes' | 'weekends' | 'disabled';
-
 export interface SyncEntityConfig {
   name: string;
   service: string;
   syncMethod: string;
   syncType: 'simple' | 'full';
-  schedule: ScheduleType;
   dependencies?: string[];
-  retryCount?: number;
   description?: string;
-  hasLarkBaseSync: boolean; // NEW: Does this entity sync to LarkBase?
-  larkBaseBatchSize?: number; // NEW: Batch size for LarkBase operations
-  larkBaseRetryLimit?: number; // NEW: Max retry attempts
+  hasLarkBaseSync: boolean;
+  larkBaseBatchSize?: number;
+  larkBaseRetryLimit?: number;
 }
 
+// ⭐ SIMPLIFIED: Remove schedule field, keep entity info for future scaling
 export const SYNC_ENTITIES_CONFIG: SyncEntityConfig[] = [
-  // === EVERY 15 MINUTES ===
+  // === CURRENT: CUSTOMER FOCUS ===
   {
     name: 'customergroup',
     service: 'customerGroupService',
     syncMethod: 'syncCustomerGroups',
     syncType: 'simple',
-    schedule: 'every_15_minutes',
     hasLarkBaseSync: false,
-    description: 'Customer group sync every 15 minutes',
+    description: 'Customer group sync',
   },
   {
     name: 'customer',
     service: 'customerService',
     syncMethod: 'checkAndRunAppropriateSync',
     syncType: 'full',
-    schedule: 'every_15_minutes',
     dependencies: ['customergroup'],
     hasLarkBaseSync: true,
     larkBaseBatchSize: 50,
     larkBaseRetryLimit: 3,
-    description: 'Customer sync every 15 minutes',
+    description: 'Customer sync',
   },
+
+  // === FUTURE: OTHER ENTITIES (Ready for scaling) ===
   {
     name: 'order',
     service: 'orderService',
     syncMethod: 'checkAndRunAppropriateSync',
     syncType: 'full',
-    schedule: 'every_15_minutes',
     dependencies: ['customer'],
     hasLarkBaseSync: true,
     larkBaseBatchSize: 50,
     larkBaseRetryLimit: 3,
-    description: 'Order sync every 15 minutes',
+    description: 'Order sync',
   },
   {
     name: 'invoice',
     service: 'invoiceService',
     syncMethod: 'checkAndRunAppropriateSync',
     syncType: 'full',
-    schedule: 'every_15_minutes',
     dependencies: ['customer', 'order'],
     hasLarkBaseSync: true,
     larkBaseBatchSize: 50,
     larkBaseRetryLimit: 3,
-    description: 'Invoice sync every 15 minutes',
+    description: 'Invoice sync',
   },
 
-  // === WEEKENDS ===
+  // === BACKGROUND ENTITIES ===
   {
     name: 'user',
     service: 'userService',
     syncMethod: 'syncHistoricalUsers',
     syncType: 'full',
-    schedule: 'weekends',
     hasLarkBaseSync: false,
-    description: 'User sync runs on weekends only',
+    description: 'User sync',
   },
   {
     name: 'salechannel',
     service: 'saleChannelService',
     syncMethod: 'syncSaleChannels',
     syncType: 'simple',
-    schedule: 'weekends',
     hasLarkBaseSync: false,
-    description: 'Sale channel sync runs on weekends only',
+    description: 'Sale channel sync',
   },
   {
     name: 'surcharge',
     service: 'surchargeService',
     syncMethod: 'syncSurcharges',
     syncType: 'simple',
-    schedule: 'weekends',
     hasLarkBaseSync: false,
-    description: 'Surcharge sync runs on weekends only',
+    description: 'Surcharge sync',
   },
   {
     name: 'bankaccount',
     service: 'bankAccountService',
     syncMethod: 'syncBankAccounts',
     syncType: 'simple',
-    schedule: 'weekends',
     hasLarkBaseSync: false,
-    description: 'Bank account sync runs on weekends only',
+    description: 'Bank account sync',
   },
   {
     name: 'category',
     service: 'categoryService',
     syncMethod: 'syncCategories',
     syncType: 'simple',
-    schedule: 'weekends',
     hasLarkBaseSync: false,
-    description: 'Category sync runs on weekends only',
+    description: 'Category sync',
   },
   {
     name: 'product',
     service: 'productService',
     syncMethod: 'syncHistoricalProducts',
     syncType: 'full',
-    schedule: 'weekends',
     hasLarkBaseSync: false,
-    description: 'Product sync runs on weekends only',
+    description: 'Product sync',
   },
   {
     name: 'trademark',
     service: 'tradeMarkService',
     syncMethod: 'syncTradeMarks',
     syncType: 'simple',
-    schedule: 'weekends',
     hasLarkBaseSync: false,
-    description: 'Trademark sync runs on weekends only',
+    description: 'Trademark sync',
   },
-
-  // === MANUAL ONLY ===
   {
     name: 'branch',
     service: 'branchService',
     syncMethod: 'syncBranches',
     syncType: 'simple',
-    schedule: 'disabled',
     hasLarkBaseSync: false,
-    description: 'Branch sync disabled per requirements',
+    description: 'Branch sync',
   },
 ];
 
-export function getEntitiesBySchedule(
-  schedule: ScheduleType,
-): SyncEntityConfig[] {
-  return SYNC_ENTITIES_CONFIG.filter((entity) => entity.schedule === schedule);
-}
-
+// ⭐ KEEP: Useful utility functions
 export function getEntitiesWithLarkBaseSync(): SyncEntityConfig[] {
   return SYNC_ENTITIES_CONFIG.filter((entity) => entity.hasLarkBaseSync);
+}
+
+export function getEntityConfig(name: string): SyncEntityConfig | undefined {
+  return SYNC_ENTITIES_CONFIG.find((entity) => entity.name === name);
 }
