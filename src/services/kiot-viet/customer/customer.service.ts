@@ -570,19 +570,17 @@ export class KiotVietCustomerService {
             organization: customerData.organization,
             comments: customerData.comments,
             taxCode: customerData.taxCode,
-            debt: customerData.debt
-              ? new Prisma.Decimal(customerData.debt)
-              : null,
+            debt: customerData.debt ? new Prisma.Decimal(customerData.debt) : 0,
             totalInvoiced: customerData.totalInvoiced
               ? new Prisma.Decimal(customerData.totalInvoiced)
-              : null,
+              : 0,
             totalPoint: customerData.totalPoint,
             totalRevenue: customerData.totalRevenue
               ? new Prisma.Decimal(customerData.totalRevenue)
-              : null,
+              : 0,
             rewardPoint: customerData.rewardPoint
               ? BigInt(customerData.rewardPoint)
-              : null,
+              : 0,
             psidFacebook: customerData.psidFacebook
               ? BigInt(customerData.psidFacebook)
               : null,

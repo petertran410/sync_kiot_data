@@ -12,6 +12,7 @@ const LARK_CUSTOMER_FIELDS = {
   CUSTOMER_CODE: 'Mã Khách Hàng',
   PHONE_NUMBER: 'Số Điện Thoại',
   STORE_ID: 'Id Cửa Hàng',
+  BRANCH: 'Branch',
   COMPANY: 'Công Ty',
   EMAIL: 'Email của Khách Hàng',
   ADDRESS: 'Địa Chỉ Khách Hàng',
@@ -35,6 +36,13 @@ const GENDER_OPTIONS = {
   MALE: 'Nam',
   FEMALE: 'Nữ',
 } as const;
+
+const BRANCH_OPTIONS = {
+  CUA_HANG_DIEP_TRA: 'Cửa Hàng Diệp Trà',
+  KHO_HA_NOI: 'Kho Hà Nội',
+  KHO_SAI_GON: 'Kho Sài Gòn',
+  VAN_PHONG_HA_NOI: 'Văn Phòng Hà Nội',
+};
 
 interface LarkBaseRecord {
   record_id?: string;
@@ -110,14 +118,26 @@ export class LarkCustomerSyncService {
         `🚀 Starting LarkBase sync for ${customers.length} customers (BYPASS SEARCH MODE)...`,
       );
 
+      // ✅ INCLUDE BOTH PENDING AND FAILED for safe retry
       const customersToSync = customers.filter(
-        (c) => c.larkSyncStatus === 'PENDING',
+        (c) => c.larkSyncStatus === 'PENDING' || c.larkSyncStatus === 'FAILED',
       );
 
       if (customersToSync.length === 0) {
         this.logger.log('📋 No customers need LarkBase sync');
         return;
       }
+
+      const pendingCount = customers.filter(
+        (c) => c.larkSyncStatus === 'PENDING',
+      ).length;
+      const failedCount = customers.filter(
+        (c) => c.larkSyncStatus === 'FAILED',
+      ).length;
+
+      this.logger.log(
+        `📊 Including: ${pendingCount} PENDING + ${failedCount} FAILED customers`,
+      );
 
       this.logger.log(
         `📊 Bypass sync: ${customersToSync.length}/${customers.length} customers need sync`,
@@ -599,40 +619,42 @@ export class LarkCustomerSyncService {
     }
 
     if (customer.contactNumber) {
-      fields[LARK_CUSTOMER_FIELDS.PHONE_NUMBER] = customer.contactNumber;
+      fields[LARK_CUSTOMER_FIELDS.PHONE_NUMBER] = customer.contactNumber || '';
     }
 
-    if (customer.branchId) {
-      fields[LARK_CUSTOMER_FIELDS.STORE_ID] = String(customer.branchId);
+    if (customer.retailerId) {
+      fields[LARK_CUSTOMER_FIELDS.STORE_ID] = '2svn';
     }
 
     if (customer.organization) {
-      fields[LARK_CUSTOMER_FIELDS.COMPANY] = customer.organization;
+      fields[LARK_CUSTOMER_FIELDS.COMPANY] = customer.organization || '';
     }
 
     if (customer.email) {
-      fields[LARK_CUSTOMER_FIELDS.EMAIL] = customer.email;
+      fields[LARK_CUSTOMER_FIELDS.EMAIL] = customer.email || '';
     }
 
     if (customer.address) {
-      fields[LARK_CUSTOMER_FIELDS.ADDRESS] = customer.address;
+      fields[LARK_CUSTOMER_FIELDS.ADDRESS] = customer.address || '';
     }
 
     if (customer.debt !== null && customer.debt !== undefined) {
-      fields[LARK_CUSTOMER_FIELDS.CURRENT_DEBT] = Number(customer.debt);
+      fields[LARK_CUSTOMER_FIELDS.CURRENT_DEBT] = Number(customer.debt || 0);
     }
 
     if (customer.taxCode) {
-      fields[LARK_CUSTOMER_FIELDS.TAX_CODE] = customer.taxCode;
+      fields[LARK_CUSTOMER_FIELDS.TAX_CODE] = customer.taxCode || '';
     }
 
     if (customer.totalPoint !== null && customer.totalPoint !== undefined) {
-      fields[LARK_CUSTOMER_FIELDS.TOTAL_POINTS] = Number(customer.totalPoint);
+      fields[LARK_CUSTOMER_FIELDS.TOTAL_POINTS] = Number(
+        customer.totalPoint || 0,
+      );
     }
 
     if (customer.totalRevenue !== null && customer.totalRevenue !== undefined) {
       fields[LARK_CUSTOMER_FIELDS.TOTAL_REVENUE] = Number(
-        customer.totalRevenue,
+        customer.totalRevenue || 0,
       );
     }
 
@@ -642,13 +664,25 @@ export class LarkCustomerSyncService {
         : GENDER_OPTIONS.FEMALE;
     }
 
+    if (customer.branchId !== null && customer.branchId !== undefined) {
+      if (customer.branchId === 1) {
+        fields[LARK_CUSTOMER_FIELDS.BRANCH] = BRANCH_OPTIONS.CUA_HANG_DIEP_TRA;
+      } else if (customer.branchId === 2) {
+        fields[LARK_CUSTOMER_FIELDS.BRANCH] = BRANCH_OPTIONS.KHO_HA_NOI;
+      } else if (customer.branchId === 3) {
+        fields[LARK_CUSTOMER_FIELDS.BRANCH] = BRANCH_OPTIONS.KHO_SAI_GON;
+      } else if (customer.branchId == 4) {
+        fields[LARK_CUSTOMER_FIELDS.BRANCH] = BRANCH_OPTIONS.VAN_PHONG_HA_NOI;
+      }
+    }
+
     if (customer.wardName) {
-      fields[LARK_CUSTOMER_FIELDS.WARD_NAME] = customer.wardName;
+      fields[LARK_CUSTOMER_FIELDS.WARD_NAME] = customer.wardName || '';
     }
 
     if (customer.rewardPoint !== null && customer.rewardPoint !== undefined) {
       fields[LARK_CUSTOMER_FIELDS.CURRENT_POINTS] = this.safeBigIntToNumber(
-        customer.rewardPoint,
+        customer.rewardPoint || 0,
       );
     }
 
@@ -657,70 +691,65 @@ export class LarkCustomerSyncService {
       customer.totalInvoiced !== undefined
     ) {
       fields[LARK_CUSTOMER_FIELDS.TOTAL_INVOICED] = Number(
-        customer.totalInvoiced,
+        customer.totalInvoiced || 0,
       );
     }
 
     if (customer.comments) {
-      fields[LARK_CUSTOMER_FIELDS.COMMENTS] = customer.comments;
+      fields[LARK_CUSTOMER_FIELDS.COMMENTS] = customer.comments || '';
     }
 
     if (customer.modifiedDate) {
-      const modifiedDate = new Date(customer.modifiedDate + '+07:00');
-      fields[LARK_CUSTOMER_FIELDS.MODIFIED_DATE] = modifiedDate.getTime();
+      // const modifiedDate = new Date(customer.modifiedDate + '+07:00');
+      // fields[LARK_CUSTOMER_FIELDS.MODIFIED_DATE] = modifiedDate.getTime();
+      fields[LARK_CUSTOMER_FIELDS.MODIFIED_DATE] =
+        customer.modifiedDate.getTime();
     }
 
     if (customer.createdDate) {
-      const createdDate = new Date(customer.createdDate + '+07:00');
-      fields[LARK_CUSTOMER_FIELDS.CREATED_DATE] = createdDate.getTime();
+      // const createdDate = new Date(customer.createdDate + '+07:00');
+      // fields[LARK_CUSTOMER_FIELDS.CREATED_DATE] = createdDate.getTime();
+      fields[LARK_CUSTOMER_FIELDS.CREATED_DATE] =
+        customer.createdDate.getTime();
     }
 
     if (customer.psidFacebook) {
       fields[LARK_CUSTOMER_FIELDS.FACEBOOK_ID] = this.safeBigIntToNumber(
-        customer.psidFacebook,
+        customer.psidFacebook || '',
       );
     }
 
     if (customer.locationName) {
-      fields[LARK_CUSTOMER_FIELDS.LOCATION_NAME] = customer.locationName;
+      fields[LARK_CUSTOMER_FIELDS.LOCATION_NAME] = customer.locationName || 0;
     }
 
     return { fields };
   }
 
   // ============================================================================
-  // ✅ MONITORING & STATISTICS
+  // ✅ FAILED CUSTOMER MANAGEMENT (Safe Reset)
   // ============================================================================
 
-  async getSyncProgress(): Promise<{
-    total: number;
-    synced: number;
-    pending: number;
-    failed: number;
-    progress: number;
-  }> {
-    const total = await this.prismaService.customer.count();
-    const synced = await this.prismaService.customer.count({
-      where: { larkSyncStatus: 'SYNCED' },
-    });
-    const pending = await this.prismaService.customer.count({
-      where: { larkSyncStatus: 'PENDING' },
-    });
-    const failed = await this.prismaService.customer.count({
+  async resetFailedCustomers(): Promise<{ resetCount: number }> {
+    this.logger.log(
+      '🔄 Resetting FAILED customers to PENDING (safe for bypass)...',
+    );
+
+    const result = await this.prismaService.customer.updateMany({
       where: { larkSyncStatus: 'FAILED' },
+      data: {
+        larkSyncStatus: 'PENDING',
+        larkSyncRetries: 0,
+        larkSyncedAt: null,
+      },
     });
 
-    const progress = total > 0 ? Math.round((synced / total) * 100) : 0;
-
-    return { total, synced, pending, failed, progress };
-  }
-
-  async getSyncStatistics(): Promise<any> {
-    return this.getSyncProgress();
+    this.logger.log(`✅ Reset ${result.count} FAILED customers to PENDING`);
+    return { resetCount: result.count };
   }
 
   async resetAllSyncStatus(): Promise<void> {
-    this.logger.log('🔄 Resetting all customer sync status to PENDING...');
+    this.logger.log('🔄 Resetting ALL customer sync status to PENDING...');
 
     const result = await this.prismaService.customer.updateMany({
       where: {
@@ -736,6 +765,113 @@ export class LarkCustomerSyncService {
     this.logger.log(`✅ Reset sync status for ${result.count} customers`);
   }
 
+  async getFailedCustomersReport(): Promise<{
+    totalFailed: number;
+    byRetryCount: Record<number, number>;
+    sampleFailedCustomers: any[];
+  }> {
+    const failedCustomers = await this.prismaService.customer.findMany({
+      where: { larkSyncStatus: 'FAILED' },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        kiotVietId: true,
+        larkSyncRetries: true,
+        larkSyncedAt: true,
+      },
+      orderBy: { larkSyncedAt: 'desc' },
+      take: 10,
+    });
+
+    const byRetryCount: Record<number, number> = {};
+
+    for (const customer of failedCustomers) {
+      const retries = customer.larkSyncRetries || 0;
+      byRetryCount[retries] = (byRetryCount[retries] || 0) + 1;
+    }
+
+    return {
+      totalFailed: failedCustomers.length,
+      byRetryCount,
+      sampleFailedCustomers: failedCustomers.slice(0, 5),
+    };
+  }
+
+  // ============================================================================
+  // ✅ MONITORING & STATISTICS
+  // ============================================================================
+
+  async getSyncProgress(): Promise<{
+    total: number;
+    synced: number;
+    pending: number;
+    failed: number;
+    progress: number;
+    canRetryFailed: boolean;
+  }> {
+    const total = await this.prismaService.customer.count();
+    const synced = await this.prismaService.customer.count({
+      where: { larkSyncStatus: 'SYNCED' },
+    });
+    const pending = await this.prismaService.customer.count({
+      where: { larkSyncStatus: 'PENDING' },
+    });
+    const failed = await this.prismaService.customer.count({
+      where: { larkSyncStatus: 'FAILED' },
+    });
+
+    const progress = total > 0 ? Math.round((synced / total) * 100) : 0;
+    const canRetryFailed = failed > 0;
+
+    return { total, synced, pending, failed, progress, canRetryFailed };
+  }
+
+  async getSyncStatistics(): Promise<any> {
+    const progress = await this.getSyncProgress();
+    const failedReport = await this.getFailedCustomersReport();
+
+    return {
+      ...progress,
+      failedDetails: failedReport,
+      cacheInfo: {
+        loaded: this.cacheLoaded,
+        size: this.existingRecordsCache.size,
+      },
+      recommendations: this.generateRecommendations(progress, failedReport),
+    };
+  }
+
+  private generateRecommendations(progress: any, failedReport: any): string[] {
+    const recommendations: string[] = [];
+
+    if (failedReport.totalFailed > 0) {
+      recommendations.push(
+        `🔄 ${failedReport.totalFailed} FAILED customers can be safely retried with resetFailedCustomers()`,
+      );
+    }
+
+    if (progress.pending > 0) {
+      recommendations.push(
+        `🚀 ${progress.pending} PENDING customers ready for sync`,
+      );
+    }
+
+    if (progress.progress < 50) {
+      recommendations.push(
+        `⚡ Consider running full sync to improve ${progress.progress}% completion rate`,
+      );
+    }
+
+    if (failedReport.totalFailed === 0 && progress.pending === 0) {
+      recommendations.push(
+        `✅ All customers synced successfully! No action needed.`,
+      );
+    }
+
+    return recommendations;
+  }
+
   async getDuplicateReport(): Promise<any> {
     const stats = await this.getSyncProgress();
 
@@ -748,7 +884,41 @@ export class LarkCustomerSyncService {
     };
   }
 
+  // ============================================================================
+  // ✅ CONVENIENT SYNC METHODS
+  // ============================================================================
+
+  async syncAllCustomersIncludingFailed(customers: any[]): Promise<void> {
+    this.logger.log(
+      '🚀 Starting FULL sync including FAILED customers (bypass mode)...',
+    );
+
+    // This will include both PENDING and FAILED customers
+    await this.syncCustomersToLarkBase(customers);
+  }
+
+  async resetAndSyncFailedCustomers(customers: any[]): Promise<void> {
+    this.logger.log('🔄 Reset FAILED customers and sync (bypass mode)...');
+
+    // Step 1: Reset FAILED to PENDING
+    const resetResult = await this.resetFailedCustomers();
+
+    if (resetResult.resetCount > 0) {
+      this.logger.log(
+        `✅ Reset ${resetResult.resetCount} customers, starting sync...`,
+      );
+
+      // Step 2: Sync all (now all PENDING)
+      await this.syncCustomersToLarkBase(customers);
+    } else {
+      this.logger.log('📋 No FAILED customers to reset');
+    }
+  }
+
+  // ============================================================================
   // ✅ LEGACY COMPATIBILITY
+  // ============================================================================
+
   async searchRecordByKiotVietId(
     kiotVietId: number | BigInt,
   ): Promise<any | null> {
