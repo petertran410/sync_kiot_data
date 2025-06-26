@@ -260,8 +260,8 @@ export class LarkCustomerSyncService {
         for (const customer of batch) {
           const existingRecord = batchResults.find(
             (record) =>
-              record.fields[LARK_CUSTOMER_FIELDS.KIOTVIET_ID] ===
-              customer.kiotVietId.toString(),
+              Number(record.fields[LARK_CUSTOMER_FIELDS.KIOTVIET_ID]) ===
+              customer.kiotVietId, // ✅ FIX: Compare numbers
           );
 
           results.push({
@@ -322,6 +322,14 @@ export class LarkCustomerSyncService {
       `🎯 Robust duplicate check complete: ${duplicateCount}/${results.length} duplicates detected`,
     );
 
+    // ✅ DEBUG: Log sample results for troubleshooting
+    if (results.length > 0) {
+      const sampleResult = results[0];
+      this.logger.debug(
+        `📋 Sample result: ${JSON.stringify(sampleResult, null, 2)}`,
+      );
+    }
+
     return results;
   }
 
@@ -341,8 +349,8 @@ export class LarkCustomerSyncService {
         // Build search filter for multiple KiotViet IDs
         const filters = customers.map((customer) => ({
           field_name: LARK_CUSTOMER_FIELDS.KIOTVIET_ID,
-          operator: 'is',
-          value: [customer.kiotVietId.toString()],
+          operator: 'equal', // ✅ FIX: Use 'equal' for number fields
+          value: [customer.kiotVietId], // ✅ FIX: Use number, not string
         }));
 
         const searchFilter = {
@@ -354,6 +362,11 @@ export class LarkCustomerSyncService {
           filter: searchFilter,
           page_size: 500,
         };
+
+        // ✅ DEBUG: Log filter for troubleshooting
+        this.logger.debug(
+          `🔍 Search filter: ${JSON.stringify(searchFilter, null, 2)}`,
+        );
 
         const response = await firstValueFrom(
           this.httpService.post(
@@ -387,6 +400,13 @@ export class LarkCustomerSyncService {
 
         throw new Error(`Batch search failed: ${response.data.msg}`);
       } catch (error) {
+        // ✅ Enhanced error logging for debugging
+        this.logger.error(`❌ Batch search error details:`, {
+          error: error.message,
+          customers: customers.length,
+          sampleKiotVietId: customers[0]?.kiotVietId,
+        });
+
         // Handle different error types
         if (error.response?.status === 401 || error.response?.status === 403) {
           authRetries++;
@@ -440,13 +460,18 @@ export class LarkCustomerSyncService {
             conditions: [
               {
                 field_name: LARK_CUSTOMER_FIELDS.KIOTVIET_ID,
-                operator: 'is',
-                value: [kiotVietId.toString()],
+                operator: 'equal', // ✅ FIX: Use 'equal' for number fields
+                value: [kiotVietId], // ✅ FIX: Use number, not string
               },
             ],
           },
           page_size: 1,
         };
+
+        // ✅ DEBUG: Log individual search
+        this.logger.debug(
+          `🔍 Individual search for ${kiotVietId}: ${JSON.stringify(searchPayload.filter, null, 2)}`,
+        );
 
         const response = await firstValueFrom(
           this.httpService.post(
@@ -862,7 +887,7 @@ export class LarkCustomerSyncService {
     }
 
     if (customer.retailerId) {
-      fields[LARK_CUSTOMER_FIELDS.STORE_ID] = customer.retailerId.toString();
+      fields[LARK_CUSTOMER_FIELDS.STORE_ID] = Number(customer.retailerId); // ✅ FIX: Number not string
     }
 
     if (customer.debt !== null && customer.debt !== undefined) {
@@ -905,26 +930,27 @@ export class LarkCustomerSyncService {
     }
 
     if (customer.modifiedDate) {
-      const vietnamDate = new Date(customer.modifiedDate + '+07:00');
-      fields[LARK_CUSTOMER_FIELDS.MODIFIED_DATE] = vietnamDate.getTime();
+      // ✅ FIX: Ensure proper timestamp format for LarkBase
+      const modifiedDate = new Date(customer.modifiedDate);
+      fields[LARK_CUSTOMER_FIELDS.MODIFIED_DATE] = modifiedDate.getTime();
     }
 
     if (customer.createdDate) {
-      const vietnamDate = new Date(customer.createdDate + '+07:00');
-      fields[LARK_CUSTOMER_FIELDS.CREATED_DATE] = vietnamDate.getTime();
+      // ✅ FIX: Ensure proper timestamp format for LarkBase
+      const createdDate = new Date(customer.createdDate);
+      fields[LARK_CUSTOMER_FIELDS.CREATED_DATE] = createdDate.getTime();
     }
 
     if (customer.psidFacebook) {
-      fields[LARK_CUSTOMER_FIELDS.FACEBOOK_ID] =
-        customer.psidFacebook.toString();
+      fields[LARK_CUSTOMER_FIELDS.FACEBOOK_ID] = Number(customer.psidFacebook); // ✅ FIX: Number not string
     }
 
     if (customer.locationName) {
       fields[LARK_CUSTOMER_FIELDS.LOCATION_NAME] = customer.locationName;
     }
 
-    // ✅ CRITICAL: Always include KiotViet ID for duplicate detection
-    fields[LARK_CUSTOMER_FIELDS.KIOTVIET_ID] = customer.kiotVietId.toString();
+    // ✅ CRITICAL: Always include KiotViet ID for duplicate detection as NUMBER
+    fields[LARK_CUSTOMER_FIELDS.KIOTVIET_ID] = Number(customer.kiotVietId);
 
     return { fields };
   }
