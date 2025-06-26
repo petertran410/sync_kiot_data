@@ -275,7 +275,7 @@ export class KiotVietCustomerService {
         expectedTotal: totalCustomers,
         isComplete:
           totalCustomers > 0
-            ? processedCount >= totalCustomers * 0.95
+            ? processedCount >= totalCustomers * 0.99
             : processedCount >= MIN_EXPECTED_CUSTOMERS,
         completionRate:
           totalCustomers > 0
