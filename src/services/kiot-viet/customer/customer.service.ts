@@ -115,13 +115,12 @@ export class KiotVietCustomerService {
   async syncHistoricalCustomers(): Promise<void> {
     const syncName = 'customer_historical';
 
+    // ✅ FIX: Declare ALL variables at the top of function scope
     let currentItem = 0;
     let processedCount = 0;
     let totalCustomers = 0;
     let consecutiveEmptyPages = 0;
     let lastValidTotal = 0;
-    let stuckPageCounter = 0;
-    let lastProcessedCount = 0;
 
     try {
       await this.updateSyncControl(syncName, {
@@ -131,24 +130,23 @@ export class KiotVietCustomerService {
         error: null,
       });
 
-      this.logger.log('🚀 Starting historical customer sync (ROBUST MODE)...');
+      this.logger.log('🚀 Starting historical customer sync...');
 
-      // ✅ ENHANCED SAFETY LIMITS
-      const MAX_CONSECUTIVE_EMPTY_PAGES = 5; // Increased from 3
-      const MAX_STUCK_ITERATIONS = 10; // New: detect stuck pagination
+      // ✅ SAFE COMPLETION DETECTION
+      const MAX_CONSECUTIVE_EMPTY_PAGES = 3;
       const MIN_EXPECTED_CUSTOMERS = 10;
-      const PAGE_SKIP_THRESHOLD = 50; // Skip ahead if too many empty pages
 
       while (true) {
-        const currentPage = Math.floor(currentItem / this.PAGE_SIZE) + 1;
-        this.logger.log(`📄 Fetching customers page: ${currentPage}`);
+        this.logger.log(
+          `📄 Fetching customers page: ${Math.floor(currentItem / this.PAGE_SIZE) + 1}`,
+        );
 
         try {
           const customerListResponse = await this.fetchCustomersList({
             currentItem,
             pageSize: this.PAGE_SIZE,
-            orderBy: 'id', // ✅ FIXED: Use 'id' instead of 'createdDate' for consistent pagination
-            orderDirection: 'ASC', // ✅ FIXED: ASC for consistent ordering
+            orderBy: 'createdDate',
+            orderDirection: 'DESC',
             includeTotal: true,
             includeCustomerGroup: true,
             includeCustomerSocial: true,
@@ -156,22 +154,18 @@ export class KiotVietCustomerService {
 
           // ✅ VALIDATION 1: Check response structure
           if (!customerListResponse) {
-            this.logger.warn(`⚠️ Null response on page ${currentPage}`);
+            this.logger.warn('⚠️ Received null response from KiotViet API');
             consecutiveEmptyPages++;
 
             if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
-              // ✅ SMART RECOVERY: Try skipping ahead instead of failing
-              const skipSize = PAGE_SKIP_THRESHOLD * this.PAGE_SIZE;
-              this.logger.warn(
-                `🔄 Skipping ahead ${PAGE_SKIP_THRESHOLD} pages to resume sync...`,
+              this.logger.error(
+                `❌ Received ${MAX_CONSECUTIVE_EMPTY_PAGES} consecutive empty responses. Possible API issue.`,
               );
-              currentItem += skipSize;
-              consecutiveEmptyPages = 0; // Reset counter
-              continue;
+              throw new Error(
+                `API returned consecutive empty responses. Processed ${processedCount}/${totalCustomers || 'unknown'} customers.`,
+              );
             }
-
-            await new Promise((resolve) => setTimeout(resolve, 5000)); // Longer delay
-            currentItem += this.PAGE_SIZE;
+            await new Promise((resolve) => setTimeout(resolve, 5000));
             continue;
           }
 
@@ -180,20 +174,11 @@ export class KiotVietCustomerService {
             customerListResponse.total !== undefined &&
             customerListResponse.total > 0
           ) {
-            const newTotal = customerListResponse.total;
-            if (totalCustomers === 0) {
-              totalCustomers = newTotal;
-              lastValidTotal = newTotal;
-              this.logger.log(
-                `📊 Total customers in system: ${totalCustomers}`,
-              );
-            } else if (Math.abs(newTotal - totalCustomers) > 100) {
-              // ✅ DETECTION: Total count changed significantly
-              this.logger.warn(
-                `⚠️ Total count changed: ${totalCustomers} → ${newTotal}`,
-              );
-              totalCustomers = newTotal;
-            }
+            totalCustomers = customerListResponse.total;
+            lastValidTotal = totalCustomers;
+            this.logger.log(`📊 Total customers in system: ${totalCustomers}`);
+          } else if (lastValidTotal > 0) {
+            totalCustomers = lastValidTotal;
           }
 
           // ✅ VALIDATION 3: Check for empty data
@@ -201,79 +186,31 @@ export class KiotVietCustomerService {
             !customerListResponse.data ||
             customerListResponse.data.length === 0
           ) {
-            this.logger.warn(
-              `⚠️ Empty page ${currentPage}. Count: ${consecutiveEmptyPages + 1}`,
-            );
             consecutiveEmptyPages++;
+            this.logger.warn(
+              `⚠️ Empty page received. Count: ${consecutiveEmptyPages}`,
+            );
 
             if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
-              // ✅ SMART COMPLETION: Check if we're near expected total
-              const completionRate =
-                totalCustomers > 0
-                  ? (processedCount / totalCustomers) * 100
-                  : 0;
-
-              if (completionRate >= 90) {
-                this.logger.log(
-                  `✅ Smart completion: ${completionRate.toFixed(1)}% complete (${processedCount}/${totalCustomers})`,
-                );
-                break; // Complete with 90%+ success rate
-              } else if (completionRate >= 70) {
-                // ✅ TRY ALTERNATIVE APPROACH: Different ordering
-                this.logger.warn(
-                  `🔄 Switching to alternative pagination approach...`,
-                );
-                await this.continueWithAlternativePagination(
-                  currentItem,
-                  processedCount,
-                  totalCustomers,
-                );
-                break;
-              } else {
-                // ✅ GRACEFUL DEGRADATION: Report partial success
-                this.logger.error(
-                  `❌ Pagination failed after page ${currentPage}. ` +
-                    `Completed: ${processedCount}/${totalCustomers} (${completionRate.toFixed(1)}%)`,
-                );
-                throw new Error(
-                  `Pagination gap detected. Processed ${processedCount}/${totalCustomers}. ` +
-                    `Last successful page: ${currentPage - consecutiveEmptyPages}. ` +
-                    `Consider manual investigation of data gap.`,
-                );
-              }
+              throw new Error(
+                `Too many empty pages. Processed ${processedCount}/${totalCustomers || 'unknown'}. ` +
+                  `Expected ${lastValidTotal || 'unknown'}. Multiple empty API responses.`,
+              );
             }
-
-            await new Promise((resolve) => setTimeout(resolve, 3000));
+            await new Promise((resolve) => setTimeout(resolve, 2000));
             currentItem += this.PAGE_SIZE;
             continue;
           }
 
-          // ✅ VALIDATION 4: Reset counters on successful data
+          // ✅ VALIDATION 4: Reset empty page counter on successful data
           consecutiveEmptyPages = 0;
-
-          // ✅ VALIDATION 5: Check for stuck pagination
-          if (processedCount === lastProcessedCount) {
-            stuckPageCounter++;
-            if (stuckPageCounter >= MAX_STUCK_ITERATIONS) {
-              this.logger.error(
-                `❌ Pagination stuck: no progress for ${MAX_STUCK_ITERATIONS} iterations`,
-              );
-              throw new Error(
-                `Sync stuck at ${processedCount}/${totalCustomers}. ` +
-                  `Possible API pagination bug or data inconsistency.`,
-              );
-            }
-          } else {
-            stuckPageCounter = 0; // Reset if making progress
-            lastProcessedCount = processedCount;
-          }
 
           this.logger.log(
             `📊 Processing ${customerListResponse.data.length} customers ` +
               `(Processed: ${processedCount}/${totalCustomers || 'unknown'})`,
           );
 
-          // ✅ VALIDATION 6: Check for ALL duplicates (pagination overlap)
+          // ✅ VALIDATION 5: Check for duplicate/overlapping data
           const currentPageIds = customerListResponse.data.map((c) => c.id);
           const duplicateCheck = await this.prismaService.customer.findMany({
             where: { kiotVietId: { in: currentPageIds } },
@@ -282,13 +219,13 @@ export class KiotVietCustomerService {
 
           if (duplicateCheck.length === customerListResponse.data.length) {
             this.logger.warn(
-              `⚠️ All customers in page ${currentPage} already exist. Skipping...`,
+              `⚠️ All customers in current page already exist. Possible pagination overlap.`,
             );
             currentItem += this.PAGE_SIZE;
             continue;
           }
 
-          // ✅ PROCESS: Normal processing
+          // Process customers normally
           const customersWithDetails = await this.enrichCustomersWithDetails(
             customerListResponse.data,
           );
@@ -300,43 +237,30 @@ export class KiotVietCustomerService {
           processedCount += customersWithDetails.length;
           currentItem += this.PAGE_SIZE;
 
-          // ✅ VALIDATION 7: Progress tracking
-          const progressPercent =
-            totalCustomers > 0
-              ? Math.round((processedCount / totalCustomers) * 100)
-              : 0;
+          // ✅ VALIDATION 6: Progress validation
           this.logger.log(
-            `✅ Progress: ${processedCount}/${totalCustomers || 'unknown'} customers (${progressPercent}%)`,
+            `✅ Progress: ${processedCount}/${totalCustomers || 'unknown'} customers ` +
+              `(${totalCustomers ? Math.round((processedCount / totalCustomers) * 100) : '?'}%)`,
           );
 
-          // ✅ VALIDATION 8: Auto-completion check
+          // ✅ VALIDATION 7: Auto-stop if we've exceeded expected total
           if (totalCustomers > 0 && processedCount >= totalCustomers) {
             this.logger.log(
-              `✅ Target reached: Processed ${processedCount}/${totalCustomers} customers`,
+              `✅ Completed: Processed ${processedCount}/${totalCustomers} customers`,
             );
             break;
           }
-
-          // ✅ RATE LIMITING: Small delay to avoid overwhelming API
-          await new Promise((resolve) => setTimeout(resolve, 500));
         } catch (apiError) {
           this.logger.error(
-            `❌ API error on page ${currentPage}: ${apiError.message}`,
+            `❌ API error on page ${Math.floor(currentItem / this.PAGE_SIZE) + 1}: ${apiError.message}`,
           );
 
           consecutiveEmptyPages++;
 
           if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
-            // ✅ ENHANCED ERROR REPORTING
-            const completionRate =
-              totalCustomers > 0 ? (processedCount / totalCustomers) * 100 : 0;
-
             throw new Error(
-              `Multiple API failures during sync. ` +
-                `Processed ${processedCount}/${totalCustomers || 'unknown'} customers (${completionRate.toFixed(1)}%). ` +
-                `Failed at page ${currentPage}. ` +
-                `Last error: ${apiError.message}. ` +
-                `Possible causes: API rate limiting, data inconsistency, or pagination bugs.`,
+              `Multiple API failures during sync. Processed ${processedCount}/${totalCustomers || 'unknown'} customers. ` +
+                `Last error: ${apiError.message}`,
             );
           }
 
@@ -345,25 +269,57 @@ export class KiotVietCustomerService {
         }
       }
 
-      // ✅ FINAL VALIDATION
-      const finalCompletionRate =
-        totalCustomers > 0 ? (processedCount / totalCustomers) * 100 : 100;
+      // ✅ FINAL VALIDATION - Now variables are in scope
+      const finalValidation = {
+        processedCount,
+        expectedTotal: totalCustomers,
+        isComplete:
+          totalCustomers > 0
+            ? processedCount >= totalCustomers * 0.95
+            : processedCount >= MIN_EXPECTED_CUSTOMERS,
+        completionRate:
+          totalCustomers > 0
+            ? Math.round((processedCount / totalCustomers) * 100)
+            : null,
+      };
 
-      await this.updateSyncControl(syncName, {
-        isRunning: false,
-        status: finalCompletionRate >= 95 ? 'completed' : 'partial',
-        completedAt: new Date(),
-        progress: {
-          processedCount,
-          expectedTotal: totalCustomers,
-          completionRate: finalCompletionRate,
-          finalPage: Math.floor(currentItem / this.PAGE_SIZE),
-        },
+      this.logger.log(
+        `📊 Final validation: ${JSON.stringify(finalValidation, null, 2)}`,
+      );
+
+      if (!finalValidation.isComplete) {
+        this.logger.warn(
+          `⚠️ Sync may be incomplete: ${processedCount}/${totalCustomers || 'unknown'} customers processed`,
+        );
+
+        await this.updateSyncControl(syncName, {
+          isRunning: false,
+          isEnabled: false,
+          status: 'completed_with_warnings',
+          completedAt: new Date(),
+          lastRunAt: new Date(),
+          progress: finalValidation,
+        });
+      } else {
+        await this.updateSyncControl(syncName, {
+          isRunning: false,
+          isEnabled: false,
+          status: 'completed',
+          completedAt: new Date(),
+          lastRunAt: new Date(),
+          progress: finalValidation,
+        });
+      }
+
+      // Enable recent sync
+      await this.updateSyncControl('customer_recent', {
+        isEnabled: true,
+        status: 'idle',
       });
 
       this.logger.log(
-        `🎉 Historical customer sync completed: ${processedCount}/${totalCustomers} customers ` +
-          `(${finalCompletionRate.toFixed(1)}% completion rate)`,
+        `🎉 Historical customer sync finished: ${processedCount} customers processed ` +
+          `(${finalValidation.completionRate || '?'}% completion rate)`,
       );
     } catch (error) {
       this.logger.error(`❌ Historical customer sync failed: ${error.message}`);
@@ -372,72 +328,11 @@ export class KiotVietCustomerService {
         isRunning: false,
         status: 'failed',
         error: error.message,
-        progress: {
-          processedCount,
-          expectedTotal: totalCustomers,
-          failedAtPage: Math.floor(currentItem / this.PAGE_SIZE) + 1,
-        },
+        progress: { processedCount, expectedTotal: totalCustomers },
       });
 
       throw error;
     }
-  }
-
-  // ============================================================================
-  // ✅ ALTERNATIVE PAGINATION APPROACH
-  // ============================================================================
-
-  private async continueWithAlternativePagination(
-    startItem: number,
-    alreadyProcessed: number,
-    expectedTotal: number,
-  ): Promise<void> {
-    this.logger.log('🔄 Attempting alternative pagination approach...');
-
-    try {
-      // ✅ APPROACH 1: Use different ordering
-      const alternativeResponse = await this.fetchCustomersList({
-        currentItem: 0, // Start from beginning with different order
-        pageSize: this.PAGE_SIZE,
-        orderBy: 'modifiedDate', // Different field
-        orderDirection: 'DESC',
-        includeTotal: true,
-      });
-
-      if (alternativeResponse?.data && alternativeResponse.data.length > 0) {
-        this.logger.log(
-          `✅ Alternative approach found ${alternativeResponse.data.length} customers`,
-        );
-
-        // Process remaining customers with alternative approach
-        // (Implementation would continue with different pagination strategy)
-      } else {
-        this.logger.warn(
-          '⚠️ Alternative pagination also returned empty results',
-        );
-      }
-    } catch (error) {
-      this.logger.error(`❌ Alternative pagination failed: ${error.message}`);
-      throw error;
-    }
-  }
-
-  // ============================================================================
-  // ✅ DIAGNOSTIC METHODS
-  // ============================================================================
-
-  async diagnosePaginationIssue(): Promise<{
-    totalCustomers: number;
-    actualPages: number;
-    emptyPageRanges: Array<{ start: number; end: number }>;
-    recommendedAction: string;
-  }> {
-    return {
-      totalCustomers: 0,
-      actualPages: 0,
-      emptyPageRanges: [],
-      recommendedAction: 'Switch to alternative pagination approach',
-    };
   }
 
   // ============================================================================
