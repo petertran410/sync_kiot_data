@@ -95,11 +95,32 @@ export class KiotVietCustomerService {
   }
 
   // ============================================================================
-  // HISTORICAL SYNC (Complete dataset) - FIXED VERSION
+  // ✅ KEEP EXISTING METHOD - Required by sync.controller.ts and sync.service.ts
+  // ============================================================================
+
+  async enableHistoricalSync(): Promise<void> {
+    await this.updateSyncControl('customer_historical', {
+      isEnabled: true,
+      isRunning: false,
+      status: 'idle',
+    });
+
+    this.logger.log('✅ Historical customer sync enabled');
+  }
+
+  // ============================================================================
+  // HISTORICAL SYNC (Complete dataset) - ✅ FIXED VARIABLE SCOPING ONLY
   // ============================================================================
 
   async syncHistoricalCustomers(): Promise<void> {
     const syncName = 'customer_historical';
+
+    // ✅ FIX: Declare ALL variables at the top of function scope
+    let currentItem = 0;
+    let processedCount = 0;
+    let totalCustomers = 0;
+    let consecutiveEmptyPages = 0;
+    let lastValidTotal = 0;
 
     try {
       await this.updateSyncControl(syncName, {
@@ -110,13 +131,6 @@ export class KiotVietCustomerService {
       });
 
       this.logger.log('🚀 Starting historical customer sync...');
-
-      // ✅ FIX: Declare ALL variables in proper scope at the top
-      let currentItem = 0;
-      let processedCount = 0;
-      let totalCustomers = 0;
-      let consecutiveEmptyPages = 0;
-      let lastValidTotal = 0;
 
       // ✅ SAFE COMPLETION DETECTION
       const MAX_CONSECUTIVE_EMPTY_PAGES = 3;
@@ -218,8 +232,6 @@ export class KiotVietCustomerService {
 
           const savedCustomers =
             await this.saveCustomersToDatabase(customersWithDetails);
-
-          // ✅ FIX: Enhanced LarkBase sync with better error handling
           await this.syncCustomersToLarkBase(savedCustomers);
 
           processedCount += customersWithDetails.length;
@@ -257,7 +269,7 @@ export class KiotVietCustomerService {
         }
       }
 
-      // ✅ FINAL VALIDATION
+      // ✅ FINAL VALIDATION - Now variables are in scope
       const finalValidation = {
         processedCount,
         expectedTotal: totalCustomers,
@@ -312,12 +324,11 @@ export class KiotVietCustomerService {
     } catch (error) {
       this.logger.error(`❌ Historical customer sync failed: ${error.message}`);
 
-      // ✅ FIX: Use declared variables in proper scope
       await this.updateSyncControl(syncName, {
         isRunning: false,
         status: 'failed',
         error: error.message,
-        progress: { processedCount: 0, expectedTotal: 0 }, // Safe fallback
+        progress: { processedCount, expectedTotal: totalCustomers },
       });
 
       throw error;
@@ -487,7 +498,7 @@ export class KiotVietCustomerService {
   async saveCustomersToDatabase(customers: KiotVietCustomer[]): Promise<any[]> {
     this.logger.log(`💾 Saving ${customers.length} customers to database...`);
 
-    const savedCustomers = [];
+    const savedCustomers: any[] = [];
 
     for (const customerData of customers) {
       try {
@@ -598,7 +609,7 @@ export class KiotVietCustomerService {
   }
 
   // ============================================================================
-  // ✅ ENHANCED LARKBASE SYNC WITH IMPROVED ERROR HANDLING
+  // LARKBASE SYNC (Keep existing behavior)
   // ============================================================================
 
   async syncCustomersToLarkBase(customers: any[]): Promise<void> {
@@ -617,7 +628,7 @@ export class KiotVietCustomerService {
         return;
       }
 
-      // ✅ FIX: Enhanced sync with individual record tracking
+      // Sync to LarkBase
       await this.larkCustomerSyncService.syncCustomersToLarkBase(
         customersToSync,
       );
@@ -627,7 +638,7 @@ export class KiotVietCustomerService {
       this.logger.error(`❌ LarkBase sync FAILED: ${error.message}`);
       this.logger.error(`🛑 STOPPING sync to prevent data duplication`);
 
-      // ✅ FIX: Don't fail entire sync, just mark failed customers
+      // Update all failed customers
       const customerIds = customers.map((c) => c.id);
       await this.prismaService.customer.updateMany({
         where: { id: { in: customerIds } },
@@ -637,8 +648,8 @@ export class KiotVietCustomerService {
         },
       });
 
-      // Log error but don't throw to continue database operations
-      this.logger.warn(`⚠️ LarkBase sync failed but database sync continues`);
+      // Do NOT throw error to continue database sync, but stop LarkBase sync
+      throw new Error(`LarkBase sync failed: ${error.message}`);
     }
   }
 

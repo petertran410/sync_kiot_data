@@ -6,7 +6,7 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { LarkAuthService } from '../auth/lark-auth.service';
 import { firstValueFrom } from 'rxjs';
 
-// Field mappings - Based on Khách Hàng.rtf configuration
+// Field mappings (same as before)
 const LARK_CUSTOMER_FIELDS = {
   PRIMARY_NAME: 'fld71g8Gci',
   CUSTOMER_CODE: 'fld29zIB9D',
@@ -52,6 +52,7 @@ interface LarkBatchResponse {
   };
 }
 
+// ✅ NEW: Interface for duplicate check results
 interface DuplicateCheckResult {
   kiotVietId: number;
   larkRecordId: string | null;
@@ -63,12 +64,11 @@ export class LarkCustomerSyncService {
   private readonly logger = new Logger(LarkCustomerSyncService.name);
   private readonly baseToken: string;
   private readonly tableId: string;
-  private readonly batchSize: number = 25; // ✅ Reduced batch size for stability
+  private readonly batchSize: number = 25; // ✅ Reduced for stability
 
   // ✅ AUTH ERROR CODES
   private readonly AUTH_ERROR_CODES = [99991663, 99991664, 99991665];
   private readonly MAX_AUTH_RETRIES = 3;
-  private readonly MAX_INDIVIDUAL_RETRIES = 2;
 
   constructor(
     private readonly httpService: HttpService,
@@ -92,7 +92,7 @@ export class LarkCustomerSyncService {
   }
 
   // ============================================================================
-  // ✅ ENHANCED MAIN SYNC WITH ROBUST DUPLICATE DETECTION
+  // ✅ ENHANCED MAIN SYNC WITH BETTER DUPLICATE DETECTION
   // ============================================================================
 
   async syncCustomersToLarkBase(customers: any[]): Promise<void> {
@@ -101,12 +101,12 @@ export class LarkCustomerSyncService {
         `🚀 Starting LarkBase sync for ${customers.length} customers...`,
       );
 
-      // ✅ Step 1: Pre-filter customers that are already synced
-      const customersToCheck = customers.filter(
+      // ✅ RESUME LOGIC: Filter customers already synced
+      const customersToSync = customers.filter(
         (c) => c.larkSyncStatus === 'PENDING',
       );
 
-      if (customersToCheck.length === 0) {
+      if (customersToSync.length === 0) {
         this.logger.log(
           '📋 No customers need LarkBase sync - all already synced!',
         );
@@ -114,30 +114,29 @@ export class LarkCustomerSyncService {
       }
 
       this.logger.log(
-        `📊 Resuming sync: ${customersToCheck.length}/${customers.length} customers need sync`,
+        `📊 Resuming sync: ${customersToSync.length}/${customers.length} customers need sync`,
       );
 
-      // ✅ Step 2: Batch duplicate check to identify existing records
+      // ✅ ENHANCED: Check for duplicates in batches
       const duplicateCheckResults =
-        await this.batchCheckDuplicates(customersToCheck);
+        await this.batchCheckDuplicates(customersToSync);
 
-      // ✅ Step 3: Separate new records vs updates
-      const newCustomers = [];
-      const updateCustomers = [];
+      // ✅ ENHANCED: Separate new vs existing customers
+      const newCustomers: any[] = [];
+      const updateCustomers: any[] = [];
 
-      for (const customer of customersToCheck) {
+      for (const customer of customersToSync) {
         const checkResult = duplicateCheckResults.find(
           (r) => r.kiotVietId === customer.kiotVietId,
         );
 
         if (checkResult?.isDuplicate && checkResult.larkRecordId) {
-          // Existing record - prepare for update
+          // Add larkRecordId for updates
           updateCustomers.push({
             ...customer,
             larkRecordId: checkResult.larkRecordId,
           });
         } else {
-          // New record - prepare for creation
           newCustomers.push(customer);
         }
       }
@@ -146,12 +145,12 @@ export class LarkCustomerSyncService {
         `📋 Duplicate check complete: ${newCustomers.length} new, ${updateCustomers.length} updates`,
       );
 
-      // ✅ Step 4: Process new records in batches
+      // ✅ Process new customers in batches
       if (newCustomers.length > 0) {
         await this.processNewCustomers(newCustomers);
       }
 
-      // ✅ Step 5: Process updates individually (more reliable)
+      // ✅ Process updates individually (more reliable)
       if (updateCustomers.length > 0) {
         await this.processUpdateCustomers(updateCustomers);
       }
@@ -164,10 +163,10 @@ export class LarkCustomerSyncService {
   }
 
   // ============================================================================
-  // ✅ ROBUST DUPLICATE DETECTION SYSTEM
+  // ✅ ENHANCED DUPLICATE DETECTION
   // ============================================================================
 
-  async batchCheckDuplicates(
+  private async batchCheckDuplicates(
     customers: any[],
   ): Promise<DuplicateCheckResult[]> {
     this.logger.log(
@@ -175,20 +174,19 @@ export class LarkCustomerSyncService {
     );
 
     const results: DuplicateCheckResult[] = [];
-    const batchSize = 50; // Check duplicates in smaller batches
+    const batchSize = 50;
 
     for (let i = 0; i < customers.length; i += batchSize) {
       const batch = customers.slice(i, i + batchSize);
 
       try {
-        // ✅ Build complex filter for multiple KiotViet IDs
+        // Build search filter for multiple KiotViet IDs
         const filters = batch.map((customer) => ({
           field_name: LARK_CUSTOMER_FIELDS.KIOTVIET_ID,
           operator: 'is',
           value: [customer.kiotVietId.toString()],
         }));
 
-        // ✅ Use OR condition to check multiple IDs at once
         const searchFilter = {
           conjunction: 'or',
           conditions: filters,
@@ -196,7 +194,7 @@ export class LarkCustomerSyncService {
 
         const searchResults = await this.searchLarkBaseRecords(searchFilter);
 
-        // ✅ Map results back to customers
+        // Map results back to customers
         for (const customer of batch) {
           const existingRecord = searchResults.find(
             (record) =>
@@ -215,14 +213,13 @@ export class LarkCustomerSyncService {
           `✅ Batch ${Math.floor(i / batchSize) + 1}: Found ${searchResults.length} existing records`,
         );
 
-        // Small delay between batches to avoid rate limiting
         await new Promise((resolve) => setTimeout(resolve, 200));
       } catch (error) {
         this.logger.warn(
           `⚠️ Duplicate check failed for batch ${Math.floor(i / batchSize) + 1}: ${error.message}`,
         );
 
-        // ✅ Fallback: Treat as new records if check fails
+        // Fallback: treat as new records
         for (const customer of batch) {
           results.push({
             kiotVietId: customer.kiotVietId,
@@ -237,7 +234,7 @@ export class LarkCustomerSyncService {
   }
 
   // ============================================================================
-  // ✅ ENHANCED SEARCH WITH RETRY LOGIC
+  // ✅ SEARCH WITH RETRY LOGIC
   // ============================================================================
 
   private async searchLarkBaseRecords(filter: any): Promise<any[]> {
@@ -249,7 +246,7 @@ export class LarkCustomerSyncService {
 
         const searchPayload = {
           filter,
-          page_size: 500, // Max page size for search
+          page_size: 500,
         };
 
         const response = await firstValueFrom(
@@ -264,7 +261,6 @@ export class LarkCustomerSyncService {
           return response.data.data?.items || [];
         }
 
-        // ✅ Check for auth errors
         if (this.AUTH_ERROR_CODES.includes(response.data.code)) {
           authRetries++;
           this.logger.warn(
@@ -291,7 +287,6 @@ export class LarkCustomerSyncService {
           }
         }
 
-        this.logger.warn(`⚠️ Search error: ${error.message}`);
         throw error;
       }
     }
@@ -300,7 +295,7 @@ export class LarkCustomerSyncService {
   }
 
   // ============================================================================
-  // ✅ PROCESS NEW CUSTOMERS (BATCH CREATE)
+  // ✅ PROCESS NEW CUSTOMERS
   // ============================================================================
 
   private async processNewCustomers(customers: any[]): Promise<void> {
@@ -324,18 +319,15 @@ export class LarkCustomerSyncService {
         successCount += batchResult.successCount;
         failedCount += batchResult.failedCount;
 
-        // ✅ Mark successful customers as SYNCED
         if (batchResult.successCount > 0) {
           await this.markCustomersAsSynced(
             batch.slice(0, batchResult.successCount),
           );
         }
 
-        // ✅ Mark failed customers
         if (batchResult.failedCount > 0) {
           await this.markCustomersAsFailed(
             batch.slice(batchResult.successCount),
-            'Batch creation failed',
           );
         }
 
@@ -344,7 +336,7 @@ export class LarkCustomerSyncService {
         this.logger.error(
           `❌ Batch ${i + 1} creation failed: ${error.message}`,
         );
-        await this.markCustomersAsFailed(batch, error.message);
+        await this.markCustomersAsFailed(batch);
         failedCount += batch.length;
       }
     }
@@ -355,7 +347,7 @@ export class LarkCustomerSyncService {
   }
 
   // ============================================================================
-  // ✅ PROCESS UPDATE CUSTOMERS (INDIVIDUAL UPDATES)
+  // ✅ PROCESS UPDATE CUSTOMERS
   // ============================================================================
 
   private async processUpdateCustomers(customers: any[]): Promise<void> {
@@ -374,14 +366,13 @@ export class LarkCustomerSyncService {
 
         this.logger.debug(`✅ Updated customer ${customer.code}`);
 
-        // Small delay between individual updates
         await new Promise((resolve) => setTimeout(resolve, 100));
       } catch (error) {
         this.logger.warn(
           `⚠️ Failed to update customer ${customer.code}: ${error.message}`,
         );
 
-        await this.markCustomersAsFailed([customer], error.message);
+        await this.markCustomersAsFailed([customer]);
         failedCount++;
       }
     }
@@ -392,7 +383,7 @@ export class LarkCustomerSyncService {
   }
 
   // ============================================================================
-  // ✅ INDIVIDUAL CUSTOMER UPDATE
+  // ✅ INDIVIDUAL UPDATE
   // ============================================================================
 
   private async updateSingleCustomer(customer: any): Promise<void> {
@@ -416,10 +407,9 @@ export class LarkCustomerSyncService {
         );
 
         if (response.data.code === 0) {
-          return; // Success
+          return;
         }
 
-        // ✅ Check for auth errors
         if (this.AUTH_ERROR_CODES.includes(response.data.code)) {
           authRetries++;
           this.logger.warn(
@@ -490,7 +480,6 @@ export class LarkCustomerSyncService {
           };
         }
 
-        // ✅ Check for auth errors
         if (this.AUTH_ERROR_CODES.includes(response.data.code)) {
           authRetries++;
           this.logger.warn(
@@ -534,11 +523,9 @@ export class LarkCustomerSyncService {
     try {
       this.logger.log('🔄 Forcing LarkBase token refresh...');
 
-      // Clear cached token in auth service
       (this.larkAuthService as any).accessToken = null;
       (this.larkAuthService as any).tokenExpiry = null;
 
-      // Get fresh token
       await this.larkAuthService.getCustomerHeaders();
 
       this.logger.log('✅ LarkBase token refreshed successfully');
@@ -551,7 +538,7 @@ export class LarkCustomerSyncService {
   }
 
   // ============================================================================
-  // ✅ DATABASE STATUS TRACKING
+  // ✅ DATABASE STATUS TRACKING (NO SCHEMA CHANGES)
   // ============================================================================
 
   private async markCustomersAsSynced(customers: any[]): Promise<void> {
@@ -575,45 +562,30 @@ export class LarkCustomerSyncService {
     }
   }
 
-  private async markCustomersAsFailed(
-    customers: any[],
-    error: string,
-  ): Promise<void> {
+  private async markCustomersAsFailed(customers: any[]): Promise<void> {
     try {
       const customerIds = customers.map((c) => c.id);
 
-      // ✅ Increment retry count and mark as failed if too many retries
-      for (const customerId of customerIds) {
-        const customer = await this.prismaService.customer.findUnique({
-          where: { id: customerId },
-          select: { larkSyncRetries: true },
-        });
+      // ✅ FIX: Only use fields that exist in schema
+      await this.prismaService.customer.updateMany({
+        where: { id: { in: customerIds } },
+        data: {
+          larkSyncStatus: 'FAILED',
+          larkSyncedAt: new Date(),
+          larkSyncRetries: { increment: 1 },
+        },
+      });
 
-        const retryCount = (customer?.larkSyncRetries || 0) + 1;
-        const status =
-          retryCount >= this.MAX_INDIVIDUAL_RETRIES ? 'FAILED' : 'PENDING';
-
-        await this.prismaService.customer.update({
-          where: { id: customerId },
-          data: {
-            larkSyncStatus: status,
-            larkSyncedAt: new Date(),
-            larkSyncRetries: retryCount,
-            larkSyncError: error.substring(0, 500),
-          },
-        });
-      }
-
-      this.logger.debug(`⚠️ Marked ${customers.length} customers with error`);
-    } catch (dbError) {
+      this.logger.debug(`❌ Marked ${customers.length} customers as FAILED`);
+    } catch (error) {
       this.logger.error(
-        `❌ Failed to mark customers as failed: ${dbError.message}`,
+        `❌ Failed to mark customers as failed: ${error.message}`,
       );
     }
   }
 
   // ============================================================================
-  // ✅ UTILITY METHODS
+  // ✅ UTILITY METHODS (Keep existing mapping logic)
   // ============================================================================
 
   private createBatches<T>(items: T[], batchSize: number): T[][] {
@@ -627,7 +599,6 @@ export class LarkCustomerSyncService {
   private mapCustomerToLarkBase(customer: any): LarkBaseRecord {
     const fields: Record<string, any> = {};
 
-    // ✅ Map all customer fields based on Khách Hàng.rtf configuration
     if (customer.name) {
       fields[LARK_CUSTOMER_FIELDS.PRIMARY_NAME] = customer.name;
     }
@@ -729,10 +700,16 @@ export class LarkCustomerSyncService {
   }
 
   // ============================================================================
-  // ✅ SYNC STATISTICS & MONITORING
+  // ✅ EXISTING METHODS (Keep for compatibility)
   // ============================================================================
 
-  async getSyncStatistics(): Promise<any> {
+  async getSyncProgress(): Promise<{
+    total: number;
+    synced: number;
+    pending: number;
+    failed: number;
+    progress: number;
+  }> {
     const total = await this.prismaService.customer.count();
     const synced = await this.prismaService.customer.count({
       where: { larkSyncStatus: 'SYNCED' },
@@ -749,10 +726,11 @@ export class LarkCustomerSyncService {
     return { total, synced, pending, failed, progress };
   }
 
-  // ============================================================================
-  // ✅ LEGACY COMPATIBILITY METHODS (if needed by other parts of system)
-  // ============================================================================
+  async getSyncStatistics(): Promise<any> {
+    return this.getSyncProgress();
+  }
 
+  // ✅ KEEP: Legacy compatibility
   async searchRecordByKiotVietId(kiotVietId: number): Promise<any | null> {
     try {
       const filter = {
@@ -784,7 +762,6 @@ export class LarkCustomerSyncService {
         larkSyncStatus: 'PENDING',
         larkSyncedAt: null,
         larkSyncRetries: 0,
-        larkSyncError: null,
       },
     });
 
