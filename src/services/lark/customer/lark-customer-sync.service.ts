@@ -7,32 +7,32 @@ import { firstValueFrom } from 'rxjs';
 
 // Field mappings (same as before)
 const LARK_CUSTOMER_FIELDS = {
-  PRIMARY_NAME: 'Tên Khách Hàng',
-  CUSTOMER_CODE: 'Mã Khách Hàng',
-  PHONE_NUMBER: 'Số Điện Thoại',
-  STORE_ID: 'Id Cửa Hàng',
-  COMPANY: 'Công Ty',
-  EMAIL: 'Email của Khách Hàng',
-  ADDRESS: 'Địa Chỉ Khách Hàng',
-  CURRENT_DEBT: 'Nợ Hiện Tại',
-  TAX_CODE: 'Mã Số Thuế',
-  TOTAL_POINTS: 'Tổng Điểm',
-  TOTAL_REVENUE: 'Tổng Doanh Thu',
-  GENDER: 'Giới Tính',
-  WARD_NAME: 'Phường xã',
-  CURRENT_POINTS: 'Điểm Hiện Tại',
-  KIOTVIET_ID: 'kiotVietId',
-  TOTAL_INVOICED: 'Tổng Bán',
-  COMMENTS: 'Ghi Chú',
-  MODIFIED_DATE: 'Thời Gian Cập Nhật',
-  CREATED_DATE: 'Thời Gian Tạo',
-  FACEBOOK_ID: 'Facebook Khách Hàng',
-  LOCATION_NAME: 'Khu Vực',
+  PRIMARY_NAME: 'fld71g8Gci',
+  CUSTOMER_CODE: 'fld29zIB9D',
+  PHONE_NUMBER: 'fldHo79lXi',
+  STORE_ID: 'fld6M0YzOE',
+  COMPANY: 'fldUubtChK',
+  EMAIL: 'fldRXGBAzC',
+  ADDRESS: 'fld17QvTM6',
+  CURRENT_DEBT: 'fldEBifOyt',
+  TAX_CODE: 'fldCDKr4yC',
+  TOTAL_POINTS: 'fld9zfi74R',
+  TOTAL_REVENUE: 'fldStZEptP',
+  GENDER: 'fldLa1obN8',
+  WARD_NAME: 'fldU0Vru4a',
+  CURRENT_POINTS: 'fldujW0cpW',
+  KIOTVIET_ID: 'fldN5NE17y',
+  TOTAL_INVOICED: 'fld1gzrrvR',
+  COMMENTS: 'fldRFEVYOn',
+  MODIFIED_DATE: 'fldK8teGni',
+  CREATED_DATE: 'flddDuUUEg',
+  FACEBOOK_ID: 'fldh8TIi9K',
+  LOCATION_NAME: 'fldU3fKuoa',
 } as const;
 
 const GENDER_OPTIONS = {
-  MALE: 'Nam',
-  FEMALE: 'Nữ',
+  MALE: 'optUmkTfdd',
+  FEMALE: 'optcf5ndAC',
 } as const;
 
 interface LarkBaseRecord {
@@ -690,15 +690,13 @@ export class LarkCustomerSyncService {
     }
 
     if (customer.createdDate) {
-      fields[LARK_CUSTOMER_FIELDS.CREATED_DATE] = new Date(
-        customer.createdDate,
-      ).getTime();
+      const vietnamDate = new Date(customer.createdDate + '+07:00');
+      fields[LARK_CUSTOMER_FIELDS.CREATED_DATE] = vietnamDate.getTime();
     }
 
     if (customer.modifiedDate) {
-      fields[LARK_CUSTOMER_FIELDS.MODIFIED_DATE] = new Date(
-        customer.modifiedDate,
-      ).getTime();
+      const vietnamDate = new Date(customer.modifiedDate + '+07:00');
+      fields[LARK_CUSTOMER_FIELDS.MODIFIED_DATE] = vietnamDate.getTime;
     }
 
     return { fields };
