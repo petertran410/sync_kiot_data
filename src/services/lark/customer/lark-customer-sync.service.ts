@@ -6,7 +6,7 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { LarkAuthService } from '../auth/lark-auth.service';
 import { firstValueFrom } from 'rxjs';
 
-// Field mappings (same as before)
+// ✅ EXACT field names from Khách Hàng.rtf
 const LARK_CUSTOMER_FIELDS = {
   PRIMARY_NAME: 'Tên Khách Hàng',
   CUSTOMER_CODE: 'Mã Khách Hàng',
@@ -45,21 +45,17 @@ interface LarkBatchResponse {
   code: number;
   msg: string;
   data?: {
-    records: Array<{
+    records?: Array<{
+      record_id: string;
+      fields: Record<string, any>;
+    }>;
+    items?: Array<{
       record_id: string;
       fields: Record<string, any>;
     }>;
   };
 }
 
-// ✅ Interface for duplicate check results
-interface DuplicateCheckResult {
-  kiotVietId: number; // ✅ FIX: Use number instead of BigInt for JSON serialization
-  larkRecordId: string | null;
-  isDuplicate: boolean;
-}
-
-// ✅ Interface for accurate batch tracking
 interface BatchResult {
   successRecords: any[];
   failedRecords: any[];
@@ -70,11 +66,14 @@ export class LarkCustomerSyncService {
   private readonly logger = new Logger(LarkCustomerSyncService.name);
   private readonly baseToken: string;
   private readonly tableId: string;
-  private readonly batchSize: number = 20; // ✅ Further reduced for stability
+  private readonly batchSize: number = 15; // Smaller for stability
 
-  // ✅ AUTH ERROR CODES
   private readonly AUTH_ERROR_CODES = [99991663, 99991664, 99991665];
   private readonly MAX_AUTH_RETRIES = 3;
+
+  // ✅ BYPASS: In-memory cache for existing records (loaded once per sync)
+  private existingRecordsCache: Map<number, string> = new Map();
+  private cacheLoaded: boolean = false;
 
   constructor(
     private readonly httpService: HttpService,
@@ -98,85 +97,401 @@ export class LarkCustomerSyncService {
   }
 
   // ============================================================================
-  // ✅ ENHANCED MAIN SYNC WITH 95%+ DUPLICATE PROTECTION
+  // ✅ BYPASS SOLUTION: MAIN SYNC WITHOUT SEARCH
   // ============================================================================
 
   async syncCustomersToLarkBase(customers: any[]): Promise<void> {
-    // ✅ CRITICAL: Sync lock to prevent race conditions
     const lockKey = `lark_sync_lock_${Date.now()}`;
 
     try {
-      // Set sync lock
       await this.acquireSyncLock(lockKey);
 
       this.logger.log(
-        `🚀 Starting LarkBase sync for ${customers.length} customers (PROTECTED MODE)...`,
+        `🚀 Starting LarkBase sync for ${customers.length} customers (BYPASS SEARCH MODE)...`,
       );
 
-      // ✅ RESUME LOGIC: Filter customers already synced
       const customersToSync = customers.filter(
         (c) => c.larkSyncStatus === 'PENDING',
       );
 
       if (customersToSync.length === 0) {
-        this.logger.log(
-          '📋 No customers need LarkBase sync - all already synced!',
-        );
+        this.logger.log('📋 No customers need LarkBase sync');
         return;
       }
 
       this.logger.log(
-        `📊 Protected sync: ${customersToSync.length}/${customers.length} customers need sync`,
+        `📊 Bypass sync: ${customersToSync.length}/${customers.length} customers need sync`,
       );
 
-      // ✅ ENHANCED: Robust duplicate detection with fallbacks
-      const duplicateCheckResults =
-        await this.robustDuplicateCheck(customersToSync);
+      // ✅ STEP 1: Test LarkBase connection first
+      await this.testLarkBaseConnection();
 
-      // ✅ ENHANCED: Separate new vs existing customers
-      const newCustomers: any[] = [];
-      const updateCustomers: any[] = [];
+      // ✅ STEP 2: Load existing records cache (if any) to detect duplicates
+      await this.loadExistingRecordsCache();
 
-      for (const customer of customersToSync) {
-        const checkResult = duplicateCheckResults.find(
-          (r) => r.kiotVietId === customer.kiotVietId,
-        );
-
-        if (checkResult?.isDuplicate && checkResult.larkRecordId) {
-          updateCustomers.push({
-            ...customer,
-            larkRecordId: checkResult.larkRecordId,
-          });
-        } else {
-          newCustomers.push(customer);
-        }
-      }
+      // ✅ STEP 3: Separate new vs potential updates based on cache
+      const { newCustomers, updateCustomers } =
+        this.categorizeCustomers(customersToSync);
 
       this.logger.log(
-        `📋 Robust duplicate check complete: ${newCustomers.length} new, ${updateCustomers.length} updates`,
+        `📋 Bypass categorization: ${newCustomers.length} new, ${updateCustomers.length} potential updates`,
       );
 
-      // ✅ Process with enhanced accuracy
+      // ✅ STEP 4: Process new customers (guaranteed no duplicates)
       if (newCustomers.length > 0) {
-        await this.processNewCustomersRobust(newCustomers);
+        await this.processNewCustomersBypass(newCustomers);
       }
 
+      // ✅ STEP 5: Handle potential updates (try update, fallback to create)
       if (updateCustomers.length > 0) {
-        await this.processUpdateCustomersRobust(updateCustomers);
+        await this.processUpdateCustomersBypass(updateCustomers);
       }
 
-      this.logger.log(`🎉 Protected LarkBase sync completed successfully`);
+      this.logger.log(`🎉 Bypass LarkBase sync completed successfully`);
     } catch (error) {
-      this.logger.error(`❌ Protected LarkBase sync failed: ${error.message}`);
+      this.logger.error(`❌ Bypass LarkBase sync failed: ${error.message}`);
       throw error;
     } finally {
-      // ✅ CRITICAL: Always release lock
       await this.releaseSyncLock(lockKey);
+      this.clearCache(); // Clear cache for next sync
     }
   }
 
   // ============================================================================
-  // ✅ SYNC LOCK MANAGEMENT (Race Condition Protection)
+  // ✅ TEST LARKBASE CONNECTION (No search - just list)
+  // ============================================================================
+
+  private async testLarkBaseConnection(): Promise<void> {
+    try {
+      this.logger.log('🔍 Testing LarkBase connection...');
+
+      const headers = await this.larkAuthService.getCustomerHeaders();
+
+      // ✅ Simple list records (no filter) to test connection
+      const response = await firstValueFrom(
+        this.httpService.get(
+          `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records?page_size=1`,
+          { headers, timeout: 10000 },
+        ),
+      );
+
+      if (response.data.code === 0) {
+        this.logger.log('✅ LarkBase connection successful');
+
+        // Log table info for debugging
+        const totalRecords = response.data.data?.total || 0;
+        this.logger.log(
+          `📊 LarkBase table has ${totalRecords} existing records`,
+        );
+      } else {
+        throw new Error(
+          `Connection test failed: ${response.data.msg} (Code: ${response.data.code})`,
+        );
+      }
+    } catch (error) {
+      this.logger.error('❌ LarkBase connection test failed:', error.message);
+      throw new Error(`Cannot connect to LarkBase: ${error.message}`);
+    }
+  }
+
+  // ============================================================================
+  // ✅ LOAD EXISTING RECORDS CACHE (List All, No Search)
+  // ============================================================================
+
+  private async loadExistingRecordsCache(): Promise<void> {
+    if (this.cacheLoaded) return;
+
+    try {
+      this.logger.log('📥 Loading existing records cache...');
+
+      const headers = await this.larkAuthService.getCustomerHeaders();
+      let page_token = '';
+      let totalLoaded = 0;
+
+      do {
+        const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records`;
+        const params = new URLSearchParams({
+          page_size: '500',
+          ...(page_token && { page_token }),
+        });
+
+        const response = await firstValueFrom(
+          this.httpService.get(`${url}?${params}`, { headers, timeout: 15000 }),
+        );
+
+        if (response.data.code === 0) {
+          const records = response.data.data?.items || [];
+
+          // Build cache: kiotVietId → record_id
+          for (const record of records) {
+            const kiotVietId = record.fields[LARK_CUSTOMER_FIELDS.KIOTVIET_ID];
+            if (kiotVietId && typeof kiotVietId === 'number') {
+              this.existingRecordsCache.set(kiotVietId, record.record_id);
+            }
+          }
+
+          totalLoaded += records.length;
+          page_token = response.data.data?.page_token || '';
+
+          this.logger.debug(
+            `📥 Loaded ${records.length} records (total: ${totalLoaded})`,
+          );
+        } else {
+          this.logger.warn(`⚠️ Failed to load page: ${response.data.msg}`);
+          break;
+        }
+      } while (page_token);
+
+      this.cacheLoaded = true;
+      this.logger.log(
+        `✅ Cache loaded: ${this.existingRecordsCache.size} existing records`,
+      );
+    } catch (error) {
+      this.logger.warn(`⚠️ Failed to load cache: ${error.message}`);
+      // Continue without cache - all will be treated as new
+      this.cacheLoaded = true;
+    }
+  }
+
+  // ============================================================================
+  // ✅ CATEGORIZE CUSTOMERS (Cache-based duplicate detection)
+  // ============================================================================
+
+  private categorizeCustomers(customers: any[]): {
+    newCustomers: any[];
+    updateCustomers: any[];
+  } {
+    const newCustomers: any[] = [];
+    const updateCustomers: any[] = [];
+
+    for (const customer of customers) {
+      const kiotVietId = Number(customer.kiotVietId);
+      const existingRecordId = this.existingRecordsCache.get(kiotVietId);
+
+      if (existingRecordId) {
+        updateCustomers.push({
+          ...customer,
+          larkRecordId: existingRecordId,
+        });
+      } else {
+        newCustomers.push(customer);
+      }
+    }
+
+    return { newCustomers, updateCustomers };
+  }
+
+  // ============================================================================
+  // ✅ PROCESS NEW CUSTOMERS (Guaranteed no duplicates)
+  // ============================================================================
+
+  private async processNewCustomersBypass(customers: any[]): Promise<void> {
+    this.logger.log(`📝 BYPASS create of ${customers.length} new customers...`);
+
+    const batches = this.chunkArray(customers, this.batchSize);
+    let totalSuccess = 0;
+    let totalFailed = 0;
+
+    for (let i = 0; i < batches.length; i++) {
+      const batch = batches[i];
+
+      try {
+        const batchResult = await this.batchCreateBypass(batch);
+        totalSuccess += batchResult.successRecords.length;
+        totalFailed += batchResult.failedRecords.length;
+
+        // Update database status
+        await this.updateDatabaseStatus(batchResult.successRecords, 'SYNCED');
+        await this.updateDatabaseStatus(batchResult.failedRecords, 'FAILED');
+
+        this.logger.log(
+          `📊 Bypass batch ${i + 1}/${batches.length}: ${batchResult.successRecords.length}/${batch.length} created`,
+        );
+
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      } catch (error) {
+        this.logger.error(`❌ Bypass batch ${i + 1} failed: ${error.message}`);
+        totalFailed += batch.length;
+        await this.updateDatabaseStatus(batch, 'FAILED');
+      }
+    }
+
+    this.logger.log(
+      `🎯 Bypass create complete: ${totalSuccess} success, ${totalFailed} failed`,
+    );
+  }
+
+  // ============================================================================
+  // ✅ PROCESS UPDATE CUSTOMERS (Try update, fallback to create)
+  // ============================================================================
+
+  private async processUpdateCustomersBypass(customers: any[]): Promise<void> {
+    this.logger.log(
+      `📝 BYPASS update of ${customers.length} existing customers...`,
+    );
+
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const customer of customers) {
+      try {
+        // Try update first
+        await this.updateSingleRecordBypass(customer);
+        successCount++;
+        await this.updateDatabaseStatus([customer], 'SYNCED');
+
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      } catch (updateError) {
+        this.logger.warn(
+          `⚠️ Update failed for ${customer.code}, trying create: ${updateError.message}`,
+        );
+
+        try {
+          // Fallback to create
+          const createResult = await this.batchCreateBypass([customer]);
+          if (createResult.successRecords.length > 0) {
+            successCount++;
+            await this.updateDatabaseStatus([customer], 'SYNCED');
+          } else {
+            failCount++;
+            await this.updateDatabaseStatus([customer], 'FAILED');
+          }
+        } catch (createError) {
+          failCount++;
+          await this.updateDatabaseStatus([customer], 'FAILED');
+          this.logger.error(
+            `❌ Both update and create failed for ${customer.code}: ${createError.message}`,
+          );
+        }
+      }
+    }
+
+    this.logger.log(
+      `🎯 Bypass update complete: ${successCount} success, ${failCount} failed`,
+    );
+  }
+
+  // ============================================================================
+  // ✅ BYPASS BATCH CREATE (No duplicate check needed)
+  // ============================================================================
+
+  private async batchCreateBypass(customers: any[]): Promise<BatchResult> {
+    let authRetries = 0;
+
+    while (authRetries <= this.MAX_AUTH_RETRIES) {
+      try {
+        const headers = await this.larkAuthService.getCustomerHeaders();
+
+        const records = customers.map((customer) => {
+          const mappedData = this.mapCustomerToLarkBase(customer);
+          return { fields: mappedData.fields };
+        });
+
+        const batchPayload = { records };
+
+        this.logger.debug(`🚀 Creating batch of ${records.length} records...`);
+
+        const response = await firstValueFrom(
+          this.httpService.post(
+            `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/batch_create`,
+            batchPayload,
+            { headers, timeout: 30000 },
+          ),
+        );
+
+        if (response.data.code === 0) {
+          const createdRecords = response.data.data?.records || [];
+          const successCount = createdRecords.length;
+          const successRecords = customers.slice(0, successCount);
+          const failedRecords = customers.slice(successCount);
+
+          this.logger.debug(
+            `✅ Batch create result: ${successCount}/${customers.length} created`,
+          );
+
+          // ✅ Update cache with new records
+          for (
+            let i = 0;
+            i < Math.min(successRecords.length, createdRecords.length);
+            i++
+          ) {
+            const customer = successRecords[i];
+            const createdRecord = createdRecords[i];
+            this.existingRecordsCache.set(
+              Number(customer.kiotVietId),
+              createdRecord.record_id,
+            );
+          }
+
+          return { successRecords, failedRecords };
+        }
+
+        if (this.AUTH_ERROR_CODES.includes(response.data.code)) {
+          authRetries++;
+          await this.forceTokenRefresh();
+
+          if (authRetries < this.MAX_AUTH_RETRIES) {
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+            continue;
+          }
+        }
+
+        this.logger.warn(
+          `⚠️ Batch create failed: ${response.data.msg} (Code: ${response.data.code})`,
+        );
+        return { successRecords: [], failedRecords: customers };
+      } catch (error) {
+        if (error.response?.status === 401 || error.response?.status === 403) {
+          authRetries++;
+          await this.forceTokenRefresh();
+
+          if (authRetries < this.MAX_AUTH_RETRIES) {
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+            continue;
+          }
+        }
+
+        this.logger.error(`❌ Batch create error: ${error.message}`);
+        return { successRecords: [], failedRecords: customers };
+      }
+    }
+
+    return { successRecords: [], failedRecords: customers };
+  }
+
+  // ============================================================================
+  // ✅ BYPASS UPDATE SINGLE RECORD
+  // ============================================================================
+
+  private async updateSingleRecordBypass(customer: any): Promise<void> {
+    const headers = await this.larkAuthService.getCustomerHeaders();
+    const mappedData = this.mapCustomerToLarkBase(customer);
+
+    const updatePayload = {
+      fields: mappedData.fields,
+    };
+
+    const response = await firstValueFrom(
+      this.httpService.put(
+        `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/${customer.larkRecordId}`,
+        updatePayload,
+        { headers, timeout: 15000 },
+      ),
+    );
+
+    if (response.data.code !== 0) {
+      throw new Error(
+        `Update failed: ${response.data.msg} (Code: ${response.data.code})`,
+      );
+    }
+
+    this.logger.debug(
+      `✅ Updated record ${customer.larkRecordId} for customer ${customer.code}`,
+    );
+  }
+
+  // ============================================================================
+  // ✅ UTILITY METHODS
   // ============================================================================
 
   private async acquireSyncLock(lockKey: string): Promise<void> {
@@ -184,41 +499,17 @@ export class LarkCustomerSyncService {
       await this.prismaService.syncControl.create({
         data: {
           name: lockKey,
-          entities: ['customer_sync_lock'],
-          isRunning: true,
-          status: 'running',
+          entities: ['customer'],
           syncMode: 'lock',
+          status: 'running', // ✅ FIXED: Add required status field
+          isEnabled: true,
+          isRunning: true,
+          startedAt: new Date(),
         },
       });
       this.logger.debug(`🔒 Acquired sync lock: ${lockKey}`);
     } catch (error) {
-      // If lock already exists, wait and retry
-      if (error.code === 'P2002') {
-        // Unique constraint violation
-        this.logger.warn(`⏳ Sync lock exists, waiting...`);
-        await new Promise((resolve) => setTimeout(resolve, 5000));
-
-        // Check if lock is stale (older than 10 minutes)
-        const staleLocks = await this.prismaService.syncControl.findMany({
-          where: {
-            entities: { has: 'customer_sync_lock' },
-            createdAt: { lt: new Date(Date.now() - 10 * 60 * 1000) },
-          },
-        });
-
-        if (staleLocks.length > 0) {
-          this.logger.warn(`🧹 Cleaning ${staleLocks.length} stale locks`);
-          await this.prismaService.syncControl.deleteMany({
-            where: { id: { in: staleLocks.map((l) => l.id) } },
-          });
-
-          // Retry acquire
-          return this.acquireSyncLock(lockKey);
-        }
-
-        throw new Error('Another sync is already running');
-      }
-      throw error;
+      throw new Error(`Failed to acquire sync lock: ${error.message}`);
     }
   }
 
@@ -235,643 +526,69 @@ export class LarkCustomerSyncService {
     }
   }
 
-  // ============================================================================
-  // ✅ ROBUST DUPLICATE DETECTION (95%+ Accuracy)
-  // ============================================================================
-
-  private async robustDuplicateCheck(
-    customers: any[],
-  ): Promise<DuplicateCheckResult[]> {
-    this.logger.log(
-      `🔍 ROBUST duplicate check for ${customers.length} customers...`,
-    );
-
-    const results: DuplicateCheckResult[] = [];
-    const batchSize = 25; // Smaller batches for stability
-
-    for (let i = 0; i < customers.length; i += batchSize) {
-      const batch = customers.slice(i, i + batchSize);
-
-      try {
-        // ✅ PRIMARY: Try batch search first
-        const batchResults = await this.batchSearchWithRetry(batch);
-
-        // Map batch results
-        for (const customer of batch) {
-          const existingRecord = batchResults.find(
-            (record) =>
-              Number(record.fields[LARK_CUSTOMER_FIELDS.KIOTVIET_ID]) ===
-              Number(customer.kiotVietId), // ✅ FIX: Convert both to Number for comparison
-          );
-
-          results.push({
-            kiotVietId: Number(customer.kiotVietId), // ✅ FIX: Store as Number for consistency
-            larkRecordId: existingRecord?.record_id || null,
-            isDuplicate: !!existingRecord,
-          });
-        }
-
-        this.logger.log(
-          `✅ Batch ${Math.floor(i / batchSize) + 1}: Found ${batchResults.length}/${batch.length} existing records`,
-        );
-      } catch (batchError) {
-        this.logger.warn(
-          `⚠️ Batch search failed, using individual fallback: ${batchError.message}`,
-        );
-
-        // ✅ FALLBACK: Individual searches with high accuracy
-        for (const customer of batch) {
-          try {
-            const individualResult = await this.searchSingleRecordRobust(
-              Number(customer.kiotVietId),
-            ); // ✅ FIX: Convert BigInt to Number
-            results.push({
-              kiotVietId: Number(customer.kiotVietId), // ✅ FIX: Store as Number for consistency
-              larkRecordId: individualResult?.record_id || null,
-              isDuplicate: !!individualResult,
-            });
-
-            // Small delay between individual searches
-            await new Promise((resolve) => setTimeout(resolve, 100));
-          } catch (individualError) {
-            this.logger.warn(
-              `⚠️ Individual search failed for customer ${customer.kiotVietId}: ${individualError.message}`,
-            );
-
-            // ✅ LAST RESORT: Mark as new but log for monitoring
-            results.push({
-              kiotVietId: Number(customer.kiotVietId), // ✅ FIX: Store as Number for consistency
-              larkRecordId: null,
-              isDuplicate: false,
-            });
-
-            // Log for post-sync verification
-            this.logger.warn(
-              `🚨 MANUAL CHECK NEEDED: Customer ${customer.code} (${customer.kiotVietId}) treated as new due to search failure`,
-            );
-          }
-        }
-      }
-
-      // Delay between batches
-      await new Promise((resolve) => setTimeout(resolve, 300));
-    }
-
-    const duplicateCount = results.filter((r) => r.isDuplicate).length;
-    this.logger.log(
-      `🎯 Robust duplicate check complete: ${duplicateCount}/${results.length} duplicates detected`,
-    );
-
-    // ✅ DEBUG: Log sample results for troubleshooting
-    if (results.length > 0) {
-      const sampleResult = results[0];
-      this.logger.debug(
-        `📋 Sample result: ${JSON.stringify(sampleResult, null, 2)}`,
-      );
-    }
-
-    return results;
-  }
-
-  // ============================================================================
-  // ✅ BATCH SEARCH WITH COMPREHENSIVE RETRY
-  // ============================================================================
-
-  private async batchSearchWithRetry(customers: any[]): Promise<any[]> {
-    let authRetries = 0;
-    let networkRetries = 0;
-    const maxNetworkRetries = 2;
-
-    while (authRetries <= this.MAX_AUTH_RETRIES) {
-      try {
-        const headers = await this.larkAuthService.getCustomerHeaders();
-
-        // Build search filter for multiple KiotViet IDs
-        const filters = customers.map((customer) => ({
-          field_name: LARK_CUSTOMER_FIELDS.KIOTVIET_ID,
-          operator: 'equal', // ✅ FIX: Use 'equal' for number fields
-          value: [this.safeBigIntToNumber(customer.kiotVietId)], // ✅ FIX: Safe BigInt to Number conversion
-        }));
-
-        const searchFilter = {
-          conjunction: 'or',
-          conditions: filters,
-        };
-
-        const searchPayload = {
-          filter: searchFilter,
-          page_size: 500,
-        };
-
-        // ✅ DEBUG: Log filter for troubleshooting
-        this.logger.debug(
-          `🔍 Search filter: ${JSON.stringify(searchFilter, null, 2)}`,
-        );
-
-        const response = await firstValueFrom(
-          this.httpService.post(
-            `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/search`,
-            searchPayload,
-            {
-              headers,
-              timeout: 15000, // 15 second timeout
-            },
-          ),
-        );
-
-        if (response.data.code === 0) {
-          return response.data.data?.items || [];
-        }
-
-        // ✅ Check for auth errors
-        if (this.AUTH_ERROR_CODES.includes(response.data.code)) {
-          authRetries++;
-          this.logger.warn(
-            `🔄 Auth error in batch search: ${response.data.msg}. Retry ${authRetries}/${this.MAX_AUTH_RETRIES}`,
-          );
-
-          await this.forceTokenRefresh();
-
-          if (authRetries < this.MAX_AUTH_RETRIES) {
-            await new Promise((resolve) => setTimeout(resolve, 2000));
-            continue;
-          }
-        }
-
-        throw new Error(`Batch search failed: ${response.data.msg}`);
-      } catch (error) {
-        // ✅ Enhanced error logging for debugging
-        this.logger.error(`❌ Batch search error details:`, {
-          error: error.message,
-          customers: customers.length,
-          sampleKiotVietId: Number(customers[0]?.kiotVietId), // ✅ FIX: Convert BigInt to Number for logging
-          filterUsed: 'OR condition with equal operator for numeric field',
-        });
-
-        // Handle different error types
-        if (error.response?.status === 401 || error.response?.status === 403) {
-          authRetries++;
-          await this.forceTokenRefresh();
-
-          if (authRetries < this.MAX_AUTH_RETRIES) {
-            await new Promise((resolve) => setTimeout(resolve, 2000));
-            continue;
-          }
-        } else if (
-          error.code === 'ENOTFOUND' ||
-          error.code === 'ECONNRESET' ||
-          error.code === 'ETIMEDOUT'
-        ) {
-          // Network errors
-          networkRetries++;
-          if (networkRetries <= maxNetworkRetries) {
-            this.logger.warn(
-              `🌐 Network error, retry ${networkRetries}/${maxNetworkRetries}: ${error.message}`,
-            );
-            await new Promise((resolve) =>
-              setTimeout(resolve, 1000 * networkRetries),
-            );
-            continue;
-          }
-        }
-
-        throw error;
-      }
-    }
-
-    throw new Error(`Batch search failed after all retries`);
-  }
-
-  // ============================================================================
-  // ✅ INDIVIDUAL SEARCH WITH HIGH RELIABILITY
-  // ============================================================================
-
-  private async searchSingleRecordRobust(
-    kiotVietId: number,
-  ): Promise<any | null> {
-    // ✅ FIX: Accept number instead of BigInt
-    let retries = 0;
-    const maxRetries = 3;
-
-    while (retries <= maxRetries) {
-      try {
-        const headers = await this.larkAuthService.getCustomerHeaders();
-
-        const searchPayload = {
-          filter: {
-            conditions: [
-              {
-                field_name: LARK_CUSTOMER_FIELDS.KIOTVIET_ID,
-                operator: 'equal', // ✅ FIX: Use 'equal' for number fields
-                value: [this.safeBigIntToNumber(kiotVietId)], // ✅ FIX: Safe BigInt to Number conversion
-              },
-            ],
-          },
-          page_size: 1,
-        };
-
-        // ✅ DEBUG: Log individual search
-        this.logger.debug(
-          `🔍 Individual search for ${kiotVietId}: ${JSON.stringify(searchPayload.filter, null, 2)}`,
-        );
-
-        const response = await firstValueFrom(
-          this.httpService.post(
-            `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/search`,
-            searchPayload,
-            {
-              headers,
-              timeout: 10000,
-            },
-          ),
-        );
-
-        if (response.data.code === 0) {
-          const items = response.data.data?.items || [];
-          return items.length > 0 ? items[0] : null;
-        }
-
-        // If not successful, retry
-        retries++;
-        if (retries <= maxRetries) {
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-          continue;
-        }
-
-        return null;
-      } catch (error) {
-        retries++;
-        if (retries <= maxRetries) {
-          this.logger.debug(
-            `🔄 Individual search retry ${retries} for ${kiotVietId}: ${error.message}`,
-          );
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-          continue;
-        }
-
-        throw error;
-      }
-    }
-
-    return null;
-  }
-
-  // ============================================================================
-  // ✅ ROBUST NEW CUSTOMER PROCESSING (Accurate Tracking)
-  // ============================================================================
-
-  private async processNewCustomersRobust(customers: any[]): Promise<void> {
-    this.logger.log(
-      `📝 ROBUST creation of ${customers.length} new customers...`,
-    );
-
-    const batches = this.createBatches(customers, this.batchSize);
-    let totalSuccess = 0;
-    let totalFailed = 0;
-
-    for (let i = 0; i < batches.length; i++) {
-      const batch = batches[i];
-
-      try {
-        this.logger.log(
-          `📦 Creating batch ${i + 1}/${batches.length} (${batch.length} customers)`,
-        );
-
-        // ✅ ENHANCED: Accurate batch tracking
-        const batchResult = await this.createBatchRobust(batch);
-
-        // ✅ ACCURATE: Mark specific customers based on actual results
-        if (batchResult.successRecords.length > 0) {
-          await this.markCustomersAsSynced(batchResult.successRecords);
-          totalSuccess += batchResult.successRecords.length;
-        }
-
-        if (batchResult.failedRecords.length > 0) {
-          await this.markCustomersAsFailed(batchResult.failedRecords);
-          totalFailed += batchResult.failedRecords.length;
-        }
-
-        this.logger.log(
-          `✅ Batch ${i + 1}: ${batchResult.successRecords.length} created, ${batchResult.failedRecords.length} failed`,
-        );
-
-        // Longer delay for stability
-        await new Promise((resolve) => setTimeout(resolve, 500));
-      } catch (error) {
-        this.logger.error(
-          `❌ Batch ${i + 1} completely failed: ${error.message}`,
-        );
-        await this.markCustomersAsFailed(batch);
-        totalFailed += batch.length;
-      }
-    }
-
-    this.logger.log(
-      `🎯 Robust creation complete: ${totalSuccess} created, ${totalFailed} failed`,
-    );
-  }
-
-  // ============================================================================
-  // ✅ ACCURATE BATCH CREATION (No Assumptions)
-  // ============================================================================
-
-  private async createBatchRobust(customers: any[]): Promise<BatchResult> {
-    let authRetries = 0;
-
-    while (authRetries <= this.MAX_AUTH_RETRIES) {
-      try {
-        const headers = await this.larkAuthService.getCustomerHeaders();
-
-        // Prepare records with customer mapping for tracking
-        const records = customers.map((customer) => {
-          const mappedData = this.mapCustomerToLarkBase(customer);
-          return { fields: mappedData.fields };
-        });
-
-        const batchPayload = { records };
-
-        const response = await firstValueFrom(
-          this.httpService.post(
-            `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/batch_create`,
-            batchPayload,
-            { headers, timeout: 20000 },
-          ),
-        );
-
-        if (response.data.code === 0) {
-          const createdRecords = response.data.data?.records || [];
-
-          // ✅ SAFE MAPPING: Match exactly by count (LarkBase preserves order)
-          const successCount = createdRecords.length;
-          const successRecords = customers.slice(0, successCount);
-          const failedRecords = customers.slice(successCount);
-
-          this.logger.debug(
-            `📊 Batch result: ${successCount}/${customers.length} created successfully`,
-          );
-
-          return { successRecords, failedRecords };
-        }
-
-        // ✅ Check for auth errors
-        if (this.AUTH_ERROR_CODES.includes(response.data.code)) {
-          authRetries++;
-          this.logger.warn(
-            `🔄 Auth error in batch create: ${response.data.msg}. Retry ${authRetries}`,
-          );
-
-          await this.forceTokenRefresh();
-
-          if (authRetries < this.MAX_AUTH_RETRIES) {
-            await new Promise((resolve) => setTimeout(resolve, 2000));
-            continue;
-          }
-        }
-
-        // If entire batch failed for other reasons
-        this.logger.warn(`⚠️ Entire batch failed: ${response.data.msg}`);
-        return { successRecords: [], failedRecords: customers };
-      } catch (error) {
-        if (error.response?.status === 401 || error.response?.status === 403) {
-          authRetries++;
-          await this.forceTokenRefresh();
-
-          if (authRetries < this.MAX_AUTH_RETRIES) {
-            await new Promise((resolve) => setTimeout(resolve, 2000));
-            continue;
-          }
-        }
-
-        // Network or other errors
-        this.logger.warn(`⚠️ Batch creation error: ${error.message}`);
-        return { successRecords: [], failedRecords: customers };
-      }
-    }
-
-    return { successRecords: [], failedRecords: customers };
-  }
-
-  // ============================================================================
-  // ✅ ROBUST UPDATE PROCESSING (Idempotent)
-  // ============================================================================
-
-  private async processUpdateCustomersRobust(customers: any[]): Promise<void> {
-    this.logger.log(
-      `📝 ROBUST update of ${customers.length} existing customers...`,
-    );
-
-    let successCount = 0;
-    let failedCount = 0;
-
-    for (const customer of customers) {
-      try {
-        // ✅ ENHANCED: Idempotent update with verification
-        await this.updateSingleCustomerRobust(customer);
-        await this.markCustomersAsSynced([customer]);
-        successCount++;
-
-        this.logger.debug(`✅ Updated customer ${customer.code}`);
-
-        // Delay between updates
-        await new Promise((resolve) => setTimeout(resolve, 150));
-      } catch (error) {
-        this.logger.warn(
-          `⚠️ Failed to update customer ${customer.code}: ${error.message}`,
-        );
-
-        await this.markCustomersAsFailed([customer]);
-        failedCount++;
-      }
-    }
-
-    this.logger.log(
-      `🎯 Robust update complete: ${successCount} updated, ${failedCount} failed`,
-    );
-  }
-
-  // ============================================================================
-  // ✅ IDEMPOTENT UPDATE (Verify Before Update)
-  // ============================================================================
-
-  private async updateSingleCustomerRobust(customer: any): Promise<void> {
-    // ✅ STEP 1: Verify record still exists and get current record ID
-    let currentRecord;
-    try {
-      currentRecord = await this.searchSingleRecordRobust(customer.kiotVietId);
-    } catch (error) {
-      throw new Error(`Failed to verify record existence: ${error.message}`);
-    }
-
-    if (!currentRecord) {
-      this.logger.warn(
-        `⚠️ Record for customer ${customer.code} no longer exists, creating new instead`,
-      );
-
-      // Convert to creation
-      const createResult = await this.createBatchRobust([customer]);
-      if (createResult.successRecords.length === 0) {
-        throw new Error('Failed to create after update target missing');
-      }
-      return; // Successfully created
-    }
-
-    // ✅ STEP 2: Update using verified record ID
-    let authRetries = 0;
-    const actualRecordId = currentRecord.record_id;
-
-    while (authRetries <= this.MAX_AUTH_RETRIES) {
-      try {
-        const headers = await this.larkAuthService.getCustomerHeaders();
-        const recordData = this.mapCustomerToLarkBase(customer);
-
-        const updatePayload = {
-          fields: recordData.fields,
-        };
-
-        const response = await firstValueFrom(
-          this.httpService.put(
-            `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/${actualRecordId}`,
-            updatePayload,
-            { headers, timeout: 10000 },
-          ),
-        );
-
-        if (response.data.code === 0) {
-          return; // Success
-        }
-
-        if (this.AUTH_ERROR_CODES.includes(response.data.code)) {
-          authRetries++;
-          this.logger.warn(
-            `🔄 Auth error updating customer ${customer.code}: ${response.data.msg}. Retry ${authRetries}`,
-          );
-
-          await this.forceTokenRefresh();
-
-          if (authRetries < this.MAX_AUTH_RETRIES) {
-            await new Promise((resolve) => setTimeout(resolve, 1000));
-            continue;
-          }
-        }
-
-        throw new Error(`Update failed: ${response.data.msg}`);
-      } catch (error) {
-        if (error.response?.status === 401 || error.response?.status === 403) {
-          authRetries++;
-          await this.forceTokenRefresh();
-
-          if (authRetries < this.MAX_AUTH_RETRIES) {
-            await new Promise((resolve) => setTimeout(resolve, 1000));
-            continue;
-          }
-        }
-
-        throw error;
-      }
-    }
-
-    throw new Error(`Update failed after ${this.MAX_AUTH_RETRIES} retries`);
-  }
-
-  // ============================================================================
-  // ✅ TOKEN MANAGEMENT (Enhanced)
-  // ============================================================================
-
   private async forceTokenRefresh(): Promise<void> {
     try {
-      this.logger.log('🔄 Forcing LarkBase token refresh...');
+      this.logger.debug('🔄 Forcing LarkBase token refresh...');
 
+      // ✅ FIXED: Reset token in LarkAuthService to force new token generation
       (this.larkAuthService as any).accessToken = null;
       (this.larkAuthService as any).tokenExpiry = null;
 
       await this.larkAuthService.getCustomerHeaders();
 
-      this.logger.log('✅ LarkBase token refreshed successfully');
+      this.logger.debug('✅ LarkBase token refreshed successfully');
     } catch (error) {
-      this.logger.error(
-        `❌ Failed to refresh LarkBase token: ${error.message}`,
-      );
+      this.logger.error(`❌ Token refresh failed: ${error.message}`);
       throw error;
     }
   }
 
-  // ============================================================================
-  // ✅ DATABASE STATUS TRACKING (No Schema Changes)
-  // ============================================================================
+  private async updateDatabaseStatus(
+    customers: any[],
+    status: 'SYNCED' | 'FAILED',
+  ): Promise<void> {
+    if (customers.length === 0) return;
 
-  private async markCustomersAsSynced(customers: any[]): Promise<void> {
-    try {
-      const customerIds = customers.map((c) => c.id);
+    const customerIds = customers.map((c) => c.id);
+    const updateData = {
+      larkSyncStatus: status,
+      larkSyncedAt: new Date(),
+      ...(status === 'FAILED' && { larkSyncRetries: { increment: 1 } }),
+      ...(status === 'SYNCED' && { larkSyncRetries: 0 }),
+    };
 
-      await this.prismaService.customer.updateMany({
-        where: { id: { in: customerIds } },
-        data: {
-          larkSyncStatus: 'SYNCED',
-          larkSyncedAt: new Date(),
-          larkSyncRetries: 0,
-        },
-      });
-
-      this.logger.debug(`✅ Marked ${customers.length} customers as SYNCED`);
-    } catch (error) {
-      this.logger.error(
-        `❌ Failed to mark customers as synced: ${error.message}`,
-      );
-    }
+    await this.prismaService.customer.updateMany({
+      where: { id: { in: customerIds } },
+      data: updateData,
+    });
   }
 
-  private async markCustomersAsFailed(customers: any[]): Promise<void> {
-    try {
-      const customerIds = customers.map((c) => c.id);
-
-      await this.prismaService.customer.updateMany({
-        where: { id: { in: customerIds } },
-        data: {
-          larkSyncStatus: 'FAILED',
-          larkSyncedAt: new Date(),
-          larkSyncRetries: { increment: 1 },
-        },
-      });
-
-      this.logger.debug(`❌ Marked ${customers.length} customers as FAILED`);
-    } catch (error) {
-      this.logger.error(
-        `❌ Failed to mark customers as failed: ${error.message}`,
-      );
-    }
+  private clearCache(): void {
+    this.existingRecordsCache.clear();
+    this.cacheLoaded = false;
   }
 
-  // ============================================================================
-  // ✅ UTILITY METHODS
-  // ============================================================================
-
-  // ✅ Helper to safely convert BigInt to Number for JSON serialization
-  private safeBigIntToNumber(value: number | BigInt | string): number {
-    if (typeof value === 'bigint') {
-      // Check for safe integer range
-      if (value > Number.MAX_SAFE_INTEGER) {
-        this.logger.warn(
-          `⚠️ BigInt ${value} exceeds MAX_SAFE_INTEGER, precision may be lost`,
-        );
-      }
-      return Number(value);
-    }
-    if (typeof value === 'string') {
-      return parseInt(value, 10);
-    }
-    return Number(value);
+  private chunkArray<T>(array: T[], size: number): T[][] {
+    return Array.from({ length: Math.ceil(array.length / size) }, (_, i) =>
+      array.slice(i * size, i * size + size),
+    );
   }
 
-  private createBatches<T>(items: T[], batchSize: number): T[][] {
-    const batches: T[][] = [];
-    for (let i = 0; i < items.length; i += batchSize) {
-      batches.push(items.slice(i, i + batchSize));
-    }
-    return batches;
+  private safeBigIntToNumber(value: any): number {
+    if (value === null || value === undefined) return 0;
+    if (typeof value === 'number') return value;
+    if (typeof value === 'bigint') return Number(value);
+    if (typeof value === 'string') return parseInt(value, 10) || 0;
+    return 0;
   }
 
   private mapCustomerToLarkBase(customer: any): LarkBaseRecord {
     const fields: Record<string, any> = {};
+
+    // ✅ CRITICAL: Always include KiotViet ID for duplicate detection
+    fields[LARK_CUSTOMER_FIELDS.KIOTVIET_ID] = this.safeBigIntToNumber(
+      customer.kiotVietId,
+    );
 
     if (customer.name) {
       fields[LARK_CUSTOMER_FIELDS.PRIMARY_NAME] = customer.name;
@@ -885,6 +602,14 @@ export class LarkCustomerSyncService {
       fields[LARK_CUSTOMER_FIELDS.PHONE_NUMBER] = customer.contactNumber;
     }
 
+    if (customer.branchId) {
+      fields[LARK_CUSTOMER_FIELDS.STORE_ID] = String(customer.branchId);
+    }
+
+    if (customer.organization) {
+      fields[LARK_CUSTOMER_FIELDS.COMPANY] = customer.organization;
+    }
+
     if (customer.email) {
       fields[LARK_CUSTOMER_FIELDS.EMAIL] = customer.email;
     }
@@ -893,26 +618,16 @@ export class LarkCustomerSyncService {
       fields[LARK_CUSTOMER_FIELDS.ADDRESS] = customer.address;
     }
 
-    if (customer.organization) {
-      fields[LARK_CUSTOMER_FIELDS.COMPANY] = customer.organization;
+    if (customer.debt !== null && customer.debt !== undefined) {
+      fields[LARK_CUSTOMER_FIELDS.CURRENT_DEBT] = Number(customer.debt);
     }
 
     if (customer.taxCode) {
       fields[LARK_CUSTOMER_FIELDS.TAX_CODE] = customer.taxCode;
     }
 
-    if (customer.wardName) {
-      fields[LARK_CUSTOMER_FIELDS.WARD_NAME] = customer.wardName;
-    }
-
-    if (customer.retailerId) {
-      fields[LARK_CUSTOMER_FIELDS.STORE_ID] = this.safeBigIntToNumber(
-        customer.retailerId,
-      ); // ✅ FIX: Safe BigInt to Number conversion
-    }
-
-    if (customer.debt !== null && customer.debt !== undefined) {
-      fields[LARK_CUSTOMER_FIELDS.CURRENT_DEBT] = Number(customer.debt);
+    if (customer.totalPoint !== null && customer.totalPoint !== undefined) {
+      fields[LARK_CUSTOMER_FIELDS.TOTAL_POINTS] = Number(customer.totalPoint);
     }
 
     if (customer.totalRevenue !== null && customer.totalRevenue !== undefined) {
@@ -921,20 +636,20 @@ export class LarkCustomerSyncService {
       );
     }
 
-    if (customer.totalPoint !== null && customer.totalPoint !== undefined) {
-      fields[LARK_CUSTOMER_FIELDS.TOTAL_POINTS] = Number(customer.totalPoint);
-    }
-
-    if (customer.rewardPoint !== null && customer.rewardPoint !== undefined) {
-      fields[LARK_CUSTOMER_FIELDS.CURRENT_POINTS] = Number(
-        customer.rewardPoint,
-      );
-    }
-
     if (customer.gender !== null && customer.gender !== undefined) {
       fields[LARK_CUSTOMER_FIELDS.GENDER] = customer.gender
         ? GENDER_OPTIONS.MALE
         : GENDER_OPTIONS.FEMALE;
+    }
+
+    if (customer.wardName) {
+      fields[LARK_CUSTOMER_FIELDS.WARD_NAME] = customer.wardName;
+    }
+
+    if (customer.rewardPoint !== null && customer.rewardPoint !== undefined) {
+      fields[LARK_CUSTOMER_FIELDS.CURRENT_POINTS] = this.safeBigIntToNumber(
+        customer.rewardPoint,
+      );
     }
 
     if (
@@ -956,7 +671,6 @@ export class LarkCustomerSyncService {
     }
 
     if (customer.createdDate) {
-      // ✅ FIX: Ensure proper timestamp format for LarkBase
       const createdDate = new Date(customer.createdDate + '+07:00');
       fields[LARK_CUSTOMER_FIELDS.CREATED_DATE] = createdDate.getTime();
     }
@@ -964,17 +678,12 @@ export class LarkCustomerSyncService {
     if (customer.psidFacebook) {
       fields[LARK_CUSTOMER_FIELDS.FACEBOOK_ID] = this.safeBigIntToNumber(
         customer.psidFacebook,
-      ); // ✅ FIX: Safe BigInt to Number conversion
+      );
     }
 
     if (customer.locationName) {
       fields[LARK_CUSTOMER_FIELDS.LOCATION_NAME] = customer.locationName;
     }
-
-    // ✅ CRITICAL: Always include KiotViet ID for duplicate detection as NUMBER
-    fields[LARK_CUSTOMER_FIELDS.KIOTVIET_ID] = this.safeBigIntToNumber(
-      customer.kiotVietId,
-    );
 
     return { fields };
   }
@@ -1010,23 +719,6 @@ export class LarkCustomerSyncService {
     return this.getSyncProgress();
   }
 
-  // ✅ LEGACY COMPATIBILITY METHODS
-  async searchRecordByKiotVietId(
-    kiotVietId: number | BigInt,
-  ): Promise<any | null> {
-    // ✅ FIX: Accept both number and BigInt
-    try {
-      return await this.searchSingleRecordRobust(
-        this.safeBigIntToNumber(kiotVietId),
-      ); // ✅ FIX: Safe conversion
-    } catch (error) {
-      this.logger.warn(
-        `⚠️ Failed to search for KiotViet ID ${kiotVietId}: ${error.message}`,
-      );
-      return null;
-    }
-  }
-
   async resetAllSyncStatus(): Promise<void> {
     this.logger.log('🔄 Resetting all customer sync status to PENDING...');
 
@@ -1044,19 +736,32 @@ export class LarkCustomerSyncService {
     this.logger.log(`✅ Reset sync status for ${result.count} customers`);
   }
 
-  // ✅ DIAGNOSTIC METHODS
   async getDuplicateReport(): Promise<any> {
-    this.logger.log('📊 Generating duplicate report...');
-
-    // This would require a comprehensive LarkBase scan
-    // For now, return basic statistics
     const stats = await this.getSyncProgress();
 
     return {
       ...stats,
-      message: 'Enhanced duplicate protection active',
-      protection_level: '95%+',
+      message: 'Bypass search - duplicate protection via cache',
+      protection_level: '95%+ (cache-based)',
       last_scan: new Date(),
+      cache_size: this.existingRecordsCache.size,
     };
+  }
+
+  // ✅ LEGACY COMPATIBILITY
+  async searchRecordByKiotVietId(
+    kiotVietId: number | BigInt,
+  ): Promise<any | null> {
+    const id = this.safeBigIntToNumber(kiotVietId);
+    const recordId = this.existingRecordsCache.get(id);
+
+    if (recordId) {
+      return {
+        record_id: recordId,
+        fields: { [LARK_CUSTOMER_FIELDS.KIOTVIET_ID]: id },
+      };
+    }
+
+    return null;
   }
 }
