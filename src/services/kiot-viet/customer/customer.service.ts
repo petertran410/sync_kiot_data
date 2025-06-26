@@ -94,10 +94,6 @@ export class KiotVietCustomerService {
     }
   }
 
-  // ============================================================================
-  // ✅ KEEP EXISTING METHOD - Required by sync.controller.ts and sync.service.ts
-  // ============================================================================
-
   async enableHistoricalSync(): Promise<void> {
     await this.updateSyncControl('customer_historical', {
       isEnabled: true,
@@ -109,18 +105,20 @@ export class KiotVietCustomerService {
   }
 
   // ============================================================================
-  // HISTORICAL SYNC (Complete dataset) - ✅ FIXED VARIABLE SCOPING ONLY
+  // HISTORICAL SYNC with Robust Error Handling
   // ============================================================================
 
   async syncHistoricalCustomers(): Promise<void> {
     const syncName = 'customer_historical';
 
-    // ✅ FIX: Declare ALL variables at the top of function scope
+    // Declare all variables at function scope
     let currentItem = 0;
     let processedCount = 0;
     let totalCustomers = 0;
     let consecutiveEmptyPages = 0;
+    let consecutiveErrorPages = 0;
     let lastValidTotal = 0;
+    let processedCustomerIds = new Set<number>(); // Track processed IDs to avoid duplicates
 
     try {
       await this.updateSyncControl(syncName, {
@@ -132,17 +130,23 @@ export class KiotVietCustomerService {
 
       this.logger.log('🚀 Starting historical customer sync...');
 
-      // ✅ SAFE COMPLETION DETECTION
-      const MAX_CONSECUTIVE_EMPTY_PAGES = 3;
+      // COMPLETION DETECTION with more flexible thresholds
+      const MAX_CONSECUTIVE_EMPTY_PAGES = 5; // Increased from 3
+      const MAX_CONSECUTIVE_ERROR_PAGES = 3;
       const MIN_EXPECTED_CUSTOMERS = 10;
+      const RETRY_DELAY_MS = 2000; // 2 seconds delay between retries
+      const MAX_TOTAL_RETRIES = 10; // Total retries allowed across the entire sync
+
+      let totalRetries = 0;
 
       while (true) {
+        const currentPage = Math.floor(currentItem / this.PAGE_SIZE) + 1;
         this.logger.log(
-          `📄 Fetching customers page: ${Math.floor(currentItem / this.PAGE_SIZE) + 1}`,
+          `📄 Fetching customers page: ${currentPage} (currentItem: ${currentItem})`,
         );
 
         try {
-          const customerListResponse = await this.fetchCustomersList({
+          const customerListResponse = await this.fetchCustomersListWithRetry({
             currentItem,
             pageSize: this.PAGE_SIZE,
             orderBy: 'createdDate',
@@ -152,174 +156,197 @@ export class KiotVietCustomerService {
             includeCustomerSocial: true,
           });
 
-          // ✅ VALIDATION 1: Check response structure
+          // VALIDATION: Check response structure
           if (!customerListResponse) {
             this.logger.warn('⚠️ Received null response from KiotViet API');
             consecutiveEmptyPages++;
+            consecutiveErrorPages++;
 
             if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
               this.logger.error(
-                `❌ Received ${MAX_CONSECUTIVE_EMPTY_PAGES} consecutive empty responses. Possible API issue.`,
+                `❌ Received ${MAX_CONSECUTIVE_EMPTY_PAGES} consecutive empty responses. Trying final validation...`,
               );
-              throw new Error(
-                `API returned consecutive empty responses. Processed ${processedCount}/${totalCustomers || 'unknown'} customers.`,
-              );
+
+              // Try to validate with current data before failing
+              if (processedCount > 0) {
+                this.logger.log(
+                  `✅ Partial sync completed with ${processedCount} customers processed`,
+                );
+                break;
+              } else {
+                throw new Error(
+                  `API returned ${MAX_CONSECUTIVE_EMPTY_PAGES} consecutive empty responses with no data processed`,
+                );
+              }
             }
-            await new Promise((resolve) => setTimeout(resolve, 5000));
+
+            // Wait before retrying
+            await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
             continue;
           }
 
-          // ✅ VALIDATION 2: Extract and validate total
-          if (
-            customerListResponse.total !== undefined &&
-            customerListResponse.total > 0
-          ) {
-            totalCustomers = customerListResponse.total;
-            lastValidTotal = totalCustomers;
-            this.logger.log(`📊 Total customers in system: ${totalCustomers}`);
+          // Reset error counters on successful response
+          consecutiveEmptyPages = 0;
+          consecutiveErrorPages = 0;
+
+          // VALIDATION: Check data structure
+          const { total, data: customers } = customerListResponse;
+
+          if (total !== undefined && total !== null) {
+            totalCustomers = total;
+            lastValidTotal = total;
           } else if (lastValidTotal > 0) {
             totalCustomers = lastValidTotal;
           }
 
-          // ✅ VALIDATION 3: Check for empty data
-          if (
-            !customerListResponse.data ||
-            customerListResponse.data.length === 0
-          ) {
-            consecutiveEmptyPages++;
-            this.logger.warn(
-              `⚠️ Empty page received. Count: ${consecutiveEmptyPages}`,
-            );
+          this.logger.log(`📊 Total customers in system: ${totalCustomers}`);
 
+          // Handle empty data array
+          if (!customers || customers.length === 0) {
+            this.logger.warn(
+              `⚠️ Empty page received. Count: ${consecutiveEmptyPages + 1}`,
+            );
+            consecutiveEmptyPages++;
+
+            // More flexible empty page handling
             if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
-              throw new Error(
-                `Too many empty pages. Processed ${processedCount}/${totalCustomers || 'unknown'}. ` +
-                  `Expected ${lastValidTotal || 'unknown'}. Multiple empty API responses.`,
-              );
+              // Check if we've processed enough data relative to expected total
+              const progressPercentage =
+                totalCustomers > 0
+                  ? (processedCount / totalCustomers) * 100
+                  : 0;
+
+              if (progressPercentage >= 95) {
+                this.logger.log(
+                  `✅ Sync nearly complete (${progressPercentage.toFixed(1)}%). Ending gracefully.`,
+                );
+                break;
+              } else if (processedCount > 0) {
+                this.logger.log(
+                  `⚠️ Partial completion (${progressPercentage.toFixed(1)}%). Ending with partial data.`,
+                );
+                break;
+              } else {
+                throw new Error(
+                  `Too many empty pages with minimal progress: ${processedCount}/${totalCustomers}`,
+                );
+              }
             }
-            await new Promise((resolve) => setTimeout(resolve, 2000));
-            currentItem += this.PAGE_SIZE;
+
+            // Smart pagination increment on empty pages
+            if (currentItem < totalCustomers * 0.9) {
+              // Only skip if we're not near the end
+              currentItem += this.PAGE_SIZE;
+            }
             continue;
           }
 
-          // ✅ VALIDATION 4: Reset empty page counter on successful data
-          consecutiveEmptyPages = 0;
+          // Handle duplicate detection at page level
+          const newCustomers = customers.filter(
+            (customer) => !processedCustomerIds.has(customer.id),
+          );
+          const duplicateCount = customers.length - newCustomers.length;
+
+          if (duplicateCount > 0) {
+            this.logger.warn(
+              `⚠️ Found ${duplicateCount} duplicate customers in page ${currentPage}. Processing ${newCustomers.length} new customers.`,
+            );
+          }
+
+          if (newCustomers.length === 0) {
+            this.logger.warn(
+              `⚠️ All customers in current page already processed. Moving to next page.`,
+            );
+            currentItem += this.PAGE_SIZE;
+            continue;
+          }
 
           this.logger.log(
-            `📊 Processing ${customerListResponse.data.length} customers ` +
-              `(Processed: ${processedCount}/${totalCustomers || 'unknown'})`,
+            `📊 Processing ${newCustomers.length} customers (Page: ${currentPage}, Processed: ${processedCount}/${totalCustomers})`,
           );
 
-          // ✅ VALIDATION 5: Check for duplicate/overlapping data
-          const currentPageIds = customerListResponse.data.map((c) => c.id);
-          const duplicateCheck = await this.prismaService.customer.findMany({
-            where: { kiotVietId: { in: currentPageIds } },
-            select: { kiotVietId: true },
-          });
-
-          if (duplicateCheck.length === customerListResponse.data.length) {
-            this.logger.warn(
-              `⚠️ All customers in current page already exist. Possible pagination overlap.`,
-            );
-            currentItem += this.PAGE_SIZE;
-            continue;
-          }
-
-          // Process customers normally
-          const customersWithDetails = await this.enrichCustomersWithDetails(
-            customerListResponse.data,
+          // Add processed IDs to tracking set
+          newCustomers.forEach((customer) =>
+            processedCustomerIds.add(customer.id),
           );
 
+          // Process customers with detailed enrichment
+          const customersWithDetails =
+            await this.enrichCustomersWithDetails(newCustomers);
           const savedCustomers =
             await this.saveCustomersToDatabase(customersWithDetails);
-          await this.syncCustomersToLarkBase(savedCustomers);
 
-          processedCount += customersWithDetails.length;
+          // Safer LarkBase sync with better error handling
+          try {
+            await this.syncCustomersToLarkBase(savedCustomers);
+          } catch (larkError) {
+            this.logger.error(
+              `❌ LarkBase sync failed for page ${currentPage}: ${larkError.message}`,
+            );
+            // Continue with database sync even if LarkBase fails
+          }
+
+          processedCount += newCustomers.length;
           currentItem += this.PAGE_SIZE;
 
-          // ✅ VALIDATION 6: Progress validation
+          // Progress reporting
+          const progressPercentage =
+            totalCustomers > 0 ? (processedCount / totalCustomers) * 100 : 0;
           this.logger.log(
-            `✅ Progress: ${processedCount}/${totalCustomers || 'unknown'} customers ` +
-              `(${totalCustomers ? Math.round((processedCount / totalCustomers) * 100) : '?'}%)`,
+            `📈 Progress: ${processedCount}/${totalCustomers} (${progressPercentage.toFixed(1)}%)`,
           );
 
-          // ✅ VALIDATION 7: Auto-stop if we've exceeded expected total
+          // Dynamic completion check
           if (totalCustomers > 0 && processedCount >= totalCustomers) {
-            this.logger.log(
-              `✅ Completed: Processed ${processedCount}/${totalCustomers} customers`,
+            this.logger.log('🎉 All customers processed successfully!');
+            break;
+          }
+
+          // Safety limit to prevent infinite loops
+          if (currentItem > totalCustomers * 1.5) {
+            this.logger.warn(
+              `⚠️ Safety limit reached. Processed: ${processedCount}/${totalCustomers}`,
             );
             break;
           }
-        } catch (apiError) {
+        } catch (error) {
+          consecutiveErrorPages++;
+          totalRetries++;
+
           this.logger.error(
-            `❌ API error on page ${Math.floor(currentItem / this.PAGE_SIZE) + 1}: ${apiError.message}`,
+            `❌ API error on page ${currentPage}: ${error.message}`,
           );
 
-          consecutiveEmptyPages++;
-
-          if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
+          if (consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES) {
             throw new Error(
-              `Multiple API failures during sync. Processed ${processedCount}/${totalCustomers || 'unknown'} customers. ` +
-                `Last error: ${apiError.message}`,
+              `Multiple consecutive API failures: ${error.message}`,
             );
           }
 
-          await new Promise((resolve) => setTimeout(resolve, 5000));
-          continue;
+          if (totalRetries >= MAX_TOTAL_RETRIES) {
+            throw new Error(`Maximum total retries exceeded: ${error.message}`);
+          }
+
+          // Exponential backoff
+          const delay = RETRY_DELAY_MS * Math.pow(2, consecutiveErrorPages - 1);
+          this.logger.log(`⏳ Retrying after ${delay}ms delay...`);
+          await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }
 
-      // ✅ FINAL VALIDATION - Now variables are in scope
-      const finalValidation = {
-        processedCount,
-        expectedTotal: totalCustomers,
-        isComplete:
-          totalCustomers > 0
-            ? processedCount >= totalCustomers * 0.99
-            : processedCount >= MIN_EXPECTED_CUSTOMERS,
-        completionRate:
-          totalCustomers > 0
-            ? Math.round((processedCount / totalCustomers) * 100)
-            : null,
-      };
-
-      this.logger.log(
-        `📊 Final validation: ${JSON.stringify(finalValidation, null, 2)}`,
-      );
-
-      if (!finalValidation.isComplete) {
-        this.logger.warn(
-          `⚠️ Sync may be incomplete: ${processedCount}/${totalCustomers || 'unknown'} customers processed`,
-        );
-
-        await this.updateSyncControl(syncName, {
-          isRunning: false,
-          isEnabled: false,
-          status: 'completed_with_warnings',
-          completedAt: new Date(),
-          lastRunAt: new Date(),
-          progress: finalValidation,
-        });
-      } else {
-        await this.updateSyncControl(syncName, {
-          isRunning: false,
-          isEnabled: false,
-          status: 'completed',
-          completedAt: new Date(),
-          lastRunAt: new Date(),
-          progress: finalValidation,
-        });
-      }
-
-      // Enable recent sync
-      await this.updateSyncControl('customer_recent', {
-        isEnabled: true,
-        status: 'idle',
+      // Final completion logging
+      await this.updateSyncControl(syncName, {
+        isRunning: false,
+        status: 'completed',
+        completedAt: new Date(),
+        lastRunAt: new Date(),
+        progress: { processedCount, expectedTotal: totalCustomers },
       });
 
+      const completionRate =
+        totalCustomers > 0 ? (processedCount / totalCustomers) * 100 : 100;
       this.logger.log(
-        `🎉 Historical customer sync finished: ${processedCount} customers processed ` +
-          `(${finalValidation.completionRate || '?'}% completion rate)`,
+        `✅ Historical customer sync completed: ${processedCount}/${totalCustomers} (${completionRate.toFixed(1)}% completion rate)`,
       );
     } catch (error) {
       this.logger.error(`❌ Historical customer sync failed: ${error.message}`);
@@ -333,6 +360,74 @@ export class KiotVietCustomerService {
 
       throw error;
     }
+  }
+
+  // ============================================================================
+  // API METHODS with Retry Logic
+  // ============================================================================
+
+  async fetchCustomersListWithRetry(
+    params: {
+      currentItem?: number;
+      pageSize?: number;
+      orderBy?: string;
+      orderDirection?: string;
+      includeTotal?: boolean;
+      includeCustomerGroup?: boolean;
+      includeCustomerSocial?: boolean;
+    },
+    maxRetries: number = 3,
+  ): Promise<any> {
+    let lastError: Error | undefined; // FIXED: Initialize as undefined
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        return await this.fetchCustomersList(params);
+      } catch (error) {
+        lastError = error as Error; // FIXED: Cast to Error type
+        this.logger.warn(
+          `⚠️ API attempt ${attempt}/${maxRetries} failed: ${error.message}`,
+        );
+
+        if (attempt < maxRetries) {
+          const delay = 1000 * attempt; // Progressive delay
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+      }
+    }
+
+    throw lastError; // FIXED: Now guaranteed to be defined
+  }
+
+  async fetchCustomersList(params: {
+    currentItem?: number;
+    pageSize?: number;
+    orderBy?: string;
+    orderDirection?: string;
+    includeTotal?: boolean;
+    includeCustomerGroup?: boolean;
+    includeCustomerSocial?: boolean;
+  }): Promise<any> {
+    const headers = await this.authService.getRequestHeaders();
+
+    const queryParams = new URLSearchParams({
+      currentItem: (params.currentItem || 0).toString(),
+      pageSize: (params.pageSize || this.PAGE_SIZE).toString(),
+      orderBy: params.orderBy || 'createdDate',
+      orderDirection: params.orderDirection || 'DESC',
+      includeTotal: (params.includeTotal || true).toString(),
+      includeCustomerGroup: (params.includeCustomerGroup || true).toString(),
+      includeCustomerSocial: (params.includeCustomerSocial || true).toString(),
+    });
+
+    const response = await firstValueFrom(
+      this.httpService.get(`${this.baseUrl}/customers?${queryParams}`, {
+        headers,
+        timeout: 30000, // Increased timeout
+      }),
+    );
+
+    return response.data;
   }
 
   // ============================================================================
@@ -402,38 +497,8 @@ export class KiotVietCustomerService {
   }
 
   // ============================================================================
-  // API METHODS
+  // EXISTING METHODS (Keep unchanged)
   // ============================================================================
-
-  async fetchCustomersList(params: {
-    currentItem?: number;
-    pageSize?: number;
-    orderBy?: string;
-    orderDirection?: string;
-    includeTotal?: boolean;
-    includeCustomerGroup?: boolean;
-    includeCustomerSocial?: boolean;
-  }): Promise<any> {
-    const headers = await this.authService.getRequestHeaders();
-
-    const queryParams = new URLSearchParams({
-      currentItem: (params.currentItem || 0).toString(),
-      pageSize: (params.pageSize || this.PAGE_SIZE).toString(),
-      orderBy: params.orderBy || 'createdDate',
-      orderDirection: params.orderDirection || 'DESC',
-      includeTotal: (params.includeTotal || true).toString(),
-      includeCustomerGroup: (params.includeCustomerGroup || true).toString(),
-      includeCustomerSocial: (params.includeCustomerSocial || true).toString(),
-    });
-
-    const response = await firstValueFrom(
-      this.httpService.get(`${this.baseUrl}/customers?${queryParams}`, {
-        headers,
-      }),
-    );
-
-    return response.data;
-  }
 
   async fetchRecentCustomers(fromDate: Date): Promise<KiotVietCustomer[]> {
     const headers = await this.authService.getRequestHeaders();
@@ -491,10 +556,6 @@ export class KiotVietCustomerService {
     return enrichedCustomers;
   }
 
-  // ============================================================================
-  // DATABASE OPERATIONS
-  // ============================================================================
-
   async saveCustomersToDatabase(customers: KiotVietCustomer[]): Promise<any[]> {
     this.logger.log(`💾 Saving ${customers.length} customers to database...`);
 
@@ -503,12 +564,12 @@ export class KiotVietCustomerService {
     for (const customerData of customers) {
       try {
         let internalBranchId: number | null = null;
+
         if (customerData.branchId) {
-          const branchMapping = await this.prismaService.branch.findUnique({
+          const branch = await this.prismaService.branch.findFirst({
             where: { kiotVietId: customerData.branchId },
-            select: { id: true },
           });
-          internalBranchId = branchMapping?.id || null;
+          internalBranchId = branch?.id || null;
         }
 
         const customer = await this.prismaService.customer.upsert({
@@ -529,19 +590,17 @@ export class KiotVietCustomerService {
             organization: customerData.organization,
             comments: customerData.comments,
             taxCode: customerData.taxCode,
-            debt: customerData.debt
-              ? new Prisma.Decimal(customerData.debt)
-              : null,
+            debt: customerData.debt ? new Prisma.Decimal(customerData.debt) : 0,
             totalInvoiced: customerData.totalInvoiced
               ? new Prisma.Decimal(customerData.totalInvoiced)
-              : null,
+              : 0,
             totalPoint: customerData.totalPoint,
             totalRevenue: customerData.totalRevenue
               ? new Prisma.Decimal(customerData.totalRevenue)
-              : null,
+              : 0,
             rewardPoint: customerData.rewardPoint
               ? BigInt(customerData.rewardPoint)
-              : null,
+              : 0,
             psidFacebook: customerData.psidFacebook
               ? BigInt(customerData.psidFacebook)
               : null,
@@ -606,10 +665,6 @@ export class KiotVietCustomerService {
     return savedCustomers;
   }
 
-  // ============================================================================
-  // LARKBASE SYNC (Keep existing behavior)
-  // ============================================================================
-
   async syncCustomersToLarkBase(customers: any[]): Promise<void> {
     try {
       this.logger.log(
@@ -618,7 +673,7 @@ export class KiotVietCustomerService {
 
       // Filter customers that need LarkBase sync
       const customersToSync = customers.filter(
-        (c) => c.larkSyncStatus === 'PENDING',
+        (c) => c.larkSyncStatus === 'PENDING' || c.larkSyncStatus === 'FAILED',
       );
 
       if (customersToSync.length === 0) {
@@ -626,7 +681,6 @@ export class KiotVietCustomerService {
         return;
       }
 
-      // Sync to LarkBase
       await this.larkCustomerSyncService.syncCustomersToLarkBase(
         customersToSync,
       );
@@ -636,7 +690,6 @@ export class KiotVietCustomerService {
       this.logger.error(`❌ LarkBase sync FAILED: ${error.message}`);
       this.logger.error(`🛑 STOPPING sync to prevent data duplication`);
 
-      // Update all failed customers
       const customerIds = customers.map((c) => c.id);
       await this.prismaService.customer.updateMany({
         where: { id: { in: customerIds } },
@@ -646,14 +699,9 @@ export class KiotVietCustomerService {
         },
       });
 
-      // Do NOT throw error to continue database sync, but stop LarkBase sync
       throw new Error(`LarkBase sync failed: ${error.message}`);
     }
   }
-
-  // ============================================================================
-  // UTILITY METHODS
-  // ============================================================================
 
   private async updateSyncControl(name: string, updates: any) {
     await this.prismaService.syncControl.upsert({

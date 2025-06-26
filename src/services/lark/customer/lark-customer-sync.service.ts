@@ -864,7 +864,7 @@ export class LarkCustomerSyncService {
         larkSyncedAt: true,
       },
       orderBy: { larkSyncedAt: 'desc' },
-      take: 10,
+      take: 1000,
     });
 
     const byRetryCount: Record<number, number> = {};
@@ -1004,7 +1004,7 @@ export class LarkCustomerSyncService {
 
   async getFailedCustomersStats(): Promise<{
     totalFailed: number;
-    estimated5584Gap: boolean;
+    estimatedGap: boolean;
     syncProgress: any;
   }> {
     const totalFailed = await this.prismaService.customer.count({
@@ -1015,7 +1015,7 @@ export class LarkCustomerSyncService {
 
     return {
       totalFailed,
-      estimated5584Gap: totalFailed >= 5000, // Close to reported 5584 gap
+      estimatedGap: totalFailed >= 5000, // Close to reported 5584 gap
       syncProgress,
     };
   }
