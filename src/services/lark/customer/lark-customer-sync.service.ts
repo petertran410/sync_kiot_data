@@ -12,7 +12,6 @@ const LARK_CUSTOMER_FIELDS = {
   CUSTOMER_CODE: 'Mã Khách Hàng',
   PHONE_NUMBER: 'Số Điện Thoại',
   STORE_ID: 'Id Cửa Hàng',
-  BRANCH: 'Branch',
   COMPANY: 'Công Ty',
   EMAIL: 'Email của Khách Hàng',
   ADDRESS: 'Địa Chỉ Khách Hàng',
@@ -36,13 +35,6 @@ const GENDER_OPTIONS = {
   MALE: 'Nam',
   FEMALE: 'Nữ',
 } as const;
-
-const BRANCH_OPTIONS = {
-  CUA_HANG_DIEP_TRA: 'Cửa Hàng Diệp Trà',
-  KHO_HA_NOI: 'Kho Hà Nội',
-  KHO_SAI_GON: 'Kho Sài Gòn',
-  VAN_PHONG_HA_NOI: 'Văn Phòng Hà Nội',
-};
 
 interface LarkBaseRecord {
   record_id?: string;
@@ -178,77 +170,111 @@ export class LarkCustomerSyncService {
   }
 
   // ============================================================================
-  // ✅ TEST LARKBASE CONNECTION (No search - just list)
+  // ✅ FIXED CONNECTION TEST (Increased timeout + retry)
   // ============================================================================
 
   private async testLarkBaseConnection(): Promise<void> {
-    try {
-      this.logger.log('🔍 Testing LarkBase connection...');
+    const maxRetries = 3;
+    let retryCount = 0;
 
-      const headers = await this.larkAuthService.getCustomerHeaders();
-
-      // ✅ Simple list records (no filter) to test connection
-      const response = await firstValueFrom(
-        this.httpService.get(
-          `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records?page_size=1`,
-          { headers, timeout: 10000 },
-        ),
-      );
-
-      if (response.data.code === 0) {
-        this.logger.log('✅ LarkBase connection successful');
-
-        // Log table info for debugging
-        const totalRecords = response.data.data?.total || 0;
+    while (retryCount <= maxRetries) {
+      try {
         this.logger.log(
-          `📊 LarkBase table has ${totalRecords} existing records`,
+          `🔍 Testing LarkBase connection (attempt ${retryCount + 1}/${maxRetries + 1})...`,
         );
-      } else {
-        throw new Error(
-          `Connection test failed: ${response.data.msg} (Code: ${response.data.code})`,
+
+        const headers = await this.larkAuthService.getCustomerHeaders();
+
+        // ✅ FIXED: Increased timeout to 30s + simple request
+        const response = await firstValueFrom(
+          this.httpService.get(
+            `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records?page_size=1`,
+            {
+              headers,
+              timeout: 30000, // ✅ 30 seconds instead of 10
+            },
+          ),
         );
+
+        if (response.data.code === 0) {
+          this.logger.log('✅ LarkBase connection successful');
+
+          const totalRecords = response.data.data?.total || 0;
+          this.logger.log(
+            `📊 LarkBase table has ${totalRecords} existing records`,
+          );
+          return; // Success - exit retry loop
+        } else {
+          throw new Error(
+            `Connection test failed: ${response.data.msg} (Code: ${response.data.code})`,
+          );
+        }
+      } catch (error) {
+        retryCount++;
+
+        if (retryCount <= maxRetries) {
+          const delay = retryCount * 2000; // Progressive delay: 2s, 4s, 6s
+          this.logger.warn(
+            `⚠️ Connection attempt ${retryCount} failed: ${error.message}`,
+          );
+          this.logger.log(`🔄 Retrying in ${delay / 1000}s...`);
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        } else {
+          this.logger.error(
+            '❌ LarkBase connection test failed after all retries:',
+            error.message,
+          );
+          throw new Error(
+            `Cannot connect to LarkBase after ${maxRetries + 1} attempts: ${error.message}`,
+          );
+        }
       }
-    } catch (error) {
-      this.logger.error('❌ LarkBase connection test failed:', error.message);
-      throw new Error(`Cannot connect to LarkBase: ${error.message}`);
     }
   }
 
   // ============================================================================
-  // ✅ LOAD EXISTING RECORDS CACHE (List All, No Search)
+  // ✅ FIXED CACHE LOADING (Handle string kiotVietId + timeout)
   // ============================================================================
 
   private async loadExistingRecordsCache(): Promise<void> {
     if (this.cacheLoaded) return;
 
     try {
-      this.logger.log('📥 Loading existing records cache...');
+      this.logger.log('📥 Loading existing records cache (optimized)...');
 
       const headers = await this.larkAuthService.getCustomerHeaders();
       let page_token = '';
       let totalLoaded = 0;
       let cacheBuilt = 0;
 
+      // ✅ OPTIMIZATION: Smaller page size for reliability
+      const pageSize = 200; // Reduced from 500 for better timeout handling
+
       do {
         const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records`;
         const params = new URLSearchParams({
-          page_size: '500',
+          page_size: pageSize.toString(),
           ...(page_token && { page_token }),
         });
 
+        const startTime = Date.now();
+
         const response = await firstValueFrom(
-          this.httpService.get(`${url}?${params}`, { headers, timeout: 15000 }),
+          this.httpService.get(`${url}?${params}`, {
+            headers,
+            timeout: 45000, // ✅ 45 seconds for cache loading
+          }),
         );
+
+        const loadTime = Date.now() - startTime;
 
         if (response.data.code === 0) {
           const records = response.data.data?.items || [];
 
-          // ✅ FIXED: Build cache accepting STRING kiotVietId
+          // ✅ FIXED: Build cache with string handling
           for (const record of records) {
             const kiotVietIdRaw =
               record.fields[LARK_CUSTOMER_FIELDS.KIOTVIET_ID];
-
-            // ✅ Convert string to number safely
             const kiotVietId = this.safeBigIntToNumber(kiotVietIdRaw);
 
             if (kiotVietId && kiotVietId > 0) {
@@ -275,8 +301,15 @@ export class LarkCustomerSyncService {
           page_token = response.data.data?.page_token || '';
 
           this.logger.debug(
-            `📥 Loaded ${records.length} records (total: ${totalLoaded}, cached: ${cacheBuilt})`,
+            `📥 Loaded ${records.length} records in ${loadTime}ms (total: ${totalLoaded}, cached: ${cacheBuilt})`,
           );
+
+          // ✅ PROGRESS UPDATE: Show cache loading progress
+          if (totalLoaded % 1000 === 0 || !page_token) {
+            this.logger.log(
+              `📊 Cache progress: ${cacheBuilt}/${totalLoaded} records processed`,
+            );
+          }
         } else {
           this.logger.warn(`⚠️ Failed to load page: ${response.data.msg}`);
           break;
@@ -284,29 +317,31 @@ export class LarkCustomerSyncService {
       } while (page_token);
 
       this.cacheLoaded = true;
-      this.logger.log(
-        `✅ Cache loaded: ${this.existingRecordsCache.size} existing records from ${totalLoaded} total`,
-      );
 
-      // ✅ Success rate check
       const successRate =
-        totalLoaded > 0
-          ? Math.round((this.existingRecordsCache.size / totalLoaded) * 100)
-          : 0;
+        totalLoaded > 0 ? Math.round((cacheBuilt / totalLoaded) * 100) : 0;
       this.logger.log(
-        `📊 Cache success rate: ${successRate}% (${this.existingRecordsCache.size}/${totalLoaded})`,
+        `✅ Cache loaded: ${this.existingRecordsCache.size} records from ${totalLoaded} total (${successRate}% success)`,
       );
 
-      if (this.existingRecordsCache.size > 0) {
-        const sampleEntries = Array.from(
-          this.existingRecordsCache.entries(),
-        ).slice(0, 3);
-        this.logger.debug(
-          `📋 Sample cache entries: ${JSON.stringify(sampleEntries)}`,
+      // ✅ VALIDATION: Ensure cache is populated
+      if (totalLoaded > 0 && this.existingRecordsCache.size === 0) {
+        this.logger.error(
+          `❌ CRITICAL: Cache build failed - no valid kiotVietId found in ${totalLoaded} records`,
         );
+        throw new Error('Cache building failed - data format issue');
       }
     } catch (error) {
-      this.logger.warn(`⚠️ Failed to load cache: ${error.message}`);
+      this.logger.error(`❌ Cache loading failed: ${error.message}`);
+
+      // ✅ GRACEFUL DEGRADATION: Continue without cache but warn user
+      this.logger.warn(
+        `⚠️ CONTINUING WITHOUT CACHE - all customers will be treated as new`,
+      );
+      this.logger.warn(
+        `⚠️ This may cause duplicates if LarkBase has existing data`,
+      );
+
       this.cacheLoaded = true;
     }
   }
@@ -430,7 +465,7 @@ export class LarkCustomerSyncService {
   }
 
   // ============================================================================
-  // ✅ BYPASS BATCH CREATE (No duplicate check needed)
+  // ✅ ENHANCED BATCH CREATE (Better timeout handling)
   // ============================================================================
 
   private async batchCreateBypass(customers: any[]): Promise<BatchResult> {
@@ -453,7 +488,10 @@ export class LarkCustomerSyncService {
           this.httpService.post(
             `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/batch_create`,
             batchPayload,
-            { headers, timeout: 30000 },
+            {
+              headers,
+              timeout: 60000, // ✅ 60 seconds for batch operations
+            },
           ),
         );
 
@@ -624,6 +662,7 @@ export class LarkCustomerSyncService {
   private clearCache(): void {
     this.existingRecordsCache.clear();
     this.cacheLoaded = false;
+    this.logger.debug('🧹 Cache cleared for next sync');
   }
 
   private chunkArray<T>(array: T[], size: number): T[][] {
@@ -681,42 +720,40 @@ export class LarkCustomerSyncService {
     }
 
     if (customer.contactNumber) {
-      fields[LARK_CUSTOMER_FIELDS.PHONE_NUMBER] = customer.contactNumber || '';
+      fields[LARK_CUSTOMER_FIELDS.PHONE_NUMBER] = customer.contactNumber;
     }
 
-    if (customer.retailerId) {
-      fields[LARK_CUSTOMER_FIELDS.STORE_ID] = '2svn';
+    if (customer.branchId) {
+      fields[LARK_CUSTOMER_FIELDS.STORE_ID] = String(customer.branchId);
     }
 
     if (customer.organization) {
-      fields[LARK_CUSTOMER_FIELDS.COMPANY] = customer.organization || '';
+      fields[LARK_CUSTOMER_FIELDS.COMPANY] = customer.organization;
     }
 
     if (customer.email) {
-      fields[LARK_CUSTOMER_FIELDS.EMAIL] = customer.email || '';
+      fields[LARK_CUSTOMER_FIELDS.EMAIL] = customer.email;
     }
 
     if (customer.address) {
-      fields[LARK_CUSTOMER_FIELDS.ADDRESS] = customer.address || '';
+      fields[LARK_CUSTOMER_FIELDS.ADDRESS] = customer.address;
     }
 
     if (customer.debt !== null && customer.debt !== undefined) {
-      fields[LARK_CUSTOMER_FIELDS.CURRENT_DEBT] = Number(customer.debt || 0);
+      fields[LARK_CUSTOMER_FIELDS.CURRENT_DEBT] = Number(customer.debt);
     }
 
     if (customer.taxCode) {
-      fields[LARK_CUSTOMER_FIELDS.TAX_CODE] = customer.taxCode || '';
+      fields[LARK_CUSTOMER_FIELDS.TAX_CODE] = customer.taxCode;
     }
 
     if (customer.totalPoint !== null && customer.totalPoint !== undefined) {
-      fields[LARK_CUSTOMER_FIELDS.TOTAL_POINTS] = Number(
-        customer.totalPoint || 0,
-      );
+      fields[LARK_CUSTOMER_FIELDS.TOTAL_POINTS] = Number(customer.totalPoint);
     }
 
     if (customer.totalRevenue !== null && customer.totalRevenue !== undefined) {
       fields[LARK_CUSTOMER_FIELDS.TOTAL_REVENUE] = Number(
-        customer.totalRevenue || 0,
+        customer.totalRevenue,
       );
     }
 
@@ -726,25 +763,13 @@ export class LarkCustomerSyncService {
         : GENDER_OPTIONS.FEMALE;
     }
 
-    if (customer.branchId !== null && customer.branchId !== undefined) {
-      if (customer.branchId === 1) {
-        fields[LARK_CUSTOMER_FIELDS.BRANCH] = BRANCH_OPTIONS.CUA_HANG_DIEP_TRA;
-      } else if (customer.branchId === 2) {
-        fields[LARK_CUSTOMER_FIELDS.BRANCH] = BRANCH_OPTIONS.KHO_HA_NOI;
-      } else if (customer.branchId === 3) {
-        fields[LARK_CUSTOMER_FIELDS.BRANCH] = BRANCH_OPTIONS.KHO_SAI_GON;
-      } else if (customer.branchId == 4) {
-        fields[LARK_CUSTOMER_FIELDS.BRANCH] = BRANCH_OPTIONS.VAN_PHONG_HA_NOI;
-      }
-    }
-
     if (customer.wardName) {
-      fields[LARK_CUSTOMER_FIELDS.WARD_NAME] = customer.wardName || '';
+      fields[LARK_CUSTOMER_FIELDS.WARD_NAME] = customer.wardName;
     }
 
     if (customer.rewardPoint !== null && customer.rewardPoint !== undefined) {
       fields[LARK_CUSTOMER_FIELDS.CURRENT_POINTS] = this.safeBigIntToNumber(
-        customer.rewardPoint || 0,
+        customer.rewardPoint,
       );
     }
 
@@ -753,43 +778,39 @@ export class LarkCustomerSyncService {
       customer.totalInvoiced !== undefined
     ) {
       fields[LARK_CUSTOMER_FIELDS.TOTAL_INVOICED] = Number(
-        customer.totalInvoiced || 0,
+        customer.totalInvoiced,
       );
     }
 
     if (customer.comments) {
-      fields[LARK_CUSTOMER_FIELDS.COMMENTS] = customer.comments || '';
+      fields[LARK_CUSTOMER_FIELDS.COMMENTS] = customer.comments;
     }
 
     if (customer.modifiedDate) {
-      // const modifiedDate = new Date(customer.modifiedDate + '+07:00');
-      // fields[LARK_CUSTOMER_FIELDS.MODIFIED_DATE] = modifiedDate.getTime();
-      fields[LARK_CUSTOMER_FIELDS.MODIFIED_DATE] =
-        customer.modifiedDate.getTime();
+      const modifiedDate = new Date(customer.modifiedDate + '+07:00');
+      fields[LARK_CUSTOMER_FIELDS.MODIFIED_DATE] = modifiedDate.getTime();
     }
 
     if (customer.createdDate) {
-      // const createdDate = new Date(customer.createdDate + '+07:00');
-      // fields[LARK_CUSTOMER_FIELDS.CREATED_DATE] = createdDate.getTime();
-      fields[LARK_CUSTOMER_FIELDS.CREATED_DATE] =
-        customer.createdDate.getTime();
+      const createdDate = new Date(customer.createdDate + '+07:00');
+      fields[LARK_CUSTOMER_FIELDS.CREATED_DATE] = createdDate.getTime();
     }
 
     if (customer.psidFacebook) {
       fields[LARK_CUSTOMER_FIELDS.FACEBOOK_ID] = this.safeBigIntToNumber(
-        customer.psidFacebook || '',
+        customer.psidFacebook,
       );
     }
 
     if (customer.locationName) {
-      fields[LARK_CUSTOMER_FIELDS.LOCATION_NAME] = customer.locationName || 0;
+      fields[LARK_CUSTOMER_FIELDS.LOCATION_NAME] = customer.locationName;
     }
 
     return { fields };
   }
 
   // ============================================================================
-  // ✅ FAILED CUSTOMER MANAGEMENT (Safe Reset)
+  // ✅ FAILED CUSTOMER MANAGEMENT
   // ============================================================================
 
   async resetFailedCustomers(): Promise<{ resetCount: number }> {
@@ -975,6 +996,74 @@ export class LarkCustomerSyncService {
     } else {
       this.logger.log('📋 No FAILED customers to reset');
     }
+  }
+
+  // ============================================================================
+  // ✅ FAILED CUSTOMER RECOVERY
+  // ============================================================================
+
+  async getFailedCustomersStats(): Promise<{
+    totalFailed: number;
+    estimated5584Gap: boolean;
+    syncProgress: any;
+  }> {
+    const totalFailed = await this.prismaService.customer.count({
+      where: { larkSyncStatus: 'FAILED' },
+    });
+
+    const syncProgress = await this.getSyncProgress();
+
+    return {
+      totalFailed,
+      estimated5584Gap: totalFailed >= 5000, // Close to reported 5584 gap
+      syncProgress,
+    };
+  }
+
+  async processFailedCustomersInBatches(
+    batchSize: number = 100,
+  ): Promise<void> {
+    this.logger.log('🔄 Processing FAILED customers in safe batches...');
+
+    let processed = 0;
+    let offset = 0;
+
+    while (true) {
+      // Get batch of FAILED customers
+      const failedBatch = await this.prismaService.customer.findMany({
+        where: { larkSyncStatus: 'FAILED' },
+        take: batchSize,
+        skip: offset,
+      });
+
+      if (failedBatch.length === 0) break;
+
+      this.logger.log(
+        `📦 Processing FAILED batch: ${processed + 1}-${processed + failedBatch.length}`,
+      );
+
+      try {
+        // Process this batch through bypass sync
+        await this.syncCustomersToLarkBase(failedBatch);
+        processed += failedBatch.length;
+
+        this.logger.log(
+          `✅ Batch completed: ${processed} FAILED customers processed`,
+        );
+
+        // Small delay between batches
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      } catch (error) {
+        this.logger.error(`❌ Batch failed: ${error.message}`);
+        // Continue with next batch
+      }
+
+      offset += batchSize;
+    }
+
+    this.logger.log(
+      `🎉 FAILED customer processing complete: ${processed} customers processed`,
+    );
   }
 
   // ============================================================================
