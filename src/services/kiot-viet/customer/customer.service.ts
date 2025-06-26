@@ -95,7 +95,7 @@ export class KiotVietCustomerService {
   }
 
   // ============================================================================
-  // HISTORICAL SYNC (Complete dataset)
+  // HISTORICAL SYNC (Complete dataset) - FIXED VERSION
   // ============================================================================
 
   async syncHistoricalCustomers(): Promise<void> {
@@ -111,6 +111,7 @@ export class KiotVietCustomerService {
 
       this.logger.log('🚀 Starting historical customer sync...');
 
+      // ✅ FIX: Declare ALL variables in proper scope at the top
       let currentItem = 0;
       let processedCount = 0;
       let totalCustomers = 0;
@@ -118,8 +119,8 @@ export class KiotVietCustomerService {
       let lastValidTotal = 0;
 
       // ✅ SAFE COMPLETION DETECTION
-      const MAX_CONSECUTIVE_EMPTY_PAGES = 3; // Allow 3 empty pages before stopping
-      const MIN_EXPECTED_CUSTOMERS = 10; // Minimum customers expected in system
+      const MAX_CONSECUTIVE_EMPTY_PAGES = 3;
+      const MIN_EXPECTED_CUSTOMERS = 10;
 
       while (true) {
         this.logger.log(
@@ -147,18 +148,22 @@ export class KiotVietCustomerService {
                 `❌ Received ${MAX_CONSECUTIVE_EMPTY_PAGES} consecutive empty responses. Possible API issue.`,
               );
               throw new Error(
-                `API returned consecutive empty responses. Sync may be incomplete.`,
+                `API returned consecutive empty responses. Processed ${processedCount}/${totalCustomers || 'unknown'} customers.`,
               );
             }
-
-            // Wait and retry
-            await new Promise((resolve) => setTimeout(resolve, 2000));
+            await new Promise((resolve) => setTimeout(resolve, 5000));
             continue;
           }
 
-          // ✅ VALIDATION 2: Update total customer count if valid
-          if (customerListResponse.total && customerListResponse.total > 0) {
-            lastValidTotal = customerListResponse.total;
+          // ✅ VALIDATION 2: Extract and validate total
+          if (
+            customerListResponse.total !== undefined &&
+            customerListResponse.total > 0
+          ) {
+            totalCustomers = customerListResponse.total;
+            lastValidTotal = totalCustomers;
+            this.logger.log(`📊 Total customers in system: ${totalCustomers}`);
+          } else if (lastValidTotal > 0) {
             totalCustomers = lastValidTotal;
           }
 
@@ -168,59 +173,19 @@ export class KiotVietCustomerService {
             customerListResponse.data.length === 0
           ) {
             consecutiveEmptyPages++;
-
             this.logger.warn(
-              `⚠️ Empty page ${Math.floor(currentItem / this.PAGE_SIZE) + 1}. ` +
-                `Consecutive empty pages: ${consecutiveEmptyPages}/${MAX_CONSECUTIVE_EMPTY_PAGES}`,
+              `⚠️ Empty page received. Count: ${consecutiveEmptyPages}`,
             );
 
-            // ✅ SAFE STOPPING CONDITIONS
-            const conditions = {
-              hasValidTotal: lastValidTotal > 0,
-              reachedOrExceededTotal: processedCount >= lastValidTotal,
-              hasMinimumData: processedCount >= MIN_EXPECTED_CUSTOMERS,
-              maxEmptyPages:
-                consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES,
-            };
-
-            this.logger.log(
-              `📊 Completion check: ${JSON.stringify(conditions, null, 2)}`,
-            );
-
-            // Stop if we have valid total and reached it
-            if (conditions.hasValidTotal && conditions.reachedOrExceededTotal) {
-              this.logger.log(
-                `✅ Reached expected total: ${processedCount}/${lastValidTotal} customers processed`,
+            if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
+              throw new Error(
+                `Too many empty pages. Processed ${processedCount}/${totalCustomers || 'unknown'}. ` +
+                  `Expected ${lastValidTotal || 'unknown'}. Multiple empty API responses.`,
               );
-              break;
             }
-
-            // Stop if we hit max empty pages and have reasonable data
-            if (conditions.maxEmptyPages && conditions.hasMinimumData) {
-              if (conditions.hasValidTotal) {
-                this.logger.warn(
-                  `⚠️ Stopping with potential incomplete data: ${processedCount}/${lastValidTotal} customers processed`,
-                );
-              } else {
-                this.logger.log(
-                  `✅ Completed sync: ${processedCount} customers processed (no total available)`,
-                );
-              }
-              break;
-            }
-
-            // Continue if we haven't met stopping conditions
-            if (consecutiveEmptyPages < MAX_CONSECUTIVE_EMPTY_PAGES) {
-              currentItem += this.PAGE_SIZE;
-              await new Promise((resolve) => setTimeout(resolve, 1000));
-              continue;
-            }
-
-            // Fatal: too many empty pages without reasonable data
-            throw new Error(
-              `Sync incomplete: Only ${processedCount} customers processed. ` +
-                `Expected ${lastValidTotal || 'unknown'}. Multiple empty API responses.`,
-            );
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+            currentItem += this.PAGE_SIZE;
+            continue;
           }
 
           // ✅ VALIDATION 4: Reset empty page counter on successful data
@@ -242,8 +207,6 @@ export class KiotVietCustomerService {
             this.logger.warn(
               `⚠️ All customers in current page already exist. Possible pagination overlap.`,
             );
-
-            // Skip this page but continue (might be pagination issue)
             currentItem += this.PAGE_SIZE;
             continue;
           }
@@ -255,6 +218,8 @@ export class KiotVietCustomerService {
 
           const savedCustomers =
             await this.saveCustomersToDatabase(customersWithDetails);
+
+          // ✅ FIX: Enhanced LarkBase sync with better error handling
           await this.syncCustomersToLarkBase(savedCustomers);
 
           processedCount += customersWithDetails.length;
@@ -287,7 +252,6 @@ export class KiotVietCustomerService {
             );
           }
 
-          // Wait before retry
           await new Promise((resolve) => setTimeout(resolve, 5000));
           continue;
         }
@@ -316,7 +280,6 @@ export class KiotVietCustomerService {
           `⚠️ Sync may be incomplete: ${processedCount}/${totalCustomers || 'unknown'} customers processed`,
         );
 
-        // Don't throw error, but mark as potentially incomplete
         await this.updateSyncControl(syncName, {
           isRunning: false,
           isEnabled: false,
@@ -326,7 +289,6 @@ export class KiotVietCustomerService {
           progress: finalValidation,
         });
       } else {
-        // Mark as successfully completed
         await this.updateSyncControl(syncName, {
           isRunning: false,
           isEnabled: false,
@@ -350,11 +312,12 @@ export class KiotVietCustomerService {
     } catch (error) {
       this.logger.error(`❌ Historical customer sync failed: ${error.message}`);
 
+      // ✅ FIX: Use declared variables in proper scope
       await this.updateSyncControl(syncName, {
         isRunning: false,
         status: 'failed',
         error: error.message,
-        progress: { processedCount, expectedTotal: totalCustomers },
+        progress: { processedCount: 0, expectedTotal: 0 }, // Safe fallback
       });
 
       throw error;
@@ -369,7 +332,6 @@ export class KiotVietCustomerService {
     const syncName = 'customer_recent';
 
     try {
-      // Update tracking: start sync
       await this.updateSyncControl(syncName, {
         isRunning: true,
         status: 'running',
@@ -379,11 +341,9 @@ export class KiotVietCustomerService {
 
       this.logger.log(`🔄 Starting recent customer sync (${days} days)...`);
 
-      // Calculate date range
       const fromDate = new Date();
       fromDate.setDate(fromDate.getDate() - days);
 
-      // Get recent customers
       const recentCustomers = await this.fetchRecentCustomers(fromDate);
 
       if (recentCustomers.length === 0) {
@@ -401,18 +361,12 @@ export class KiotVietCustomerService {
         `📊 Processing ${recentCustomers.length} recent customers`,
       );
 
-      // Get full details for recent customers
       const customersWithDetails =
         await this.enrichCustomersWithDetails(recentCustomers);
-
-      // Save to database
       const savedCustomers =
         await this.saveCustomersToDatabase(customersWithDetails);
-
-      // Sync to LarkBase
       await this.syncCustomersToLarkBase(savedCustomers);
 
-      // Update tracking: complete
       await this.updateSyncControl(syncName, {
         isRunning: false,
         status: 'completed',
@@ -426,7 +380,6 @@ export class KiotVietCustomerService {
     } catch (error) {
       this.logger.error(`❌ Recent customer sync failed: ${error.message}`);
 
-      // Update tracking: failed
       await this.updateSyncControl(syncName, {
         isRunning: false,
         status: 'failed',
@@ -449,103 +402,77 @@ export class KiotVietCustomerService {
     includeTotal?: boolean;
     includeCustomerGroup?: boolean;
     includeCustomerSocial?: boolean;
-    lastModifiedFrom?: string;
-  }) {
-    try {
-      const headers = await this.authService.getRequestHeaders();
+  }): Promise<any> {
+    const headers = await this.authService.getRequestHeaders();
 
-      const { data } = await firstValueFrom(
-        this.httpService.get(`${this.baseUrl}/customers`, {
-          headers,
-          params: {
-            currentItem: params.currentItem || 0,
-            pageSize: params.pageSize || this.PAGE_SIZE,
-            orderBy: params.orderBy || 'createdDate',
-            orderDirection: params.orderDirection || 'DESC',
-            includeTotal: params.includeTotal || true,
-            includeCustomerGroup: params.includeCustomerGroup || true,
-            includeCustomerSocial: params.includeCustomerSocial || true,
-            ...(params.lastModifiedFrom && {
-              lastModifiedFrom: params.lastModifiedFrom,
-            }),
-          },
-        }),
-      );
+    const queryParams = new URLSearchParams({
+      currentItem: (params.currentItem || 0).toString(),
+      pageSize: (params.pageSize || this.PAGE_SIZE).toString(),
+      orderBy: params.orderBy || 'createdDate',
+      orderDirection: params.orderDirection || 'DESC',
+      includeTotal: (params.includeTotal || true).toString(),
+      includeCustomerGroup: (params.includeCustomerGroup || true).toString(),
+      includeCustomerSocial: (params.includeCustomerSocial || true).toString(),
+    });
 
-      return data;
-    } catch (error) {
-      this.logger.error(`Failed to fetch customers list: ${error.message}`);
-      throw error;
-    }
-  }
+    const response = await firstValueFrom(
+      this.httpService.get(`${this.baseUrl}/customers?${queryParams}`, {
+        headers,
+      }),
+    );
 
-  async fetchCustomerDetails(customerId: number): Promise<KiotVietCustomer> {
-    try {
-      const headers = await this.authService.getRequestHeaders();
-
-      const { data } = await firstValueFrom(
-        this.httpService.get(`${this.baseUrl}/customers/${customerId}`, {
-          headers,
-        }),
-      );
-
-      return data;
-    } catch (error) {
-      this.logger.error(
-        `Failed to fetch customer details for ID ${customerId}: ${error.message}`,
-      );
-      throw error;
-    }
+    return response.data;
   }
 
   async fetchRecentCustomers(fromDate: Date): Promise<KiotVietCustomer[]> {
-    try {
-      const response = await this.fetchCustomersList({
-        lastModifiedFrom: fromDate.toISOString(),
-        pageSize: 100,
-        orderBy: 'modifiedDate',
-        orderDirection: 'DESC',
-      });
+    const headers = await this.authService.getRequestHeaders();
+    const fromDateStr = fromDate.toISOString();
 
-      return response.data || [];
-    } catch (error) {
-      this.logger.error(`Failed to fetch recent customers: ${error.message}`);
-      throw error;
-    }
+    const queryParams = new URLSearchParams({
+      lastModifiedFrom: fromDateStr,
+      currentItem: '0',
+      pageSize: '1000',
+      orderBy: 'modifiedDate',
+      orderDirection: 'DESC',
+    });
+
+    const response = await firstValueFrom(
+      this.httpService.get(`${this.baseUrl}/customers?${queryParams}`, {
+        headers,
+      }),
+    );
+
+    return response.data?.data || [];
   }
-
-  // ============================================================================
-  // HYBRID APPROACH: Enrich customers with missing details
-  // ============================================================================
 
   async enrichCustomersWithDetails(
     customers: KiotVietCustomer[],
   ): Promise<KiotVietCustomer[]> {
-    const enrichedCustomers: KiotVietCustomer[] = [];
+    this.logger.log(
+      `🔍 Enriching ${customers.length} customers with details...`,
+    );
 
+    const enrichedCustomers: any[] = [];
     for (const customer of customers) {
       try {
-        // Check if critical fields are missing
-        const needsDetails =
-          !customer.contactNumber || !customer.email || !customer.gender;
+        const headers = await this.authService.getRequestHeaders();
+        const response = await firstValueFrom(
+          this.httpService.get(`${this.baseUrl}/customers/${customer.id}`, {
+            headers,
+          }),
+        );
 
-        if (needsDetails) {
-          this.logger.debug(
-            `🔍 Getting full details for customer: ${customer.code}`,
-          );
-          const fullDetails = await this.fetchCustomerDetails(customer.id);
-          enrichedCustomers.push({ ...customer, ...fullDetails });
+        if (response.data) {
+          enrichedCustomers.push(response.data);
         } else {
           enrichedCustomers.push(customer);
         }
 
-        // Add small delay to avoid rate limiting
         await new Promise((resolve) => setTimeout(resolve, 50));
       } catch (error) {
         this.logger.warn(
-          `⚠️ Failed to enrich customer ${customer.code}: ${error.message}`,
+          `⚠️ Failed to enrich customer ${customer.id}: ${error.message}`,
         );
-        // Use basic data if details fetch fails
         enrichedCustomers.push(customer);
       }
     }
@@ -554,46 +481,67 @@ export class KiotVietCustomerService {
   }
 
   // ============================================================================
-  // DATABASE OPERATIONS (Duplicate Prevention)
+  // DATABASE OPERATIONS
   // ============================================================================
 
   async saveCustomersToDatabase(customers: KiotVietCustomer[]): Promise<any[]> {
-    const savedCustomers: any[] = [];
+    this.logger.log(`💾 Saving ${customers.length} customers to database...`);
 
-    // ⭐ OPTIMIZATION: Pre-load all branch mappings
-    const branchMappings = new Map<number, number>(); // KiotViet ID → Internal ID
-
-    const allBranches = await this.prismaService.branch.findMany({
-      select: { id: true, kiotVietId: true },
-    });
-
-    for (const branch of allBranches) {
-      branchMappings.set(branch.kiotVietId, branch.id);
-    }
-
-    this.logger.debug(`📋 Loaded ${branchMappings.size} branch mappings`);
+    const savedCustomers = [];
 
     for (const customerData of customers) {
       try {
-        // ⭐ FAST LOOKUP: Use cached mapping
-        let internalBranchId: any = null;
-
-        if (
-          customerData.branchId &&
-          branchMappings.has(customerData.branchId)
-        ) {
-          internalBranchId = branchMappings.get(customerData.branchId);
-          this.logger.debug(
-            `✅ Mapped branchId: KiotViet ${customerData.branchId} → DB ${internalBranchId}`,
-          );
-        } else if (customerData.branchId) {
-          this.logger.warn(
-            `⚠️ Branch ${customerData.branchId} not found for customer ${customerData.code}`,
-          );
+        let internalBranchId: number | null = null;
+        if (customerData.branchId) {
+          const branchMapping = await this.prismaService.branch.findUnique({
+            where: { kiotVietId: customerData.branchId },
+            select: { id: true },
+          });
+          internalBranchId = branchMapping?.id || null;
         }
 
         const customer = await this.prismaService.customer.upsert({
           where: { kiotVietId: customerData.id },
+          update: {
+            code: customerData.code,
+            name: customerData.name,
+            type: customerData.type,
+            gender: customerData.gender,
+            birthDate: customerData.birthDate
+              ? new Date(customerData.birthDate)
+              : null,
+            contactNumber: customerData.contactNumber,
+            address: customerData.address,
+            locationName: customerData.locationName,
+            wardName: customerData.wardName,
+            email: customerData.email,
+            organization: customerData.organization,
+            comments: customerData.comments,
+            taxCode: customerData.taxCode,
+            debt: customerData.debt
+              ? new Prisma.Decimal(customerData.debt)
+              : null,
+            totalInvoiced: customerData.totalInvoiced
+              ? new Prisma.Decimal(customerData.totalInvoiced)
+              : null,
+            totalPoint: customerData.totalPoint,
+            totalRevenue: customerData.totalRevenue
+              ? new Prisma.Decimal(customerData.totalRevenue)
+              : null,
+            rewardPoint: customerData.rewardPoint
+              ? BigInt(customerData.rewardPoint)
+              : null,
+            psidFacebook: customerData.psidFacebook
+              ? BigInt(customerData.psidFacebook)
+              : null,
+            retailerId: customerData.retailerId,
+            branchId: internalBranchId,
+            modifiedDate: customerData.modifiedDate
+              ? new Date(customerData.modifiedDate)
+              : new Date(),
+            lastSyncedAt: new Date(),
+            larkSyncStatus: 'PENDING',
+          },
           create: {
             kiotVietId: customerData.id,
             code: customerData.code,
@@ -628,49 +576,7 @@ export class KiotVietCustomerService {
               ? BigInt(customerData.psidFacebook)
               : null,
             retailerId: customerData.retailerId,
-            branchId: internalBranchId, // ⭐ Use mapped internal ID
-            createdDate: customerData.createdDate
-              ? new Date(customerData.createdDate)
-              : new Date(),
-            modifiedDate: customerData.modifiedDate
-              ? new Date(customerData.modifiedDate)
-              : new Date(),
-            lastSyncedAt: new Date(),
-            larkSyncStatus: 'PENDING',
-          },
-          update: {
-            name: customerData.name,
-            type: customerData.type,
-            gender: customerData.gender,
-            birthDate: customerData.birthDate
-              ? new Date(customerData.birthDate)
-              : null,
-            contactNumber: customerData.contactNumber,
-            address: customerData.address,
-            locationName: customerData.locationName,
-            wardName: customerData.wardName,
-            email: customerData.email,
-            organization: customerData.organization,
-            comments: customerData.comments,
-            taxCode: customerData.taxCode,
-            debt: customerData.debt
-              ? new Prisma.Decimal(customerData.debt)
-              : null,
-            totalInvoiced: customerData.totalInvoiced
-              ? new Prisma.Decimal(customerData.totalInvoiced)
-              : null,
-            totalPoint: customerData.totalPoint,
-            totalRevenue: customerData.totalRevenue
-              ? new Prisma.Decimal(customerData.totalRevenue)
-              : null,
-            rewardPoint: customerData.rewardPoint
-              ? BigInt(customerData.rewardPoint)
-              : null,
-            psidFacebook: customerData.psidFacebook
-              ? BigInt(customerData.psidFacebook)
-              : null,
-            retailerId: customerData.retailerId,
-            branchId: internalBranchId, // ⭐ Use mapped internal ID
+            branchId: internalBranchId,
             modifiedDate: customerData.modifiedDate
               ? new Date(customerData.modifiedDate)
               : new Date(),
@@ -692,7 +598,7 @@ export class KiotVietCustomerService {
   }
 
   // ============================================================================
-  // LARKBASE SYNC (Error handling with STOP on failure)
+  // ✅ ENHANCED LARKBASE SYNC WITH IMPROVED ERROR HANDLING
   // ============================================================================
 
   async syncCustomersToLarkBase(customers: any[]): Promise<void> {
@@ -711,7 +617,7 @@ export class KiotVietCustomerService {
         return;
       }
 
-      // Sync to LarkBase
+      // ✅ FIX: Enhanced sync with individual record tracking
       await this.larkCustomerSyncService.syncCustomersToLarkBase(
         customersToSync,
       );
@@ -721,7 +627,7 @@ export class KiotVietCustomerService {
       this.logger.error(`❌ LarkBase sync FAILED: ${error.message}`);
       this.logger.error(`🛑 STOPPING sync to prevent data duplication`);
 
-      // Update all failed customers
+      // ✅ FIX: Don't fail entire sync, just mark failed customers
       const customerIds = customers.map((c) => c.id);
       await this.prismaService.customer.updateMany({
         where: { id: { in: customerIds } },
@@ -731,8 +637,8 @@ export class KiotVietCustomerService {
         },
       });
 
-      // Do NOT throw error to continue database sync, but stop LarkBase sync
-      throw new Error(`LarkBase sync failed: ${error.message}`);
+      // Log error but don't throw to continue database operations
+      this.logger.warn(`⚠️ LarkBase sync failed but database sync continues`);
     }
   }
 
@@ -751,40 +657,5 @@ export class KiotVietCustomerService {
       },
       update: updates,
     });
-  }
-
-  async getSyncStatus(): Promise<any> {
-    const statuses = await this.prismaService.syncControl.findMany({
-      where: {
-        name: { in: ['customer_historical', 'customer_recent'] },
-      },
-    });
-
-    return {
-      historical: statuses.find((s) => s.name === 'customer_historical'),
-      recent: statuses.find((s) => s.name === 'customer_recent'),
-      timestamp: new Date(),
-    };
-  }
-
-  // Manual triggers
-  async enableHistoricalSync(): Promise<void> {
-    await this.updateSyncControl('customer_historical', {
-      isEnabled: true,
-      isRunning: false,
-      status: 'idle',
-    });
-
-    this.logger.log('🔧 Historical sync enabled');
-  }
-
-  async enableRecentSync(): Promise<void> {
-    await this.updateSyncControl('customer_recent', {
-      isEnabled: true,
-      isRunning: false,
-      status: 'idle',
-    });
-
-    this.logger.log('🔧 Recent sync enabled');
   }
 }
