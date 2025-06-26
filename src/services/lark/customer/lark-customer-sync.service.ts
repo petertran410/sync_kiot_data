@@ -222,13 +222,12 @@ export class LarkCustomerSyncService {
     if (this.cacheLoaded) return;
 
     try {
-      this.logger.log('📥 Loading existing records cache (DEBUG MODE)...');
+      this.logger.log('📥 Loading existing records cache...');
 
       const headers = await this.larkAuthService.getCustomerHeaders();
       let page_token = '';
       let totalLoaded = 0;
       let cacheBuilt = 0;
-      let debugSampleCount = 0;
 
       do {
         const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records`;
@@ -244,91 +243,29 @@ export class LarkCustomerSyncService {
         if (response.data.code === 0) {
           const records = response.data.data?.items || [];
 
-          // ✅ DEBUG: Log first few records to see ACTUAL structure
-          if (debugSampleCount < 3 && records.length > 0) {
-            for (let i = 0; i < Math.min(3, records.length); i++) {
-              const record = records[i];
-              debugSampleCount++;
-
-              this.logger.debug(`🔍 DEBUG Record ${debugSampleCount}:`);
-              this.logger.debug(`   Record ID: ${record.record_id}`);
-              this.logger.debug(
-                `   Fields keys: ${Object.keys(record.fields)}`,
-              );
-              this.logger.debug(
-                `   Full fields: ${JSON.stringify(record.fields, null, 2)}`,
-              );
-
-              // ✅ Check specific kiotVietId field
-              const kiotVietIdValue =
-                record.fields[LARK_CUSTOMER_FIELDS.KIOTVIET_ID];
-              this.logger.debug(
-                `   kiotVietId field name: "${LARK_CUSTOMER_FIELDS.KIOTVIET_ID}"`,
-              );
-              this.logger.debug(`   kiotVietId value: ${kiotVietIdValue}`);
-              this.logger.debug(
-                `   kiotVietId type: ${typeof kiotVietIdValue}`,
-              );
-
-              // ✅ Check if field exists with different case/format
-              const allFieldsLower = Object.keys(record.fields).map((k) =>
-                k.toLowerCase(),
-              );
-              const kiotVietVariations = [
-                'kiotvietid',
-                'kiot_viet_id',
-                'kiotVietId',
-                'kiot-viet-id',
-              ];
-              for (const variation of kiotVietVariations) {
-                if (allFieldsLower.includes(variation.toLowerCase())) {
-                  const actualKey: any = Object.keys(record.fields).find(
-                    (k) => k.toLowerCase() === variation.toLowerCase(),
-                  );
-                  this.logger.debug(
-                    `   Found variation "${actualKey}": ${record.fields[actualKey]}`,
-                  );
-                }
-              }
-            }
-          }
-
-          // ✅ Build cache with current logic (để thấy exact failure point)
+          // ✅ FIXED: Build cache accepting STRING kiotVietId
           for (const record of records) {
             const kiotVietIdRaw =
               record.fields[LARK_CUSTOMER_FIELDS.KIOTVIET_ID];
 
-            // ✅ Log cache building attempts for first few records
-            if (cacheBuilt < 5) {
-              this.logger.debug(`🔧 Cache attempt ${cacheBuilt + 1}:`);
-              this.logger.debug(`   Raw value: ${kiotVietIdRaw}`);
-              this.logger.debug(`   Type: ${typeof kiotVietIdRaw}`);
-              this.logger.debug(`   Is truthy: ${!!kiotVietIdRaw}`);
-              this.logger.debug(
-                `   Is number: ${typeof kiotVietIdRaw === 'number'}`,
-              );
-            }
+            // ✅ Convert string to number safely
+            const kiotVietId = this.safeBigIntToNumber(kiotVietIdRaw);
 
-            // ✅ Current logic
-            if (kiotVietIdRaw && typeof kiotVietIdRaw === 'number') {
-              this.existingRecordsCache.set(kiotVietIdRaw, record.record_id);
+            if (kiotVietId && kiotVietId > 0) {
+              this.existingRecordsCache.set(kiotVietId, record.record_id);
               cacheBuilt++;
 
-              if (cacheBuilt <= 3) {
+              // ✅ DEBUG: Log first few successful cache builds
+              if (cacheBuilt <= 5) {
                 this.logger.debug(
-                  `✅ Successfully cached: ${kiotVietIdRaw} → ${record.record_id}`,
+                  `✅ Cached: "${kiotVietIdRaw}" (${typeof kiotVietIdRaw}) → ${kiotVietId} → ${record.record_id}`,
                 );
               }
             } else {
-              // ✅ Log why it failed
-              if (cacheBuilt < 5) {
+              // ✅ Log failures (should be rare now)
+              if (totalLoaded - cacheBuilt < 3) {
                 this.logger.warn(
-                  `❌ Failed to cache record ${record.record_id}:`,
-                );
-                this.logger.warn(`   kiotVietId: ${kiotVietIdRaw}`);
-                this.logger.warn(`   Type: ${typeof kiotVietIdRaw}`);
-                this.logger.warn(
-                  `   Reason: ${!kiotVietIdRaw ? 'falsy value' : 'not a number'}`,
+                  `❌ Failed to cache: "${kiotVietIdRaw}" (${typeof kiotVietIdRaw}) → ${kiotVietId}`,
                 );
               }
             }
@@ -340,14 +277,6 @@ export class LarkCustomerSyncService {
           this.logger.debug(
             `📥 Loaded ${records.length} records (total: ${totalLoaded}, cached: ${cacheBuilt})`,
           );
-
-          // ✅ Stop after first page for debugging
-          if (debugSampleCount >= 3) {
-            this.logger.log(
-              `🛑 DEBUG MODE: Stopping after first page for analysis`,
-            );
-            break;
-          }
         } else {
           this.logger.warn(`⚠️ Failed to load page: ${response.data.msg}`);
           break;
@@ -355,26 +284,29 @@ export class LarkCustomerSyncService {
       } while (page_token);
 
       this.cacheLoaded = true;
-      this.logger.log(`🔍 DEBUG RESULTS:`);
-      this.logger.log(`   Total records loaded: ${totalLoaded}`);
       this.logger.log(
-        `   Successfully cached: ${this.existingRecordsCache.size}`,
-      );
-      this.logger.log(
-        `   Field name used: "${LARK_CUSTOMER_FIELDS.KIOTVIET_ID}"`,
+        `✅ Cache loaded: ${this.existingRecordsCache.size} existing records from ${totalLoaded} total`,
       );
 
-      if (this.existingRecordsCache.size === 0 && totalLoaded > 0) {
-        this.logger.error(
-          `❌ CACHE BUILD FAILED: Field name or data type mismatch`,
+      // ✅ Success rate check
+      const successRate =
+        totalLoaded > 0
+          ? Math.round((this.existingRecordsCache.size / totalLoaded) * 100)
+          : 0;
+      this.logger.log(
+        `📊 Cache success rate: ${successRate}% (${this.existingRecordsCache.size}/${totalLoaded})`,
+      );
+
+      if (this.existingRecordsCache.size > 0) {
+        const sampleEntries = Array.from(
+          this.existingRecordsCache.entries(),
+        ).slice(0, 3);
+        this.logger.debug(
+          `📋 Sample cache entries: ${JSON.stringify(sampleEntries)}`,
         );
-        this.logger.error(
-          `❌ All ${totalLoaded} records failed to build cache`,
-        );
-        this.logger.error(`❌ Check field name and data type in logs above`);
       }
     } catch (error) {
-      this.logger.error(`❌ Cache loading error: ${error.message}`);
+      this.logger.warn(`⚠️ Failed to load cache: ${error.message}`);
       this.cacheLoaded = true;
     }
   }
@@ -702,10 +634,34 @@ export class LarkCustomerSyncService {
 
   private safeBigIntToNumber(value: any): number {
     if (value === null || value === undefined) return 0;
-    if (typeof value === 'number') return value;
-    if (typeof value === 'bigint') return Number(value);
-    if (typeof value === 'string') return parseInt(value, 10) || 0;
-    return 0;
+
+    // ✅ Handle different types that LarkBase might use
+    if (typeof value === 'number') {
+      return Math.floor(value); // Ensure integer
+    }
+
+    if (typeof value === 'bigint') {
+      return Number(value);
+    }
+
+    // ✅ CRITICAL: Handle string type (main case from debug)
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (trimmed === '') return 0;
+
+      const parsed = parseInt(trimmed, 10);
+      return isNaN(parsed) ? 0 : parsed;
+    }
+
+    // ✅ Handle boolean (just in case)
+    if (typeof value === 'boolean') {
+      return value ? 1 : 0;
+    }
+
+    // ✅ Try to convert any other type
+    const asString = String(value).trim();
+    const parsed = parseInt(asString, 10);
+    return isNaN(parsed) ? 0 : parsed;
   }
 
   private mapCustomerToLarkBase(customer: any): LarkBaseRecord {
