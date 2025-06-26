@@ -8,32 +8,32 @@ import { firstValueFrom } from 'rxjs';
 
 // Field mappings (same as before)
 const LARK_CUSTOMER_FIELDS = {
-  PRIMARY_NAME: 'fld71g8Gci',
-  CUSTOMER_CODE: 'fld29zIB9D',
-  PHONE_NUMBER: 'fldHo79lXi',
-  STORE_ID: 'fld6M0YzOE',
-  COMPANY: 'fldUubtChK',
-  EMAIL: 'fldRXGBAzC',
-  ADDRESS: 'fld17QvTM6',
-  CURRENT_DEBT: 'fldEBifOyt',
-  TAX_CODE: 'fldCDKr4yC',
-  TOTAL_POINTS: 'fld9zfi74R',
-  TOTAL_REVENUE: 'fldStZEptP',
-  GENDER: 'fldLa1obN8',
-  WARD_NAME: 'fldU0Vru4a',
-  CURRENT_POINTS: 'fldujW0cpW',
-  KIOTVIET_ID: 'fldN5NE17y',
-  TOTAL_INVOICED: 'fld1gzrrvR',
-  COMMENTS: 'fldRFEVYOn',
-  MODIFIED_DATE: 'fldK8teGni',
-  CREATED_DATE: 'flddDuUUEg',
-  FACEBOOK_ID: 'fldh8TIi9K',
-  LOCATION_NAME: 'fldU3fKuoa',
+  PRIMARY_NAME: 'Tên Khách Hàng',
+  CUSTOMER_CODE: 'Mã Khách Hàng',
+  PHONE_NUMBER: 'Số Điện Thoại',
+  STORE_ID: 'Id Cửa Hàng',
+  COMPANY: 'Công Ty',
+  EMAIL: 'Email của Khách Hàng',
+  ADDRESS: 'Địa Chỉ Khách Hàng',
+  CURRENT_DEBT: 'Nợ Hiện Tại',
+  TAX_CODE: 'Mã Số Thuế',
+  TOTAL_POINTS: 'Tổng Điểm',
+  TOTAL_REVENUE: 'Tổng Doanh Thu',
+  GENDER: 'Giới Tính',
+  WARD_NAME: 'Phường xã',
+  CURRENT_POINTS: 'Điểm Hiện Tại',
+  KIOTVIET_ID: 'kiotVietId',
+  TOTAL_INVOICED: 'Tổng Bán',
+  COMMENTS: 'Ghi Chú',
+  MODIFIED_DATE: 'Thời Gian Cập Nhật',
+  CREATED_DATE: 'Thời Gian Tạo',
+  FACEBOOK_ID: 'Facebook Khách Hàng',
+  LOCATION_NAME: 'Khu Vực',
 } as const;
 
 const GENDER_OPTIONS = {
-  MALE: 'optUmkTfdd',
-  FEMALE: 'optcf5ndAC',
+  MALE: 'Nam',
+  FEMALE: 'Nữ',
 } as const;
 
 interface LarkBaseRecord {
@@ -54,7 +54,7 @@ interface LarkBatchResponse {
 
 // ✅ Interface for duplicate check results
 interface DuplicateCheckResult {
-  kiotVietId: number;
+  kiotVietId: number; // ✅ FIX: Use number instead of BigInt for JSON serialization
   larkRecordId: string | null;
   isDuplicate: boolean;
 }
@@ -261,11 +261,11 @@ export class LarkCustomerSyncService {
           const existingRecord = batchResults.find(
             (record) =>
               Number(record.fields[LARK_CUSTOMER_FIELDS.KIOTVIET_ID]) ===
-              customer.kiotVietId, // ✅ FIX: Compare numbers
+              Number(customer.kiotVietId), // ✅ FIX: Convert both to Number for comparison
           );
 
           results.push({
-            kiotVietId: customer.kiotVietId,
+            kiotVietId: Number(customer.kiotVietId), // ✅ FIX: Store as Number for consistency
             larkRecordId: existingRecord?.record_id || null,
             isDuplicate: !!existingRecord,
           });
@@ -283,10 +283,10 @@ export class LarkCustomerSyncService {
         for (const customer of batch) {
           try {
             const individualResult = await this.searchSingleRecordRobust(
-              customer.kiotVietId,
-            );
+              Number(customer.kiotVietId),
+            ); // ✅ FIX: Convert BigInt to Number
             results.push({
-              kiotVietId: customer.kiotVietId,
+              kiotVietId: Number(customer.kiotVietId), // ✅ FIX: Store as Number for consistency
               larkRecordId: individualResult?.record_id || null,
               isDuplicate: !!individualResult,
             });
@@ -300,7 +300,7 @@ export class LarkCustomerSyncService {
 
             // ✅ LAST RESORT: Mark as new but log for monitoring
             results.push({
-              kiotVietId: customer.kiotVietId,
+              kiotVietId: Number(customer.kiotVietId), // ✅ FIX: Store as Number for consistency
               larkRecordId: null,
               isDuplicate: false,
             });
@@ -350,7 +350,7 @@ export class LarkCustomerSyncService {
         const filters = customers.map((customer) => ({
           field_name: LARK_CUSTOMER_FIELDS.KIOTVIET_ID,
           operator: 'equal', // ✅ FIX: Use 'equal' for number fields
-          value: [customer.kiotVietId], // ✅ FIX: Use number, not string
+          value: [this.safeBigIntToNumber(customer.kiotVietId)], // ✅ FIX: Safe BigInt to Number conversion
         }));
 
         const searchFilter = {
@@ -404,7 +404,8 @@ export class LarkCustomerSyncService {
         this.logger.error(`❌ Batch search error details:`, {
           error: error.message,
           customers: customers.length,
-          sampleKiotVietId: customers[0]?.kiotVietId,
+          sampleKiotVietId: Number(customers[0]?.kiotVietId), // ✅ FIX: Convert BigInt to Number for logging
+          filterUsed: 'OR condition with equal operator for numeric field',
         });
 
         // Handle different error types
@@ -448,6 +449,7 @@ export class LarkCustomerSyncService {
   private async searchSingleRecordRobust(
     kiotVietId: number,
   ): Promise<any | null> {
+    // ✅ FIX: Accept number instead of BigInt
     let retries = 0;
     const maxRetries = 3;
 
@@ -461,7 +463,7 @@ export class LarkCustomerSyncService {
               {
                 field_name: LARK_CUSTOMER_FIELDS.KIOTVIET_ID,
                 operator: 'equal', // ✅ FIX: Use 'equal' for number fields
-                value: [kiotVietId], // ✅ FIX: Use number, not string
+                value: [this.safeBigIntToNumber(kiotVietId)], // ✅ FIX: Safe BigInt to Number conversion
               },
             ],
           },
@@ -843,6 +845,23 @@ export class LarkCustomerSyncService {
   // ✅ UTILITY METHODS
   // ============================================================================
 
+  // ✅ Helper to safely convert BigInt to Number for JSON serialization
+  private safeBigIntToNumber(value: number | BigInt | string): number {
+    if (typeof value === 'bigint') {
+      // Check for safe integer range
+      if (value > Number.MAX_SAFE_INTEGER) {
+        this.logger.warn(
+          `⚠️ BigInt ${value} exceeds MAX_SAFE_INTEGER, precision may be lost`,
+        );
+      }
+      return Number(value);
+    }
+    if (typeof value === 'string') {
+      return parseInt(value, 10);
+    }
+    return Number(value);
+  }
+
   private createBatches<T>(items: T[], batchSize: number): T[][] {
     const batches: T[][] = [];
     for (let i = 0; i < items.length; i += batchSize) {
@@ -887,7 +906,9 @@ export class LarkCustomerSyncService {
     }
 
     if (customer.retailerId) {
-      fields[LARK_CUSTOMER_FIELDS.STORE_ID] = Number(customer.retailerId); // ✅ FIX: Number not string
+      fields[LARK_CUSTOMER_FIELDS.STORE_ID] = this.safeBigIntToNumber(
+        customer.retailerId,
+      ); // ✅ FIX: Safe BigInt to Number conversion
     }
 
     if (customer.debt !== null && customer.debt !== undefined) {
@@ -930,19 +951,20 @@ export class LarkCustomerSyncService {
     }
 
     if (customer.modifiedDate) {
-      // ✅ FIX: Ensure proper timestamp format for LarkBase
-      const modifiedDate = new Date(customer.modifiedDate);
+      const modifiedDate = new Date(customer.modifiedDate + '+07:00');
       fields[LARK_CUSTOMER_FIELDS.MODIFIED_DATE] = modifiedDate.getTime();
     }
 
     if (customer.createdDate) {
       // ✅ FIX: Ensure proper timestamp format for LarkBase
-      const createdDate = new Date(customer.createdDate);
+      const createdDate = new Date(customer.createdDate + '+07:00');
       fields[LARK_CUSTOMER_FIELDS.CREATED_DATE] = createdDate.getTime();
     }
 
     if (customer.psidFacebook) {
-      fields[LARK_CUSTOMER_FIELDS.FACEBOOK_ID] = Number(customer.psidFacebook); // ✅ FIX: Number not string
+      fields[LARK_CUSTOMER_FIELDS.FACEBOOK_ID] = this.safeBigIntToNumber(
+        customer.psidFacebook,
+      ); // ✅ FIX: Safe BigInt to Number conversion
     }
 
     if (customer.locationName) {
@@ -950,7 +972,9 @@ export class LarkCustomerSyncService {
     }
 
     // ✅ CRITICAL: Always include KiotViet ID for duplicate detection as NUMBER
-    fields[LARK_CUSTOMER_FIELDS.KIOTVIET_ID] = Number(customer.kiotVietId);
+    fields[LARK_CUSTOMER_FIELDS.KIOTVIET_ID] = this.safeBigIntToNumber(
+      customer.kiotVietId,
+    );
 
     return { fields };
   }
@@ -987,9 +1011,14 @@ export class LarkCustomerSyncService {
   }
 
   // ✅ LEGACY COMPATIBILITY METHODS
-  async searchRecordByKiotVietId(kiotVietId: number): Promise<any | null> {
+  async searchRecordByKiotVietId(
+    kiotVietId: number | BigInt,
+  ): Promise<any | null> {
+    // ✅ FIX: Accept both number and BigInt
     try {
-      return await this.searchSingleRecordRobust(kiotVietId);
+      return await this.searchSingleRecordRobust(
+        this.safeBigIntToNumber(kiotVietId),
+      ); // ✅ FIX: Safe conversion
     } catch (error) {
       this.logger.warn(
         `⚠️ Failed to search for KiotViet ID ${kiotVietId}: ${error.message}`,
