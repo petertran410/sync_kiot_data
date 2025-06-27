@@ -1,3 +1,4 @@
+import { LarkCustomerSyncService } from './../../lark/customer/lark-customer-sync.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
@@ -69,22 +70,62 @@ interface KiotVietInvoice {
       };
     },
   ];
-  SaleChannel?: {
-    isNotDelete?: boolean;
-    RetailedId?: number;
-    Position?: number;
-    IsActive?: boolean;
-    CreatedBy?: number;
-    CreatedDate?: string;
-    Id?: number;
-    Name?: string;
-  };
   invoiceDelivery?: {
+    deliveryCode?: string;
     type?: number;
     status?: number;
     statusValue?: string;
     price?: number;
     receiver?: string;
     contactNumber?: string;
+    address?: string;
+    locationId?: number;
+    locationName?: string;
+    usingPriceCod?: boolean;
+    priceCodPayment?: number;
+    weight?: number;
+    length?: number;
+    width?: number;
+    height?: number;
+    partnerDeliveryId?: number;
+    partnerDelivery?: {
+      code?: string;
+      name?: string;
+      address?: string;
+      contactNumber?: string;
+      email?: string;
+    };
+    SaleChannel?: {
+      IsNotDelete?: boolean;
+      RetailedId?: number;
+      Position?: number;
+      IsActivate?: boolean;
+      CreatedBy?: number;
+      CreatedDate?: string;
+      Id?: number;
+      Name?: string;
+    };
   };
+}
+
+@Injectable()
+export class KiotVietInvoiceService {
+  private readonly logger = new Logger(KiotVietInvoiceService.name);
+  private readonly baseUrl: string;
+  private readonly PAGE_SIZE = 100;
+
+  constructor(
+    private readonly httpService: HttpService,
+    private readonly configService: ConfigService,
+    private readonly prismaService: PrismaService,
+    private readonly authService: KiotVietAuthService,
+    private readonly larkCustomerSyncService: LarkCustomerSyncService,
+  ) {
+    const baseUrl = this.configService.get<string>('KIOT_BASE_URL');
+    if (!baseUrl) {
+      throw new Error('KIOT_BASE_URL environment variable is not configured');
+    }
+
+    this.baseUrl = baseUrl;
+  }
 }

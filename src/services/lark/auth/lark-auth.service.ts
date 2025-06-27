@@ -77,4 +77,22 @@ export class LarkAuthService {
       'Content-Type': 'application/json',
     };
   }
+
+  async getInvoiceHeaders(): Promise<Record<string, string>> {
+    const appId = this.configService.get<string>('LARK_INVOICE_SYNC_APP_ID');
+    const appSecret = this.configService.get<string>(
+      'LARK_INVOICE_SYNC_APP_SECRET',
+    );
+
+    if (!appId || !appSecret) {
+      throw new Error('LarkBase invoice credentials not configured');
+    }
+
+    const accessToken = await this.getAccessToken(appId, appSecret);
+
+    return {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    };
+  }
 }

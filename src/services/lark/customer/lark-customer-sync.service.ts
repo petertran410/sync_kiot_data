@@ -684,7 +684,7 @@ export class LarkCustomerSyncService {
   // ============================================================================
 
   private async testLarkBaseConnection(): Promise<void> {
-    const maxRetries = 3;
+    const maxRetries = 10;
 
     for (let retryCount = 0; retryCount <= maxRetries; retryCount++) {
       try {
