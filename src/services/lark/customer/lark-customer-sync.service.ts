@@ -178,6 +178,656 @@ export class LarkCustomerSyncService {
   }
 
   // ============================================================================
+  // ✅ 1. DATA RECONCILIATION & MISMATCH ANALYSIS
+  // ============================================================================
+
+  async reconcileDataMismatch(): Promise<{
+    databaseCount: number;
+    larkBaseCount: number;
+    mismatch: number;
+    pendingSync: number;
+    failedSync: number;
+    syncedCount: number;
+    recommendations: string[];
+  }> {
+    this.logger.log('🔍 Starting data reconciliation analysis...');
+
+    // Count database records by status
+    const databaseCount = await this.prismaService.customer.count();
+    const pendingCount = await this.prismaService.customer.count({
+      where: { larkSyncStatus: 'PENDING' },
+    });
+    const failedCount = await this.prismaService.customer.count({
+      where: { larkSyncStatus: 'FAILED' },
+    });
+    const syncedCount = await this.prismaService.customer.count({
+      where: { larkSyncStatus: 'SYNCED' },
+    });
+
+    this.logger.log(`📊 Database Status:`);
+    this.logger.log(`   Total: ${databaseCount}`);
+    this.logger.log(`   SYNCED: ${syncedCount}`);
+    this.logger.log(`   PENDING: ${pendingCount}`);
+    this.logger.log(`   FAILED: ${failedCount}`);
+
+    // Count LarkBase records
+    let larkBaseCount = 0;
+    let cacheLoadError = null;
+
+    try {
+      this.logger.log('📥 Counting LarkBase records...');
+
+      // Clear cache first to get fresh count
+      this.clearCache();
+      await this.loadExistingRecordsCache();
+      larkBaseCount = this.existingRecordsCache.size;
+
+      this.logger.log(`📊 LarkBase: ${larkBaseCount} records`);
+    } catch (error) {
+      cacheLoadError = error.message;
+      this.logger.warn(`⚠️ Could not count LarkBase records: ${error.message}`);
+    }
+
+    const mismatch = Math.abs(databaseCount - larkBaseCount);
+    const recommendations: string[] = [];
+
+    // Generate detailed recommendations
+    if (cacheLoadError) {
+      recommendations.push(
+        `🚨 CRITICAL: Cannot access LarkBase - ${cacheLoadError}`,
+      );
+    }
+
+    if (mismatch > 1000) {
+      recommendations.push(
+        `🚨 CRITICAL: Major data mismatch - ${mismatch} records difference`,
+      );
+    } else if (mismatch > 100) {
+      recommendations.push(
+        `⚠️ WARNING: Significant mismatch - ${mismatch} records difference`,
+      );
+    }
+
+    if (pendingCount > 0) {
+      recommendations.push(`⏳ ${pendingCount} customers waiting to sync`);
+    }
+
+    if (failedCount > 0) {
+      recommendations.push(
+        `❌ ${failedCount} customers failed sync - recommend retry`,
+      );
+    }
+
+    if (syncedCount > larkBaseCount) {
+      recommendations.push(
+        `🔍 ${syncedCount - larkBaseCount} SYNCED customers missing from LarkBase - data corruption detected`,
+      );
+    }
+
+    if (larkBaseCount > syncedCount) {
+      recommendations.push(
+        `📊 ${larkBaseCount - syncedCount} extra records in LarkBase - possible manual additions or sync status issues`,
+      );
+    }
+
+    const result = {
+      databaseCount,
+      larkBaseCount,
+      mismatch,
+      pendingSync: pendingCount,
+      failedSync: failedCount,
+      syncedCount,
+      recommendations,
+    };
+
+    this.logger.log(`📊 Reconciliation Summary:`);
+    this.logger.log(
+      `   Database vs LarkBase: ${databaseCount} vs ${larkBaseCount}`,
+    );
+    this.logger.log(`   Mismatch: ${mismatch} records`);
+    this.logger.log(`   Issues found: ${recommendations.length}`);
+
+    return result;
+  }
+
+  // ============================================================================
+  // ✅ 2. SYNC CONTROL & STUCK PROCESS DETECTION
+  // ============================================================================
+
+  async checkSyncControlHealth(): Promise<{
+    activeSyncs: any[];
+    stuckSyncs: any[];
+    recentErrors: any[];
+    issues: string[];
+  }> {
+    this.logger.log('🔄 Checking sync control health...');
+
+    const issues: string[] = [];
+
+    // Check for currently running syncs
+    const activeSyncs = await this.prismaService.syncControl.findMany({
+      where: { isRunning: true },
+      orderBy: { startedAt: 'desc' },
+    });
+
+    // Check for stuck syncs (running for > 2 hours)
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    const stuckSyncs = await this.prismaService.syncControl.findMany({
+      where: {
+        isRunning: true,
+        startedAt: { lt: twoHoursAgo },
+      },
+    });
+
+    // Check for recent errors
+    const recentErrors = await this.prismaService.syncControl.findMany({
+      where: {
+        status: 'failed',
+        startedAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }, // Last 24 hours
+      },
+      orderBy: { startedAt: 'desc' },
+      take: 10,
+    });
+
+    // Generate issues
+    if (stuckSyncs.length > 0) {
+      issues.push(
+        `${stuckSyncs.length} stuck sync processes detected (running > 2 hours)`,
+      );
+    }
+
+    if (activeSyncs.length > 3) {
+      issues.push(
+        `Too many concurrent syncs: ${activeSyncs.length} processes running`,
+      );
+    }
+
+    if (recentErrors.length > 5) {
+      issues.push(
+        `High error rate: ${recentErrors.length} failed syncs in last 24 hours`,
+      );
+    }
+
+    this.logger.log(`🔄 Sync Control Status:`);
+    this.logger.log(`   Active syncs: ${activeSyncs.length}`);
+    this.logger.log(`   Stuck syncs: ${stuckSyncs.length}`);
+    this.logger.log(`   Recent errors: ${recentErrors.length}`);
+
+    return {
+      activeSyncs,
+      stuckSyncs,
+      recentErrors,
+      issues,
+    };
+  }
+
+  // ============================================================================
+  // ✅ 3. LARKBASE CONNECTIVITY TEST
+  // ============================================================================
+
+  async testLarkBaseConnectivity(): Promise<{
+    connected: boolean;
+    responseTime: number;
+    error?: string;
+    tableInfo?: any;
+  }> {
+    this.logger.log('🌐 Testing LarkBase connectivity...');
+
+    const startTime = Date.now();
+
+    try {
+      const headers = await this.larkAuthService.getCustomerHeaders();
+
+      const response = await firstValueFrom(
+        this.httpService.get(
+          `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records?page_size=1`,
+          {
+            headers,
+            timeout: 10000,
+          },
+        ),
+      );
+
+      const responseTime = Date.now() - startTime;
+
+      if (response.data.code === 0) {
+        const tableInfo = {
+          totalRecords: response.data.data?.total || 0,
+          hasRecords: (response.data.data?.items || []).length > 0,
+        };
+
+        this.logger.log(`✅ LarkBase connectivity: OK (${responseTime}ms)`);
+        this.logger.log(
+          `📊 Table info: ${tableInfo.totalRecords} total records`,
+        );
+
+        return {
+          connected: true,
+          responseTime,
+          tableInfo,
+        };
+      } else {
+        throw new Error(
+          `API returned error: ${response.data.msg} (Code: ${response.data.code})`,
+        );
+      }
+    } catch (error) {
+      const responseTime = Date.now() - startTime;
+      this.logger.error(`❌ LarkBase connectivity failed: ${error.message}`);
+
+      return {
+        connected: false,
+        responseTime,
+        error: error.message,
+      };
+    }
+  }
+
+  // ============================================================================
+  // ✅ 4. CUSTOMER DATA QUALITY CHECK
+  // ============================================================================
+
+  async checkCustomerDataQuality(): Promise<{
+    totalCustomers: number;
+    duplicateKiotVietIds: number;
+    missingKiotVietIds: number;
+    invalidDataCount: number;
+    issues: string[];
+  }> {
+    this.logger.log('🔍 Checking customer data quality...');
+
+    const issues: string[] = [];
+
+    // Total customers
+    const totalCustomers = await this.prismaService.customer.count();
+
+    // Check for duplicate kiotVietIds
+    const duplicateCheck = await this.prismaService.$queryRaw<
+      { kiotVietId: bigint; count: bigint }[]
+    >`
+      SELECT "kiotVietId", COUNT(*) as count 
+      FROM "Customer" 
+      WHERE "kiotVietId" IS NOT NULL AND "kiotVietId" != 0
+      GROUP BY "kiotVietId" 
+      HAVING COUNT(*) > 1
+    `;
+    const duplicateKiotVietIds = duplicateCheck.length;
+
+    // Check for missing or zero kiotVietIds using raw SQL (safest approach)
+    const missingKiotVietIds = await this.prismaService.$queryRaw<
+      { count: bigint }[]
+    >`
+      SELECT COUNT(*) as count 
+      FROM "Customer" 
+      WHERE "kiotVietId" IS NULL OR "kiotVietId" = 0
+    `;
+    const missingKiotVietIdsCount = Number(missingKiotVietIds[0]?.count || 0);
+
+    // Check for customers with invalid data using raw SQL
+    const invalidData = await this.prismaService.$queryRaw<{ count: bigint }[]>`
+      SELECT COUNT(*) as count 
+      FROM "Customer" 
+      WHERE "name" IS NULL OR "name" = '' OR "code" IS NULL OR "code" = ''
+    `;
+    const invalidDataCount = Number(invalidData[0]?.count || 0);
+
+    // Generate issues
+    if (duplicateKiotVietIds > 0) {
+      issues.push(`${duplicateKiotVietIds} duplicate kiotVietIds detected`);
+    }
+
+    if (missingKiotVietIdsCount > 0) {
+      issues.push(`${missingKiotVietIdsCount} customers missing kiotVietId`);
+    }
+
+    if (invalidDataCount > 0) {
+      issues.push(
+        `${invalidDataCount} customers with invalid/missing name or code`,
+      );
+    }
+
+    this.logger.log(`🔍 Data Quality Results:`);
+    this.logger.log(`   Total customers: ${totalCustomers}`);
+    this.logger.log(`   Duplicate kiotVietIds: ${duplicateKiotVietIds}`);
+    this.logger.log(`   Missing kiotVietIds: ${missingKiotVietIdsCount}`);
+    this.logger.log(`   Invalid data: ${invalidDataCount}`);
+
+    return {
+      totalCustomers,
+      duplicateKiotVietIds,
+      missingKiotVietIds: missingKiotVietIdsCount,
+      invalidDataCount,
+      issues,
+    };
+  }
+
+  // ============================================================================
+  // ✅ 5. KIOTVIET ID DEBUG & DATA TYPE ANALYSIS
+  // ============================================================================
+
+  async debugKiotVietIdDataTypes(): Promise<{
+    larkBaseSampleTypes: Array<{
+      kiotVietId: any;
+      type: string;
+      recordId: string;
+    }>;
+    databaseSampleTypes: Array<{
+      kiotVietId: any;
+      type: string;
+      customerCode: string;
+    }>;
+    typeConsistency: {
+      larkBaseStringCount: number;
+      larkBaseNumberCount: number;
+      databaseBigIntCount: number;
+      databaseNumberCount: number;
+    };
+    conversionIssues: string[];
+  }> {
+    this.logger.log(
+      '🔍 Debugging kiotVietId data types between Database and LarkBase...',
+    );
+
+    const conversionIssues: string[] = [];
+
+    // 1. Sample Database kiotVietId types using raw SQL (avoid Prisma type issues)
+    const databaseSamples = await this.prismaService.$queryRaw<
+      {
+        kiotVietId: bigint;
+        code: string;
+      }[]
+    >`
+      SELECT "kiotVietId", "code" 
+      FROM "Customer" 
+      WHERE "kiotVietId" IS NOT NULL AND "kiotVietId" != 0
+      LIMIT 10
+    `;
+
+    const databaseSampleTypes = databaseSamples.map((customer) => ({
+      kiotVietId: customer.kiotVietId,
+      type: typeof customer.kiotVietId,
+      customerCode: customer.code,
+    }));
+
+    // 2. Sample LarkBase kiotVietId types
+    let larkBaseSampleTypes: Array<{
+      kiotVietId: any;
+      type: string;
+      recordId: string;
+    }> = [];
+
+    try {
+      // Load a small sample from LarkBase
+      const headers = await this.larkAuthService.getCustomerHeaders();
+      const response = await firstValueFrom(
+        this.httpService.get(
+          `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records?page_size=10`,
+          { headers, timeout: 15000 },
+        ),
+      );
+
+      if (response.data.code === 0) {
+        const records = response.data.data?.items || [];
+        larkBaseSampleTypes = records
+          .map((record: any) => {
+            const kiotVietId = record.fields[LARK_CUSTOMER_FIELDS.KIOTVIET_ID];
+            return {
+              kiotVietId: kiotVietId,
+              type: typeof kiotVietId,
+              recordId: record.record_id,
+            };
+          })
+          .filter((item: any) => item.kiotVietId !== undefined);
+      }
+    } catch (error) {
+      conversionIssues.push(
+        `Failed to load LarkBase samples: ${error.message}`,
+      );
+    }
+
+    // 3. Analyze type consistency
+    const larkBaseStringCount = larkBaseSampleTypes.filter(
+      (item) => typeof item.kiotVietId === 'string',
+    ).length;
+    const larkBaseNumberCount = larkBaseSampleTypes.filter(
+      (item) => typeof item.kiotVietId === 'number',
+    ).length;
+    const databaseBigIntCount = databaseSampleTypes.filter(
+      (item) => typeof item.kiotVietId === 'bigint',
+    ).length;
+    const databaseNumberCount = databaseSampleTypes.filter(
+      (item) => typeof item.kiotVietId === 'number',
+    ).length;
+
+    // 4. Identify conversion issues
+    if (
+      larkBaseStringCount > 0 &&
+      (databaseBigIntCount > 0 || databaseNumberCount > 0)
+    ) {
+      conversionIssues.push(
+        `Type mismatch: LarkBase stores kiotVietId as STRING but Database expects NUMBER/BIGINT`,
+      );
+    }
+
+    if (larkBaseNumberCount > 0 && databaseBigIntCount > 0) {
+      conversionIssues.push(
+        `Type precision: LarkBase uses NUMBER but Database uses BIGINT`,
+      );
+    }
+
+    // 5. Log detailed findings
+    this.logger.log(`🔍 KiotVietId Data Type Analysis:`);
+    this.logger.log(`   Database samples (${databaseSampleTypes.length}):`);
+    databaseSampleTypes.forEach((sample, index) => {
+      this.logger.log(
+        `     ${index + 1}. ${sample.kiotVietId} (${sample.type}) - ${sample.customerCode}`,
+      );
+    });
+
+    this.logger.log(`   LarkBase samples (${larkBaseSampleTypes.length}):`);
+    larkBaseSampleTypes.forEach((sample, index) => {
+      this.logger.log(
+        `     ${index + 1}. ${sample.kiotVietId} (${sample.type}) - ${sample.recordId}`,
+      );
+    });
+
+    this.logger.log(`   Type Distribution:`);
+    this.logger.log(
+      `     LarkBase: ${larkBaseStringCount} strings, ${larkBaseNumberCount} numbers`,
+    );
+    this.logger.log(
+      `     Database: ${databaseBigIntCount} bigints, ${databaseNumberCount} numbers`,
+    );
+
+    if (conversionIssues.length > 0) {
+      this.logger.warn(`⚠️ Conversion Issues Found:`);
+      conversionIssues.forEach((issue, index) => {
+        this.logger.warn(`     ${index + 1}. ${issue}`);
+      });
+    }
+
+    return {
+      larkBaseSampleTypes,
+      databaseSampleTypes,
+      typeConsistency: {
+        larkBaseStringCount,
+        larkBaseNumberCount,
+        databaseBigIntCount,
+        databaseNumberCount,
+      },
+      conversionIssues,
+    };
+  }
+
+  // ============================================================================
+  // ✅ 6. COMPREHENSIVE HEALTH CHECK (UPDATED MAIN METHOD)
+  // ============================================================================
+
+  async performSyncHealthCheck(): Promise<{
+    overallStatus: 'HEALTHY' | 'WARNING' | 'CRITICAL';
+    timestamp: Date;
+    dataReconciliation: any;
+    syncControlHealth: any;
+    larkBaseConnectivity: any;
+    dataQuality: any;
+    kiotVietIdDebug: any;
+    allIssues: string[];
+    recommendations: string[];
+  }> {
+    this.logger.log('🏥 =================================================');
+    this.logger.log('🏥 STARTING COMPREHENSIVE SYNC HEALTH CHECK');
+    this.logger.log('🏥 =================================================');
+
+    const startTime = Date.now();
+    const allIssues: string[] = [];
+    const recommendations: string[] = [];
+
+    // 1. Data Reconciliation
+    this.logger.log('');
+    this.logger.log('📊 [1/5] DATA RECONCILIATION');
+    const dataReconciliation = await this.reconcileDataMismatch();
+    allIssues.push(...dataReconciliation.recommendations);
+
+    // 2. Sync Control Health
+    this.logger.log('');
+    this.logger.log('🔄 [2/5] SYNC CONTROL HEALTH');
+    const syncControlHealth = await this.checkSyncControlHealth();
+    allIssues.push(...syncControlHealth.issues);
+
+    // 3. LarkBase Connectivity
+    this.logger.log('');
+    this.logger.log('🌐 [3/5] LARKBASE CONNECTIVITY');
+    const larkBaseConnectivity = await this.testLarkBaseConnectivity();
+    if (!larkBaseConnectivity.connected) {
+      allIssues.push(
+        `LarkBase connectivity failed: ${larkBaseConnectivity.error}`,
+      );
+    }
+
+    // 4. Data Quality
+    this.logger.log('');
+    this.logger.log('🔍 [4/5] DATA QUALITY CHECK');
+    const dataQuality = await this.checkCustomerDataQuality();
+    allIssues.push(...dataQuality.issues);
+
+    // 5. KiotVietId Data Type Debug (NEW!)
+    this.logger.log('');
+    this.logger.log('🔍 [5/5] KIOTVIET ID DATA TYPE DEBUG');
+    const kiotVietIdDebug = await this.debugKiotVietIdDataTypes();
+    allIssues.push(...kiotVietIdDebug.conversionIssues);
+
+    // Determine overall status
+    let overallStatus: 'HEALTHY' | 'WARNING' | 'CRITICAL' = 'HEALTHY';
+
+    const criticalIssues = allIssues.filter(
+      (issue) =>
+        issue.includes('🚨') ||
+        issue.includes('CRITICAL') ||
+        issue.includes('connectivity failed') ||
+        issue.includes('stuck sync') ||
+        issue.includes('Type mismatch'),
+    );
+
+    const warningIssues = allIssues.filter(
+      (issue) =>
+        issue.includes('⚠️') ||
+        issue.includes('WARNING') ||
+        issue.includes('duplicate') ||
+        issue.includes('failed sync') ||
+        issue.includes('precision'),
+    );
+
+    if (criticalIssues.length > 0) {
+      overallStatus = 'CRITICAL';
+    } else if (warningIssues.length > 0 || allIssues.length > 0) {
+      overallStatus = 'WARNING';
+    }
+
+    // Generate recommendations
+    if (dataReconciliation.pendingSync > 0) {
+      recommendations.push(
+        `🚀 Sync ${dataReconciliation.pendingSync} pending customers`,
+      );
+    }
+
+    if (dataReconciliation.failedSync > 0) {
+      recommendations.push(
+        `🔄 Retry ${dataReconciliation.failedSync} failed customers`,
+      );
+    }
+
+    if (syncControlHealth.stuckSyncs.length > 0) {
+      recommendations.push(
+        `🧹 Clean up ${syncControlHealth.stuckSyncs.length} stuck sync processes`,
+      );
+    }
+
+    if (!larkBaseConnectivity.connected) {
+      recommendations.push(`🔧 Fix LarkBase connectivity issues`);
+    }
+
+    if (dataQuality.duplicateKiotVietIds > 0) {
+      recommendations.push(
+        `🔍 Investigate and resolve ${dataQuality.duplicateKiotVietIds} duplicate kiotVietIds`,
+      );
+    }
+
+    if (dataReconciliation.mismatch > 100) {
+      recommendations.push(
+        `📊 Run data reconciliation to fix ${dataReconciliation.mismatch} record mismatch`,
+      );
+    }
+
+    // NEW: Data type specific recommendations
+    if (kiotVietIdDebug.conversionIssues.length > 0) {
+      recommendations.push(
+        `🔧 Fix kiotVietId data type conversion issues in cache loading logic`,
+      );
+    }
+
+    const totalTime = Date.now() - startTime;
+
+    // Final summary
+    this.logger.log('');
+    this.logger.log('🏥 =================================================');
+    this.logger.log('🏥 HEALTH CHECK SUMMARY');
+    this.logger.log('🏥 =================================================');
+    this.logger.log(`🏥 Overall Status: ${overallStatus}`);
+    this.logger.log(`🏥 Total Issues: ${allIssues.length}`);
+    this.logger.log(`🏥 Critical Issues: ${criticalIssues.length}`);
+    this.logger.log(`🏥 Warning Issues: ${warningIssues.length}`);
+    this.logger.log(`🏥 Check Duration: ${totalTime}ms`);
+
+    if (allIssues.length > 0) {
+      this.logger.log('🏥 Issues Found:');
+      allIssues.forEach((issue, index) => {
+        this.logger.log(`🏥   ${index + 1}. ${issue}`);
+      });
+    }
+
+    if (recommendations.length > 0) {
+      this.logger.log('🏥 Recommendations:');
+      recommendations.forEach((rec, index) => {
+        this.logger.log(`🏥   ${index + 1}. ${rec}`);
+      });
+    }
+
+    this.logger.log('🏥 =================================================');
+
+    return {
+      overallStatus,
+      timestamp: new Date(),
+      dataReconciliation,
+      syncControlHealth,
+      larkBaseConnectivity,
+      dataQuality,
+      kiotVietIdDebug,
+      allIssues,
+      recommendations,
+    };
+  }
+
+  // ============================================================================
   // ✅ FIXED CONNECTION TEST (Increased timeout + retry)
   // ============================================================================
 
