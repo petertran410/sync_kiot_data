@@ -1410,4 +1410,320 @@ export class LarkCustomerSyncService {
       conversionIssues,
     };
   }
+
+  // ============================================================================
+  // DATA ANALYSIS METHODS
+  // ============================================================================
+
+  async analyzeMissingData(): Promise<{
+    missing: any[];
+    exists: any[];
+    duplicates: any[];
+    summary: any;
+  }> {
+    this.logger.log(
+      '🔍 Analyzing missing data between Database and LarkBase...',
+    );
+
+    // Load cache để có data LarkBase
+    await this.loadExistingRecordsWithRetry();
+
+    // Get all database records
+    const dbCustomers = await this.prismaService.customer.findMany({
+      select: {
+        id: true,
+        kiotVietId: true,
+        code: true,
+        name: true,
+        larkSyncStatus: true,
+        larkSyncedAt: true,
+      },
+      orderBy: { kiotVietId: 'asc' },
+    });
+
+    const missing: any[] = [];
+    const exists: any[] = [];
+    const duplicates: Map<number, number> = new Map();
+
+    // Analyze each database record
+    for (const customer of dbCustomers) {
+      const kiotVietId = this.safeBigIntToNumber(customer.kiotVietId);
+      const existsInLark = this.existingRecordsCache.has(kiotVietId);
+
+      if (existsInLark) {
+        exists.push({
+          dbId: customer.id,
+          kiotVietId,
+          code: customer.code,
+          name: customer.name,
+          larkRecordId: this.existingRecordsCache.get(kiotVietId),
+          syncStatus: customer.larkSyncStatus,
+        });
+
+        // Count occurrences for duplicate detection
+        duplicates.set(kiotVietId, (duplicates.get(kiotVietId) || 0) + 1);
+      } else {
+        missing.push({
+          dbId: customer.id,
+          kiotVietId,
+          code: customer.code,
+          name: customer.name,
+          syncStatus: customer.larkSyncStatus,
+          lastSyncAttempt: customer.larkSyncedAt,
+        });
+      }
+    }
+
+    // Find actual duplicates
+    const duplicatesList: any[] = [];
+    for (const [kiotVietId, count] of duplicates.entries()) {
+      if (count > 1) {
+        duplicatesList.push({ kiotVietId, count });
+      }
+    }
+
+    const summary = {
+      totalDatabase: dbCustomers.length,
+      totalLarkBase: this.existingRecordsCache.size,
+      existsInBoth: exists.length,
+      missingInLarkBase: missing.length,
+      duplicatesFound: duplicatesList.length,
+      syncStatusBreakdown: {
+        SYNCED: missing.filter((m) => m.syncStatus === 'SYNCED').length,
+        PENDING: missing.filter((m) => m.syncStatus === 'PENDING').length,
+        FAILED: missing.filter((m) => m.syncStatus === 'FAILED').length,
+      },
+    };
+
+    this.logger.log('📊 Analysis Summary:');
+    this.logger.log(`- Total in Database: ${summary.totalDatabase}`);
+    this.logger.log(`- Total in LarkBase: ${summary.totalLarkBase}`);
+    this.logger.log(`- Exists in both: ${summary.existsInBoth}`);
+    this.logger.log(`- Missing in LarkBase: ${summary.missingInLarkBase}`);
+    this.logger.log(`- Duplicates found: ${summary.duplicatesFound}`);
+
+    return {
+      missing: missing.slice(0, 100), // First 100 for readability
+      exists: exists.slice(0, 20), // Sample of existing
+      duplicates: duplicatesList,
+      summary,
+    };
+  }
+
+  // ============================================================================
+  // TARGETED SYNC FOR MISSING DATA
+  // ============================================================================
+
+  async syncMissingDataOnly(): Promise<{
+    attempted: number;
+    success: number;
+    failed: number;
+    details: any[];
+  }> {
+    this.logger.log('🚀 Starting targeted sync for missing data only...');
+
+    // First, analyze what's missing
+    const analysis = await this.analyzeMissingData();
+    const missingCustomers = analysis.missing;
+
+    if (missingCustomers.length === 0) {
+      this.logger.log(
+        '✅ No missing data found! Database and LarkBase are in sync.',
+      );
+      return {
+        attempted: 0,
+        success: 0,
+        failed: 0,
+        details: [],
+      };
+    }
+
+    // Get full customer data for missing records
+    const missingIds = missingCustomers.map((m) => m.dbId);
+    const customersToSync = await this.prismaService.customer.findMany({
+      where: { id: { in: missingIds } },
+    });
+
+    this.logger.log(
+      `📋 Found ${customersToSync.length} missing customers to sync`,
+    );
+
+    // Reset their status to PENDING for fresh sync
+    await this.prismaService.customer.updateMany({
+      where: { id: { in: missingIds } },
+      data: {
+        larkSyncStatus: 'PENDING',
+        larkSyncRetries: 0,
+      },
+    });
+
+    // Sync in small batches
+    const BATCH_SIZE = 25;
+    let totalSuccess = 0;
+    let totalFailed = 0;
+    const syncDetails: any[] = [];
+
+    for (let i = 0; i < customersToSync.length; i += BATCH_SIZE) {
+      const batch = customersToSync.slice(i, i + BATCH_SIZE);
+      const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
+      const totalBatches = Math.ceil(customersToSync.length / BATCH_SIZE);
+
+      this.logger.log(
+        `🔄 Processing batch ${batchNumber}/${totalBatches} (${batch.length} customers)`,
+      );
+
+      try {
+        // Process this batch
+        const { successRecords, failedRecords } =
+          await this.batchCreateCustomers(batch);
+
+        totalSuccess += successRecords.length;
+        totalFailed += failedRecords.length;
+
+        // Update database status
+        if (successRecords.length > 0) {
+          await this.updateDatabaseStatus(successRecords, 'SYNCED');
+        }
+
+        if (failedRecords.length > 0) {
+          await this.updateDatabaseStatus(failedRecords, 'FAILED');
+        }
+
+        syncDetails.push({
+          batch: batchNumber,
+          success: successRecords.length,
+          failed: failedRecords.length,
+          failedCodes: failedRecords.map((f) => f.code),
+        });
+
+        // Small delay between batches
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      } catch (error) {
+        this.logger.error(`❌ Batch ${batchNumber} failed: ${error.message}`);
+        totalFailed += batch.length;
+
+        syncDetails.push({
+          batch: batchNumber,
+          success: 0,
+          failed: batch.length,
+          error: error.message,
+        });
+      }
+    }
+
+    this.logger.log('🎯 Missing data sync completed:');
+    this.logger.log(`- Attempted: ${customersToSync.length}`);
+    this.logger.log(`- Success: ${totalSuccess}`);
+    this.logger.log(`- Failed: ${totalFailed}`);
+
+    return {
+      attempted: customersToSync.length,
+      success: totalSuccess,
+      failed: totalFailed,
+      details: syncDetails,
+    };
+  }
+
+  // ============================================================================
+  // VERIFY SYNC COMPLETENESS
+  // ============================================================================
+
+  async verifySyncCompleteness(): Promise<{
+    isComplete: boolean;
+    discrepancies: any[];
+    recommendations: string[];
+  }> {
+    this.logger.log('🔍 Verifying sync completeness...');
+
+    // Reload cache to get latest LarkBase state
+    this.clearCache();
+    await this.loadExistingRecordsWithRetry();
+
+    // Get counts
+    const dbTotal = await this.prismaService.customer.count();
+    const dbSynced = await this.prismaService.customer.count({
+      where: { larkSyncStatus: 'SYNCED' },
+    });
+    const larkTotal = this.existingRecordsCache.size;
+
+    // Check each SYNCED record actually exists in LarkBase
+    const syncedButMissing: any[] = [];
+    const syncedCustomers = await this.prismaService.customer.findMany({
+      where: { larkSyncStatus: 'SYNCED' },
+      select: {
+        id: true,
+        kiotVietId: true,
+        code: true,
+        name: true,
+      },
+    });
+
+    for (const customer of syncedCustomers) {
+      const kiotVietId = this.safeBigIntToNumber(customer.kiotVietId);
+      if (!this.existingRecordsCache.has(kiotVietId)) {
+        syncedButMissing.push({
+          id: customer.id,
+          kiotVietId,
+          code: customer.code,
+          name: customer.name,
+        });
+      }
+    }
+
+    const isComplete = dbTotal === larkTotal && syncedButMissing.length === 0;
+    const discrepancies: any[] = [];
+    const recommendations: string[] = [];
+
+    if (dbTotal !== larkTotal) {
+      discrepancies.push({
+        type: 'COUNT_MISMATCH',
+        database: dbTotal,
+        larkBase: larkTotal,
+        difference: Math.abs(dbTotal - larkTotal),
+      });
+    }
+
+    if (syncedButMissing.length > 0) {
+      discrepancies.push({
+        type: 'SYNCED_BUT_MISSING',
+        count: syncedButMissing.length,
+        samples: syncedButMissing.slice(0, 5),
+      });
+
+      recommendations.push(
+        `Reset ${syncedButMissing.length} incorrectly marked SYNCED records and re-sync`,
+      );
+    }
+
+    if (dbSynced < dbTotal) {
+      const pending = await this.prismaService.customer.count({
+        where: { larkSyncStatus: 'PENDING' },
+      });
+      const failed = await this.prismaService.customer.count({
+        where: { larkSyncStatus: 'FAILED' },
+      });
+
+      if (pending > 0) {
+        recommendations.push(`Sync ${pending} PENDING customers`);
+      }
+
+      if (failed > 0) {
+        recommendations.push(`Reset and retry ${failed} FAILED customers`);
+      }
+    }
+
+    if (isComplete) {
+      recommendations.push(
+        '✅ Sync is complete! Database and LarkBase are fully synchronized.',
+      );
+    } else {
+      recommendations.push('Run syncMissingDataOnly() to sync missing records');
+    }
+
+    return {
+      isComplete,
+      discrepancies,
+      recommendations,
+    };
+  }
 }

@@ -1,5 +1,5 @@
 // src/controllers/health.controller.ts
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Post } from '@nestjs/common';
 import { LarkCustomerSyncService } from '../services/lark/customer/lark-customer-sync.service';
 
 @Controller('health')
@@ -49,5 +49,39 @@ export class HealthController {
   async resetFailed() {
     const result = await this.larkCustomerSyncService.resetFailedCustomers();
     return result;
+  }
+
+  @Get('sync/analyze-missing')
+  async analyzeMissing() {
+    const analysis = await this.larkCustomerSyncService.analyzeMissingData();
+
+    return JSON.parse(
+      JSON.stringify(analysis, (key, value) =>
+        typeof value === 'bigint' ? Number(value) : value,
+      ),
+    );
+  }
+
+  @Post('sync/missing-only')
+  async syncMissingOnly() {
+    const result = await this.larkCustomerSyncService.syncMissingDataOnly();
+
+    return JSON.parse(
+      JSON.stringify(result, (key, value) =>
+        typeof value === 'bigint' ? Number(value) : value,
+      ),
+    );
+  }
+
+  @Get('sync/verify')
+  async verifySync() {
+    const verification =
+      await this.larkCustomerSyncService.verifySyncCompleteness();
+
+    return JSON.parse(
+      JSON.stringify(verification, (key, value) =>
+        typeof value === 'bigint' ? Number(value) : value,
+      ),
+    );
   }
 }
