@@ -61,6 +61,8 @@ interface LarkBatchResponse {
       record_id: string;
       fields: Record<string, any>;
     }>;
+    page_token?: string;
+    total?: number;
   };
 }
 
@@ -74,14 +76,17 @@ export class LarkCustomerSyncService {
   private readonly logger = new Logger(LarkCustomerSyncService.name);
   private readonly baseToken: string;
   private readonly tableId: string;
-  private readonly batchSize: number = 15; // Smaller for stability
+  private readonly batchSize: number = 15;
 
   private readonly AUTH_ERROR_CODES = [99991663, 99991664, 99991665];
   private readonly MAX_AUTH_RETRIES = 3;
 
-  // ✅ BYPASS: In-memory cache for existing records (loaded once per sync)
+  // Cache management
   private existingRecordsCache: Map<number, string> = new Map();
+  private customerCodeCache: Map<string, string> = new Map();
   private cacheLoaded: boolean = false;
+  private lastCacheLoadTime: Date | null = null;
+  private readonly CACHE_VALIDITY_MINUTES = 30;
 
   constructor(
     private readonly httpService: HttpService,
@@ -105,7 +110,7 @@ export class LarkCustomerSyncService {
   }
 
   // ============================================================================
-  // ✅ BYPASS SOLUTION: MAIN SYNC WITHOUT SEARCH
+  // MAIN SYNC METHOD WITH IMPROVED ERROR HANDLING
   // ============================================================================
 
   async syncCustomersToLarkBase(customers: any[]): Promise<void> {
@@ -115,10 +120,9 @@ export class LarkCustomerSyncService {
       await this.acquireSyncLock(lockKey);
 
       this.logger.log(
-        `🚀 Starting LarkBase sync for ${customers.length} customers (BYPASS SEARCH MODE)...`,
+        `🚀 Starting LarkBase sync for ${customers.length} customers (IMPROVED MODE)...`,
       );
 
-      // ✅ INCLUDE BOTH PENDING AND FAILED for safe retry
       const customersToSync = customers.filter(
         (c) => c.larkSyncStatus === 'PENDING' || c.larkSyncStatus === 'FAILED',
       );
@@ -139,774 +143,135 @@ export class LarkCustomerSyncService {
         `📊 Including: ${pendingCount} PENDING + ${failedCount} FAILED customers`,
       );
 
-      this.logger.log(
-        `📊 Bypass sync: ${customersToSync.length}/${customers.length} customers need sync`,
-      );
-
-      // ✅ STEP 1: Test LarkBase connection first
+      // Test LarkBase connection
       await this.testLarkBaseConnection();
 
-      // ✅ STEP 2: Load existing records cache (if any) to detect duplicates
-      await this.loadExistingRecordsCache();
+      // Load cache with retry mechanism
+      const cacheLoaded = await this.loadExistingRecordsWithRetry();
 
-      // ✅ STEP 3: Separate new vs potential updates based on cache
+      if (!cacheLoaded) {
+        this.logger.warn(
+          '⚠️ Cache loading failed - will use alternative duplicate detection',
+        );
+        // Continue with careful duplicate handling instead of stopping
+      }
+
+      // Categorize customers
       const { newCustomers, updateCustomers } =
         this.categorizeCustomers(customersToSync);
 
       this.logger.log(
-        `📋 Bypass categorization: ${newCustomers.length} new, ${updateCustomers.length} potential updates`,
+        `📋 Categorization: ${newCustomers.length} new, ${updateCustomers.length} updates`,
       );
 
-      // ✅ STEP 4: Process new customers (guaranteed no duplicates)
+      // Process in smaller batches to avoid timeouts
+      const BATCH_SIZE_FOR_SYNC = 50;
+
+      // Process new customers in batches
       if (newCustomers.length > 0) {
-        await this.processNewCustomersBypass(newCustomers);
+        for (let i = 0; i < newCustomers.length; i += BATCH_SIZE_FOR_SYNC) {
+          const batch = newCustomers.slice(i, i + BATCH_SIZE_FOR_SYNC);
+          this.logger.log(
+            `Processing new customers batch ${Math.floor(i / BATCH_SIZE_FOR_SYNC) + 1}/${Math.ceil(newCustomers.length / BATCH_SIZE_FOR_SYNC)}`,
+          );
+          await this.processNewCustomers(batch);
+        }
       }
 
-      // ✅ STEP 5: Handle potential updates (try update, fallback to create)
+      // Process updates in batches
       if (updateCustomers.length > 0) {
-        await this.processUpdateCustomersBypass(updateCustomers);
+        for (let i = 0; i < updateCustomers.length; i += BATCH_SIZE_FOR_SYNC) {
+          const batch = updateCustomers.slice(i, i + BATCH_SIZE_FOR_SYNC);
+          this.logger.log(
+            `Processing update batch ${Math.floor(i / BATCH_SIZE_FOR_SYNC) + 1}/${Math.ceil(updateCustomers.length / BATCH_SIZE_FOR_SYNC)}`,
+          );
+          await this.processUpdateCustomers(batch);
+        }
       }
 
-      this.logger.log(`🎉 Bypass LarkBase sync completed successfully`);
+      this.logger.log(`🎉 LarkBase sync completed successfully`);
     } catch (error) {
-      this.logger.error(`❌ Bypass LarkBase sync failed: ${error.message}`);
+      this.logger.error(`❌ LarkBase sync failed: ${error.message}`);
+
+      // Mark all as failed to prevent data corruption
+      await this.updateDatabaseStatus(customers, 'FAILED');
+
       throw error;
     } finally {
       await this.releaseSyncLock(lockKey);
-      this.clearCache(); // Clear cache for next sync
     }
   }
 
   // ============================================================================
-  // ✅ 1. DATA RECONCILIATION & MISMATCH ANALYSIS
+  // IMPROVED CACHE LOADING WITH STRING HANDLING
   // ============================================================================
 
-  async reconcileDataMismatch(): Promise<{
-    databaseCount: number;
-    larkBaseCount: number;
-    mismatch: number;
-    pendingSync: number;
-    failedSync: number;
-    syncedCount: number;
-    recommendations: string[];
-  }> {
-    this.logger.log('🔍 Starting data reconciliation analysis...');
-
-    // Count database records by status
-    const databaseCount = await this.prismaService.customer.count();
-    const pendingCount = await this.prismaService.customer.count({
-      where: { larkSyncStatus: 'PENDING' },
-    });
-    const failedCount = await this.prismaService.customer.count({
-      where: { larkSyncStatus: 'FAILED' },
-    });
-    const syncedCount = await this.prismaService.customer.count({
-      where: { larkSyncStatus: 'SYNCED' },
-    });
-
-    this.logger.log(`📊 Database Status:`);
-    this.logger.log(`   Total: ${databaseCount}`);
-    this.logger.log(`   SYNCED: ${syncedCount}`);
-    this.logger.log(`   PENDING: ${pendingCount}`);
-    this.logger.log(`   FAILED: ${failedCount}`);
-
-    // Count LarkBase records
-    let larkBaseCount = 0;
-    let cacheLoadError = null;
-
-    try {
-      this.logger.log('📥 Counting LarkBase records...');
-
-      // Clear cache first to get fresh count
-      this.clearCache();
-      await this.loadExistingRecordsCache();
-      larkBaseCount = this.existingRecordsCache.size;
-
-      this.logger.log(`📊 LarkBase: ${larkBaseCount} records`);
-    } catch (error) {
-      cacheLoadError = error.message;
-      this.logger.warn(`⚠️ Could not count LarkBase records: ${error.message}`);
-    }
-
-    const mismatch = Math.abs(databaseCount - larkBaseCount);
-    const recommendations: string[] = [];
-
-    // Generate detailed recommendations
-    if (cacheLoadError) {
-      recommendations.push(
-        `🚨 CRITICAL: Cannot access LarkBase - ${cacheLoadError}`,
-      );
-    }
-
-    if (mismatch > 1000) {
-      recommendations.push(
-        `🚨 CRITICAL: Major data mismatch - ${mismatch} records difference`,
-      );
-    } else if (mismatch > 100) {
-      recommendations.push(
-        `⚠️ WARNING: Significant mismatch - ${mismatch} records difference`,
-      );
-    }
-
-    if (pendingCount > 0) {
-      recommendations.push(`⏳ ${pendingCount} customers waiting to sync`);
-    }
-
-    if (failedCount > 0) {
-      recommendations.push(
-        `❌ ${failedCount} customers failed sync - recommend retry`,
-      );
-    }
-
-    if (syncedCount > larkBaseCount) {
-      recommendations.push(
-        `🔍 ${syncedCount - larkBaseCount} SYNCED customers missing from LarkBase - data corruption detected`,
-      );
-    }
-
-    if (larkBaseCount > syncedCount) {
-      recommendations.push(
-        `📊 ${larkBaseCount - syncedCount} extra records in LarkBase - possible manual additions or sync status issues`,
-      );
-    }
-
-    const result = {
-      databaseCount,
-      larkBaseCount,
-      mismatch,
-      pendingSync: pendingCount,
-      failedSync: failedCount,
-      syncedCount,
-      recommendations,
-    };
-
-    this.logger.log(`📊 Reconciliation Summary:`);
-    this.logger.log(
-      `   Database vs LarkBase: ${databaseCount} vs ${larkBaseCount}`,
-    );
-    this.logger.log(`   Mismatch: ${mismatch} records`);
-    this.logger.log(`   Issues found: ${recommendations.length}`);
-
-    return result;
-  }
-
-  // ============================================================================
-  // ✅ 2. SYNC CONTROL & STUCK PROCESS DETECTION
-  // ============================================================================
-
-  async checkSyncControlHealth(): Promise<{
-    activeSyncs: any[];
-    stuckSyncs: any[];
-    recentErrors: any[];
-    issues: string[];
-  }> {
-    this.logger.log('🔄 Checking sync control health...');
-
-    const issues: string[] = [];
-
-    // Check for currently running syncs
-    const activeSyncs = await this.prismaService.syncControl.findMany({
-      where: { isRunning: true },
-      orderBy: { startedAt: 'desc' },
-    });
-
-    // Check for stuck syncs (running for > 2 hours)
-    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
-    const stuckSyncs = await this.prismaService.syncControl.findMany({
-      where: {
-        isRunning: true,
-        startedAt: { lt: twoHoursAgo },
-      },
-    });
-
-    // Check for recent errors
-    const recentErrors = await this.prismaService.syncControl.findMany({
-      where: {
-        status: 'failed',
-        startedAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }, // Last 24 hours
-      },
-      orderBy: { startedAt: 'desc' },
-      take: 10,
-    });
-
-    // Generate issues
-    if (stuckSyncs.length > 0) {
-      issues.push(
-        `${stuckSyncs.length} stuck sync processes detected (running > 2 hours)`,
-      );
-    }
-
-    if (activeSyncs.length > 3) {
-      issues.push(
-        `Too many concurrent syncs: ${activeSyncs.length} processes running`,
-      );
-    }
-
-    if (recentErrors.length > 5) {
-      issues.push(
-        `High error rate: ${recentErrors.length} failed syncs in last 24 hours`,
-      );
-    }
-
-    this.logger.log(`🔄 Sync Control Status:`);
-    this.logger.log(`   Active syncs: ${activeSyncs.length}`);
-    this.logger.log(`   Stuck syncs: ${stuckSyncs.length}`);
-    this.logger.log(`   Recent errors: ${recentErrors.length}`);
-
-    return {
-      activeSyncs,
-      stuckSyncs,
-      recentErrors,
-      issues,
-    };
-  }
-
-  // ============================================================================
-  // ✅ 3. LARKBASE CONNECTIVITY TEST
-  // ============================================================================
-
-  async testLarkBaseConnectivity(): Promise<{
-    connected: boolean;
-    responseTime: number;
-    error?: string;
-    tableInfo?: any;
-  }> {
-    this.logger.log('🌐 Testing LarkBase connectivity...');
-
-    const startTime = Date.now();
-
-    try {
-      const headers = await this.larkAuthService.getCustomerHeaders();
-
-      const response = await firstValueFrom(
-        this.httpService.get(
-          `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records?page_size=1`,
-          {
-            headers,
-            timeout: 10000,
-          },
-        ),
-      );
-
-      const responseTime = Date.now() - startTime;
-
-      if (response.data.code === 0) {
-        const tableInfo = {
-          totalRecords: response.data.data?.total || 0,
-          hasRecords: (response.data.data?.items || []).length > 0,
-        };
-
-        this.logger.log(`✅ LarkBase connectivity: OK (${responseTime}ms)`);
-        this.logger.log(
-          `📊 Table info: ${tableInfo.totalRecords} total records`,
-        );
-
-        return {
-          connected: true,
-          responseTime,
-          tableInfo,
-        };
-      } else {
-        throw new Error(
-          `API returned error: ${response.data.msg} (Code: ${response.data.code})`,
-        );
-      }
-    } catch (error) {
-      const responseTime = Date.now() - startTime;
-      this.logger.error(`❌ LarkBase connectivity failed: ${error.message}`);
-
-      return {
-        connected: false,
-        responseTime,
-        error: error.message,
-      };
-    }
-  }
-
-  // ============================================================================
-  // ✅ 4. CUSTOMER DATA QUALITY CHECK
-  // ============================================================================
-
-  async checkCustomerDataQuality(): Promise<{
-    totalCustomers: number;
-    duplicateKiotVietIds: number;
-    missingKiotVietIds: number;
-    invalidDataCount: number;
-    issues: string[];
-  }> {
-    this.logger.log('🔍 Checking customer data quality...');
-
-    const issues: string[] = [];
-
-    // Total customers
-    const totalCustomers = await this.prismaService.customer.count();
-
-    // Check for duplicate kiotVietIds
-    const duplicateCheck = await this.prismaService.$queryRaw<
-      { kiotVietId: bigint; count: bigint }[]
-    >`
-      SELECT "kiotVietId", COUNT(*) as count 
-      FROM "Customer" 
-      WHERE "kiotVietId" IS NOT NULL AND "kiotVietId" != 0
-      GROUP BY "kiotVietId" 
-      HAVING COUNT(*) > 1
-    `;
-    const duplicateKiotVietIds = duplicateCheck.length;
-
-    // Check for missing or zero kiotVietIds using raw SQL (safest approach)
-    const missingKiotVietIds = await this.prismaService.$queryRaw<
-      { count: bigint }[]
-    >`
-      SELECT COUNT(*) as count 
-      FROM "Customer" 
-      WHERE "kiotVietId" IS NULL OR "kiotVietId" = 0
-    `;
-    const missingKiotVietIdsCount = Number(missingKiotVietIds[0]?.count || 0);
-
-    // Check for customers with invalid data using raw SQL
-    const invalidData = await this.prismaService.$queryRaw<{ count: bigint }[]>`
-      SELECT COUNT(*) as count 
-      FROM "Customer" 
-      WHERE "name" IS NULL OR "name" = '' OR "code" IS NULL OR "code" = ''
-    `;
-    const invalidDataCount = Number(invalidData[0]?.count || 0);
-
-    // Generate issues
-    if (duplicateKiotVietIds > 0) {
-      issues.push(`${duplicateKiotVietIds} duplicate kiotVietIds detected`);
-    }
-
-    if (missingKiotVietIdsCount > 0) {
-      issues.push(`${missingKiotVietIdsCount} customers missing kiotVietId`);
-    }
-
-    if (invalidDataCount > 0) {
-      issues.push(
-        `${invalidDataCount} customers with invalid/missing name or code`,
-      );
-    }
-
-    this.logger.log(`🔍 Data Quality Results:`);
-    this.logger.log(`   Total customers: ${totalCustomers}`);
-    this.logger.log(`   Duplicate kiotVietIds: ${duplicateKiotVietIds}`);
-    this.logger.log(`   Missing kiotVietIds: ${missingKiotVietIdsCount}`);
-    this.logger.log(`   Invalid data: ${invalidDataCount}`);
-
-    return {
-      totalCustomers,
-      duplicateKiotVietIds,
-      missingKiotVietIds: missingKiotVietIdsCount,
-      invalidDataCount,
-      issues,
-    };
-  }
-
-  // ============================================================================
-  // ✅ 5. KIOTVIET ID DEBUG & DATA TYPE ANALYSIS
-  // ============================================================================
-
-  async debugKiotVietIdDataTypes(): Promise<{
-    larkBaseSampleTypes: Array<{
-      kiotVietId: any;
-      type: string;
-      recordId: string;
-    }>;
-    databaseSampleTypes: Array<{
-      kiotVietId: any;
-      type: string;
-      customerCode: string;
-    }>;
-    typeConsistency: {
-      larkBaseStringCount: number;
-      larkBaseNumberCount: number;
-      databaseBigIntCount: number;
-      databaseNumberCount: number;
-    };
-    conversionIssues: string[];
-  }> {
-    this.logger.log(
-      '🔍 Debugging kiotVietId data types between Database and LarkBase...',
-    );
-
-    const conversionIssues: string[] = [];
-
-    // 1. Sample Database kiotVietId types using raw SQL (avoid Prisma type issues)
-    const databaseSamples = await this.prismaService.$queryRaw<
-      {
-        kiotVietId: bigint;
-        code: string;
-      }[]
-    >`
-      SELECT "kiotVietId", "code" 
-      FROM "Customer" 
-      WHERE "kiotVietId" IS NOT NULL AND "kiotVietId" != 0
-      LIMIT 10
-    `;
-
-    const databaseSampleTypes = databaseSamples.map((customer) => ({
-      kiotVietId: customer.kiotVietId,
-      type: typeof customer.kiotVietId,
-      customerCode: customer.code,
-    }));
-
-    // 2. Sample LarkBase kiotVietId types
-    let larkBaseSampleTypes: Array<{
-      kiotVietId: any;
-      type: string;
-      recordId: string;
-    }> = [];
-
-    try {
-      // Load a small sample from LarkBase
-      const headers = await this.larkAuthService.getCustomerHeaders();
-      const response = await firstValueFrom(
-        this.httpService.get(
-          `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records?page_size=10`,
-          { headers, timeout: 15000 },
-        ),
-      );
-
-      if (response.data.code === 0) {
-        const records = response.data.data?.items || [];
-        larkBaseSampleTypes = records
-          .map((record: any) => {
-            const kiotVietId = record.fields[LARK_CUSTOMER_FIELDS.KIOTVIET_ID];
-            return {
-              kiotVietId: kiotVietId,
-              type: typeof kiotVietId,
-              recordId: record.record_id,
-            };
-          })
-          .filter((item: any) => item.kiotVietId !== undefined);
-      }
-    } catch (error) {
-      conversionIssues.push(
-        `Failed to load LarkBase samples: ${error.message}`,
-      );
-    }
-
-    // 3. Analyze type consistency
-    const larkBaseStringCount = larkBaseSampleTypes.filter(
-      (item) => typeof item.kiotVietId === 'string',
-    ).length;
-    const larkBaseNumberCount = larkBaseSampleTypes.filter(
-      (item) => typeof item.kiotVietId === 'number',
-    ).length;
-    const databaseBigIntCount = databaseSampleTypes.filter(
-      (item) => typeof item.kiotVietId === 'bigint',
-    ).length;
-    const databaseNumberCount = databaseSampleTypes.filter(
-      (item) => typeof item.kiotVietId === 'number',
-    ).length;
-
-    // 4. Identify conversion issues
-    if (
-      larkBaseStringCount > 0 &&
-      (databaseBigIntCount > 0 || databaseNumberCount > 0)
-    ) {
-      conversionIssues.push(
-        `Type mismatch: LarkBase stores kiotVietId as STRING but Database expects NUMBER/BIGINT`,
-      );
-    }
-
-    if (larkBaseNumberCount > 0 && databaseBigIntCount > 0) {
-      conversionIssues.push(
-        `Type precision: LarkBase uses NUMBER but Database uses BIGINT`,
-      );
-    }
-
-    // 5. Log detailed findings
-    this.logger.log(`🔍 KiotVietId Data Type Analysis:`);
-    this.logger.log(`   Database samples (${databaseSampleTypes.length}):`);
-    databaseSampleTypes.forEach((sample, index) => {
-      this.logger.log(
-        `     ${index + 1}. ${sample.kiotVietId} (${sample.type}) - ${sample.customerCode}`,
-      );
-    });
-
-    this.logger.log(`   LarkBase samples (${larkBaseSampleTypes.length}):`);
-    larkBaseSampleTypes.forEach((sample, index) => {
-      this.logger.log(
-        `     ${index + 1}. ${sample.kiotVietId} (${sample.type}) - ${sample.recordId}`,
-      );
-    });
-
-    this.logger.log(`   Type Distribution:`);
-    this.logger.log(
-      `     LarkBase: ${larkBaseStringCount} strings, ${larkBaseNumberCount} numbers`,
-    );
-    this.logger.log(
-      `     Database: ${databaseBigIntCount} bigints, ${databaseNumberCount} numbers`,
-    );
-
-    if (conversionIssues.length > 0) {
-      this.logger.warn(`⚠️ Conversion Issues Found:`);
-      conversionIssues.forEach((issue, index) => {
-        this.logger.warn(`     ${index + 1}. ${issue}`);
-      });
-    }
-
-    return {
-      larkBaseSampleTypes,
-      databaseSampleTypes,
-      typeConsistency: {
-        larkBaseStringCount,
-        larkBaseNumberCount,
-        databaseBigIntCount,
-        databaseNumberCount,
-      },
-      conversionIssues,
-    };
-  }
-
-  // ============================================================================
-  // ✅ 6. COMPREHENSIVE HEALTH CHECK (UPDATED MAIN METHOD)
-  // ============================================================================
-
-  async performSyncHealthCheck(): Promise<{
-    overallStatus: 'HEALTHY' | 'WARNING' | 'CRITICAL';
-    timestamp: Date;
-    dataReconciliation: any;
-    syncControlHealth: any;
-    larkBaseConnectivity: any;
-    dataQuality: any;
-    kiotVietIdDebug: any;
-    allIssues: string[];
-    recommendations: string[];
-  }> {
-    this.logger.log('🏥 =================================================');
-    this.logger.log('🏥 STARTING COMPREHENSIVE SYNC HEALTH CHECK');
-    this.logger.log('🏥 =================================================');
-
-    const startTime = Date.now();
-    const allIssues: string[] = [];
-    const recommendations: string[] = [];
-
-    // 1. Data Reconciliation
-    this.logger.log('');
-    this.logger.log('📊 [1/5] DATA RECONCILIATION');
-    const dataReconciliation = await this.reconcileDataMismatch();
-    allIssues.push(...dataReconciliation.recommendations);
-
-    // 2. Sync Control Health
-    this.logger.log('');
-    this.logger.log('🔄 [2/5] SYNC CONTROL HEALTH');
-    const syncControlHealth = await this.checkSyncControlHealth();
-    allIssues.push(...syncControlHealth.issues);
-
-    // 3. LarkBase Connectivity
-    this.logger.log('');
-    this.logger.log('🌐 [3/5] LARKBASE CONNECTIVITY');
-    const larkBaseConnectivity = await this.testLarkBaseConnectivity();
-    if (!larkBaseConnectivity.connected) {
-      allIssues.push(
-        `LarkBase connectivity failed: ${larkBaseConnectivity.error}`,
-      );
-    }
-
-    // 4. Data Quality
-    this.logger.log('');
-    this.logger.log('🔍 [4/5] DATA QUALITY CHECK');
-    const dataQuality = await this.checkCustomerDataQuality();
-    allIssues.push(...dataQuality.issues);
-
-    // 5. KiotVietId Data Type Debug (NEW!)
-    this.logger.log('');
-    this.logger.log('🔍 [5/5] KIOTVIET ID DATA TYPE DEBUG');
-    const kiotVietIdDebug = await this.debugKiotVietIdDataTypes();
-    allIssues.push(...kiotVietIdDebug.conversionIssues);
-
-    // Determine overall status
-    let overallStatus: 'HEALTHY' | 'WARNING' | 'CRITICAL' = 'HEALTHY';
-
-    const criticalIssues = allIssues.filter(
-      (issue) =>
-        issue.includes('🚨') ||
-        issue.includes('CRITICAL') ||
-        issue.includes('connectivity failed') ||
-        issue.includes('stuck sync') ||
-        issue.includes('Type mismatch'),
-    );
-
-    const warningIssues = allIssues.filter(
-      (issue) =>
-        issue.includes('⚠️') ||
-        issue.includes('WARNING') ||
-        issue.includes('duplicate') ||
-        issue.includes('failed sync') ||
-        issue.includes('precision'),
-    );
-
-    if (criticalIssues.length > 0) {
-      overallStatus = 'CRITICAL';
-    } else if (warningIssues.length > 0 || allIssues.length > 0) {
-      overallStatus = 'WARNING';
-    }
-
-    // Generate recommendations
-    if (dataReconciliation.pendingSync > 0) {
-      recommendations.push(
-        `🚀 Sync ${dataReconciliation.pendingSync} pending customers`,
-      );
-    }
-
-    if (dataReconciliation.failedSync > 0) {
-      recommendations.push(
-        `🔄 Retry ${dataReconciliation.failedSync} failed customers`,
-      );
-    }
-
-    if (syncControlHealth.stuckSyncs.length > 0) {
-      recommendations.push(
-        `🧹 Clean up ${syncControlHealth.stuckSyncs.length} stuck sync processes`,
-      );
-    }
-
-    if (!larkBaseConnectivity.connected) {
-      recommendations.push(`🔧 Fix LarkBase connectivity issues`);
-    }
-
-    if (dataQuality.duplicateKiotVietIds > 0) {
-      recommendations.push(
-        `🔍 Investigate and resolve ${dataQuality.duplicateKiotVietIds} duplicate kiotVietIds`,
-      );
-    }
-
-    if (dataReconciliation.mismatch > 100) {
-      recommendations.push(
-        `📊 Run data reconciliation to fix ${dataReconciliation.mismatch} record mismatch`,
-      );
-    }
-
-    // NEW: Data type specific recommendations
-    if (kiotVietIdDebug.conversionIssues.length > 0) {
-      recommendations.push(
-        `🔧 Fix kiotVietId data type conversion issues in cache loading logic`,
-      );
-    }
-
-    const totalTime = Date.now() - startTime;
-
-    // Final summary
-    this.logger.log('');
-    this.logger.log('🏥 =================================================');
-    this.logger.log('🏥 HEALTH CHECK SUMMARY');
-    this.logger.log('🏥 =================================================');
-    this.logger.log(`🏥 Overall Status: ${overallStatus}`);
-    this.logger.log(`🏥 Total Issues: ${allIssues.length}`);
-    this.logger.log(`🏥 Critical Issues: ${criticalIssues.length}`);
-    this.logger.log(`🏥 Warning Issues: ${warningIssues.length}`);
-    this.logger.log(`🏥 Check Duration: ${totalTime}ms`);
-
-    if (allIssues.length > 0) {
-      this.logger.log('🏥 Issues Found:');
-      allIssues.forEach((issue, index) => {
-        this.logger.log(`🏥   ${index + 1}. ${issue}`);
-      });
-    }
-
-    if (recommendations.length > 0) {
-      this.logger.log('🏥 Recommendations:');
-      recommendations.forEach((rec, index) => {
-        this.logger.log(`🏥   ${index + 1}. ${rec}`);
-      });
-    }
-
-    this.logger.log('🏥 =================================================');
-
-    return {
-      overallStatus,
-      timestamp: new Date(),
-      dataReconciliation,
-      syncControlHealth,
-      larkBaseConnectivity,
-      dataQuality,
-      kiotVietIdDebug,
-      allIssues,
-      recommendations,
-    };
-  }
-
-  // ============================================================================
-  // ✅ FIXED CONNECTION TEST (Increased timeout + retry)
-  // ============================================================================
-
-  private async testLarkBaseConnection(): Promise<void> {
+  private async loadExistingRecordsWithRetry(): Promise<boolean> {
     const maxRetries = 3;
-    let retryCount = 0;
 
-    while (retryCount <= maxRetries) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         this.logger.log(
-          `🔍 Testing LarkBase connection (attempt ${retryCount + 1}/${maxRetries + 1})...`,
+          `📥 Loading cache (attempt ${attempt}/${maxRetries})...`,
         );
 
-        const headers = await this.larkAuthService.getCustomerHeaders();
-
-        // ✅ FIXED: Increased timeout to 30s + simple request
-        const response = await firstValueFrom(
-          this.httpService.get(
-            `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records?page_size=1`,
-            {
-              headers,
-              timeout: 30000, // ✅ 30 seconds instead of 10
-            },
-          ),
-        );
-
-        if (response.data.code === 0) {
-          this.logger.log('✅ LarkBase connection successful');
-
-          const totalRecords = response.data.data?.total || 0;
-          this.logger.log(
-            `📊 LarkBase table has ${totalRecords} existing records`,
-          );
-          return; // Success - exit retry loop
-        } else {
-          throw new Error(
-            `Connection test failed: ${response.data.msg} (Code: ${response.data.code})`,
-          );
+        // Check if cache is still valid
+        if (this.isCacheValid()) {
+          this.logger.log('✅ Using existing valid cache');
+          return true;
         }
-      } catch (error) {
-        retryCount++;
 
-        if (retryCount <= maxRetries) {
-          const delay = retryCount * 2000; // Progressive delay: 2s, 4s, 6s
-          this.logger.warn(
-            `⚠️ Connection attempt ${retryCount} failed: ${error.message}`,
+        // Clear old cache
+        this.clearCache();
+
+        // Load new cache
+        await this.loadExistingRecordsCache();
+
+        // Validate cache
+        if (this.existingRecordsCache.size > 0) {
+          this.logger.log(
+            `✅ Cache loaded successfully: ${this.existingRecordsCache.size} records`,
           );
-          this.logger.log(`🔄 Retrying in ${delay / 1000}s...`);
+          this.lastCacheLoadTime = new Date();
+          return true;
+        }
+
+        this.logger.warn(`⚠️ Cache empty on attempt ${attempt}`);
+      } catch (error) {
+        this.logger.error(
+          `❌ Cache loading attempt ${attempt} failed: ${error.message}`,
+        );
+
+        if (attempt < maxRetries) {
+          const delay = attempt * 3000;
+          this.logger.log(`⏳ Waiting ${delay / 1000}s before retry...`);
           await new Promise((resolve) => setTimeout(resolve, delay));
-        } else {
-          this.logger.error(
-            '❌ LarkBase connection test failed after all retries:',
-            error.message,
-          );
-          throw new Error(
-            `Cannot connect to LarkBase after ${maxRetries + 1} attempts: ${error.message}`,
-          );
         }
       }
     }
+
+    return false;
   }
 
-  // ============================================================================
-  // ✅ FIXED CACHE LOADING (Handle string kiotVietId + timeout)
-  // ============================================================================
+  private isCacheValid(): boolean {
+    if (!this.cacheLoaded || !this.lastCacheLoadTime) {
+      return false;
+    }
+
+    const cacheAge = Date.now() - this.lastCacheLoadTime.getTime();
+    const maxAge = this.CACHE_VALIDITY_MINUTES * 60 * 1000;
+
+    return cacheAge < maxAge && this.existingRecordsCache.size > 0;
+  }
 
   private async loadExistingRecordsCache(): Promise<void> {
-    if (this.cacheLoaded) return;
-
     try {
-      this.logger.log('📥 Loading existing records cache (optimized)...');
-
       const headers = await this.larkAuthService.getCustomerHeaders();
       let page_token = '';
       let totalLoaded = 0;
       let cacheBuilt = 0;
-
-      // ✅ OPTIMIZATION: Smaller page size for reliability
-      const pageSize = 200; // Reduced from 500 for better timeout handling
+      let stringConversions = 0;
+      const pageSize = 100; // Reduced for better stability
 
       do {
         const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records`;
@@ -917,60 +282,95 @@ export class LarkCustomerSyncService {
 
         const startTime = Date.now();
 
-        const response = await firstValueFrom(
-          this.httpService.get(`${url}?${params}`, {
-            headers,
-            timeout: 45000, // ✅ 45 seconds for cache loading
-          }),
-        );
+        try {
+          const response = await firstValueFrom(
+            this.httpService.get<LarkBatchResponse>(`${url}?${params}`, {
+              headers,
+              timeout: 60000, // Increased to 60s
+            }),
+          );
 
-        const loadTime = Date.now() - startTime;
+          const loadTime = Date.now() - startTime;
 
-        if (response.data.code === 0) {
-          const records = response.data.data?.items || [];
+          if (response.data.code === 0) {
+            const records = response.data.data?.items || [];
 
-          // ✅ FIXED: Build cache with string handling
-          for (const record of records) {
-            const kiotVietIdRaw =
-              record.fields[LARK_CUSTOMER_FIELDS.KIOTVIET_ID];
-            const kiotVietId = this.safeBigIntToNumber(kiotVietIdRaw);
+            for (const record of records) {
+              // CRITICAL FIX: Handle string kiotVietId from LarkBase
+              const kiotVietIdRaw =
+                record.fields[LARK_CUSTOMER_FIELDS.KIOTVIET_ID];
 
-            if (kiotVietId && kiotVietId > 0) {
-              this.existingRecordsCache.set(kiotVietId, record.record_id);
-              cacheBuilt++;
+              // Enhanced conversion with better string handling
+              let kiotVietId = 0;
 
-              // ✅ DEBUG: Log first few successful cache builds
-              if (cacheBuilt <= 5) {
-                this.logger.debug(
-                  `✅ Cached: "${kiotVietIdRaw}" (${typeof kiotVietIdRaw}) → ${kiotVietId} → ${record.record_id}`,
-                );
+              if (kiotVietIdRaw !== null && kiotVietIdRaw !== undefined) {
+                if (typeof kiotVietIdRaw === 'string') {
+                  const trimmed = kiotVietIdRaw.trim();
+                  if (trimmed !== '') {
+                    const parsed = parseInt(trimmed, 10);
+                    if (!isNaN(parsed) && parsed > 0) {
+                      kiotVietId = parsed;
+                      stringConversions++;
+                    }
+                  }
+                } else if (typeof kiotVietIdRaw === 'number') {
+                  kiotVietId = Math.floor(kiotVietIdRaw);
+                }
               }
-            } else {
-              // ✅ Log failures (should be rare now)
-              if (totalLoaded - cacheBuilt < 3) {
-                this.logger.warn(
-                  `❌ Failed to cache: "${kiotVietIdRaw}" (${typeof kiotVietIdRaw}) → ${kiotVietId}`,
+
+              if (kiotVietId > 0) {
+                this.existingRecordsCache.set(kiotVietId, record.record_id);
+                cacheBuilt++;
+
+                // Debug first few conversions
+                if (cacheBuilt <= 3) {
+                  this.logger.debug(
+                    `✅ Cached: "${kiotVietIdRaw}" (${typeof kiotVietIdRaw}) → ${kiotVietId} → ${record.record_id}`,
+                  );
+                }
+              }
+
+              // Also cache by customer code
+              const customerCode =
+                record.fields[LARK_CUSTOMER_FIELDS.CUSTOMER_CODE];
+              if (customerCode) {
+                this.customerCodeCache.set(
+                  String(customerCode).trim(),
+                  record.record_id,
                 );
               }
             }
-          }
 
-          totalLoaded += records.length;
-          page_token = response.data.data?.page_token || '';
+            totalLoaded += records.length;
+            page_token = response.data.data?.page_token || '';
 
-          this.logger.debug(
-            `📥 Loaded ${records.length} records in ${loadTime}ms (total: ${totalLoaded}, cached: ${cacheBuilt})`,
-          );
+            this.logger.debug(
+              `📥 Loaded ${records.length} records in ${loadTime}ms (total: ${totalLoaded}, cached: ${cacheBuilt})`,
+            );
 
-          // ✅ PROGRESS UPDATE: Show cache loading progress
-          if (totalLoaded % 1000 === 0 || !page_token) {
-            this.logger.log(
-              `📊 Cache progress: ${cacheBuilt}/${totalLoaded} records processed`,
+            // Progress update
+            if (totalLoaded % 1000 === 0 || !page_token) {
+              this.logger.log(
+                `📊 Cache progress: ${cacheBuilt}/${totalLoaded} records processed (${stringConversions} string conversions)`,
+              );
+            }
+          } else {
+            throw new Error(
+              `LarkBase API error: ${response.data.msg} (code: ${response.data.code})`,
             );
           }
-        } else {
-          this.logger.warn(`⚠️ Failed to load page: ${response.data.msg}`);
-          break;
+        } catch (error) {
+          if (error.code === 'ECONNABORTED') {
+            throw new Error(
+              'Request timeout - LarkBase took too long to respond',
+            );
+          }
+          if (error.response?.status === 400) {
+            throw new Error(
+              'Bad request - check table permissions and field names',
+            );
+          }
+          throw error;
         }
       } while (page_token);
 
@@ -978,34 +378,18 @@ export class LarkCustomerSyncService {
 
       const successRate =
         totalLoaded > 0 ? Math.round((cacheBuilt / totalLoaded) * 100) : 0;
-      this.logger.log(
-        `✅ Cache loaded: ${this.existingRecordsCache.size} records from ${totalLoaded} total (${successRate}% success)`,
-      );
 
-      // ✅ VALIDATION: Ensure cache is populated
-      if (totalLoaded > 0 && this.existingRecordsCache.size === 0) {
-        this.logger.error(
-          `❌ CRITICAL: Cache build failed - no valid kiotVietId found in ${totalLoaded} records`,
-        );
-        throw new Error('Cache building failed - data format issue');
-      }
+      this.logger.log(
+        `✅ Cache loaded: ${this.existingRecordsCache.size} by ID, ${this.customerCodeCache.size} by code (${successRate}% success, ${stringConversions} string→number conversions)`,
+      );
     } catch (error) {
       this.logger.error(`❌ Cache loading failed: ${error.message}`);
-
-      // ✅ GRACEFUL DEGRADATION: Continue without cache but warn user
-      this.logger.warn(
-        `⚠️ CONTINUING WITHOUT CACHE - all customers will be treated as new`,
-      );
-      this.logger.warn(
-        `⚠️ This may cause duplicates if LarkBase has existing data`,
-      );
-
-      this.cacheLoaded = true;
+      throw error;
     }
   }
 
   // ============================================================================
-  // ✅ CATEGORIZE CUSTOMERS (Cache-based duplicate detection)
+  // IMPROVED CATEGORIZATION
   // ============================================================================
 
   private categorizeCustomers(customers: any[]): {
@@ -1016,8 +400,24 @@ export class LarkCustomerSyncService {
     const updateCustomers: any[] = [];
 
     for (const customer of customers) {
-      const kiotVietId = Number(customer.kiotVietId);
-      const existingRecordId = this.existingRecordsCache.get(kiotVietId);
+      // Convert BigInt to number for comparison
+      const kiotVietId = this.safeBigIntToNumber(customer.kiotVietId);
+
+      // Check by ID first
+      let existingRecordId = this.existingRecordsCache.get(kiotVietId);
+
+      // Fallback to code lookup
+      if (!existingRecordId && customer.code) {
+        existingRecordId = this.customerCodeCache.get(
+          String(customer.code).trim(),
+        );
+
+        if (existingRecordId) {
+          this.logger.debug(
+            `Found record by code: ${customer.code} -> ${existingRecordId}`,
+          );
+        }
+      }
 
       if (existingRecordId) {
         updateCustomers.push({
@@ -1033,123 +433,132 @@ export class LarkCustomerSyncService {
   }
 
   // ============================================================================
-  // ✅ PROCESS NEW CUSTOMERS (Guaranteed no duplicates)
+  // PROCESS NEW CUSTOMERS
   // ============================================================================
 
-  private async processNewCustomersBypass(customers: any[]): Promise<void> {
-    this.logger.log(`📝 BYPASS create of ${customers.length} new customers...`);
+  private async processNewCustomers(customers: any[]): Promise<void> {
+    if (customers.length === 0) return;
+
+    this.logger.log(`📝 Creating ${customers.length} new customers...`);
 
     const batches = this.chunkArray(customers, this.batchSize);
-    let totalSuccess = 0;
+    let totalCreated = 0;
     let totalFailed = 0;
 
     for (let i = 0; i < batches.length; i++) {
       const batch = batches[i];
+      this.logger.log(
+        `📊 Batch ${i + 1}/${batches.length}: Processing ${batch.length} customers`,
+      );
 
-      try {
-        const batchResult = await this.batchCreateBypass(batch);
-        totalSuccess += batchResult.successRecords.length;
-        totalFailed += batchResult.failedRecords.length;
+      const { successRecords, failedRecords } =
+        await this.batchCreateCustomers(batch);
 
-        // Update database status
-        await this.updateDatabaseStatus(batchResult.successRecords, 'SYNCED');
-        await this.updateDatabaseStatus(batchResult.failedRecords, 'FAILED');
+      totalCreated += successRecords.length;
+      totalFailed += failedRecords.length;
 
-        this.logger.log(
-          `📊 Bypass batch ${i + 1}/${batches.length}: ${batchResult.successRecords.length}/${batch.length} created`,
-        );
+      if (successRecords.length > 0) {
+        await this.updateDatabaseStatus(successRecords, 'SYNCED');
+      }
 
+      if (failedRecords.length > 0) {
+        await this.updateDatabaseStatus(failedRecords, 'FAILED');
+      }
+
+      this.logger.log(
+        `📊 Batch ${i + 1}/${batches.length}: ${successRecords.length}/${batch.length} created`,
+      );
+
+      // Small delay between batches to avoid rate limiting
+      if (i < batches.length - 1) {
         await new Promise((resolve) => setTimeout(resolve, 500));
-      } catch (error) {
-        this.logger.error(`❌ Bypass batch ${i + 1} failed: ${error.message}`);
-        totalFailed += batch.length;
-        await this.updateDatabaseStatus(batch, 'FAILED');
       }
     }
 
     this.logger.log(
-      `🎯 Bypass create complete: ${totalSuccess} success, ${totalFailed} failed`,
+      `🎯 Create complete: ${totalCreated} success, ${totalFailed} failed`,
     );
   }
 
   // ============================================================================
-  // ✅ PROCESS UPDATE CUSTOMERS (Try update, fallback to create)
+  // PROCESS UPDATES
   // ============================================================================
 
-  private async processUpdateCustomersBypass(customers: any[]): Promise<void> {
-    this.logger.log(
-      `📝 BYPASS update of ${customers.length} existing customers...`,
-    );
+  private async processUpdateCustomers(customers: any[]): Promise<void> {
+    if (customers.length === 0) return;
+
+    this.logger.log(`📝 Updating ${customers.length} existing customers...`);
 
     let successCount = 0;
-    let failCount = 0;
+    let failedCount = 0;
+    const createFallbacks: any[] = [];
 
-    for (const customer of customers) {
-      try {
-        // Try update first
-        await this.updateSingleRecordBypass(customer);
-        successCount++;
-        await this.updateDatabaseStatus([customer], 'SYNCED');
+    // Process updates in smaller chunks to avoid timeouts
+    const UPDATE_CHUNK_SIZE = 5;
 
-        await new Promise((resolve) => setTimeout(resolve, 200));
-      } catch (updateError) {
-        this.logger.warn(
-          `⚠️ Update failed for ${customer.code}, trying create: ${updateError.message}`,
-        );
+    for (let i = 0; i < customers.length; i += UPDATE_CHUNK_SIZE) {
+      const chunk = customers.slice(i, i + UPDATE_CHUNK_SIZE);
 
-        try {
-          // Fallback to create
-          const createResult = await this.batchCreateBypass([customer]);
-          if (createResult.successRecords.length > 0) {
-            successCount++;
-            await this.updateDatabaseStatus([customer], 'SYNCED');
-          } else {
-            failCount++;
-            await this.updateDatabaseStatus([customer], 'FAILED');
+      await Promise.all(
+        chunk.map(async (customer) => {
+          try {
+            const updated = await this.updateSingleCustomer(customer);
+
+            if (updated) {
+              successCount++;
+              await this.updateDatabaseStatus([customer], 'SYNCED');
+            } else {
+              createFallbacks.push(customer);
+            }
+          } catch (error) {
+            this.logger.warn(
+              `Update failed for ${customer.code}: ${error.message}`,
+            );
+            createFallbacks.push(customer);
           }
-        } catch (createError) {
-          failCount++;
-          await this.updateDatabaseStatus([customer], 'FAILED');
-          this.logger.error(
-            `❌ Both update and create failed for ${customer.code}: ${createError.message}`,
-          );
-        }
+        }),
+      );
+
+      // Small delay between chunks
+      if (i + UPDATE_CHUNK_SIZE < customers.length) {
+        await new Promise((resolve) => setTimeout(resolve, 300));
       }
     }
 
+    // Process fallbacks
+    if (createFallbacks.length > 0) {
+      this.logger.log(
+        `📝 Creating ${createFallbacks.length} customers that failed update...`,
+      );
+      await this.processNewCustomers(createFallbacks);
+    }
+
     this.logger.log(
-      `🎯 Bypass update complete: ${successCount} success, ${failCount} failed`,
+      `🎯 Update complete: ${successCount} success, ${failedCount} failed`,
     );
   }
 
   // ============================================================================
-  // ✅ ENHANCED BATCH CREATE (Better timeout handling)
+  // BATCH CREATE WITH PROPER DATA CONVERSION
   // ============================================================================
 
-  private async batchCreateBypass(customers: any[]): Promise<BatchResult> {
+  private async batchCreateCustomers(customers: any[]): Promise<BatchResult> {
+    const records = customers.map((customer) => ({
+      fields: this.mapCustomerToLarkBase(customer),
+    }));
+
     let authRetries = 0;
 
-    while (authRetries <= this.MAX_AUTH_RETRIES) {
+    while (authRetries < this.MAX_AUTH_RETRIES) {
       try {
         const headers = await this.larkAuthService.getCustomerHeaders();
-
-        const records = customers.map((customer) => {
-          const mappedData = this.mapCustomerToLarkBase(customer);
-          return { fields: mappedData.fields };
-        });
-
-        const batchPayload = { records };
-
-        this.logger.debug(`🚀 Creating batch of ${records.length} records...`);
+        const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/batch_create`;
 
         const response = await firstValueFrom(
-          this.httpService.post(
-            `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/batch_create`,
-            batchPayload,
-            {
-              headers,
-              timeout: 60000, // ✅ 60 seconds for batch operations
-            },
+          this.httpService.post<LarkBatchResponse>(
+            url,
+            { records },
+            { headers, timeout: 30000 },
           ),
         );
 
@@ -1159,11 +568,7 @@ export class LarkCustomerSyncService {
           const successRecords = customers.slice(0, successCount);
           const failedRecords = customers.slice(successCount);
 
-          this.logger.debug(
-            `✅ Batch create result: ${successCount}/${customers.length} created`,
-          );
-
-          // ✅ Update cache with new records
+          // Update cache with proper number conversion
           for (
             let i = 0;
             i < Math.min(successRecords.length, createdRecords.length);
@@ -1171,10 +576,21 @@ export class LarkCustomerSyncService {
           ) {
             const customer = successRecords[i];
             const createdRecord = createdRecords[i];
-            this.existingRecordsCache.set(
-              Number(customer.kiotVietId),
-              createdRecord.record_id,
-            );
+
+            const kiotVietId = this.safeBigIntToNumber(customer.kiotVietId);
+            if (kiotVietId > 0) {
+              this.existingRecordsCache.set(
+                kiotVietId,
+                createdRecord.record_id,
+              );
+            }
+
+            if (customer.code) {
+              this.customerCodeCache.set(
+                String(customer.code).trim(),
+                createdRecord.record_id,
+              );
+            }
           }
 
           return { successRecords, failedRecords };
@@ -1183,11 +599,8 @@ export class LarkCustomerSyncService {
         if (this.AUTH_ERROR_CODES.includes(response.data.code)) {
           authRetries++;
           await this.forceTokenRefresh();
-
-          if (authRetries < this.MAX_AUTH_RETRIES) {
-            await new Promise((resolve) => setTimeout(resolve, 2000));
-            continue;
-          }
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          continue;
         }
 
         this.logger.warn(
@@ -1198,11 +611,8 @@ export class LarkCustomerSyncService {
         if (error.response?.status === 401 || error.response?.status === 403) {
           authRetries++;
           await this.forceTokenRefresh();
-
-          if (authRetries < this.MAX_AUTH_RETRIES) {
-            await new Promise((resolve) => setTimeout(resolve, 2000));
-            continue;
-          }
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          continue;
         }
 
         this.logger.error(`❌ Batch create error: ${error.message}`);
@@ -1214,82 +624,190 @@ export class LarkCustomerSyncService {
   }
 
   // ============================================================================
-  // ✅ BYPASS UPDATE SINGLE RECORD
+  // UPDATE SINGLE CUSTOMER
   // ============================================================================
 
-  private async updateSingleRecordBypass(customer: any): Promise<void> {
-    const headers = await this.larkAuthService.getCustomerHeaders();
-    const mappedData = this.mapCustomerToLarkBase(customer);
+  private async updateSingleCustomer(customer: any): Promise<boolean> {
+    let authRetries = 0;
 
-    const updatePayload = {
-      fields: mappedData.fields,
-    };
+    while (authRetries < this.MAX_AUTH_RETRIES) {
+      try {
+        const headers = await this.larkAuthService.getCustomerHeaders();
+        const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/${customer.larkRecordId}`;
 
-    const response = await firstValueFrom(
-      this.httpService.put(
-        `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/${customer.larkRecordId}`,
-        updatePayload,
-        { headers, timeout: 15000 },
-      ),
-    );
+        const response = await firstValueFrom(
+          this.httpService.put(
+            url,
+            { fields: this.mapCustomerToLarkBase(customer) },
+            { headers, timeout: 15000 },
+          ),
+        );
 
-    if (response.data.code !== 0) {
-      throw new Error(
-        `Update failed: ${response.data.msg} (Code: ${response.data.code})`,
-      );
+        if (response.data.code === 0) {
+          this.logger.debug(
+            `✅ Updated record ${customer.larkRecordId} for customer ${customer.code}`,
+          );
+          return true;
+        }
+
+        if (this.AUTH_ERROR_CODES.includes(response.data.code)) {
+          authRetries++;
+          await this.forceTokenRefresh();
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          continue;
+        }
+
+        this.logger.warn(`Update failed: ${response.data.msg}`);
+        return false;
+      } catch (error) {
+        if (error.response?.status === 401 || error.response?.status === 403) {
+          authRetries++;
+          await this.forceTokenRefresh();
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          continue;
+        }
+
+        if (error.response?.status === 404) {
+          this.logger.warn(`Record not found: ${customer.larkRecordId}`);
+          return false;
+        }
+
+        throw error;
+      }
     }
 
-    this.logger.debug(
-      `✅ Updated record ${customer.larkRecordId} for customer ${customer.code}`,
-    );
+    return false;
   }
 
   // ============================================================================
-  // ✅ UTILITY METHODS
+  // HELPER METHODS
   // ============================================================================
 
-  private async acquireSyncLock(lockKey: string): Promise<void> {
-    try {
-      await this.prismaService.syncControl.create({
-        data: {
-          name: lockKey,
-          entities: ['customer'],
-          syncMode: 'lock',
-          status: 'running', // ✅ FIXED: Add required status field
-          isEnabled: true,
-          isRunning: true,
-          startedAt: new Date(),
-        },
-      });
-      this.logger.debug(`🔒 Acquired sync lock: ${lockKey}`);
-    } catch (error) {
-      throw new Error(`Failed to acquire sync lock: ${error.message}`);
+  private async testLarkBaseConnection(): Promise<void> {
+    const maxRetries = 3;
+
+    for (let retryCount = 0; retryCount <= maxRetries; retryCount++) {
+      try {
+        this.logger.log(
+          `🔍 Testing LarkBase connection (attempt ${retryCount + 1}/${maxRetries + 1})...`,
+        );
+
+        const headers = await this.larkAuthService.getCustomerHeaders();
+        const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records`;
+        const params = new URLSearchParams({ page_size: '1' });
+
+        const response = await firstValueFrom(
+          this.httpService.get(`${url}?${params}`, {
+            headers,
+            timeout: 30000, // Increased timeout
+          }),
+        );
+
+        if (response.data.code === 0) {
+          const totalRecords = response.data.data?.total || 0;
+          this.logger.log(`✅ LarkBase connection successful`);
+          this.logger.log(
+            `📊 LarkBase table has ${totalRecords} existing records`,
+          );
+          return;
+        }
+
+        throw new Error(`Connection test failed: ${response.data.msg}`);
+      } catch (error) {
+        if (retryCount < maxRetries) {
+          const delay = (retryCount + 1) * 2000;
+          this.logger.warn(
+            `⚠️ Connection attempt ${retryCount + 1} failed: ${error.message}`,
+          );
+          this.logger.log(`🔄 Retrying in ${delay / 1000}s...`);
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        } else {
+          this.logger.error(
+            '❌ LarkBase connection test failed after all retries',
+          );
+          throw new Error(`Cannot connect to LarkBase: ${error.message}`);
+        }
+      }
     }
+  }
+
+  private async acquireSyncLock(lockKey: string): Promise<void> {
+    const existingLock = await this.prismaService.syncControl.findFirst({
+      where: {
+        name: 'customer_lark_sync',
+        isRunning: true,
+      },
+    });
+
+    if (existingLock && existingLock.startedAt) {
+      const lockAge = Date.now() - existingLock.startedAt.getTime();
+      if (lockAge < 30 * 60 * 1000) {
+        throw new Error('Another sync is already running');
+      }
+      this.logger.warn('🔓 Clearing stale lock');
+    }
+
+    await this.prismaService.syncControl.upsert({
+      where: { name: 'customer_lark_sync' },
+      create: {
+        name: 'customer_lark_sync',
+        entities: ['customer'],
+        syncMode: 'lark_sync',
+        isEnabled: true,
+        isRunning: true,
+        status: 'running',
+        lastRunAt: new Date(),
+        startedAt: new Date(),
+        progress: { lockKey }, // Sử dụng progress field thay vì metadata
+      },
+      update: {
+        isRunning: true,
+        status: 'running',
+        lastRunAt: new Date(),
+        startedAt: new Date(),
+        progress: { lockKey }, // Sử dụng progress field thay vì metadata
+      },
+    });
+
+    this.logger.debug(`🔒 Acquired sync lock: ${lockKey}`);
   }
 
   private async releaseSyncLock(lockKey: string): Promise<void> {
-    try {
-      await this.prismaService.syncControl.deleteMany({
-        where: { name: lockKey },
+    // Tìm record có lockKey trong progress
+    const lockRecord = await this.prismaService.syncControl.findFirst({
+      where: {
+        name: 'customer_lark_sync',
+        isRunning: true,
+      },
+    });
+
+    if (
+      lockRecord &&
+      lockRecord.progress &&
+      typeof lockRecord.progress === 'object' &&
+      'lockKey' in lockRecord.progress &&
+      lockRecord.progress.lockKey === lockKey
+    ) {
+      await this.prismaService.syncControl.update({
+        where: { id: lockRecord.id },
+        data: {
+          isRunning: false,
+          status: 'completed',
+          completedAt: new Date(),
+          progress: {}, // Clear progress sau khi hoàn thành
+        },
       });
+
       this.logger.debug(`🔓 Released sync lock: ${lockKey}`);
-    } catch (error) {
-      this.logger.warn(
-        `⚠️ Failed to release lock ${lockKey}: ${error.message}`,
-      );
     }
   }
 
   private async forceTokenRefresh(): Promise<void> {
     try {
       this.logger.debug('🔄 Forcing LarkBase token refresh...');
-
-      // ✅ FIXED: Reset token in LarkAuthService to force new token generation
       (this.larkAuthService as any).accessToken = null;
       (this.larkAuthService as any).tokenExpiry = null;
-
       await this.larkAuthService.getCustomerHeaders();
-
       this.logger.debug('✅ LarkBase token refreshed successfully');
     } catch (error) {
       this.logger.error(`❌ Token refresh failed: ${error.message}`);
@@ -1319,8 +837,10 @@ export class LarkCustomerSyncService {
 
   private clearCache(): void {
     this.existingRecordsCache.clear();
+    this.customerCodeCache.clear();
     this.cacheLoaded = false;
-    this.logger.debug('🧹 Cache cleared for next sync');
+    this.lastCacheLoadTime = null;
+    this.logger.debug('🧹 Cache cleared');
   }
 
   private chunkArray<T>(array: T[], size: number): T[][] {
@@ -1332,39 +852,43 @@ export class LarkCustomerSyncService {
   private safeBigIntToNumber(value: any): number {
     if (value === null || value === undefined) return 0;
 
-    // ✅ Handle different types that LarkBase might use
-    if (typeof value === 'number') {
-      return Math.floor(value); // Ensure integer
-    }
-
+    // Handle BigInt
     if (typeof value === 'bigint') {
       return Number(value);
     }
 
-    // ✅ CRITICAL: Handle string type (main case from debug)
+    // Handle number
+    if (typeof value === 'number') {
+      return Math.floor(value);
+    }
+
+    // Handle string
     if (typeof value === 'string') {
       const trimmed = value.trim();
       if (trimmed === '') return 0;
-
       const parsed = parseInt(trimmed, 10);
       return isNaN(parsed) ? 0 : parsed;
     }
 
-    // ✅ Handle boolean (just in case)
+    // Handle boolean
     if (typeof value === 'boolean') {
       return value ? 1 : 0;
     }
 
-    // ✅ Try to convert any other type
-    const asString = String(value).trim();
-    const parsed = parseInt(asString, 10);
-    return isNaN(parsed) ? 0 : parsed;
+    // Try to convert any other type
+    try {
+      const asString = String(value).trim();
+      const parsed = parseInt(asString, 10);
+      return isNaN(parsed) ? 0 : parsed;
+    } catch {
+      return 0;
+    }
   }
 
-  private mapCustomerToLarkBase(customer: any): LarkBaseRecord {
+  private mapCustomerToLarkBase(customer: any): Record<string, any> {
     const fields: Record<string, any> = {};
 
-    // ✅ CRITICAL: Always include KiotViet ID for duplicate detection
+    // CRITICAL: Convert BigInt to number for kiotVietId
     fields[LARK_CUSTOMER_FIELDS.KIOTVIET_ID] = this.safeBigIntToNumber(
       customer.kiotVietId,
     );
@@ -1459,116 +983,33 @@ export class LarkCustomerSyncService {
     }
 
     if (customer.modifiedDate) {
-      // const modifiedDate = new Date(customer.modifiedDate + '+07:00');
-      // fields[LARK_CUSTOMER_FIELDS.MODIFIED_DATE] = modifiedDate.getTime();
       fields[LARK_CUSTOMER_FIELDS.MODIFIED_DATE] =
         customer.modifiedDate.getTime();
     }
 
     if (customer.createdDate) {
-      // const createdDate = new Date(customer.createdDate + '+07:00');
-      // fields[LARK_CUSTOMER_FIELDS.CREATED_DATE] = createdDate.getTime();
       fields[LARK_CUSTOMER_FIELDS.CREATED_DATE] =
         customer.createdDate.getTime();
     }
 
+    if (customer.locationName) {
+      fields[LARK_CUSTOMER_FIELDS.LOCATION_NAME] = customer.locationName || '';
+    }
+
     if (customer.psidFacebook) {
-      fields[LARK_CUSTOMER_FIELDS.FACEBOOK_ID] = this.safeBigIntToNumber(
+      fields[LARK_CUSTOMER_FIELDS.FACEBOOK_ID] = String(
         customer.psidFacebook || '',
       );
     }
 
-    if (customer.locationName) {
-      fields[LARK_CUSTOMER_FIELDS.LOCATION_NAME] = customer.locationName || 0;
-    }
-
-    return { fields };
+    return fields;
   }
 
   // ============================================================================
-  // ✅ FAILED CUSTOMER MANAGEMENT
+  // MONITORING & HEALTH CHECK METHODS (Fixed BigInt serialization)
   // ============================================================================
 
-  async resetFailedCustomers(): Promise<{ resetCount: number }> {
-    this.logger.log(
-      '🔄 Resetting FAILED customers to PENDING (safe for bypass)...',
-    );
-
-    const result = await this.prismaService.customer.updateMany({
-      where: { larkSyncStatus: 'FAILED' },
-      data: {
-        larkSyncStatus: 'PENDING',
-        larkSyncRetries: 0,
-        larkSyncedAt: null,
-      },
-    });
-
-    this.logger.log(`✅ Reset ${result.count} FAILED customers to PENDING`);
-    return { resetCount: result.count };
-  }
-
-  async resetAllSyncStatus(): Promise<void> {
-    this.logger.log('🔄 Resetting ALL customer sync status to PENDING...');
-
-    const result = await this.prismaService.customer.updateMany({
-      where: {
-        larkSyncStatus: { in: ['SYNCED', 'FAILED'] },
-      },
-      data: {
-        larkSyncStatus: 'PENDING',
-        larkSyncedAt: null,
-        larkSyncRetries: 0,
-      },
-    });
-
-    this.logger.log(`✅ Reset sync status for ${result.count} customers`);
-  }
-
-  async getFailedCustomersReport(): Promise<{
-    totalFailed: number;
-    byRetryCount: Record<number, number>;
-    sampleFailedCustomers: any[];
-  }> {
-    const failedCustomers = await this.prismaService.customer.findMany({
-      where: { larkSyncStatus: 'FAILED' },
-      select: {
-        id: true,
-        code: true,
-        name: true,
-        kiotVietId: true,
-        larkSyncRetries: true,
-        larkSyncedAt: true,
-      },
-      orderBy: { larkSyncedAt: 'desc' },
-      take: 1000,
-    });
-
-    const byRetryCount: Record<number, number> = {};
-
-    for (const customer of failedCustomers) {
-      const retries = customer.larkSyncRetries || 0;
-      byRetryCount[retries] = (byRetryCount[retries] || 0) + 1;
-    }
-
-    return {
-      totalFailed: failedCustomers.length,
-      byRetryCount,
-      sampleFailedCustomers: failedCustomers.slice(0, 5),
-    };
-  }
-
-  // ============================================================================
-  // ✅ MONITORING & STATISTICS
-  // ============================================================================
-
-  async getSyncProgress(): Promise<{
-    total: number;
-    synced: number;
-    pending: number;
-    failed: number;
-    progress: number;
-    canRetryFailed: boolean;
-  }> {
+  async getSyncProgress(): Promise<any> {
     const total = await this.prismaService.customer.count();
     const synced = await this.prismaService.customer.count({
       where: { larkSyncStatus: 'SYNCED' },
@@ -1583,182 +1024,390 @@ export class LarkCustomerSyncService {
     const progress = total > 0 ? Math.round((synced / total) * 100) : 0;
     const canRetryFailed = failed > 0;
 
-    return { total, synced, pending, failed, progress, canRetryFailed };
-  }
-
-  async getSyncStatistics(): Promise<any> {
-    const progress = await this.getSyncProgress();
-    const failedReport = await this.getFailedCustomersReport();
-
     return {
-      ...progress,
-      failedDetails: failedReport,
-      cacheInfo: {
-        loaded: this.cacheLoaded,
-        size: this.existingRecordsCache.size,
-      },
-      recommendations: this.generateRecommendations(progress, failedReport),
+      total,
+      synced,
+      pending,
+      failed,
+      progress,
+      canRetryFailed,
+      summary: `${synced}/${total} synced (${progress}%)`,
     };
   }
 
-  private generateRecommendations(progress: any, failedReport: any): string[] {
-    const recommendations: string[] = [];
-
-    if (failedReport.totalFailed > 0) {
-      recommendations.push(
-        `🔄 ${failedReport.totalFailed} FAILED customers can be safely retried with resetFailedCustomers()`,
-      );
-    }
-
-    if (progress.pending > 0) {
-      recommendations.push(
-        `🚀 ${progress.pending} PENDING customers ready for sync`,
-      );
-    }
-
-    if (progress.progress < 50) {
-      recommendations.push(
-        `⚡ Consider running full sync to improve ${progress.progress}% completion rate`,
-      );
-    }
-
-    if (failedReport.totalFailed === 0 && progress.pending === 0) {
-      recommendations.push(
-        `✅ All customers synced successfully! No action needed.`,
-      );
-    }
-
-    return recommendations;
-  }
-
-  async getDuplicateReport(): Promise<any> {
-    const stats = await this.getSyncProgress();
-
-    return {
-      ...stats,
-      message: 'Bypass search - duplicate protection via cache',
-      protection_level: '95%+ (cache-based)',
-      last_scan: new Date(),
-      cache_size: this.existingRecordsCache.size,
-    };
-  }
-
-  // ============================================================================
-  // ✅ CONVENIENT SYNC METHODS
-  // ============================================================================
-
-  async syncAllCustomersIncludingFailed(customers: any[]): Promise<void> {
-    this.logger.log(
-      '🚀 Starting FULL sync including FAILED customers (bypass mode)...',
-    );
-
-    // This will include both PENDING and FAILED customers
-    await this.syncCustomersToLarkBase(customers);
-  }
-
-  async resetAndSyncFailedCustomers(customers: any[]): Promise<void> {
-    this.logger.log('🔄 Reset FAILED customers and sync (bypass mode)...');
-
-    // Step 1: Reset FAILED to PENDING
-    const resetResult = await this.resetFailedCustomers();
-
-    if (resetResult.resetCount > 0) {
-      this.logger.log(
-        `✅ Reset ${resetResult.resetCount} customers, starting sync...`,
-      );
-
-      // Step 2: Sync all (now all PENDING)
-      await this.syncCustomersToLarkBase(customers);
-    } else {
-      this.logger.log('📋 No FAILED customers to reset');
-    }
-  }
-
-  // ============================================================================
-  // ✅ FAILED CUSTOMER RECOVERY
-  // ============================================================================
-
-  async getFailedCustomersStats(): Promise<{
-    totalFailed: number;
-    estimatedGap: boolean;
-    syncProgress: any;
-  }> {
-    const totalFailed = await this.prismaService.customer.count({
+  async resetFailedCustomers(): Promise<{ resetCount: number }> {
+    const result = await this.prismaService.customer.updateMany({
       where: { larkSyncStatus: 'FAILED' },
+      data: {
+        larkSyncStatus: 'PENDING',
+        larkSyncRetries: 0,
+      },
     });
 
-    const syncProgress = await this.getSyncProgress();
+    this.logger.log(`🔄 Reset ${result.count} FAILED customers to PENDING`);
+    return { resetCount: result.count };
+  }
+
+  async getFailedCustomersReport(): Promise<any> {
+    const failedCustomers = await this.prismaService.customer.findMany({
+      where: { larkSyncStatus: 'FAILED' },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        larkSyncRetries: true,
+        larkSyncedAt: true,
+        modifiedDate: true,
+      },
+      orderBy: { larkSyncRetries: 'desc' },
+      take: 10,
+    });
 
     return {
-      totalFailed,
-      estimatedGap: totalFailed >= 5000, // Close to reported 5584 gap
-      syncProgress,
+      totalFailed: await this.prismaService.customer.count({
+        where: { larkSyncStatus: 'FAILED' },
+      }),
+      topFailures: failedCustomers.map((c) => ({
+        ...c,
+        larkSyncRetries: Number(c.larkSyncRetries), // Convert BigInt to number
+      })),
+      canReset: true,
     };
   }
 
-  async processFailedCustomersInBatches(
-    batchSize: number = 100,
-  ): Promise<void> {
-    this.logger.log('🔄 Processing FAILED customers in safe batches...');
+  async performHealthCheck(): Promise<any> {
+    const allIssues: string[] = [];
+    const recommendations: string[] = [];
 
-    let processed = 0;
-    let offset = 0;
+    // Data reconciliation
+    this.logger.log('📊 [1/5] DATA RECONCILIATION');
+    const dataReconciliation = await this.reconcileDataMismatch();
+    allIssues.push(...dataReconciliation.recommendations);
 
-    while (true) {
-      // Get batch of FAILED customers
-      const failedBatch = await this.prismaService.customer.findMany({
-        where: { larkSyncStatus: 'FAILED' },
-        take: batchSize,
-        skip: offset,
-      });
+    // Sync control health
+    this.logger.log('🔄 [2/5] SYNC CONTROL HEALTH');
+    const syncControlHealth = await this.checkSyncControlHealth();
+    allIssues.push(...syncControlHealth.issues);
 
-      if (failedBatch.length === 0) break;
-
-      this.logger.log(
-        `📦 Processing FAILED batch: ${processed + 1}-${processed + failedBatch.length}`,
+    // LarkBase connectivity
+    this.logger.log('🌐 [3/5] LARKBASE CONNECTIVITY');
+    const larkBaseConnectivity = await this.testLarkBaseConnectivity();
+    if (!larkBaseConnectivity.connected) {
+      allIssues.push(
+        `LarkBase connectivity failed: ${larkBaseConnectivity.error}`,
       );
-
-      try {
-        // Process this batch through bypass sync
-        await this.syncCustomersToLarkBase(failedBatch);
-        processed += failedBatch.length;
-
-        this.logger.log(
-          `✅ Batch completed: ${processed} FAILED customers processed`,
-        );
-
-        // Small delay between batches
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-      } catch (error) {
-        this.logger.error(`❌ Batch failed: ${error.message}`);
-        // Continue with next batch
-      }
-
-      offset += batchSize;
     }
 
-    this.logger.log(
-      `🎉 FAILED customer processing complete: ${processed} customers processed`,
+    // Data quality
+    this.logger.log('🔍 [4/5] DATA QUALITY CHECK');
+    const dataQuality = await this.checkCustomerDataQuality();
+    allIssues.push(...dataQuality.issues);
+
+    // Cache health
+    this.logger.log('📦 [5/5] CACHE HEALTH');
+    const cacheHealth = {
+      loaded: this.cacheLoaded,
+      size: this.existingRecordsCache.size,
+      codeMapSize: this.customerCodeCache.size,
+      valid: this.isCacheValid(),
+      age: this.lastCacheLoadTime
+        ? Math.round(
+            (Date.now() - this.lastCacheLoadTime.getTime()) / 1000 / 60,
+          )
+        : null,
+    };
+
+    if (!cacheHealth.valid && this.cacheLoaded) {
+      recommendations.push('🔄 Refresh cache for accurate duplicate detection');
+    }
+
+    // Generate overall status
+    let overallStatus: 'HEALTHY' | 'WARNING' | 'CRITICAL' = 'HEALTHY';
+
+    const criticalIssues = allIssues.filter(
+      (issue) =>
+        issue.includes('🚨') ||
+        issue.includes('CRITICAL') ||
+        issue.includes('connectivity failed'),
     );
+
+    const warningIssues = allIssues.filter(
+      (issue) =>
+        issue.includes('⚠️') ||
+        issue.includes('WARNING') ||
+        issue.includes('duplicate'),
+    );
+
+    if (criticalIssues.length > 0) {
+      overallStatus = 'CRITICAL';
+    } else if (warningIssues.length > 0 || allIssues.length > 0) {
+      overallStatus = 'WARNING';
+    }
+
+    // Additional recommendations
+    if (dataReconciliation.pendingSync > 0) {
+      recommendations.push(
+        `🚀 Sync ${dataReconciliation.pendingSync} pending customers`,
+      );
+    }
+
+    if (dataReconciliation.failedSync > 0) {
+      recommendations.push(
+        `🔄 Retry ${dataReconciliation.failedSync} failed customers`,
+      );
+    }
+
+    return {
+      timestamp: new Date().toISOString(),
+      overallStatus,
+      components: {
+        dataReconciliation: {
+          ...dataReconciliation,
+          syncedCount: Number(dataReconciliation.syncedCount),
+        },
+        syncControlHealth,
+        larkBaseConnectivity,
+        dataQuality: {
+          ...dataQuality,
+          duplicateKiotVietIds: Number(dataQuality.duplicateKiotVietIds),
+          nullKiotVietIds: Number(dataQuality.nullKiotVietIds),
+        },
+        cacheHealth,
+      },
+      issues: allIssues,
+      recommendations,
+    };
+  }
+
+  private async reconcileDataMismatch(): Promise<any> {
+    const databaseCount = await this.prismaService.customer.count();
+    const pendingCount = await this.prismaService.customer.count({
+      where: { larkSyncStatus: 'PENDING' },
+    });
+    const failedCount = await this.prismaService.customer.count({
+      where: { larkSyncStatus: 'FAILED' },
+    });
+    const syncedCount = await this.prismaService.customer.count({
+      where: { larkSyncStatus: 'SYNCED' },
+    });
+
+    let larkBaseCount = 0;
+    let cacheLoadError = null;
+
+    try {
+      if (!this.isCacheValid()) {
+        await this.loadExistingRecordsWithRetry();
+      }
+      larkBaseCount = this.existingRecordsCache.size;
+    } catch (error) {
+      cacheLoadError = error.message;
+    }
+
+    const mismatch = Math.abs(databaseCount - larkBaseCount);
+    const recommendations: string[] = [];
+
+    if (cacheLoadError) {
+      recommendations.push(
+        `🚨 CRITICAL: Cannot access LarkBase - ${cacheLoadError}`,
+      );
+    }
+
+    if (mismatch > 1000) {
+      recommendations.push(
+        `🚨 CRITICAL: Major data mismatch - ${mismatch} records difference`,
+      );
+    } else if (mismatch > 100) {
+      recommendations.push(
+        `⚠️ WARNING: Significant mismatch - ${mismatch} records difference`,
+      );
+    }
+
+    if (pendingCount > 0) {
+      recommendations.push(`⏳ ${pendingCount} customers pending sync`);
+    }
+
+    if (failedCount > 100) {
+      recommendations.push(
+        `❌ ${failedCount} customers failed sync - investigation needed`,
+      );
+    }
+
+    // Check for extra records in LarkBase
+    if (larkBaseCount > databaseCount) {
+      const extraRecords = larkBaseCount - databaseCount;
+      recommendations.push(
+        `📊 ${extraRecords} extra records in LarkBase - possible manual additions or sync status issues`,
+      );
+    }
+
+    return {
+      databaseCount,
+      larkBaseCount,
+      mismatch,
+      pendingSync: pendingCount,
+      failedSync: failedCount,
+      syncedCount,
+      recommendations,
+    };
+  }
+
+  private async checkSyncControlHealth(): Promise<any> {
+    const stuckSyncs = await this.prismaService.syncControl.findMany({
+      where: {
+        isRunning: true,
+        startedAt: {
+          lt: new Date(Date.now() - 60 * 60 * 1000), // Over 1 hour
+        },
+      },
+    });
+
+    const issues: string[] = [];
+
+    if (stuckSyncs.length > 0) {
+      issues.push(`⚠️ ${stuckSyncs.length} stuck sync processes detected`);
+    }
+
+    return {
+      stuckSyncs: stuckSyncs.map((s) => ({
+        name: s.name,
+        startedAt: s.startedAt ? s.startedAt.toISOString() : 'unknown',
+        duration: s.startedAt
+          ? Math.round((Date.now() - s.startedAt.getTime()) / 1000 / 60)
+          : 0,
+      })),
+      issues,
+    };
+  }
+
+  private async testLarkBaseConnectivity(): Promise<any> {
+    try {
+      await this.testLarkBaseConnection();
+      return { connected: true, error: null };
+    } catch (error) {
+      return { connected: false, error: error.message };
+    }
+  }
+
+  private async checkCustomerDataQuality(): Promise<any> {
+    const issues: string[] = [];
+
+    // Check for duplicates by kiotVietId
+    const duplicateKiotVietIds = await this.prismaService.$queryRaw<any[]>`
+      SELECT "kiotVietId", COUNT(*) as count
+      FROM "Customer"
+      GROUP BY "kiotVietId"
+      HAVING COUNT(*) > 1
+      LIMIT 10
+    `;
+
+    if (duplicateKiotVietIds.length > 0) {
+      issues.push(
+        `⚠️ Found ${duplicateKiotVietIds.length} duplicate kiotVietIds in database`,
+      );
+    }
+
+    // Check for null kiotVietIds
+    const nullKiotVietIds = await this.prismaService.customer.count({
+      where: { kiotVietId: null },
+    });
+
+    if (nullKiotVietIds > 0) {
+      issues.push(`⚠️ ${nullKiotVietIds} customers with null kiotVietId`);
+    }
+
+    return {
+      duplicateKiotVietIds: duplicateKiotVietIds.length,
+      nullKiotVietIds,
+      issues,
+    };
   }
 
   // ============================================================================
-  // ✅ LEGACY COMPATIBILITY
+  // DATA TYPE DEBUG (Fixed BigInt serialization)
   // ============================================================================
 
-  async searchRecordByKiotVietId(
-    kiotVietId: number | BigInt,
-  ): Promise<any | null> {
-    const id = this.safeBigIntToNumber(kiotVietId);
-    const recordId = this.existingRecordsCache.get(id);
+  async debugKiotVietIdDataTypes(): Promise<any> {
+    this.logger.log(
+      '🔍 Debugging kiotVietId data types between Database and LarkBase...',
+    );
 
-    if (recordId) {
-      return {
-        record_id: recordId,
-        fields: { [LARK_CUSTOMER_FIELDS.KIOTVIET_ID]: id },
-      };
+    // Get samples from database
+    const dbSamples = await this.prismaService.customer.findMany({
+      select: {
+        kiotVietId: true,
+        code: true,
+      },
+      take: 10,
+      orderBy: { createdDate: 'desc' },
+    });
+
+    // Get samples from LarkBase cache
+    const larkSamples: any[] = [];
+    if (this.existingRecordsCache.size > 0) {
+      let count = 0;
+      for (const [
+        kiotVietId,
+        recordId,
+      ] of this.existingRecordsCache.entries()) {
+        larkSamples.push({ kiotVietId, recordId });
+        count++;
+        if (count >= 10) break;
+      }
     }
 
-    return null;
+    const conversionIssues: string[] = [];
+
+    // Analyze database types
+    const dbTypes = new Map<string, number>();
+    dbSamples.forEach((sample) => {
+      const type = typeof sample.kiotVietId;
+      dbTypes.set(type, (dbTypes.get(type) || 0) + 1);
+    });
+
+    // Log findings
+    this.logger.log('🔍 KiotVietId Data Type Analysis:');
+    this.logger.log(`Database samples (${dbSamples.length}):`);
+    dbSamples.forEach((sample, i) => {
+      const type = typeof sample.kiotVietId;
+      this.logger.log(
+        `${i + 1}. ${sample.kiotVietId} (${type}) - ${sample.code}`,
+      );
+    });
+
+    this.logger.log(`LarkBase samples (${larkSamples.length}):`);
+    larkSamples.forEach((sample, i) => {
+      this.logger.log(
+        `${i + 1}. ${sample.kiotVietId} (string) - ${sample.recordId}`,
+      );
+    });
+
+    this.logger.log('Type Distribution:');
+    this.logger.log(`LarkBase: ${larkSamples.length} strings, 0 numbers`);
+    this.logger.log(
+      `Database: ${dbTypes.get('bigint') || 0} bigints, ${dbTypes.get('number') || 0} numbers`,
+    );
+
+    if (dbTypes.has('bigint') && larkSamples.length > 0) {
+      conversionIssues.push(
+        'Type mismatch: LarkBase stores kiotVietId as STRING but Database expects NUMBER/BIGINT',
+      );
+    }
+
+    if (conversionIssues.length > 0) {
+      this.logger.warn('⚠️ Conversion Issues Found:');
+      conversionIssues.forEach((issue, i) => {
+        this.logger.warn(`${i + 1}. ${issue}`);
+      });
+    }
+
+    return {
+      databaseTypes: Object.fromEntries(dbTypes),
+      larkBaseType: 'string',
+      samplesAnalyzed: {
+        database: dbSamples.length,
+        larkBase: larkSamples.length,
+      },
+      conversionIssues,
+    };
   }
 }

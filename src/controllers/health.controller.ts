@@ -1,5 +1,5 @@
 // src/controllers/health.controller.ts
-import { Controller, Get, Post } from '@nestjs/common';
+import { Controller, Get } from '@nestjs/common';
 import { LarkCustomerSyncService } from '../services/lark/customer/lark-customer-sync.service';
 
 @Controller('health')
@@ -9,32 +9,45 @@ export class HealthController {
   ) {}
 
   @Get('sync')
-  async getSyncHealth() {
-    return await this.larkCustomerSyncService.performSyncHealthCheck();
+  async checkSyncHealth() {
+    const healthCheck = await this.larkCustomerSyncService.performHealthCheck();
+
+    // Convert BigInt to string/number to avoid serialization error
+    return JSON.parse(
+      JSON.stringify(healthCheck, (key, value) =>
+        typeof value === 'bigint' ? Number(value) : value,
+      ),
+    );
   }
 
-  @Get('reconcile')
-  async getDataReconciliation() {
-    return await this.larkCustomerSyncService.reconcileDataMismatch();
+  @Get('sync/progress')
+  async getSyncProgress() {
+    const progress = await this.larkCustomerSyncService.getSyncProgress();
+
+    // Convert BigInt to string/number
+    return JSON.parse(
+      JSON.stringify(progress, (key, value) =>
+        typeof value === 'bigint' ? Number(value) : value,
+      ),
+    );
   }
 
-  @Get('connectivity')
-  async getLarkBaseConnectivity() {
-    return await this.larkCustomerSyncService.testLarkBaseConnectivity();
+  @Get('sync/failed')
+  async getFailedReport() {
+    const report =
+      await this.larkCustomerSyncService.getFailedCustomersReport();
+
+    // Convert BigInt to string/number
+    return JSON.parse(
+      JSON.stringify(report, (key, value) =>
+        typeof value === 'bigint' ? Number(value) : value,
+      ),
+    );
   }
 
-  @Get('data-quality')
-  async getDataQuality() {
-    return await this.larkCustomerSyncService.checkCustomerDataQuality();
-  }
-
-  @Get('sync-control')
-  async getSyncControlHealth() {
-    return await this.larkCustomerSyncService.checkSyncControlHealth();
-  }
-
-  @Get('kiotviet-id-debug')
-  async getKiotVietIdDebug() {
-    return await this.larkCustomerSyncService.debugKiotVietIdDataTypes();
+  @Get('sync/reset-failed')
+  async resetFailed() {
+    const result = await this.larkCustomerSyncService.resetFailedCustomers();
+    return result;
   }
 }

@@ -206,7 +206,7 @@ model ProductFormula {
 
 model Customer {
   id                Int                @id @default(autoincrement())
-  kiotVietId        BigInt             @unique
+  kiotVietId        BigInt?            @unique
   code              String             @unique
   name              String
   type              Int?
