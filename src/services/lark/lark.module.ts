@@ -5,6 +5,7 @@ import { ConfigModule } from '@nestjs/config';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { LarkAuthService } from './auth/lark-auth.service';
 import { LarkCustomerSyncService } from './customer/lark-customer-sync.service';
+import { LarkInvoiceSyncService } from './invoice/lark-invoice-sync.service';
 
 @Module({
   imports: [
@@ -15,7 +16,7 @@ import { LarkCustomerSyncService } from './customer/lark-customer-sync.service';
     ConfigModule,
     PrismaModule,
   ],
-  providers: [LarkAuthService, LarkCustomerSyncService],
-  exports: [LarkAuthService, LarkCustomerSyncService],
+  providers: [LarkAuthService, LarkCustomerSyncService, LarkInvoiceSyncService],
+  exports: [LarkAuthService, LarkCustomerSyncService, LarkInvoiceSyncService],
 })
 export class LarkModule {}

@@ -466,6 +466,8 @@ model Invoice {
   soldById          BigInt?
   soldBy            User?              @relation("InvoiceSoldBy", fields: [soldById], references: [kiotVietId])
   customerId        Int?
+  customerCode      String?
+  customerName      String?
   customer          Customer?          @relation(fields: [customerId], references: [id])
   total             Decimal            @db.Decimal(15, 2)
   totalCostOfGoods  Decimal            @db.Decimal(15,2)
@@ -473,6 +475,7 @@ model Invoice {
   discount          Decimal?           @db.Decimal(15, 2)
   discountRatio     Float?
   status            Int
+  statusValue       String?
   description       String?            @db.Text
   usingCod          Boolean            @default(false)
   saleChannelId     Int?
@@ -499,6 +502,8 @@ model Invoice {
   @@index([orderId])
   @@index([branchId])
   @@index([customerId])
+  @@index([customerCode])
+  @@index([customerName])
   @@index([soldById])
   @@index([saleChannelId])
   @@index([lastSyncedAt])
