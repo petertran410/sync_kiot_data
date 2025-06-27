@@ -12,6 +12,7 @@ const LARK_CUSTOMER_FIELDS = {
   CUSTOMER_CODE: 'Mã Khách Hàng',
   PHONE_NUMBER: 'Số Điện Thoại',
   STORE_ID: 'Id Cửa Hàng',
+  BRANCH: 'Branch',
   COMPANY: 'Công Ty',
   EMAIL: 'Email của Khách Hàng',
   ADDRESS: 'Địa Chỉ Khách Hàng',
@@ -35,6 +36,13 @@ const GENDER_OPTIONS = {
   MALE: 'Nam',
   FEMALE: 'Nữ',
 } as const;
+
+const BRANCH_OPTIONS = {
+  CUA_HANG_DIEP_TRA: 'Cửa Hàng Diệp Trà',
+  KHO_HA_NOI: 'Kho Hà Nội',
+  KHO_SAI_GON: 'Kho Sài Gòn',
+  VAN_PHONG_HA_NOI: 'Văn Phòng Hà Nội',
+};
 
 interface LarkBaseRecord {
   record_id?: string;
@@ -720,40 +728,42 @@ export class LarkCustomerSyncService {
     }
 
     if (customer.contactNumber) {
-      fields[LARK_CUSTOMER_FIELDS.PHONE_NUMBER] = customer.contactNumber;
+      fields[LARK_CUSTOMER_FIELDS.PHONE_NUMBER] = customer.contactNumber || '';
     }
 
-    if (customer.branchId) {
-      fields[LARK_CUSTOMER_FIELDS.STORE_ID] = String(customer.branchId);
+    if (customer.retailerId) {
+      fields[LARK_CUSTOMER_FIELDS.STORE_ID] = '2svn';
     }
 
     if (customer.organization) {
-      fields[LARK_CUSTOMER_FIELDS.COMPANY] = customer.organization;
+      fields[LARK_CUSTOMER_FIELDS.COMPANY] = customer.organization || '';
     }
 
     if (customer.email) {
-      fields[LARK_CUSTOMER_FIELDS.EMAIL] = customer.email;
+      fields[LARK_CUSTOMER_FIELDS.EMAIL] = customer.email || '';
     }
 
     if (customer.address) {
-      fields[LARK_CUSTOMER_FIELDS.ADDRESS] = customer.address;
+      fields[LARK_CUSTOMER_FIELDS.ADDRESS] = customer.address || '';
     }
 
     if (customer.debt !== null && customer.debt !== undefined) {
-      fields[LARK_CUSTOMER_FIELDS.CURRENT_DEBT] = Number(customer.debt);
+      fields[LARK_CUSTOMER_FIELDS.CURRENT_DEBT] = Number(customer.debt || 0);
     }
 
     if (customer.taxCode) {
-      fields[LARK_CUSTOMER_FIELDS.TAX_CODE] = customer.taxCode;
+      fields[LARK_CUSTOMER_FIELDS.TAX_CODE] = customer.taxCode || '';
     }
 
     if (customer.totalPoint !== null && customer.totalPoint !== undefined) {
-      fields[LARK_CUSTOMER_FIELDS.TOTAL_POINTS] = Number(customer.totalPoint);
+      fields[LARK_CUSTOMER_FIELDS.TOTAL_POINTS] = Number(
+        customer.totalPoint || 0,
+      );
     }
 
     if (customer.totalRevenue !== null && customer.totalRevenue !== undefined) {
       fields[LARK_CUSTOMER_FIELDS.TOTAL_REVENUE] = Number(
-        customer.totalRevenue,
+        customer.totalRevenue || 0,
       );
     }
 
@@ -763,13 +773,25 @@ export class LarkCustomerSyncService {
         : GENDER_OPTIONS.FEMALE;
     }
 
+    if (customer.branchId !== null && customer.branchId !== undefined) {
+      if (customer.branchId === 1) {
+        fields[LARK_CUSTOMER_FIELDS.BRANCH] = BRANCH_OPTIONS.CUA_HANG_DIEP_TRA;
+      } else if (customer.branchId === 2) {
+        fields[LARK_CUSTOMER_FIELDS.BRANCH] = BRANCH_OPTIONS.KHO_HA_NOI;
+      } else if (customer.branchId === 3) {
+        fields[LARK_CUSTOMER_FIELDS.BRANCH] = BRANCH_OPTIONS.KHO_SAI_GON;
+      } else if (customer.branchId == 4) {
+        fields[LARK_CUSTOMER_FIELDS.BRANCH] = BRANCH_OPTIONS.VAN_PHONG_HA_NOI;
+      }
+    }
+
     if (customer.wardName) {
-      fields[LARK_CUSTOMER_FIELDS.WARD_NAME] = customer.wardName;
+      fields[LARK_CUSTOMER_FIELDS.WARD_NAME] = customer.wardName || '';
     }
 
     if (customer.rewardPoint !== null && customer.rewardPoint !== undefined) {
       fields[LARK_CUSTOMER_FIELDS.CURRENT_POINTS] = this.safeBigIntToNumber(
-        customer.rewardPoint,
+        customer.rewardPoint || 0,
       );
     }
 
@@ -778,32 +800,36 @@ export class LarkCustomerSyncService {
       customer.totalInvoiced !== undefined
     ) {
       fields[LARK_CUSTOMER_FIELDS.TOTAL_INVOICED] = Number(
-        customer.totalInvoiced,
+        customer.totalInvoiced || 0,
       );
     }
 
     if (customer.comments) {
-      fields[LARK_CUSTOMER_FIELDS.COMMENTS] = customer.comments;
+      fields[LARK_CUSTOMER_FIELDS.COMMENTS] = customer.comments || '';
     }
 
     if (customer.modifiedDate) {
-      const modifiedDate = new Date(customer.modifiedDate + '+07:00');
-      fields[LARK_CUSTOMER_FIELDS.MODIFIED_DATE] = modifiedDate.getTime();
+      // const modifiedDate = new Date(customer.modifiedDate + '+07:00');
+      // fields[LARK_CUSTOMER_FIELDS.MODIFIED_DATE] = modifiedDate.getTime();
+      fields[LARK_CUSTOMER_FIELDS.MODIFIED_DATE] =
+        customer.modifiedDate.getTime();
     }
 
     if (customer.createdDate) {
-      const createdDate = new Date(customer.createdDate + '+07:00');
-      fields[LARK_CUSTOMER_FIELDS.CREATED_DATE] = createdDate.getTime();
+      // const createdDate = new Date(customer.createdDate + '+07:00');
+      // fields[LARK_CUSTOMER_FIELDS.CREATED_DATE] = createdDate.getTime();
+      fields[LARK_CUSTOMER_FIELDS.CREATED_DATE] =
+        customer.createdDate.getTime();
     }
 
     if (customer.psidFacebook) {
       fields[LARK_CUSTOMER_FIELDS.FACEBOOK_ID] = this.safeBigIntToNumber(
-        customer.psidFacebook,
+        customer.psidFacebook || '',
       );
     }
 
     if (customer.locationName) {
-      fields[LARK_CUSTOMER_FIELDS.LOCATION_NAME] = customer.locationName;
+      fields[LARK_CUSTOMER_FIELDS.LOCATION_NAME] = customer.locationName || 0;
     }
 
     return { fields };
