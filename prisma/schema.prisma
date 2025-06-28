@@ -470,7 +470,6 @@ model Invoice {
   customerName      String?
   customer          Customer?          @relation(fields: [customerId], references: [id])
   total             Decimal            @db.Decimal(15, 2)
-  totalCostOfGoods  Decimal            @db.Decimal(15,2)
   totalPayment      Decimal            @db.Decimal(15, 2)
   discount          Decimal?           @db.Decimal(15, 2)
   discountRatio     Float?
