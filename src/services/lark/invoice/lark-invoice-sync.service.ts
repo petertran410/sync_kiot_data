@@ -16,11 +16,12 @@ const LARK_INVOICE_FIELDS = {
   SELLER: 'Người Bán',
   CUSTOMER_NEED_PAY: 'Khách Cần Trả',
   CUSTOMER_PAID: 'Khách Đã Trả',
-  TOTAL_AMOUNT: 'Tổng Tiền Hàng',
   DISCOUNT: 'Giảm Giá',
   DISCOUNT_RATIO: 'Mức Độ Giảm Giá',
   STATUS: 'Tình Trạng',
-  SALE_CHANNEL: 'Phương Thức',
+  COMMENT: 'Ghi Chú',
+  APPLY_COD: 'Sử Dụng COD',
+  SALE_CHANNEL: 'Kênh Bán',
   APPLY_VOUCHER: 'Áp Mã Voucher',
   CREATED_DATE: 'Ngày Tạo',
   MODIFIED_DATE: 'Ngày Cập Nhật',
@@ -48,6 +49,11 @@ const SALE_CHANNEL_OPTIONS = {
 };
 
 const VOUCHER_OPTIONS = {
+  YES: 'Có',
+  NO: 'Không',
+};
+
+const COD_APPLY = {
   YES: 'Có',
   NO: 'Không',
 };
@@ -893,9 +899,9 @@ export class LarkInvoiceSyncService {
     }
 
     // Financial fields
-    if (invoice.totalPayment !== null && invoice.totalPayment !== undefined) {
+    if (invoice.total !== null && invoice.total !== undefined) {
       fields[LARK_INVOICE_FIELDS.CUSTOMER_NEED_PAY] = Number(
-        invoice.totalPayment || 0,
+        invoice.total || 0,
       );
     }
 
@@ -903,10 +909,6 @@ export class LarkInvoiceSyncService {
       fields[LARK_INVOICE_FIELDS.CUSTOMER_PAID] = Number(
         invoice.totalPayment || 0,
       );
-    }
-
-    if (invoice.total !== null && invoice.total !== undefined) {
-      fields[LARK_INVOICE_FIELDS.TOTAL_AMOUNT] = Number(invoice.total || 0);
     }
 
     if (invoice.discount !== null && invoice.discount !== undefined) {
@@ -936,14 +938,19 @@ export class LarkInvoiceSyncService {
       ? VOUCHER_OPTIONS.YES
       : VOUCHER_OPTIONS.NO;
 
+    fields[LARK_INVOICE_FIELDS.APPLY_COD] = invoice.usingCod
+      ? COD_APPLY.YES
+      : COD_APPLY.NO;
+
     // Dates
     if (invoice.createdDate) {
-      fields[LARK_INVOICE_FIELDS.CREATED_DATE] = invoice.createdDate.getTime();
+      const createdDate = new Date(invoice.createdDate + '+07:00');
+      fields[LARK_INVOICE_FIELDS.CREATED_DATE] = createdDate.getTime();
     }
 
     if (invoice.modifiedDate) {
-      fields[LARK_INVOICE_FIELDS.MODIFIED_DATE] =
-        invoice.modifiedDate.getTime();
+      const modifiedDate = new Date(invoice.modifiedDate + '+07:00');
+      fields[LARK_INVOICE_FIELDS.MODIFIED_DATE] = modifiedDate.getTime();
     }
 
     return fields;
