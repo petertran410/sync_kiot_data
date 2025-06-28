@@ -693,7 +693,7 @@ export class KiotVietInvoiceService {
     for (const invoiceData of invoices) {
       try {
         // ============================================================================
-        // SAFE FOREIGN KEY LOOKUPS - SET NULL IF NOT FOUND
+        // SAFE FOREIGN KEY LOOKUPS - FIXED REFERENCES
         // ============================================================================
 
         // Customer lookup - SAFE
@@ -710,11 +710,11 @@ export class KiotVietInvoiceService {
           select: { id: true },
         });
 
-        // User lookup - SAFE (soldById)
+        // ✅ FIX 1: User lookup for soldById - CORRECTED REFERENCE
         const soldBy = invoiceData.soldById
           ? await this.prismaService.user.findFirst({
               where: { kiotVietId: BigInt(invoiceData.soldById) },
-              select: { id: true },
+              select: { kiotVietId: true }, // ← FIXED: Get kiotVietId, not id
             })
           : null;
 
@@ -726,7 +726,7 @@ export class KiotVietInvoiceService {
             })
           : null;
 
-        // ← FIX: ORDER LOOKUP - SAFE (this was causing foreign key errors)
+        // Order lookup - SAFE
         const order = invoiceData.orderId
           ? await this.prismaService.order.findFirst({
               where: { kiotVietId: BigInt(invoiceData.orderId) },
@@ -745,7 +745,7 @@ export class KiotVietInvoiceService {
         };
 
         // ============================================================================
-        // SAFE INVOICE UPSERT - ALL FOREIGN KEYS HANDLED
+        // ✅ FIXED INVOICE UPSERT - CORRECTED soldById REFERENCE
         // ============================================================================
         const invoice = await this.prismaService.invoice.upsert({
           where: { kiotVietId: BigInt(invoiceData.id) },
@@ -753,11 +753,11 @@ export class KiotVietInvoiceService {
             code: invoiceData.code,
             purchaseDate: new Date(invoiceData.purchaseDate),
             branchId: branch?.id ?? null,
-            soldById: soldBy ? BigInt(soldBy.id) : null, // ← FIX: Handle BigInt properly
+            soldById: soldBy?.kiotVietId ?? null,
             customerId: customer?.id ?? null,
             customerCode: invoiceData.customerCode || null,
             customerName: invoiceData.customerName || null,
-            orderId: order?.id ?? null, // ← FIX: Safe order reference
+            orderId: order?.id ?? null,
             orderCode: invoiceData.orderCode || null,
             total: new Prisma.Decimal(invoiceData.total || 0),
             totalPayment: new Prisma.Decimal(invoiceData.totalPayment || 0),
@@ -783,11 +783,11 @@ export class KiotVietInvoiceService {
             code: invoiceData.code,
             purchaseDate: new Date(invoiceData.purchaseDate),
             branchId: branch?.id ?? null,
-            soldById: soldBy ? BigInt(soldBy.id) : null, // ← FIX: Handle BigInt properly
+            soldById: soldBy?.kiotVietId ?? null, // ✅ FIXED: Use kiotVietId, not id
             customerId: customer?.id ?? null,
             customerCode: invoiceData.customerCode || null,
             customerName: invoiceData.customerName || null,
-            orderId: order?.id ?? null, // ← FIX: Safe order reference
+            orderId: order?.id ?? null,
             orderCode: invoiceData.orderCode || null,
             total: new Prisma.Decimal(invoiceData.total || 0),
             totalPayment: new Prisma.Decimal(invoiceData.totalPayment || 0),
@@ -811,7 +811,7 @@ export class KiotVietInvoiceService {
         });
 
         // ============================================================================
-        // SAVE INVOICE DETAILS - SAFE PRODUCT LOOKUP
+        // SAVE INVOICE DETAILS
         // ============================================================================
         if (
           invoiceData.invoiceDetails &&
@@ -863,7 +863,7 @@ export class KiotVietInvoiceService {
         }
 
         // ============================================================================
-        // SAVE INVOICE DELIVERY - SAME AS BEFORE
+        // SAVE INVOICE DELIVERY
         // ============================================================================
         if (invoiceData.invoiceDelivery) {
           const delivery = invoiceData.invoiceDelivery;
@@ -921,10 +921,18 @@ export class KiotVietInvoiceService {
         }
 
         // ============================================================================
-        // SAVE PAYMENTS - FIXED TABLE NAME
+        // ✅ FIX 2: SAVE PAYMENTS - CORRECTED accountId REFERENCE
         // ============================================================================
         if (invoiceData.payments && invoiceData.payments.length > 0) {
           for (const payment of invoiceData.payments) {
+            // ✅ FIXED: Lookup BankAccount by kiotVietId from API data
+            const bankAccount = payment.accountId
+              ? await this.prismaService.bankAccount.findFirst({
+                  where: { kiotVietId: payment.accountId }, // KiotViet API accountId = BankAccount.kiotVietId
+                  select: { id: true },
+                })
+              : null;
+
             await this.prismaService.payment.upsert({
               where: {
                 kiotVietId: payment.id ? BigInt(payment.id) : BigInt(0),
@@ -935,7 +943,7 @@ export class KiotVietInvoiceService {
                 method: payment.method,
                 status: payment.status,
                 transDate: new Date(payment.transDate),
-                accountId: payment.accountId,
+                accountId: bankAccount?.id ?? null, // ✅ FIXED: Use internal BankAccount.id
                 description: payment.description,
                 invoiceId: invoice.id,
               },
@@ -947,7 +955,7 @@ export class KiotVietInvoiceService {
                 method: payment.method,
                 status: payment.status,
                 transDate: new Date(payment.transDate),
-                accountId: payment.accountId,
+                accountId: bankAccount?.id ?? null, // ✅ FIXED: Use internal BankAccount.id
                 description: payment.description,
               },
             });
@@ -1005,7 +1013,19 @@ export class KiotVietInvoiceService {
         this.logger.error(
           `Failed to save invoice ${invoiceData.id}: ${error.message}`,
         );
-        // Continue with next invoice instead of stopping
+        // Log detailed error for debugging
+        this.logger.debug(
+          `Invoice data: ${JSON.stringify({
+            id: invoiceData.id,
+            soldById: invoiceData.soldById,
+            customerId: invoiceData.customerId,
+            branchId: invoiceData.branchId,
+            payments: invoiceData.payments?.map((p) => ({
+              id: p.id,
+              accountId: p.accountId,
+            })),
+          })}`,
+        );
       }
     }
 

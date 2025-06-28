@@ -41,6 +41,27 @@ const STATUS_OPTIONS = {
   DELIVERY_FAILED: 'Không Giao Được',
 };
 
+const SALE_NAME = {
+  LE_ANH_TUAN: 'Lê Anh Tuấn',
+  NGUYEN_THI_PHUONG: 'Nguyễn Thị Phương',
+  LINH_THUY_DUONG: 'Linh Thuỳ Dương',
+  VU_HUYEN_TRANG: 'Vũ Huyền Trang',
+  NGUYEN_THI_THUONG: 'Nguyễn Thị Thương',
+  NGUYEN_THI_NGAN: 'Nguyễn Thị Ngân',
+  NGUYEN_HUYEN_TRANG: 'Nguyễn Huyền Trang',
+  MAI_THI_VAN_ANH: 'Mai Thị Vân Anh',
+  BANG_ANH_VU: 'Bàng Anh Vũ',
+  PHI_THI_PHUONG_THANH: 'Phí Thị Phương Thanh',
+  LE_THI_HONG_LIEN: 'Lê Thị Hồng Liên',
+  TRAN_XUAN_PHUONG: 'Trần Xuân Phương',
+  DINH_THI_LY_LY: 'Đinh Thị Ly Ly',
+  ADMIN: 'Admin',
+  LE_XUAN_TUNG: 'Lê Xuân Tùng',
+  TA_THI_TRANG: 'Tạ Thị Trang',
+  LINH_THU_TRANG: 'Linh Thu Trang',
+  LY_THI_HONG_DAO: 'Lý Thị Hồng Đào',
+};
+
 const SALE_CHANNEL_OPTIONS = {
   DIRECT: 'Bán Trực Tiếp',
   LERMAO_SANH_AN: 'LerMao - Sành Ăn Như Gấu',
@@ -1123,8 +1144,42 @@ export class LarkInvoiceSyncService {
     }
 
     // Seller name - need to look up from soldById
-    if (invoice.soldByName) {
-      fields[LARK_INVOICE_FIELDS.SELLER] = invoice.soldByName;
+    if (invoice.soldById) {
+      if (invoice.soldById === 1015579) {
+        fields[LARK_INVOICE_FIELDS.SELLER] = SALE_NAME.ADMIN;
+      } else if (invoice.soldById === 1031177) {
+        fields[LARK_INVOICE_FIELDS.SELLER] = SALE_NAME.DINH_THI_LY_LY;
+      } else if (invoice.soldById === 1015592) {
+        fields[LARK_INVOICE_FIELDS.SELLER] === SALE_NAME.TRAN_XUAN_PHUONG;
+      } else if (invoice.soldById === 1015596) {
+        fields[LARK_INVOICE_FIELDS.SELLER] === SALE_NAME.LE_THI_HONG_LIEN;
+      } else if (invoice.soldById === 1015604) {
+        fields[LARK_INVOICE_FIELDS.SELLER] = SALE_NAME.PHI_THI_PHUONG_THANH;
+      } else if (invoice.soldById === 1015610) {
+        fields[LARK_INVOICE_FIELDS.SELLER] = SALE_NAME.LE_XUAN_TUNG;
+      } else if (invoice.soldById === 1015613) {
+        fields[LARK_INVOICE_FIELDS.SELLER] = SALE_NAME.TA_THI_TRANG;
+      } else if (invoice.soldById === 1015698) {
+        fields[LARK_INVOICE_FIELDS.SELLER] = SALE_NAME.BANG_ANH_VU;
+      } else if (invoice.soldById === 1015722) {
+        fields[LARK_INVOICE_FIELDS.SELLER] = SALE_NAME.MAI_THI_VAN_ANH;
+      } else if (invoice.soldById === 1015729) {
+        fields[LARK_INVOICE_FIELDS.SELLER] = SALE_NAME.LINH_THU_TRANG;
+      } else if (invoice.soldById === 1015746) {
+        fields[LARK_INVOICE_FIELDS.SELLER] = SALE_NAME.LY_THI_HONG_DAO;
+      } else if (invoice.soldById === 1015761) {
+        fields[LARK_INVOICE_FIELDS.SELLER] = SALE_NAME.NGUYEN_HUYEN_TRANG;
+      } else if (invoice.soldById === 1015764) {
+        fields[LARK_INVOICE_FIELDS.SELLER] = SALE_NAME.NGUYEN_THI_NGAN;
+      } else if (invoice.soldById === 1015777) {
+        fields[LARK_INVOICE_FIELDS.SELLER] = SALE_NAME.NGUYEN_THI_THUONG;
+      } else if (invoice.soldById === 1015781) {
+        fields[LARK_INVOICE_FIELDS.SELLER] = SALE_NAME.VU_HUYEN_TRANG;
+      } else if (invoice.soldById === 1015788) {
+        fields[LARK_INVOICE_FIELDS.SELLER] = SALE_NAME.LINH_THUY_DUONG;
+      } else if (invoice.soldById === 1016818) {
+        fields[LARK_INVOICE_FIELDS.SELLER] = SALE_NAME.NGUYEN_THI_PHUONG;
+      }
     }
 
     // Financial fields
@@ -1250,6 +1305,10 @@ export class LarkInvoiceSyncService {
     fields[LARK_INVOICE_FIELDS.APPLY_COD] = invoice.usingCod
       ? COD_APPLY.YES
       : COD_APPLY.NO;
+
+    if (invoice.description) {
+      fields[LARK_INVOICE_FIELDS.COMMENT] = invoice.description || '';
+    }
 
     // Dates
     if (invoice.createdDate) {
