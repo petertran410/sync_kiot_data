@@ -2,6 +2,7 @@
 import { Controller, Get, Post, Query, Logger } from '@nestjs/common';
 import { BusSchedulerService } from '../services/bus-scheduler/bus-scheduler.service';
 import { KiotVietCustomerService } from '../services/kiot-viet/customer/customer.service';
+import { KiotVietInvoiceService } from 'src/services/kiot-viet/invoice/invoice.service';
 
 @Controller('sync')
 export class SyncController {
@@ -10,6 +11,7 @@ export class SyncController {
   constructor(
     private readonly busScheduler: BusSchedulerService,
     private readonly customerService: KiotVietCustomerService,
+    private readonly invoiceService: KiotVietInvoiceService,
   ) {}
 
   // ============================================================================
@@ -154,7 +156,7 @@ export class SyncController {
   }
 
   // ============================================================================
-  // MANUAL TRIGGERS (For testing)
+  // MANUAL CUSTOMER TRIGGERS (For testing)
   // ============================================================================
 
   @Post('customer/historical')
@@ -205,6 +207,68 @@ export class SyncController {
       return {
         success: true,
         message: 'Customer sync check completed',
+      };
+    } catch (error) {
+      this.logger.error(`Manual sync check failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+  }
+
+  // ============================================================================
+  // MANUAL INVOICE TRIGGERS (For testing)
+  // ============================================================================
+
+  @Post('invoice/historical')
+  async triggerHistoricalInvoice() {
+    try {
+      this.logger.log('🔧 Manual historical invoice sync triggered');
+      await this.invoiceService.enableHistoricalSync();
+      return {
+        success: true,
+        message: 'Historical invoice sync enabled and started',
+      };
+    } catch (error) {
+      this.logger.error(`Manual historical sync failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+  }
+
+  @Post('invoice/recent')
+  async triggerRecentInvoice(@Query('days') days?: string) {
+    try {
+      const syncDays = days ? parseInt(days) : 4;
+      this.logger.log(
+        `🔧 Manual recent invoice sync triggered (${syncDays} days)`,
+      );
+
+      await this.invoiceService.syncRecentInvoices(syncDays);
+      return {
+        success: true,
+        message: `Recent invoice sync completed (${syncDays} days)`,
+      };
+    } catch (error) {
+      this.logger.error(`Manual recent sync failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+  }
+
+  @Post('invoice/check')
+  async triggerInvoiceCheck() {
+    try {
+      this.logger.log('🔧 Manual invoice sync check triggered');
+      await this.invoiceService.checkAndRunAppropriateSync();
+      return {
+        success: true,
+        message: 'Invoice sync check completed',
       };
     } catch (error) {
       this.logger.error(`Manual sync check failed: ${error.message}`);

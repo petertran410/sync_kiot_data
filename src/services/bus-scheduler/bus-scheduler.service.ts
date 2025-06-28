@@ -4,6 +4,7 @@ import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../../prisma/prisma.service';
 import { KiotVietCustomerService } from '../kiot-viet/customer/customer.service';
 import { KiotVietCustomerGroupService } from '../kiot-viet/customer-group/customer-group.service';
+import { KiotVietInvoiceService } from '../kiot-viet/invoice/invoice.service';
 
 @Injectable()
 export class BusSchedulerService implements OnModuleInit {
@@ -15,6 +16,7 @@ export class BusSchedulerService implements OnModuleInit {
     private readonly prismaService: PrismaService,
     private readonly customerService: KiotVietCustomerService,
     private readonly customerGroupService: KiotVietCustomerGroupService,
+    private readonly invoiceService: KiotVietInvoiceService,
   ) {}
 
   async onModuleInit() {
@@ -63,7 +65,7 @@ export class BusSchedulerService implements OnModuleInit {
 
       // ===== PHASE 2: FUTURE ENTITIES (Ready for scaling) =====
       // await this.runOrderSync();
-      // await this.runInvoiceSync();
+      await this.runInvoiceSync();
       // await this.runProductSync();
 
       // Complete cycle
@@ -175,20 +177,20 @@ export class BusSchedulerService implements OnModuleInit {
   //   }
   // }
 
-  // private async runInvoiceSync(): Promise<void> {
-  //   try {
-  //     this.logger.log('🧾 [Invoice] Starting sync...');
-  //
-  //     const startTime = Date.now();
-  //     await this.invoiceService.checkAndRunAppropriateSync();
-  //     const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-  //
-  //     this.logger.log(`✅ [Invoice] Sync completed in ${duration}s`);
-  //   } catch (error) {
-  //     this.logger.error(`❌ [Invoice] Sync failed: ${error.message}`);
-  //     throw error;
-  //   }
-  // }
+  private async runInvoiceSync(): Promise<void> {
+    try {
+      this.logger.log('🧾 [Invoice] Starting sync...');
+
+      const startTime = Date.now();
+      await this.invoiceService.checkAndRunAppropriateSync();
+      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+
+      this.logger.log(`✅ [Invoice] Sync completed in ${duration}s`);
+    } catch (error) {
+      this.logger.error(`❌ [Invoice] Sync failed: ${error.message}`);
+      throw error;
+    }
+  }
 
   // ============================================================================
   // STARTUP & SYSTEM METHODS
@@ -219,8 +221,9 @@ export class BusSchedulerService implements OnModuleInit {
       await this.cleanupOldSyncPatterns();
 
       // Run initial customer sync check
-      this.logger.log('📋 Running initial customer sync check...');
+      this.logger.log('📋 Running initial customer + invoice sync check...');
       await this.runCustomerSync();
+      await this.runInvoiceSync();
 
       this.logger.log('✅ Startup check completed successfully');
     } catch (error) {
@@ -238,8 +241,8 @@ export class BusSchedulerService implements OnModuleInit {
             in: [
               'customer_historical_lark',
               'customer_recent_lark',
-              'order_historical_lark',
-              'order_recent_lark',
+              // 'order_historical_lark',
+              // 'order_recent_lark',
               'invoice_historical_lark',
               'invoice_recent_lark',
             ],
@@ -275,7 +278,10 @@ export class BusSchedulerService implements OnModuleInit {
       where: { name: cycleName },
       create: {
         name: cycleName,
-        entities: cycleName === 'main_cycle' ? ['customer'] : ['customergroup'],
+        entities:
+          cycleName === 'main_cycle'
+            ? ['customer', 'invoice']
+            : ['customergroup'],
         syncMode: 'cycle',
         isRunning: status === 'running',
         isEnabled: true,

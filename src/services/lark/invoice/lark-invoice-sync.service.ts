@@ -42,9 +42,25 @@ const STATUS_OPTIONS = {
 };
 
 const SALE_CHANNEL_OPTIONS = {
-  DIRECT: 'Trực Tiếp',
-  DELIVERY: 'Giao Hàng',
-  ONLINE: 'Online',
+  DIRECT: 'Bán Trực Tiếp',
+  LERMAO_SANH_AN: 'LerMao - Sành Ăn Như Gấu',
+  DIEP_TRA_PHA_CHE: 'Diệp Trà - Nguyên Liệu Pha Chế',
+  FACEBOOK: 'Facebook',
+  INSTAGRAM: 'Instagram',
+  DIEPTRA: 'DiepTra',
+  DIEPTRA_OFFICIAL: 'DiepTraOfficial',
+  TIKTOK_LIVE: 'Tiktok Live',
+  DIEPTRA_ROYAL: 'DIỆP TRÀ - ROYALTEA',
+  DIEPTRA_TONGKHO_NGUYENLIEU: 'DIỆP TRÀ  Tổng Kho Nguyên Liệu',
+  DIEPTRA_TONGKHO_NGUYENLIEU_2: 'DIỆP TRÀ  Tổng Kho Nguyên Liệu',
+  DIEPTRA_CHINHANH_MIENNAM: 'Diệp Trà Chi Nhánh Miền Nam',
+  DIEPTRA_CHINHANH_MIENNAM_2: 'Diệp Trà Chi Nhánh Miền Nam',
+  DIEPTRA_SAIGON: 'DIỆP TRÀ SÀI GÒN',
+  MAOMAO_THICH_TRASUA: 'Mao Mao thích Tà Xữa',
+  SHOPEE: 'Shopee',
+  DIEPTRA_ROYAL_2: 'DIỆP TRÀ - ROYALTEA',
+  DIEPTRA_SAIGON_2: 'DIỆP TRÀ SÀI GÒN',
+  WEBSITE: 'Website',
   OTHER: 'Khác',
 };
 
@@ -671,6 +687,219 @@ export class LarkInvoiceSyncService {
   }
 
   // ============================================================================
+  // DATA ANALYSIS METHODS
+  // ============================================================================
+
+  async analyzeMissingData(): Promise<{
+    missing: any[];
+    exists: any[];
+    duplicates: any[];
+    summary: any;
+  }> {
+    this.logger.log(
+      '🔍 Analyzing missing data between Database and LarkBase...',
+    );
+
+    // Load cache để có data LarkBase
+    await this.loadExistingRecordsWithRetry();
+
+    // Get all database records
+    const dbInvoices = await this.prismaService.invoice.findMany({
+      select: {
+        id: true,
+        kiotVietId: true,
+        code: true,
+        orderCode: true,
+        larkSyncStatus: true,
+        larkSyncedAt: true,
+      },
+      orderBy: { kiotVietId: 'asc' },
+    });
+
+    const missing: any[] = [];
+    const exists: any[] = [];
+    const duplicates: Map<number, number> = new Map();
+
+    // Analyze each database record
+    for (const invoice of dbInvoices) {
+      const kiotVietId = this.safeBigIntToNumber(invoice.kiotVietId);
+      const existsInLark = this.existingRecordsCache.has(kiotVietId);
+
+      if (existsInLark) {
+        exists.push({
+          dbId: invoice.id,
+          kiotVietId,
+          code: invoice.code,
+          orderCode: invoice.orderCode,
+          larkRecordId: this.existingRecordsCache.get(kiotVietId),
+          syncStatus: invoice.larkSyncStatus,
+        });
+
+        // Count occurrences for duplicate detection
+        duplicates.set(kiotVietId, (duplicates.get(kiotVietId) || 0) + 1);
+      } else {
+        missing.push({
+          dbId: invoice.id,
+          kiotVietId,
+          code: invoice.code,
+          orderCode: invoice.orderCode,
+          syncStatus: invoice.larkSyncStatus,
+          lastSyncAttempt: invoice.larkSyncedAt,
+        });
+      }
+    }
+
+    // Find actual duplicates
+    const duplicatesList: any[] = [];
+    for (const [kiotVietId, count] of duplicates.entries()) {
+      if (count > 1) {
+        duplicatesList.push({ kiotVietId, count });
+      }
+    }
+
+    const summary = {
+      totalDatabase: dbInvoices.length,
+      totalLarkBase: this.existingRecordsCache.size,
+      existsInBoth: exists.length,
+      missingInLarkBase: missing.length,
+      duplicatesFound: duplicatesList.length,
+      syncStatusBreakdown: {
+        SYNCED: missing.filter((m) => m.syncStatus === 'SYNCED').length,
+        PENDING: missing.filter((m) => m.syncStatus === 'PENDING').length,
+        FAILED: missing.filter((m) => m.syncStatus === 'FAILED').length,
+      },
+    };
+
+    this.logger.log('📊 Analysis Summary:');
+    this.logger.log(`- Total in Database: ${summary.totalDatabase}`);
+    this.logger.log(`- Total in LarkBase: ${summary.totalLarkBase}`);
+    this.logger.log(`- Exists in both: ${summary.existsInBoth}`);
+    this.logger.log(`- Missing in LarkBase: ${summary.missingInLarkBase}`);
+    this.logger.log(`- Duplicates found: ${summary.duplicatesFound}`);
+
+    return {
+      missing: missing.slice(0, 100), // First 100 for readability
+      exists: exists.slice(0, 20), // Sample of existing
+      duplicates: duplicatesList,
+      summary,
+    };
+  }
+
+  // ============================================================================
+  // TARGETED SYNC FOR MISSING DATA
+  // ============================================================================
+
+  async syncMissingDataOnly(): Promise<{
+    attempted: number;
+    success: number;
+    failed: number;
+    details: any[];
+  }> {
+    this.logger.log('🚀 Starting targeted sync for missing data only...');
+
+    // First, analyze what's missing
+    const analysis = await this.analyzeMissingData();
+    const missingInvoices = analysis.missing;
+
+    if (missingInvoices.length === 0) {
+      this.logger.log(
+        '✅ No missing data found! Database and LarkBase are in sync.',
+      );
+      return {
+        attempted: 0,
+        success: 0,
+        failed: 0,
+        details: [],
+      };
+    }
+
+    // Get full invoice data for missing records
+    const missingIds = missingInvoices.map((m) => m.dbId);
+    const invoicesToSync = await this.prismaService.invoice.findMany({
+      where: { id: { in: missingIds } },
+    });
+
+    this.logger.log(
+      `📋 Found ${invoicesToSync.length} missing invoice to sync`,
+    );
+
+    // Reset their status to PENDING for fresh sync
+    await this.prismaService.invoice.updateMany({
+      where: { id: { in: missingIds } },
+      data: {
+        larkSyncStatus: 'PENDING',
+        larkSyncRetries: 0,
+      },
+    });
+
+    // Sync in small batches
+    const BATCH_SIZE = 25;
+    let totalSuccess = 0;
+    let totalFailed = 0;
+    const syncDetails: any[] = [];
+
+    for (let i = 0; i < invoicesToSync.length; i += BATCH_SIZE) {
+      const batch = invoicesToSync.slice(i, i + BATCH_SIZE);
+      const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
+      const totalBatches = Math.ceil(invoicesToSync.length / BATCH_SIZE);
+
+      this.logger.log(
+        `🔄 Processing batch ${batchNumber}/${totalBatches} (${batch.length} invoices)`,
+      );
+
+      try {
+        // Process this batch
+        const { successRecords, failedRecords } =
+          await this.batchCreateInvoices(batch);
+
+        totalSuccess += successRecords.length;
+        totalFailed += failedRecords.length;
+
+        // Update database status
+        if (successRecords.length > 0) {
+          await this.updateDatabaseStatus(successRecords, 'SYNCED');
+        }
+
+        if (failedRecords.length > 0) {
+          await this.updateDatabaseStatus(failedRecords, 'FAILED');
+        }
+
+        syncDetails.push({
+          batch: batchNumber,
+          success: successRecords.length,
+          failed: failedRecords.length,
+          failedCodes: failedRecords.map((f) => f.code),
+        });
+
+        // Small delay between batches
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      } catch (error) {
+        this.logger.error(`❌ Batch ${batchNumber} failed: ${error.message}`);
+        totalFailed += batch.length;
+
+        syncDetails.push({
+          batch: batchNumber,
+          success: 0,
+          failed: batch.length,
+          error: error.message,
+        });
+      }
+    }
+
+    this.logger.log('🎯 Missing data sync completed:');
+    this.logger.log(`- Attempted: ${invoicesToSync.length}`);
+    this.logger.log(`- Success: ${totalSuccess}`);
+    this.logger.log(`- Failed: ${totalFailed}`);
+
+    return {
+      attempted: invoicesToSync.length,
+      success: totalSuccess,
+      failed: totalFailed,
+      details: syncDetails,
+    };
+  }
+
+  // ============================================================================
   // HELPER METHODS
   // ============================================================================
 
@@ -929,8 +1158,81 @@ export class LarkInvoiceSyncService {
 
     // Sale channel - need custom mapping
     if (invoice.saleChannelId) {
-      // You might need to map saleChannelId to proper options
-      fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] = SALE_CHANNEL_OPTIONS.DIRECT;
+      if (invoice.saleChannelId === 1) {
+        fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] = SALE_CHANNEL_OPTIONS.DIRECT;
+      }
+      if (invoice.saleChannelId === 2) {
+        fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] =
+          SALE_CHANNEL_OPTIONS.LERMAO_SANH_AN;
+      }
+      if (invoice.saleChannelId === 3) {
+        fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] =
+          SALE_CHANNEL_OPTIONS.DIEP_TRA_PHA_CHE;
+      }
+      if (invoice.saleChannelId === 4) {
+        fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] =
+          SALE_CHANNEL_OPTIONS.FACEBOOK;
+      }
+      if (invoice.saleChannelId === 5) {
+        fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] =
+          SALE_CHANNEL_OPTIONS.INSTAGRAM;
+      }
+      if (invoice.saleChannelId === 6) {
+        fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] = SALE_CHANNEL_OPTIONS.DIEPTRA;
+      }
+      if (invoice.saleChannelId === 7) {
+        fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] =
+          SALE_CHANNEL_OPTIONS.DIEPTRA_OFFICIAL;
+      }
+      if (invoice.saleChannelId === 8) {
+        fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] =
+          SALE_CHANNEL_OPTIONS.TIKTOK_LIVE;
+      }
+      if (invoice.saleChannelId === 9) {
+        fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] =
+          SALE_CHANNEL_OPTIONS.DIEPTRA_ROYAL;
+      }
+      if (invoice.saleChannelId === 10) {
+        fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] =
+          SALE_CHANNEL_OPTIONS.DIEPTRA_TONGKHO_NGUYENLIEU;
+      }
+      if (invoice.saleChannelId === 11) {
+        fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] =
+          SALE_CHANNEL_OPTIONS.DIEPTRA_TONGKHO_NGUYENLIEU_2;
+      }
+      if (invoice.saleChannelId === 12) {
+        fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] =
+          SALE_CHANNEL_OPTIONS.DIEPTRA_CHINHANH_MIENNAM;
+      }
+      if (invoice.saleChannelId === 13) {
+        fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] =
+          SALE_CHANNEL_OPTIONS.DIEPTRA_CHINHANH_MIENNAM_2;
+      }
+      if (invoice.saleChannelId === 14) {
+        fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] =
+          SALE_CHANNEL_OPTIONS.DIEPTRA_SAIGON;
+      }
+      if (invoice.saleChannelId === 15) {
+        fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] =
+          SALE_CHANNEL_OPTIONS.MAOMAO_THICH_TRASUA;
+      }
+      if (invoice.saleChannelId === 16) {
+        fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] = SALE_CHANNEL_OPTIONS.SHOPEE;
+      }
+      if (invoice.saleChannelId === 17) {
+        fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] =
+          SALE_CHANNEL_OPTIONS.DIEPTRA_ROYAL_2;
+      }
+      if (invoice.saleChannelId === 18) {
+        fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] =
+          SALE_CHANNEL_OPTIONS.DIEPTRA_SAIGON_2;
+      }
+      if (invoice.saleChannelId === 19) {
+        fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] = SALE_CHANNEL_OPTIONS.WEBSITE;
+      }
+      if (invoice.saleChannelId === 20) {
+        fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] = SALE_CHANNEL_OPTIONS.OTHER;
+      }
     }
 
     // Voucher
@@ -974,12 +1276,15 @@ export class LarkInvoiceSyncService {
 
     const progress = total > 0 ? Math.round((synced / total) * 100) : 0;
 
+    const canRetryFailed = failed > 0;
+
     return {
       total,
       synced,
       pending,
       failed,
       progress,
+      canRetryFailed,
       summary: `${synced}/${total} synced (${progress}%)`,
     };
   }
@@ -995,5 +1300,471 @@ export class LarkInvoiceSyncService {
 
     this.logger.log(`🔄 Reset ${result.count} FAILED invoices to PENDING`);
     return { resetCount: result.count };
+  }
+
+  async getFailedInvoicesReport(): Promise<any> {
+    const failedInvoices = await this.prismaService.invoice.findMany({
+      where: { larkSyncStatus: 'FAILED' },
+      select: {
+        id: true,
+        code: true,
+        orderCode: true,
+        larkSyncRetries: true,
+        larkSyncedAt: true,
+        modifiedDate: true,
+      },
+      orderBy: { larkSyncRetries: 'desc' },
+      take: 10,
+    });
+
+    return {
+      totalFailed: await this.prismaService.invoice.count({
+        where: { larkSyncStatus: 'FAILED' },
+      }),
+      topFailures: failedInvoices.map((c) => ({
+        ...c,
+        larkSyncRetries: Number(c.larkSyncRetries), // Convert BigInt to number
+      })),
+      canReset: true,
+    };
+  }
+
+  async performHealthCheck(): Promise<any> {
+    const allIssues: string[] = [];
+    const recommendations: string[] = [];
+
+    // Data reconciliation
+    this.logger.log('📊 [1/5] DATA RECONCILIATION');
+    const dataReconciliation = await this.reconcileDataMismatch();
+    allIssues.push(...dataReconciliation.recommendations);
+
+    // Sync control health
+    this.logger.log('🔄 [2/5] SYNC CONTROL HEALTH');
+    const syncControlHealth = await this.checkSyncControlHealth();
+    allIssues.push(...syncControlHealth.issues);
+
+    // LarkBase connectivity
+    this.logger.log('🌐 [3/5] LARKBASE CONNECTIVITY');
+    const larkBaseConnectivity = await this.testLarkBaseConnectivity();
+    if (!larkBaseConnectivity.connected) {
+      allIssues.push(
+        `LarkBase connectivity failed: ${larkBaseConnectivity.error}`,
+      );
+    }
+
+    // Data quality
+    this.logger.log('🔍 [4/5] DATA QUALITY CHECK');
+    const dataQuality = await this.checkCustomerDataQuality();
+    allIssues.push(...dataQuality.issues);
+
+    // Cache health
+    this.logger.log('📦 [5/5] CACHE HEALTH');
+    const cacheHealth = {
+      loaded: this.cacheLoaded,
+      size: this.existingRecordsCache.size,
+      codeMapSize: this.invoiceCodeCache.size,
+      valid: this.isCacheValid(),
+      age: this.lastCacheLoadTime
+        ? Math.round(
+            (Date.now() - this.lastCacheLoadTime.getTime()) / 1000 / 60,
+          )
+        : null,
+    };
+
+    if (!cacheHealth.valid && this.cacheLoaded) {
+      recommendations.push('🔄 Refresh cache for accurate duplicate detection');
+    }
+
+    // Generate overall status
+    let overallStatus: 'HEALTHY' | 'WARNING' | 'CRITICAL' = 'HEALTHY';
+
+    const criticalIssues = allIssues.filter(
+      (issue) =>
+        issue.includes('🚨') ||
+        issue.includes('CRITICAL') ||
+        issue.includes('connectivity failed'),
+    );
+
+    const warningIssues = allIssues.filter(
+      (issue) =>
+        issue.includes('⚠️') ||
+        issue.includes('WARNING') ||
+        issue.includes('duplicate'),
+    );
+
+    if (criticalIssues.length > 0) {
+      overallStatus = 'CRITICAL';
+    } else if (warningIssues.length > 0 || allIssues.length > 0) {
+      overallStatus = 'WARNING';
+    }
+
+    // Additional recommendations
+    if (dataReconciliation.pendingSync > 0) {
+      recommendations.push(
+        `🚀 Sync ${dataReconciliation.pendingSync} pending invoices`,
+      );
+    }
+
+    if (dataReconciliation.failedSync > 0) {
+      recommendations.push(
+        `🔄 Retry ${dataReconciliation.failedSync} failed invoices`,
+      );
+    }
+
+    return {
+      timestamp: new Date().toISOString(),
+      overallStatus,
+      components: {
+        dataReconciliation: {
+          ...dataReconciliation,
+          syncedCount: Number(dataReconciliation.syncedCount),
+        },
+        syncControlHealth,
+        larkBaseConnectivity,
+        dataQuality: {
+          ...dataQuality,
+          duplicateKiotVietIds: Number(dataQuality.duplicateKiotVietIds),
+          nullKiotVietIds: Number(dataQuality.nullKiotVietIds),
+        },
+        cacheHealth,
+      },
+      issues: allIssues,
+      recommendations,
+    };
+  }
+
+  private async reconcileDataMismatch(): Promise<any> {
+    const databaseCount = await this.prismaService.invoice.count();
+    const pendingCount = await this.prismaService.invoice.count({
+      where: { larkSyncStatus: 'PENDING' },
+    });
+    const failedCount = await this.prismaService.invoice.count({
+      where: { larkSyncStatus: 'FAILED' },
+    });
+    const syncedCount = await this.prismaService.invoice.count({
+      where: { larkSyncStatus: 'SYNCED' },
+    });
+
+    let larkBaseCount = 0;
+    let cacheLoadError = null;
+
+    try {
+      if (!this.isCacheValid()) {
+        await this.loadExistingRecordsWithRetry();
+      }
+      larkBaseCount = this.existingRecordsCache.size;
+    } catch (error) {
+      cacheLoadError = error.message;
+    }
+
+    const mismatch = Math.abs(databaseCount - larkBaseCount);
+    const recommendations: string[] = [];
+
+    if (cacheLoadError) {
+      recommendations.push(
+        `🚨 CRITICAL: Cannot access LarkBase - ${cacheLoadError}`,
+      );
+    }
+
+    if (mismatch > 1000) {
+      recommendations.push(
+        `🚨 CRITICAL: Major data mismatch - ${mismatch} records difference`,
+      );
+    } else if (mismatch > 100) {
+      recommendations.push(
+        `⚠️ WARNING: Significant mismatch - ${mismatch} records difference`,
+      );
+    }
+
+    if (pendingCount > 0) {
+      recommendations.push(`⏳ ${pendingCount} customers pending sync`);
+    }
+
+    if (failedCount > 100) {
+      recommendations.push(
+        `❌ ${failedCount} customers failed sync - investigation needed`,
+      );
+    }
+
+    // Check for extra records in LarkBase
+    if (larkBaseCount > databaseCount) {
+      const extraRecords = larkBaseCount - databaseCount;
+      recommendations.push(
+        `📊 ${extraRecords} extra records in LarkBase - possible manual additions or sync status issues`,
+      );
+    }
+
+    return {
+      databaseCount,
+      larkBaseCount,
+      mismatch,
+      pendingSync: pendingCount,
+      failedSync: failedCount,
+      syncedCount,
+      recommendations,
+    };
+  }
+
+  private async checkSyncControlHealth(): Promise<any> {
+    const stuckSyncs = await this.prismaService.syncControl.findMany({
+      where: {
+        isRunning: true,
+        startedAt: {
+          lt: new Date(Date.now() - 60 * 60 * 1000), // Over 1 hour
+        },
+      },
+    });
+
+    const issues: string[] = [];
+
+    if (stuckSyncs.length > 0) {
+      issues.push(`⚠️ ${stuckSyncs.length} stuck sync processes detected`);
+    }
+
+    return {
+      stuckSyncs: stuckSyncs.map((s) => ({
+        name: s.name,
+        startedAt: s.startedAt ? s.startedAt.toISOString() : 'unknown',
+        duration: s.startedAt
+          ? Math.round((Date.now() - s.startedAt.getTime()) / 1000 / 60)
+          : 0,
+      })),
+      issues,
+    };
+  }
+
+  private async testLarkBaseConnectivity(): Promise<any> {
+    try {
+      await this.testLarkBaseConnection();
+      return { connected: true, error: null };
+    } catch (error) {
+      return { connected: false, error: error.message };
+    }
+  }
+
+  private async checkCustomerDataQuality(): Promise<any> {
+    const issues: string[] = [];
+
+    // Check for duplicates by kiotVietId
+    const duplicateKiotVietIds = await this.prismaService.$queryRaw<any[]>`
+      SELECT "kiotVietId", COUNT(*) as count
+      FROM "Customer"
+      GROUP BY "kiotVietId"
+      HAVING COUNT(*) > 1
+      LIMIT 10
+    `;
+
+    if (duplicateKiotVietIds.length > 0) {
+      issues.push(
+        `⚠️ Found ${duplicateKiotVietIds.length} duplicate kiotVietIds in database`,
+      );
+    }
+
+    // Check for null kiotVietIds
+    const nullKiotVietIds = await this.prismaService.customer.count({
+      where: { kiotVietId: null },
+    });
+
+    if (nullKiotVietIds > 0) {
+      issues.push(`⚠️ ${nullKiotVietIds} customers with null kiotVietId`);
+    }
+
+    return {
+      duplicateKiotVietIds: duplicateKiotVietIds.length,
+      nullKiotVietIds,
+      issues,
+    };
+  }
+
+  // ============================================================================
+  // DATA TYPE DEBUG (Fixed BigInt serialization)
+  // ============================================================================
+
+  async debugKiotVietIdDataTypes(): Promise<any> {
+    this.logger.log(
+      '🔍 Debugging kiotVietId data types between Database and LarkBase...',
+    );
+
+    // Get samples from database
+    const dbSamples = await this.prismaService.customer.findMany({
+      select: {
+        kiotVietId: true,
+        code: true,
+      },
+      take: 10,
+      orderBy: { createdDate: 'desc' },
+    });
+
+    // Get samples from LarkBase cache
+    const larkSamples: any[] = [];
+    if (this.existingRecordsCache.size > 0) {
+      let count = 0;
+      for (const [
+        kiotVietId,
+        recordId,
+      ] of this.existingRecordsCache.entries()) {
+        larkSamples.push({ kiotVietId, recordId });
+        count++;
+        if (count >= 10) break;
+      }
+    }
+
+    const conversionIssues: string[] = [];
+
+    // Analyze database types
+    const dbTypes = new Map<string, number>();
+    dbSamples.forEach((sample) => {
+      const type = typeof sample.kiotVietId;
+      dbTypes.set(type, (dbTypes.get(type) || 0) + 1);
+    });
+
+    // Log findings
+    this.logger.log('🔍 KiotVietId Data Type Analysis:');
+    this.logger.log(`Database samples (${dbSamples.length}):`);
+    dbSamples.forEach((sample, i) => {
+      const type = typeof sample.kiotVietId;
+      this.logger.log(
+        `${i + 1}. ${sample.kiotVietId} (${type}) - ${sample.code}`,
+      );
+    });
+
+    this.logger.log(`LarkBase samples (${larkSamples.length}):`);
+    larkSamples.forEach((sample, i) => {
+      this.logger.log(
+        `${i + 1}. ${sample.kiotVietId} (string) - ${sample.recordId}`,
+      );
+    });
+
+    this.logger.log('Type Distribution:');
+    this.logger.log(`LarkBase: ${larkSamples.length} strings, 0 numbers`);
+    this.logger.log(
+      `Database: ${dbTypes.get('bigint') || 0} bigints, ${dbTypes.get('number') || 0} numbers`,
+    );
+
+    if (dbTypes.has('bigint') && larkSamples.length > 0) {
+      conversionIssues.push(
+        'Type mismatch: LarkBase stores kiotVietId as STRING but Database expects NUMBER/BIGINT',
+      );
+    }
+
+    if (conversionIssues.length > 0) {
+      this.logger.warn('⚠️ Conversion Issues Found:');
+      conversionIssues.forEach((issue, i) => {
+        this.logger.warn(`${i + 1}. ${issue}`);
+      });
+    }
+
+    return {
+      databaseTypes: Object.fromEntries(dbTypes),
+      larkBaseType: 'string',
+      samplesAnalyzed: {
+        database: dbSamples.length,
+        larkBase: larkSamples.length,
+      },
+      conversionIssues,
+    };
+  }
+
+  // ============================================================================
+  // VERIFY SYNC COMPLETENESS
+  // ============================================================================
+
+  async verifySyncCompleteness(): Promise<{
+    isComplete: boolean;
+    discrepancies: any[];
+    recommendations: string[];
+  }> {
+    this.logger.log('🔍 Verifying sync completeness...');
+
+    // Reload cache to get latest LarkBase state
+    this.clearCache();
+    await this.loadExistingRecordsWithRetry();
+
+    // Get counts
+    const dbTotal = await this.prismaService.invoice.count();
+    const dbSynced = await this.prismaService.invoice.count({
+      where: { larkSyncStatus: 'SYNCED' },
+    });
+    const larkTotal = this.existingRecordsCache.size;
+
+    // Check each SYNCED record actually exists in LarkBase
+    const syncedButMissing: any[] = [];
+    const syncedInvoices = await this.prismaService.invoice.findMany({
+      where: { larkSyncStatus: 'SYNCED' },
+      select: {
+        id: true,
+        kiotVietId: true,
+        code: true,
+        orderCode: true,
+      },
+    });
+
+    for (const invoice of syncedInvoices) {
+      const kiotVietId = this.safeBigIntToNumber(invoice.kiotVietId);
+      if (!this.existingRecordsCache.has(kiotVietId)) {
+        syncedButMissing.push({
+          id: invoice.id,
+          kiotVietId,
+          code: invoice.code,
+          orderCode: invoice.orderCode,
+        });
+      }
+    }
+
+    const isComplete = dbTotal === larkTotal && syncedButMissing.length === 0;
+    const discrepancies: any[] = [];
+    const recommendations: string[] = [];
+
+    if (dbTotal !== larkTotal) {
+      discrepancies.push({
+        type: 'COUNT_MISMATCH',
+        database: dbTotal,
+        larkBase: larkTotal,
+        difference: Math.abs(dbTotal - larkTotal),
+      });
+    }
+
+    if (syncedButMissing.length > 0) {
+      discrepancies.push({
+        type: 'SYNCED_BUT_MISSING',
+        count: syncedButMissing.length,
+        samples: syncedButMissing.slice(0, 5),
+      });
+
+      recommendations.push(
+        `Reset ${syncedButMissing.length} incorrectly marked SYNCED records and re-sync`,
+      );
+    }
+
+    if (dbSynced < dbTotal) {
+      const pending = await this.prismaService.invoice.count({
+        where: { larkSyncStatus: 'PENDING' },
+      });
+      const failed = await this.prismaService.invoice.count({
+        where: { larkSyncStatus: 'FAILED' },
+      });
+
+      if (pending > 0) {
+        recommendations.push(`Sync ${pending} PENDING invoices`);
+      }
+
+      if (failed > 0) {
+        recommendations.push(`Reset and retry ${failed} FAILED invoices`);
+      }
+    }
+
+    if (isComplete) {
+      recommendations.push(
+        '✅ Sync is complete! Database and LarkBase are fully synchronized.',
+      );
+    } else {
+      recommendations.push('Run syncMissingDataOnly() to sync missing records');
+    }
+
+    return {
+      isComplete,
+      discrepancies,
+      recommendations,
+    };
   }
 }

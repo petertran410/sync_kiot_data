@@ -11,9 +11,7 @@ export interface SyncEntityConfig {
   larkBaseRetryLimit?: number;
 }
 
-// ⭐ SIMPLIFIED: Remove schedule field, keep entity info for future scaling
 export const SYNC_ENTITIES_CONFIG: SyncEntityConfig[] = [
-  // === CURRENT: CUSTOMER FOCUS ===
   {
     name: 'customergroup',
     service: 'customerGroupService',
@@ -34,7 +32,6 @@ export const SYNC_ENTITIES_CONFIG: SyncEntityConfig[] = [
     description: 'Customer sync',
   },
 
-  // === FUTURE: OTHER ENTITIES (Ready for scaling) ===
   {
     name: 'order',
     service: 'orderService',
@@ -51,7 +48,7 @@ export const SYNC_ENTITIES_CONFIG: SyncEntityConfig[] = [
     service: 'invoiceService',
     syncMethod: 'checkAndRunAppropriateSync',
     syncType: 'full',
-    dependencies: ['customer', 'order'],
+    dependencies: ['customer'],
     hasLarkBaseSync: true,
     larkBaseBatchSize: 50,
     larkBaseRetryLimit: 3,
@@ -125,7 +122,6 @@ export const SYNC_ENTITIES_CONFIG: SyncEntityConfig[] = [
   },
 ];
 
-// ⭐ KEEP: Useful utility functions
 export function getEntitiesWithLarkBaseSync(): SyncEntityConfig[] {
   return SYNC_ENTITIES_CONFIG.filter((entity) => entity.hasLarkBaseSync);
 }
