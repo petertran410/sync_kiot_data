@@ -31,7 +31,7 @@ export class BusSchedulerService implements OnModuleInit {
   }
 
   // ============================================================================
-  // MAIN 10-MINUTE SCHEDULER (Current: Customer | Future: All entities)
+  // MAIN 10-MINUTE SCHEDULER (Current: Customer & Invoice)
   // ============================================================================
 
   @Cron('*/10 * * * *', {
@@ -63,9 +63,11 @@ export class BusSchedulerService implements OnModuleInit {
       // ===== PHASE 1: CUSTOMER SYNC =====
       await this.runCustomerSync();
 
-      // ===== PHASE 2: FUTURE ENTITIES (Ready for scaling) =====
-      // await this.runOrderSync();
+      // ===== PHASE 2: INVOICE SYNC ===== ← BỎ COMMENT
       await this.runInvoiceSync();
+
+      // ===== PHASE 3: FUTURE ENTITIES (Ready for scaling) =====
+      // await this.runOrderSync();
       // await this.runProductSync();
 
       // Complete cycle
@@ -144,6 +146,22 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
+  // ← THÊM METHOD MỚI
+  private async runInvoiceSync(): Promise<void> {
+    try {
+      this.logger.log('🧾 [Invoice] Starting sync...');
+
+      const startTime = Date.now();
+      await this.invoiceService.checkAndRunAppropriateSync();
+      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+
+      this.logger.log(`✅ [Invoice] Sync completed in ${duration}s`);
+    } catch (error) {
+      this.logger.error(`❌ [Invoice] Sync failed: ${error.message}`);
+      throw error; // Re-throw to fail the cycle
+    }
+  }
+
   private async runCustomerGroupSync(): Promise<void> {
     try {
       this.logger.log('👥 [CustomerGroup] Starting sync...');
@@ -159,56 +177,42 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
-  // ===== FUTURE ENTITY METHODS (Templates for scaling) =====
+  // ============================================================================
+  // MANUAL SCHEDULER CONTROLS
+  // ============================================================================
 
-  // private async runOrderSync(): Promise<void> {
-  //   try {
-  //     this.logger.log('📦 [Order] Starting sync...');
-  //
-  //     const startTime = Date.now();
-  //     await this.orderService.checkAndRunAppropriateSync();
-  //     const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-  //
-  //     this.logger.log(`✅ [Order] Sync completed in ${duration}s`);
-  //   } catch (error) {
-  //     this.logger.error(`❌ [Order] Sync failed: ${error.message}`);
-  //     // Decision: throw vs continue with other entities
-  //     throw error;
-  //   }
-  // }
+  enableMainScheduler() {
+    this.isMainSchedulerEnabled = true;
+    this.logger.log('✅ Main scheduler (10-minute cycle) enabled');
+  }
 
-  private async runInvoiceSync(): Promise<void> {
-    try {
-      this.logger.log('🧾 [Invoice] Starting sync...');
+  disableMainScheduler() {
+    this.isMainSchedulerEnabled = false;
+    this.logger.log('🔇 Main scheduler (10-minute cycle) disabled');
+  }
 
-      const startTime = Date.now();
-      await this.invoiceService.checkAndRunAppropriateSync();
-      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+  enableWeeklyScheduler() {
+    this.isWeeklySchedulerEnabled = true;
+    this.logger.log('✅ Weekly scheduler (Sunday 6 AM) enabled');
+  }
 
-      this.logger.log(`✅ [Invoice] Sync completed in ${duration}s`);
-    } catch (error) {
-      this.logger.error(`❌ [Invoice] Sync failed: ${error.message}`);
-      throw error;
-    }
+  disableWeeklyScheduler() {
+    this.isWeeklySchedulerEnabled = false;
+    this.logger.log('🔇 Weekly scheduler (Sunday 6 AM) disabled');
   }
 
   // ============================================================================
-  // STARTUP & SYSTEM METHODS
+  // STARTUP CHECKS & CLEANUP
   // ============================================================================
 
-  private async runStartupCheck(): Promise<void> {
+  private async runStartupCheck() {
     try {
-      this.logger.log('📋 Running startup system check...');
+      this.logger.log('🔍 Running startup check...');
 
-      // Reset any stuck "running" syncs from previous restart
+      // Reset any stuck syncs from previous session
       const stuckSyncs = await this.prismaService.syncControl.updateMany({
         where: { isRunning: true },
-        data: {
-          isRunning: false,
-          status: 'failed',
-          error: 'System restart detected',
-          completedAt: new Date(),
-        },
+        data: { isRunning: false, status: 'interrupted' },
       });
 
       if (stuckSyncs.count > 0) {
@@ -221,8 +225,11 @@ export class BusSchedulerService implements OnModuleInit {
       await this.cleanupOldSyncPatterns();
 
       // Run initial customer sync check
-      this.logger.log('📋 Running initial customer + invoice sync check...');
+      this.logger.log('📋 Running initial customer sync check...');
       await this.runCustomerSync();
+
+      // ← THÊM INVOICE STARTUP CHECK
+      this.logger.log('📋 Running initial invoice sync check...');
       await this.runInvoiceSync();
 
       this.logger.log('✅ Startup check completed successfully');
@@ -241,8 +248,8 @@ export class BusSchedulerService implements OnModuleInit {
             in: [
               'customer_historical_lark',
               'customer_recent_lark',
-              // 'order_historical_lark',
-              // 'order_recent_lark',
+              'order_historical_lark',
+              'order_recent_lark',
               'invoice_historical_lark',
               'invoice_recent_lark',
             ],
@@ -256,6 +263,51 @@ export class BusSchedulerService implements OnModuleInit {
     } catch (error) {
       this.logger.warn(`⚠️ Cleanup failed: ${error.message}`);
     }
+  }
+
+  // ============================================================================
+  // STATUS & MONITORING
+  // ============================================================================
+
+  async getSchedulerStatus(): Promise<any> {
+    const runningSyncs = await this.checkRunningSyncs();
+
+    return {
+      scheduler: {
+        mainScheduler: {
+          enabled: this.isMainSchedulerEnabled,
+          nextRun: '10 minutes interval',
+          entities: ['customer', 'invoice'], // ← CẬP NHẬT
+        },
+        weeklyScheduler: {
+          enabled: this.isWeeklySchedulerEnabled,
+          nextRun: 'Sunday 6 AM (Vietnam time)',
+          entities: ['customergroup'],
+        },
+      },
+      runningTasks: runningSyncs.length,
+      runningSyncs: runningSyncs.map((sync) => ({
+        name: sync.name,
+        startedAt: sync.startedAt,
+      })),
+    };
+  }
+
+  async resetAllSyncs(): Promise<number> {
+    const result = await this.prismaService.syncControl.updateMany({
+      data: { isRunning: false, status: 'idle' },
+    });
+    this.logger.log(`🔄 Reset ${result.count} sync(s) to idle state`);
+    return result.count;
+  }
+
+  async forceStopAllSyncs(): Promise<number> {
+    const result = await this.prismaService.syncControl.updateMany({
+      where: { isRunning: true },
+      data: { isRunning: false, status: 'stopped' },
+    });
+    this.logger.log(`🛑 Force stopped ${result.count} running sync(s)`);
+    return result.count;
   }
 
   // ============================================================================
@@ -280,7 +332,7 @@ export class BusSchedulerService implements OnModuleInit {
         name: cycleName,
         entities:
           cycleName === 'main_cycle'
-            ? ['customer', 'invoice']
+            ? ['customer', 'invoice'] // ← CẬP NHẬT
             : ['customergroup'],
         syncMode: 'cycle',
         isRunning: status === 'running',
@@ -300,134 +352,5 @@ export class BusSchedulerService implements OnModuleInit {
         lastRunAt: new Date(),
       },
     });
-  }
-
-  // ============================================================================
-  // CONTROL & STATUS METHODS
-  // ============================================================================
-
-  async getSchedulerStatus() {
-    const allSyncs = await this.prismaService.syncControl.findMany({
-      orderBy: { lastRunAt: 'desc' },
-      take: 20,
-    });
-
-    const runningSyncs = allSyncs.filter((s) => s.isRunning);
-    const nextMainCycle = this.getNextCycleTime(10); // Next 10-minute cycle
-    const nextWeeklyCycle = this.getNextSundayTime();
-
-    return {
-      scheduler: {
-        mainScheduler: {
-          enabled: this.isMainSchedulerEnabled,
-          interval: '10 minutes',
-          nextRun: nextMainCycle,
-          currentlyRunning: runningSyncs.filter((s) => s.name === 'main_cycle'),
-        },
-        weeklyScheduler: {
-          enabled: this.isWeeklySchedulerEnabled,
-          schedule: 'Sunday 6:00 AM',
-          nextRun: nextWeeklyCycle,
-          currentlyRunning: runningSyncs.filter(
-            (s) => s.name === 'weekly_cycle',
-          ),
-        },
-        timezone: 'Asia/Ho_Chi_Minh',
-      },
-      runningTasks: runningSyncs.length,
-      runningSyncs: runningSyncs.map((s) => ({
-        name: s.name,
-        startedAt: s.startedAt,
-        duration: s.startedAt
-          ? `${((Date.now() - new Date(s.startedAt).getTime()) / 1000).toFixed(0)}s`
-          : null,
-      })),
-      recentSyncs: allSyncs.slice(0, 10),
-      timestamp: new Date(),
-    };
-  }
-
-  private getNextCycleTime(intervalMinutes: number): Date {
-    const now = new Date();
-    const nextCycle = new Date(now);
-    nextCycle.setMinutes(
-      Math.ceil(now.getMinutes() / intervalMinutes) * intervalMinutes,
-      0,
-      0,
-    );
-    if (nextCycle <= now) {
-      nextCycle.setMinutes(nextCycle.getMinutes() + intervalMinutes);
-    }
-    return nextCycle;
-  }
-
-  private getNextSundayTime(): Date {
-    const now = new Date();
-    const nextSunday = new Date(now);
-    const daysUntilSunday = (7 - now.getDay()) % 7 || 7;
-    nextSunday.setDate(now.getDate() + daysUntilSunday);
-    nextSunday.setHours(6, 0, 0, 0);
-
-    // If it's already past 6 AM this Sunday, move to next Sunday
-    if (now.getDay() === 0 && now.getHours() >= 6) {
-      nextSunday.setDate(nextSunday.getDate() + 7);
-    }
-
-    return nextSunday;
-  }
-
-  // ============================================================================
-  // SCHEDULER CONTROLS
-  // ============================================================================
-
-  enableMainScheduler() {
-    this.isMainSchedulerEnabled = true;
-    this.logger.log('✅ Main scheduler (10-minute cycle) ENABLED');
-  }
-
-  disableMainScheduler() {
-    this.isMainSchedulerEnabled = false;
-    this.logger.log('🔇 Main scheduler (10-minute cycle) DISABLED');
-  }
-
-  enableWeeklyScheduler() {
-    this.isWeeklySchedulerEnabled = true;
-    this.logger.log('✅ Weekly scheduler (Sunday 6 AM) ENABLED');
-  }
-
-  disableWeeklyScheduler() {
-    this.isWeeklySchedulerEnabled = false;
-    this.logger.log('🔇 Weekly scheduler (Sunday 6 AM) DISABLED');
-  }
-
-  async resetAllSyncs() {
-    const resetCount = await this.prismaService.syncControl.updateMany({
-      where: {},
-      data: {
-        isRunning: false,
-        isEnabled: true,
-        status: 'idle',
-        error: null,
-        completedAt: new Date(),
-      },
-    });
-
-    this.logger.log(`🔄 Reset ${resetCount.count} sync(s) to idle state`);
-    return resetCount.count;
-  }
-
-  async forceStopAllSyncs() {
-    const stopCount = await this.prismaService.syncControl.updateMany({
-      where: { isRunning: true },
-      data: {
-        isRunning: false,
-        status: 'failed',
-        error: 'Force stopped by admin',
-        completedAt: new Date(),
-      },
-    });
-
-    this.logger.log(`🛑 Force stopped ${stopCount.count} running sync(s)`);
-    return stopCount.count;
   }
 }
