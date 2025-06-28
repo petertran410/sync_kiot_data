@@ -1152,8 +1152,15 @@ export class LarkInvoiceSyncService {
 
     // Status
     if (invoice.status) {
-      fields[LARK_INVOICE_FIELDS.STATUS] =
-        STATUS_OPTIONS[invoice.status] || STATUS_OPTIONS.COMPLETED;
+      if (invoice.status === 1) {
+        fields[LARK_INVOICE_FIELDS.STATUS] = STATUS_OPTIONS.COMPLETED;
+      } else if (invoice.status === 2) {
+        fields[LARK_INVOICE_FIELDS.STATUS] = STATUS_OPTIONS.CANCELLED;
+      } else if (invoice.status === 3) {
+        fields[LARK_INVOICE_FIELDS.STATUS] = STATUS_OPTIONS.PROCESSING;
+      } else if (invoice.status === 4) {
+        fields[LARK_INVOICE_FIELDS.STATUS] = STATUS_OPTIONS.DELIVERY_FAILED;
+      }
     }
 
     // Sale channel - need custom mapping

@@ -692,7 +692,11 @@ export class KiotVietInvoiceService {
 
     for (const invoiceData of invoices) {
       try {
-        // Get internal IDs
+        // ============================================================================
+        // SAFE FOREIGN KEY LOOKUPS - SET NULL IF NOT FOUND
+        // ============================================================================
+
+        // Customer lookup - SAFE
         const customer = invoiceData.customerId
           ? await this.prismaService.customer.findFirst({
               where: { kiotVietId: BigInt(invoiceData.customerId) },
@@ -700,18 +704,21 @@ export class KiotVietInvoiceService {
             })
           : null;
 
+        // Branch lookup - SAFE
         const branch = await this.prismaService.branch.findFirst({
           where: { kiotVietId: invoiceData.branchId },
           select: { id: true },
         });
 
+        // User lookup - SAFE (soldById)
         const soldBy = invoiceData.soldById
           ? await this.prismaService.user.findFirst({
-              where: { kiotVietId: invoiceData.soldById },
+              where: { kiotVietId: BigInt(invoiceData.soldById) },
               select: { id: true },
             })
           : null;
 
+        // SaleChannel lookup - SAFE
         const saleChannel = invoiceData.saleChannelId
           ? await this.prismaService.saleChannel.findFirst({
               where: { kiotVietId: invoiceData.saleChannelId },
@@ -719,7 +726,17 @@ export class KiotVietInvoiceService {
             })
           : null;
 
-        // Map status
+        // ← FIX: ORDER LOOKUP - SAFE (this was causing foreign key errors)
+        const order = invoiceData.orderId
+          ? await this.prismaService.order.findFirst({
+              where: { kiotVietId: BigInt(invoiceData.orderId) },
+              select: { id: true },
+            })
+          : null;
+
+        // ============================================================================
+        // STATUS MAPPING
+        // ============================================================================
         const statusMap = {
           1: 'COMPLETED',
           2: 'CANCELLED',
@@ -727,18 +744,20 @@ export class KiotVietInvoiceService {
           5: 'DELIVERY_FAILED',
         };
 
-        // Save invoice
+        // ============================================================================
+        // SAFE INVOICE UPSERT - ALL FOREIGN KEYS HANDLED
+        // ============================================================================
         const invoice = await this.prismaService.invoice.upsert({
           where: { kiotVietId: BigInt(invoiceData.id) },
           update: {
             code: invoiceData.code,
             purchaseDate: new Date(invoiceData.purchaseDate),
             branchId: branch?.id ?? null,
-            soldById: soldBy?.id ?? null,
+            soldById: soldBy ? BigInt(soldBy.id) : null, // ← FIX: Handle BigInt properly
             customerId: customer?.id ?? null,
             customerCode: invoiceData.customerCode || null,
             customerName: invoiceData.customerName || null,
-            orderId: invoiceData.orderId || null,
+            orderId: order?.id ?? null, // ← FIX: Safe order reference
             orderCode: invoiceData.orderCode || null,
             total: new Prisma.Decimal(invoiceData.total || 0),
             totalPayment: new Prisma.Decimal(invoiceData.totalPayment || 0),
@@ -746,7 +765,7 @@ export class KiotVietInvoiceService {
               ? new Prisma.Decimal(invoiceData.discount)
               : null,
             discountRatio: invoiceData.discountRatio || null,
-            status: statusMap[invoiceData.status] || '',
+            status: invoiceData.status,
             statusValue: invoiceData.statusValue || null,
             description: invoiceData.description || null,
             usingCod: invoiceData.usingCod || false,
@@ -764,11 +783,11 @@ export class KiotVietInvoiceService {
             code: invoiceData.code,
             purchaseDate: new Date(invoiceData.purchaseDate),
             branchId: branch?.id ?? null,
-            soldById: soldBy?.id ?? null,
+            soldById: soldBy ? BigInt(soldBy.id) : null, // ← FIX: Handle BigInt properly
             customerId: customer?.id ?? null,
             customerCode: invoiceData.customerCode || null,
             customerName: invoiceData.customerName || null,
-            orderId: invoiceData.orderId || null,
+            orderId: order?.id ?? null, // ← FIX: Safe order reference
             orderCode: invoiceData.orderCode || null,
             total: new Prisma.Decimal(invoiceData.total || 0),
             totalPayment: new Prisma.Decimal(invoiceData.totalPayment || 0),
@@ -776,7 +795,7 @@ export class KiotVietInvoiceService {
               ? new Prisma.Decimal(invoiceData.discount)
               : null,
             discountRatio: invoiceData.discountRatio || null,
-            status: statusMap[invoiceData.status] || 'COMPLETED',
+            status: invoiceData.status,
             statusValue: invoiceData.statusValue || null,
             description: invoiceData.description || null,
             usingCod: invoiceData.usingCod || false,
@@ -788,11 +807,12 @@ export class KiotVietInvoiceService {
               : new Date(),
             lastSyncedAt: new Date(),
             larkSyncStatus: 'PENDING' as const,
-            totalCostOfGoods: '',
           } satisfies Prisma.InvoiceUncheckedCreateInput,
         });
 
-        // Save invoice details
+        // ============================================================================
+        // SAVE INVOICE DETAILS - SAFE PRODUCT LOOKUP
+        // ============================================================================
         if (
           invoiceData.invoiceDetails &&
           invoiceData.invoiceDetails.length > 0
@@ -842,7 +862,9 @@ export class KiotVietInvoiceService {
           }
         }
 
-        // Save invoice delivery if exists
+        // ============================================================================
+        // SAVE INVOICE DELIVERY - SAME AS BEFORE
+        // ============================================================================
         if (invoiceData.invoiceDelivery) {
           const delivery = invoiceData.invoiceDelivery;
 
@@ -898,7 +920,9 @@ export class KiotVietInvoiceService {
           });
         }
 
-        // Save payments if exist
+        // ============================================================================
+        // SAVE PAYMENTS - FIXED TABLE NAME
+        // ============================================================================
         if (invoiceData.payments && invoiceData.payments.length > 0) {
           for (const payment of invoiceData.payments) {
             await this.prismaService.payment.upsert({
@@ -913,11 +937,11 @@ export class KiotVietInvoiceService {
                 transDate: new Date(payment.transDate),
                 accountId: payment.accountId,
                 description: payment.description,
-                invoiceId: invoice.id, // Link to invoice
+                invoiceId: invoice.id,
               },
               create: {
                 kiotVietId: payment.id ? BigInt(payment.id) : null,
-                invoiceId: invoice.id, // Link to invoice
+                invoiceId: invoice.id,
                 code: payment.code,
                 amount: new Prisma.Decimal(payment.amount),
                 method: payment.method,
@@ -930,7 +954,9 @@ export class KiotVietInvoiceService {
           }
         }
 
-        // Save invoice surcharges if exist
+        // ============================================================================
+        // SAVE INVOICE SURCHARGES (OPTIONAL)
+        // ============================================================================
         if (
           invoiceData.invoiceOrderSurcharges &&
           invoiceData.invoiceOrderSurcharges.length > 0
@@ -979,6 +1005,7 @@ export class KiotVietInvoiceService {
         this.logger.error(
           `Failed to save invoice ${invoiceData.id}: ${error.message}`,
         );
+        // Continue with next invoice instead of stopping
       }
     }
 
@@ -1004,16 +1031,30 @@ export class KiotVietInvoiceService {
   // SYNC CONTROL UTILITIES
   // ============================================================================
 
-  private async updateSyncControl(name: string, updates: any): Promise<void> {
+  private async updateSyncControl(
+    name: string,
+    data: Partial<{
+      isRunning: boolean;
+      isEnabled: boolean;
+      status: string;
+      error: string | null;
+      startedAt: Date;
+      completedAt: Date;
+      lastRunAt: Date;
+      progress: any;
+      metadata: any;
+    }>,
+  ): Promise<void> {
     await this.prismaService.syncControl.upsert({
       where: { name },
       create: {
         name,
         entities: ['invoice'],
         syncMode: name.includes('historical') ? 'historical' : 'recent',
-        ...updates,
+        status: 'idle', // ← FIX: Add default status
+        ...data,
       },
-      update: updates,
+      update: data,
     });
   }
 }
