@@ -5,6 +5,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { KiotVietCustomerService } from '../kiot-viet/customer/customer.service';
 import { KiotVietCustomerGroupService } from '../kiot-viet/customer-group/customer-group.service';
 import { KiotVietInvoiceService } from '../kiot-viet/invoice/invoice.service';
+import { LarkCustomerSyncService } from '../lark/customer/lark-customer-sync.service';
+import { LarkInvoiceSyncService } from '../lark/invoice/lark-invoice-sync.service';
 
 @Injectable()
 export class BusSchedulerService implements OnModuleInit {
@@ -17,6 +19,8 @@ export class BusSchedulerService implements OnModuleInit {
     private readonly customerService: KiotVietCustomerService,
     private readonly customerGroupService: KiotVietCustomerGroupService,
     private readonly invoiceService: KiotVietInvoiceService,
+    private readonly larkCustomerSyncService: LarkCustomerSyncService,
+    private readonly larkInvoiceSyncService: LarkInvoiceSyncService,
   ) {}
 
   async onModuleInit() {
@@ -45,34 +49,40 @@ export class BusSchedulerService implements OnModuleInit {
     }
 
     try {
-      this.logger.log('⏰ 10-minute sync cycle triggered');
+      this.logger.log('🚀 Starting 10-minute parallel sync cycle...');
+      const startTime = Date.now();
 
-      // Check if any sync is running (prevent overlap)
+      // Check if any critical sync is running
       const runningSyncs = await this.checkRunningSyncs();
       if (runningSyncs.length > 0) {
         this.logger.log(
-          `⏸️ Sync already running: ${runningSyncs.map((s) => s.name).join(', ')}`,
+          `⏸️ Parallel sync skipped - running: ${runningSyncs.map((s) => s.name).join(', ')}`,
         );
-        this.logger.log('⏸️ Skipping this cycle - will retry in 10 minutes');
         return;
       }
 
       // Update cycle tracking
       await this.updateCycleTracking('main_cycle', 'running');
 
-      // ===== ✅ PARALLEL EXECUTION: CUSTOMER & INVOICE =====
-      this.logger.log('🚀 Starting parallel sync: Customer & Invoice');
-
-      const syncStartTime = Date.now();
-      const syncPromises = [this.runCustomerSync(), this.runInvoiceSync()];
+      // ✅ Enhanced parallel execution with proper error handling
+      const syncPromises = [
+        this.runCustomerSync().catch((error) => {
+          this.logger.error(`Customer sync failed: ${error.message}`);
+          return { status: 'rejected', reason: error.message };
+        }),
+        this.runInvoiceSync().catch((error) => {
+          this.logger.error(`Invoice sync failed: ${error.message}`);
+          return { status: 'rejected', reason: error.message };
+        }),
+      ];
 
       const results = await Promise.allSettled(syncPromises);
-      const totalDuration = ((Date.now() - syncStartTime) / 1000).toFixed(2);
+      const totalDuration = ((Date.now() - startTime) / 1000).toFixed(2);
 
-      // Process results with detailed logging
+      // Process results
       let successCount = 0;
       let failureCount = 0;
-      const syncResults: any[] = [];
+      const syncResults: string[] = [];
 
       for (let i = 0; i < results.length; i++) {
         const result = results[i];
@@ -169,7 +179,11 @@ export class BusSchedulerService implements OnModuleInit {
       this.logger.log('👥 [Customer] Starting parallel sync...');
       const startTime = Date.now();
 
+      // ✅ Main sync
       await this.customerService.checkAndRunAppropriateSync();
+
+      // ✅ Auto-trigger Lark sync if recent sync completed
+      await this.autoTriggerCustomerLarkSync();
 
       const duration = ((Date.now() - startTime) / 1000).toFixed(2);
       this.logger.log(`✅ [Customer] Parallel sync completed in ${duration}s`);
@@ -181,13 +195,16 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
-  // ← THÊM METHOD MỚI
   private async runInvoiceSync(): Promise<void> {
     try {
       this.logger.log('🧾 [Invoice] Starting parallel sync...');
       const startTime = Date.now();
 
+      // ✅ Main sync
       await this.invoiceService.checkAndRunAppropriateSync();
+
+      // ✅ FIX: Auto-trigger Lark sync if recent sync completed
+      await this.autoTriggerInvoiceLarkSync();
 
       const duration = ((Date.now() - startTime) / 1000).toFixed(2);
       this.logger.log(`✅ [Invoice] Parallel sync completed in ${duration}s`);
@@ -211,6 +228,96 @@ export class BusSchedulerService implements OnModuleInit {
     } catch (error) {
       this.logger.error(`❌ [CustomerGroup] Sync failed: ${error.message}`);
       throw error;
+    }
+  }
+
+  // ============================================================================
+  // AUTO-TRIGGER LARK SYNC METHODS - NEW
+  // ============================================================================
+
+  private async autoTriggerCustomerLarkSync(): Promise<void> {
+    try {
+      const recentSync = await this.prismaService.syncControl.findFirst({
+        where: { name: 'customer_recent' },
+      });
+
+      const larkSync = await this.prismaService.syncControl.findFirst({
+        where: { name: 'customer_lark_sync' },
+      });
+
+      // ✅ Trigger if recent sync just completed and Lark sync is not running
+      if (
+        recentSync?.status === 'completed' &&
+        recentSync.isRunning === false &&
+        (!larkSync?.isRunning || larkSync.isRunning !== true)
+      ) {
+        this.logger.log('🔄 Auto-triggering customer Lark sync...');
+
+        // Get recent customers that need sync
+        const customersToSync = await this.prismaService.customer.findMany({
+          where: {
+            OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+          },
+          take: 1000, // Limit to prevent overload
+        });
+
+        if (customersToSync.length > 0) {
+          await this.larkCustomerSyncService.syncCustomersToLarkBase(
+            customersToSync,
+          );
+          this.logger.log(
+            `✅ Auto-triggered customer Lark sync: ${customersToSync.length} customers`,
+          );
+        }
+      }
+    } catch (error) {
+      this.logger.warn(
+        `⚠️ Auto-trigger customer Lark sync failed: ${error.message}`,
+      );
+      // Don't throw - this shouldn't block main sync
+    }
+  }
+
+  private async autoTriggerInvoiceLarkSync(): Promise<void> {
+    try {
+      const recentSync = await this.prismaService.syncControl.findFirst({
+        where: { name: 'invoice_recent' },
+      });
+
+      const larkSync = await this.prismaService.syncControl.findFirst({
+        where: { name: 'invoice_lark_sync' },
+      });
+
+      // ✅ FIX: Trigger if recent sync just completed and Lark sync is not running
+      if (
+        recentSync?.status === 'completed' &&
+        recentSync.isRunning === false &&
+        (!larkSync?.isRunning || larkSync.isRunning !== true)
+      ) {
+        this.logger.log('🔄 Auto-triggering invoice Lark sync...');
+
+        // Get recent invoices that need sync
+        const invoicesToSync = await this.prismaService.invoice.findMany({
+          where: {
+            OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+          },
+          take: 1000, // Limit to prevent overload
+        });
+
+        if (invoicesToSync.length > 0) {
+          await this.larkInvoiceSyncService.syncInvoicesToLarkBase(
+            invoicesToSync,
+          );
+          this.logger.log(
+            `✅ Auto-triggered invoice Lark sync: ${invoicesToSync.length} invoices`,
+          );
+        }
+      }
+    } catch (error) {
+      this.logger.warn(
+        `⚠️ Auto-trigger invoice Lark sync failed: ${error.message}`,
+      );
+      // Don't throw - this shouldn't block main sync
     }
   }
 

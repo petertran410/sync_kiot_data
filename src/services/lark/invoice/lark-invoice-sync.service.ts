@@ -168,6 +168,7 @@ export class LarkInvoiceSyncService {
     const lockKey = `lark_invoice_sync_lock_${Date.now()}`;
 
     try {
+      // ✅ FIX: Acquire lock properly with progress field
       await this.acquireSyncLock(lockKey);
 
       this.logger.log(
@@ -180,6 +181,7 @@ export class LarkInvoiceSyncService {
 
       if (invoicesToSync.length === 0) {
         this.logger.log('📋 No invoices need LarkBase sync');
+        await this.releaseSyncLock(lockKey);
         return;
       }
 
@@ -239,21 +241,12 @@ export class LarkInvoiceSyncService {
         }
       }
 
-      this.logger.log(`🎉 LarkBase sync completed successfully`);
-    } catch (error) {
-      this.logger.error(`❌ LarkBase sync failed: ${error.message}`);
-
-      // Only mark as failed for non-connection errors
-      if (
-        !error.message.includes('connect') &&
-        !error.message.includes('400')
-      ) {
-        await this.updateDatabaseStatus(invoices, 'FAILED');
-      }
-
-      throw error;
-    } finally {
+      this.logger.log('✅ LarkBase invoice sync completed successfully');
       await this.releaseSyncLock(lockKey);
+    } catch (error) {
+      this.logger.error(`❌ LarkBase invoice sync failed: ${error.message}`);
+      await this.releaseSyncLock(lockKey);
+      throw error;
     }
   }
 

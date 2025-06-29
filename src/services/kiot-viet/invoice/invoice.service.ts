@@ -476,15 +476,15 @@ export class KiotVietInvoiceService {
       // Sync to LarkBase
       await this.syncInvoicesToLarkBase(savedInvoices);
 
+      const totalProcessed = savedInvoices.length;
+      const duplicatesRemoved = recentInvoices.length - totalProcessed;
+
       await this.updateSyncControl(syncName, {
         isRunning: false,
         status: 'completed',
         completedAt: new Date(),
         lastRunAt: new Date(),
-        progress: {
-          daysSync: days,
-          invoicesProcessed: recentInvoices.length,
-        },
+        progress: { totalProcessed, duplicatesRemoved },
       });
 
       this.logger.log(
@@ -497,7 +497,7 @@ export class KiotVietInvoiceService {
         isRunning: false,
         status: 'failed',
         error: error.message,
-        completedAt: new Date(),
+        progress: { errorDetails: error.message },
       });
 
       throw error;
@@ -1071,7 +1071,7 @@ export class KiotVietInvoiceService {
       startedAt: Date;
       completedAt: Date;
       lastRunAt: Date;
-      progress: any;
+      progress: any; // ✅ FIX: Use progress instead of metadata
     }>,
   ): Promise<void> {
     await this.prismaService.syncControl.upsert({
@@ -1080,7 +1080,7 @@ export class KiotVietInvoiceService {
         name,
         entities: ['invoice'],
         syncMode: name.includes('historical') ? 'historical' : 'recent',
-        status: 'idle', // ← FIX: Add default status
+        status: 'idle',
         ...data,
       },
       update: data,
