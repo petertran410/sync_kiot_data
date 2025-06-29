@@ -1123,7 +1123,7 @@ export class LarkInvoiceSyncService {
     if (invoice.purchaseDate) {
       fields[LARK_INVOICE_FIELDS.PURCHASE_DATE] = new Date(
         invoice.purchaseDate,
-      );
+      ).getTime();
     }
 
     // Branch mapping
@@ -1303,13 +1303,15 @@ export class LarkInvoiceSyncService {
 
     // Dates
     if (invoice.createdDate) {
-      const createdDate = new Date(invoice.createdDate);
-      fields[LARK_INVOICE_FIELDS.CREATED_DATE] = createdDate;
+      fields[LARK_INVOICE_FIELDS.CREATED_DATE] = new Date(
+        invoice.createdDate,
+      ).getTime;
     }
 
     if (invoice.modifiedDate) {
-      const modifiedDate = new Date(invoice.modifiedDate);
-      fields[LARK_INVOICE_FIELDS.MODIFIED_DATE] = modifiedDate;
+      fields[LARK_INVOICE_FIELDS.MODIFIED_DATE] = new Date(
+        invoice.modifiedDate,
+      ).getTime();
     }
 
     return fields;
