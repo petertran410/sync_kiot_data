@@ -337,16 +337,26 @@ export class KiotVietCustomerService {
       // Final completion logging
       await this.updateSyncControl(syncName, {
         isRunning: false,
+        isEnabled: false,
         status: 'completed',
         completedAt: new Date(),
         lastRunAt: new Date(),
         progress: { processedCount, expectedTotal: totalCustomers },
       });
 
+      await this.updateSyncControl('customer_recent', {
+        isEnabled: true,
+        isRunning: false,
+        status: 'idle',
+      });
+
       const completionRate =
         totalCustomers > 0 ? (processedCount / totalCustomers) * 100 : 100;
       this.logger.log(
         `✅ Historical customer sync completed: ${processedCount}/${totalCustomers} (${completionRate.toFixed(1)}% completion rate)`,
+      );
+      this.logger.log(
+        `🔄 AUTO-TRANSITION: Historical sync disabled, Recent sync enabled for future cycles`,
       );
     } catch (error) {
       this.logger.error(`❌ Historical customer sync failed: ${error.message}`);

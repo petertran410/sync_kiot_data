@@ -60,20 +60,53 @@ export class BusSchedulerService implements OnModuleInit {
       // Update cycle tracking
       await this.updateCycleTracking('main_cycle', 'running');
 
-      // ===== PHASE 1: CUSTOMER SYNC =====
-      await this.runCustomerSync();
+      // ===== ✅ PARALLEL EXECUTION: CUSTOMER & INVOICE =====
+      this.logger.log('🚀 Starting parallel sync: Customer & Invoice');
 
-      // ===== PHASE 2: INVOICE SYNC ===== ← BỎ COMMENT
-      await this.runInvoiceSync();
+      const syncStartTime = Date.now();
+      const syncPromises = [this.runCustomerSync(), this.runInvoiceSync()];
 
-      // ===== PHASE 3: FUTURE ENTITIES (Ready for scaling) =====
-      // await this.runOrderSync();
-      // await this.runProductSync();
+      const results = await Promise.allSettled(syncPromises);
+      const totalDuration = ((Date.now() - syncStartTime) / 1000).toFixed(2);
 
-      // Complete cycle
-      await this.updateCycleTracking('main_cycle', 'completed');
+      // Process results with detailed logging
+      let successCount = 0;
+      let failureCount = 0;
+      const syncResults: any[] = [];
 
-      this.logger.log('✅ 10-minute sync cycle completed successfully');
+      for (let i = 0; i < results.length; i++) {
+        const result = results[i];
+        const syncName = i === 0 ? 'Customer' : 'Invoice';
+
+        if (result.status === 'fulfilled') {
+          successCount++;
+          syncResults.push(`✅ ${syncName}: Success`);
+          this.logger.log(
+            `✅ [${syncName}] Parallel sync completed successfully`,
+          );
+        } else {
+          failureCount++;
+          syncResults.push(`❌ ${syncName}: ${result.reason}`);
+          this.logger.error(
+            `❌ [${syncName}] Parallel sync failed: ${result.reason}`,
+          );
+        }
+      }
+
+      // Complete cycle with comprehensive summary
+      const cycleStatus = failureCount === 0 ? 'completed' : 'partial_failure';
+      await this.updateCycleTracking(
+        'main_cycle',
+        cycleStatus,
+        failureCount > 0
+          ? `${failureCount}/${results.length} syncs failed`
+          : undefined,
+      );
+
+      this.logger.log(
+        `🎉 Parallel sync cycle ${cycleStatus} in ${totalDuration}s: ${successCount} success, ${failureCount} failed`,
+      );
+      this.logger.log(`📊 Results: ${syncResults.join(' | ')}`);
     } catch (error) {
       this.logger.error(`❌ Main sync cycle failed: ${error.message}`);
       await this.updateCycleTracking('main_cycle', 'failed', error.message);
@@ -133,32 +166,36 @@ export class BusSchedulerService implements OnModuleInit {
 
   private async runCustomerSync(): Promise<void> {
     try {
-      this.logger.log('👥 [Customer] Starting sync...');
-
+      this.logger.log('👥 [Customer] Starting parallel sync...');
       const startTime = Date.now();
-      await this.customerService.checkAndRunAppropriateSync();
-      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
 
-      this.logger.log(`✅ [Customer] Sync completed in ${duration}s`);
+      await this.customerService.checkAndRunAppropriateSync();
+
+      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+      this.logger.log(`✅ [Customer] Parallel sync completed in ${duration}s`);
+
+      return Promise.resolve();
     } catch (error) {
-      this.logger.error(`❌ [Customer] Sync failed: ${error.message}`);
-      throw error; // Re-throw to fail the cycle
+      this.logger.error(`❌ [Customer] Parallel sync failed: ${error.message}`);
+      throw new Error(`Customer sync failed: ${error.message}`);
     }
   }
 
   // ← THÊM METHOD MỚI
   private async runInvoiceSync(): Promise<void> {
     try {
-      this.logger.log('🧾 [Invoice] Starting sync...');
-
+      this.logger.log('🧾 [Invoice] Starting parallel sync...');
       const startTime = Date.now();
-      await this.invoiceService.checkAndRunAppropriateSync();
-      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
 
-      this.logger.log(`✅ [Invoice] Sync completed in ${duration}s`);
+      await this.invoiceService.checkAndRunAppropriateSync();
+
+      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+      this.logger.log(`✅ [Invoice] Parallel sync completed in ${duration}s`);
+
+      return Promise.resolve();
     } catch (error) {
-      this.logger.error(`❌ [Invoice] Sync failed: ${error.message}`);
-      throw error; // Re-throw to fail the cycle
+      this.logger.error(`❌ [Invoice] Parallel sync failed: ${error.message}`);
+      throw new Error(`Invoice sync failed: ${error.message}`);
     }
   }
 
@@ -221,16 +258,24 @@ export class BusSchedulerService implements OnModuleInit {
         );
       }
 
-      // Cleanup old sync patterns (from previous implementations)
+      // Cleanup old sync patterns
       await this.cleanupOldSyncPatterns();
 
-      // Run initial customer sync check
-      this.logger.log('📋 Running initial customer sync check...');
-      await this.runCustomerSync();
+      // ✅ PARALLEL startup checks
+      this.logger.log('📋 Running parallel startup sync checks...');
 
-      // ← THÊM INVOICE STARTUP CHECK
-      this.logger.log('📋 Running initial invoice sync check...');
-      await this.runInvoiceSync();
+      const startupPromises = [
+        this.runCustomerSync().catch((error) => {
+          this.logger.warn(`Customer startup check failed: ${error.message}`);
+          return Promise.resolve(); // Don't fail startup
+        }),
+        this.runInvoiceSync().catch((error) => {
+          this.logger.warn(`Invoice startup check failed: ${error.message}`);
+          return Promise.resolve(); // Don't fail startup
+        }),
+      ];
+
+      await Promise.allSettled(startupPromises);
 
       this.logger.log('✅ Startup check completed successfully');
     } catch (error) {

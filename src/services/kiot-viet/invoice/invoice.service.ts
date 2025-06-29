@@ -394,16 +394,26 @@ export class KiotVietInvoiceService {
       // Final completion logging
       await this.updateSyncControl(syncName, {
         isRunning: false,
+        isEnabled: false,
         status: 'completed',
         completedAt: new Date(),
         lastRunAt: new Date(),
         progress: { processedCount, expectedTotal: totalInvoices },
       });
 
+      await this.updateSyncControl('invoice_recent', {
+        isEnabled: true,
+        isRunning: false,
+        status: 'idle',
+      });
+
       const completionRate =
         totalInvoices > 0 ? (processedCount / totalInvoices) * 100 : 100;
       this.logger.log(
         `✅ Historical invoice sync completed: ${processedCount}/${totalInvoices} (${completionRate.toFixed(1)}% completion rate)`,
+      );
+      this.logger.log(
+        `🔄 AUTO-TRANSITION: Historical sync disabled, Recent sync enabled for future cycles`,
       );
     } catch (error) {
       this.logger.error(`❌ Historical invoice sync failed: ${error.message}`);
@@ -471,7 +481,7 @@ export class KiotVietInvoiceService {
         status: 'completed',
         completedAt: new Date(),
         lastRunAt: new Date(),
-        metadata: {
+        progress: {
           daysSync: days,
           invoicesProcessed: recentInvoices.length,
         },
@@ -1062,7 +1072,6 @@ export class KiotVietInvoiceService {
       completedAt: Date;
       lastRunAt: Date;
       progress: any;
-      metadata: any;
     }>,
   ): Promise<void> {
     await this.prismaService.syncControl.upsert({
