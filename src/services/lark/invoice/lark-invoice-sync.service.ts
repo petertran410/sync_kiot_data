@@ -5,6 +5,7 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { LarkAuthService } from '../auth/lark-auth.service';
 import { firstValueFrom } from 'rxjs';
+import { TimezoneUtils } from 'src/utils/timezone.utils';
 
 // ✅ EXACT field names from Hoá Đơn.rtf
 const LARK_INVOICE_FIELDS = {
@@ -1121,8 +1122,16 @@ export class LarkInvoiceSyncService {
     }
 
     if (invoice.purchaseDate) {
-      const purchaseDate = new Date(invoice.purchaseDate + '-07:00');
-      fields[LARK_INVOICE_FIELDS.PURCHASE_DATE] = purchaseDate.getTime();
+      try {
+        const correctedTimestamp =
+          TimezoneUtils.convertKiotVietDateToLarkTimestamp(
+            invoice.purchaseDate,
+          );
+        fields[LARK_INVOICE_FIELDS.PURCHASE_DATE] = correctedTimestamp;
+      } catch (error) {
+        fields[LARK_INVOICE_FIELDS.PURCHASE_DATE] =
+          invoice.purchaseDate.getTime();
+      }
     }
 
     // Branch mapping
@@ -1302,13 +1311,27 @@ export class LarkInvoiceSyncService {
 
     // Dates
     if (invoice.createdDate) {
-      const createdDate = new Date(invoice.createdDate);
-      fields[LARK_INVOICE_FIELDS.CREATED_DATE] = createdDate.getTime();
+      try {
+        const correctedTimestamp =
+          TimezoneUtils.convertKiotVietDateToLarkTimestamp(invoice.createdDate);
+        fields[LARK_INVOICE_FIELDS.CREATED_DATE] = correctedTimestamp;
+      } catch (error) {
+        const createdDate = new Date(invoice.createdDate);
+        fields[LARK_INVOICE_FIELDS.CREATED_DATE] = createdDate.getTime();
+      }
     }
 
     if (invoice.modifiedDate) {
-      const modifiedDate = new Date(invoice.modifiedDate + '-07:00');
-      fields[LARK_INVOICE_FIELDS.MODIFIED_DATE] = modifiedDate.getTime();
+      try {
+        const correctedTimestamp =
+          TimezoneUtils.convertKiotVietDateToLarkTimestamp(
+            invoice.modifiedDate,
+          );
+        fields[LARK_INVOICE_FIELDS.MODIFIED_DATE] = correctedTimestamp;
+      } catch (error) {
+        const modifiedDate = new Date(invoice.modifiedDate);
+        fields[LARK_INVOICE_FIELDS.MODIFIED_DATE] = modifiedDate.getTime();
+      }
     }
 
     return fields;
