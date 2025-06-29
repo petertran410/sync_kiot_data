@@ -1144,7 +1144,7 @@ export class LarkInvoiceSyncService {
     }
 
     // Seller name - need to look up from soldById
-    if (invoice.soldById) {
+    if (invoice.soldById !== null && invoice.soldById !== undefined) {
       if (invoice.soldById === 1015579) {
         fields[LARK_INVOICE_FIELDS.SELLER] = SALE_NAME.ADMIN;
       } else if (invoice.soldById === 1031177) {
