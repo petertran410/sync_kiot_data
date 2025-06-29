@@ -1131,7 +1131,7 @@ export class LarkInvoiceSyncService {
 
         // ✅ METHOD 1: Parse as UTC then adjust for Vietnam timezone
         const utcDate = new Date(cleanDateString + 'Z'); // Force UTC parsing
-        const vietnamOffsetMs = 7 * 60 * 60 * 1000; // GMT+7 = +7 hours
+        const vietnamOffsetMs = 60 * 60 * 1000; // GMT+7 = +7 hours
         date = new Date(utcDate.getTime() - vietnamOffsetMs); // Adjust back to get correct UTC
 
         // ✅ Log for debugging
@@ -1156,44 +1156,6 @@ export class LarkInvoiceSyncService {
     }
   }
 
-  /**
-   * Alternative method: Parse with explicit Vietnam timezone
-   */
-  private convertKiotVietDateToTimestampV2(
-    dateString: string | Date,
-  ): number | null {
-    if (!dateString) return null;
-
-    try {
-      if (typeof dateString === 'string') {
-        // ✅ METHOD 2: Parse with Vietnam timezone explicitly
-        const cleanDateString = dateString.replace(/\.\d{7}$/, '');
-
-        // Add Vietnam timezone offset
-        const vietnamDateString = cleanDateString + '+07:00';
-        const date = new Date(vietnamDateString);
-
-        this.logger.debug(
-          `🕐 V2 Date conversion: "${dateString}" → ${date.toISOString()}`,
-        );
-
-        if (isNaN(date.getTime())) {
-          this.logger.warn(`⚠️ Invalid date V2: ${dateString}`);
-          return null;
-        }
-
-        return date.getTime();
-      }
-
-      return new Date(dateString).getTime();
-    } catch (error) {
-      this.logger.error(
-        `❌ V2 Date conversion failed for "${dateString}": ${error.message}`,
-      );
-      return null;
-    }
-  }
-
   private mapInvoiceToLarkBase(invoice: any): Record<string, any> {
     const fields: Record<string, any> = {};
 
@@ -1210,19 +1172,24 @@ export class LarkInvoiceSyncService {
       fields[LARK_INVOICE_FIELDS.ORDER_CODE] = invoice.orderCode || '';
     }
 
-    if (invoice.purchaseDate) {
-      const timestamp = this.convertKiotVietDateToTimestamp(
-        invoice.purchaseDate,
-      );
-      if (timestamp) {
-        fields[LARK_INVOICE_FIELDS.PURCHASE_DATE] = timestamp;
+    // if (invoice.purchaseDate) {
+    //   const timestamp = this.convertKiotVietDateToTimestamp(
+    //     invoice.purchaseDate,
+    //   );
+    //   if (timestamp) {
+    //     fields[LARK_INVOICE_FIELDS.PURCHASE_DATE] = timestamp;
 
-        // ✅ Debug logging for your specific case
-        const debugDate = new Date(timestamp);
-        this.logger.debug(
-          `📅 Invoice ${invoice.code} - Purchase Date: KiotViet="${invoice.purchaseDate}" → LarkBase=${debugDate.toISOString()}`,
-        );
-      }
+    //     // ✅ Debug logging for your specific case
+    //     const debugDate = new Date(timestamp);
+    //     this.logger.debug(
+    //       `📅 Invoice ${invoice.code} - Purchase Date: KiotViet="${invoice.purchaseDate}" → LarkBase=${debugDate.toISOString()}`,
+    //     );
+    //   }
+    // }
+
+    if (invoice.purchaseDate) {
+      fields[LARK_INVOICE_FIELDS.PURCHASE_DATE] =
+        invoice.purchaseDate.getTime();
     }
 
     // Branch mapping
@@ -1401,18 +1368,27 @@ export class LarkInvoiceSyncService {
     }
 
     // Dates
+    // if (invoice.createdDate) {
+    //   const timestamp = this.convertKiotVietDateToTimestamp(
+    //     invoice.createdDate,
+    //   );
+    //   fields[LARK_INVOICE_FIELDS.CREATED_DATE] = timestamp;
+    // }
+
     if (invoice.createdDate) {
-      const timestamp = this.convertKiotVietDateToTimestamp(
-        invoice.createdDate,
-      );
-      fields[LARK_INVOICE_FIELDS.CREATED_DATE] = timestamp;
+      fields[LARK_INVOICE_FIELDS.CREATED_DATE] = invoice.createdDate.getTime();
     }
 
+    // if (invoice.modifiedDate) {
+    //   const timestamp = this.convertKiotVietDateToTimestamp(
+    //     invoice.modifiedDate,
+    //   );
+    //   fields[LARK_INVOICE_FIELDS.MODIFIED_DATE] = timestamp;
+    // }
+
     if (invoice.modifiedDate) {
-      const timestamp = this.convertKiotVietDateToTimestamp(
-        invoice.modifiedDate,
-      );
-      fields[LARK_INVOICE_FIELDS.MODIFIED_DATE] = timestamp;
+      fields[LARK_INVOICE_FIELDS.MODIFIED_DATE] =
+        invoice.modifiedDate.getTime();
     }
 
     return fields;
