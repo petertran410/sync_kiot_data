@@ -4,19 +4,16 @@ import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { LarkAuthService } from '../auth/lark-auth.service';
-import { async, count, firstValueFrom } from 'rxjs';
-import { TimezoneUtils } from 'src/utils/timezone.utils';
-import { stringify } from 'querystring';
+import { firstValueFrom } from 'rxjs';
 
 // ✅ EXACT field names from Hoá Đơn.rtf
 const LARK_INVOICE_FIELDS = {
   PRIMARY_CODE: 'Mã Hoá Đơn',
   ORDER_CODE: 'Mã Đơn Hàng',
-  CUSTOMER_CODE: 'Mã Khách Hàng',
-  CUSTOMER_NAME: 'Tên Khách Hàng',
   KIOTVIET_ID: 'kiotVietId',
-  PURCHASE_DATE: 'Ngày Mua',
   BRANCH: 'Branch',
+  CUSTOMER_NAME: 'Tên Khách Hàng',
+  CUSTOMER_CODE: 'Mã Khách Hàng',
   SELLER: 'Người Bán',
   CUSTOMER_NEED_PAY: 'Khách Cần Trả',
   CUSTOMER_PAID: 'Khách Đã Trả',
@@ -28,6 +25,7 @@ const LARK_INVOICE_FIELDS = {
   SALE_CHANNEL: 'Kênh Bán',
   APPLY_VOUCHER: 'Áp Mã Voucher',
   CREATED_DATE: 'Ngày Tạo',
+  PURCHASE_DATE: 'Ngày Mua',
   MODIFIED_DATE: 'Ngày Cập Nhật',
 } as const;
 
@@ -1124,8 +1122,8 @@ export class LarkInvoiceSyncService {
 
     if (invoice.purchaseDate) {
       fields[LARK_INVOICE_FIELDS.PURCHASE_DATE] = new Date(
-        invoice.purchaseDate + '+07:00',
-      ).getTime();
+        invoice.purchaseDate,
+      );
     }
 
     // Branch mapping
@@ -1146,10 +1144,10 @@ export class LarkInvoiceSyncService {
       const sellerMapping: Record<number, string> = {
         1015579: SALE_NAME.ADMIN,
         1031177: SALE_NAME.DINH_THI_LY_LY,
-        1015592: SALE_NAME.TRAN_XUAN_PHUONG, // ✅ FIX: This was broken with ===
-        1015596: SALE_NAME.LE_THI_HONG_LIEN, // ✅ FIX: This was broken with ===
+        1015592: SALE_NAME.TRAN_XUAN_PHUONG,
+        1015596: SALE_NAME.LE_THI_HONG_LIEN,
         1015604: SALE_NAME.PHI_THI_PHUONG_THANH,
-        1015610: SALE_NAME.LE_XUAN_TUNG, // ✅ Your case: soldById 1015610
+        1015610: SALE_NAME.LE_XUAN_TUNG,
         1015613: SALE_NAME.TA_THI_TRANG,
         1015698: SALE_NAME.BANG_ANH_VU,
         1015722: SALE_NAME.MAI_THI_VAN_ANH,
@@ -1304,30 +1302,14 @@ export class LarkInvoiceSyncService {
     }
 
     // Dates
-    // if (invoice.createdDate) {
-    //   const timestamp = this.convertKiotVietDateToTimestamp(
-    //     invoice.createdDate,
-    //   );
-    //   fields[LARK_INVOICE_FIELDS.CREATED_DATE] = timestamp;
-    // }
-
     if (invoice.createdDate) {
-      fields[LARK_INVOICE_FIELDS.CREATED_DATE] = new Date(
-        invoice.createdDate + '+07:00',
-      );
+      const createdDate = new Date(invoice.createdDate);
+      fields[LARK_INVOICE_FIELDS.CREATED_DATE] = createdDate;
     }
 
-    // if (invoice.modifiedDate) {
-    //   const timestamp = this.convertKiotVietDateToTimestamp(
-    //     invoice.modifiedDate,
-    //   );
-    //   fields[LARK_INVOICE_FIELDS.MODIFIED_DATE] = timestamp;
-    // }
-
     if (invoice.modifiedDate) {
-      fields[LARK_INVOICE_FIELDS.MODIFIED_DATE] = new Date(
-        invoice.modifiedDate + '+07:00',
-      );
+      const modifiedDate = new Date(invoice.modifiedDate);
+      fields[LARK_INVOICE_FIELDS.MODIFIED_DATE] = modifiedDate;
     }
 
     return fields;

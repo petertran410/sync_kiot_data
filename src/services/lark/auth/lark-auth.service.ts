@@ -13,6 +13,9 @@ interface TenantAccessTokenResponse {
 
 @Injectable()
 export class LarkAuthService {
+  getAccessToken() {
+    throw new Error('Method not implemented.');
+  }
   private readonly logger = new Logger(LarkAuthService.name);
 
   // Separate tokens for different services
