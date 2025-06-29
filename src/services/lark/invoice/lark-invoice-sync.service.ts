@@ -6,6 +6,7 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { LarkAuthService } from '../auth/lark-auth.service';
 import { async, count, firstValueFrom } from 'rxjs';
 import { TimezoneUtils } from 'src/utils/timezone.utils';
+import { stringify } from 'querystring';
 
 // ✅ EXACT field names from Hoá Đơn.rtf
 const LARK_INVOICE_FIELDS = {
@@ -1105,57 +1106,6 @@ export class LarkInvoiceSyncService {
     }
   }
 
-  // ============================================================================
-  // ENHANCED DATE HANDLING WITH VIETNAM TIMEZONE - FIXED VERSION
-  // ============================================================================
-
-  /**
-   * Convert KiotViet datetime to proper timestamp for LarkBase
-   * KiotViet returns datetime without timezone info, but it's Vietnam time (GMT+7)
-   */
-  private convertKiotVietDateToTimestamp(
-    dateString: string | Date,
-  ): number | null {
-    if (!dateString) return null;
-
-    try {
-      // ✅ FIX: Handle KiotViet datetime properly
-      let date: Date;
-
-      if (typeof dateString === 'string') {
-        // KiotViet format: "2025-06-17T14:34:27.2900000"
-        // This is Vietnam time (GMT+7) but without timezone suffix
-
-        // Remove extra precision (.2900000) if present
-        const cleanDateString = dateString.replace(/\.\d{7}$/, '');
-
-        // ✅ METHOD 1: Parse as UTC then adjust for Vietnam timezone
-        const utcDate = new Date(cleanDateString + 'Z'); // Force UTC parsing
-        const vietnamOffsetMs = 60 * 60 * 1000; // GMT+7 = +7 hours
-        date = new Date(utcDate.getTime() - vietnamOffsetMs); // Adjust back to get correct UTC
-
-        // ✅ Log for debugging
-        this.logger.debug(
-          `🕐 Date conversion: "${dateString}" → ${date.toISOString()}`,
-        );
-      } else {
-        date = new Date(dateString);
-      }
-
-      if (isNaN(date.getTime())) {
-        this.logger.warn(`⚠️ Invalid date: ${dateString}`);
-        return null;
-      }
-
-      return date.getTime();
-    } catch (error) {
-      this.logger.error(
-        `❌ Date conversion failed for "${dateString}": ${error.message}`,
-      );
-      return null;
-    }
-  }
-
   private mapInvoiceToLarkBase(invoice: any): Record<string, any> {
     const fields: Record<string, any> = {};
 
@@ -1172,24 +1122,10 @@ export class LarkInvoiceSyncService {
       fields[LARK_INVOICE_FIELDS.ORDER_CODE] = invoice.orderCode || '';
     }
 
-    // if (invoice.purchaseDate) {
-    //   const timestamp = this.convertKiotVietDateToTimestamp(
-    //     invoice.purchaseDate,
-    //   );
-    //   if (timestamp) {
-    //     fields[LARK_INVOICE_FIELDS.PURCHASE_DATE] = timestamp;
-
-    //     // ✅ Debug logging for your specific case
-    //     const debugDate = new Date(timestamp);
-    //     this.logger.debug(
-    //       `📅 Invoice ${invoice.code} - Purchase Date: KiotViet="${invoice.purchaseDate}" → LarkBase=${debugDate.toISOString()}`,
-    //     );
-    //   }
-    // }
-
     if (invoice.purchaseDate) {
-      fields[LARK_INVOICE_FIELDS.PURCHASE_DATE] =
-        invoice.purchaseDate.getTime();
+      fields[LARK_INVOICE_FIELDS.PURCHASE_DATE] = new Date(
+        invoice.purchaseDate + '+07:00',
+      ).getTime();
     }
 
     // Branch mapping
@@ -1376,7 +1312,9 @@ export class LarkInvoiceSyncService {
     // }
 
     if (invoice.createdDate) {
-      fields[LARK_INVOICE_FIELDS.CREATED_DATE] = invoice.createdDate.getTime();
+      fields[LARK_INVOICE_FIELDS.CREATED_DATE] = new Date(
+        invoice.createdDate + '+07:00',
+      );
     }
 
     // if (invoice.modifiedDate) {
@@ -1387,8 +1325,9 @@ export class LarkInvoiceSyncService {
     // }
 
     if (invoice.modifiedDate) {
-      fields[LARK_INVOICE_FIELDS.MODIFIED_DATE] =
-        invoice.modifiedDate.getTime();
+      fields[LARK_INVOICE_FIELDS.MODIFIED_DATE] = new Date(
+        invoice.modifiedDate + '+07:00',
+      );
     }
 
     return fields;
