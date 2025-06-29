@@ -10,6 +10,8 @@ import { firstValueFrom } from 'rxjs';
 const LARK_INVOICE_FIELDS = {
   PRIMARY_CODE: 'Mã Hoá Đơn',
   ORDER_CODE: 'Mã Đơn Hàng',
+  CUSTOMER_CODE: 'Mã Khách Hàng',
+  CUSTOMER_NAME: 'Tên Khách Hàng',
   KIOTVIET_ID: 'kiotVietId',
   PURCHASE_DATE: 'Ngày Mua',
   BRANCH: 'Branch',
@@ -1138,41 +1140,36 @@ export class LarkInvoiceSyncService {
 
     // Seller name - need to look up from soldById
     if (invoice.soldById !== null && invoice.soldById !== undefined) {
-      if (invoice.soldById === 1015579) {
-        fields[LARK_INVOICE_FIELDS.SELLER] = SALE_NAME.ADMIN;
-      } else if (invoice.soldById === 1031177) {
-        fields[LARK_INVOICE_FIELDS.SELLER] = SALE_NAME.DINH_THI_LY_LY;
-      } else if (invoice.soldById === 1015592) {
-        fields[LARK_INVOICE_FIELDS.SELLER] === SALE_NAME.TRAN_XUAN_PHUONG;
-      } else if (invoice.soldById === 1015596) {
-        fields[LARK_INVOICE_FIELDS.SELLER] === SALE_NAME.LE_THI_HONG_LIEN;
-      } else if (invoice.soldById === 1015604) {
-        fields[LARK_INVOICE_FIELDS.SELLER] = SALE_NAME.PHI_THI_PHUONG_THANH;
-      } else if (invoice.soldById === 1015610) {
-        fields[LARK_INVOICE_FIELDS.SELLER] = SALE_NAME.LE_XUAN_TUNG;
-      } else if (invoice.soldById === 1015613) {
-        fields[LARK_INVOICE_FIELDS.SELLER] = SALE_NAME.TA_THI_TRANG;
-      } else if (invoice.soldById === 1015698) {
-        fields[LARK_INVOICE_FIELDS.SELLER] = SALE_NAME.BANG_ANH_VU;
-      } else if (invoice.soldById === 1015722) {
-        fields[LARK_INVOICE_FIELDS.SELLER] = SALE_NAME.MAI_THI_VAN_ANH;
-      } else if (invoice.soldById === 1015729) {
-        fields[LARK_INVOICE_FIELDS.SELLER] = SALE_NAME.LINH_THU_TRANG;
-      } else if (invoice.soldById === 1015746) {
-        fields[LARK_INVOICE_FIELDS.SELLER] = SALE_NAME.LY_THI_HONG_DAO;
-      } else if (invoice.soldById === 1015761) {
-        fields[LARK_INVOICE_FIELDS.SELLER] = SALE_NAME.NGUYEN_HUYEN_TRANG;
-      } else if (invoice.soldById === 1015764) {
-        fields[LARK_INVOICE_FIELDS.SELLER] = SALE_NAME.NGUYEN_THI_NGAN;
-      } else if (invoice.soldById === 1015777) {
-        fields[LARK_INVOICE_FIELDS.SELLER] = SALE_NAME.NGUYEN_THI_THUONG;
-      } else if (invoice.soldById === 1015781) {
-        fields[LARK_INVOICE_FIELDS.SELLER] = SALE_NAME.VU_HUYEN_TRANG;
-      } else if (invoice.soldById === 1015788) {
-        fields[LARK_INVOICE_FIELDS.SELLER] = SALE_NAME.LINH_THUY_DUONG;
-      } else if (invoice.soldById === 1016818) {
-        fields[LARK_INVOICE_FIELDS.SELLER] = SALE_NAME.NGUYEN_THI_PHUONG;
-      }
+      const sellerMapping: Record<number, string> = {
+        1015579: SALE_NAME.ADMIN,
+        1031177: SALE_NAME.DINH_THI_LY_LY,
+        1015592: SALE_NAME.TRAN_XUAN_PHUONG, // ✅ FIX: This was broken with ===
+        1015596: SALE_NAME.LE_THI_HONG_LIEN, // ✅ FIX: This was broken with ===
+        1015604: SALE_NAME.PHI_THI_PHUONG_THANH,
+        1015610: SALE_NAME.LE_XUAN_TUNG, // ✅ Your case: soldById 1015610
+        1015613: SALE_NAME.TA_THI_TRANG,
+        1015698: SALE_NAME.BANG_ANH_VU,
+        1015722: SALE_NAME.MAI_THI_VAN_ANH,
+        1015729: SALE_NAME.LINH_THU_TRANG,
+        1015746: SALE_NAME.LY_THI_HONG_DAO,
+        1015761: SALE_NAME.NGUYEN_HUYEN_TRANG,
+        1015764: SALE_NAME.NGUYEN_THI_NGAN,
+        1015777: SALE_NAME.NGUYEN_THI_THUONG,
+        1015781: SALE_NAME.VU_HUYEN_TRANG,
+        1015788: SALE_NAME.LINH_THUY_DUONG,
+        1016818: SALE_NAME.NGUYEN_THI_PHUONG,
+      };
+
+      fields[LARK_INVOICE_FIELDS.SELLER] =
+        sellerMapping[invoice.soldById] || '';
+    }
+
+    if (invoice.customerCode !== null && invoice.customerCode !== undefined) {
+      fields[LARK_INVOICE_FIELDS.CUSTOMER_CODE] = invoice.customerCode || '';
+    }
+
+    if (invoice.customerName !== null && invoice.customerName !== undefined) {
+      fields[LARK_INVOICE_FIELDS.CUSTOMER_NAME] = invoice.customerName || '';
     }
 
     // Financial fields
