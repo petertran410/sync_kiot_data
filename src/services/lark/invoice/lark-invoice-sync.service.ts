@@ -1312,12 +1312,12 @@ export class LarkInvoiceSyncService {
 
     // Dates
     if (invoice.createdDate) {
-      const createdDate = new Date(invoice.createdDate + '+07:00');
+      const createdDate = new Date(invoice.createdDate);
       fields[LARK_INVOICE_FIELDS.CREATED_DATE] = createdDate.getTime();
     }
 
     if (invoice.modifiedDate) {
-      const modifiedDate = new Date(invoice.modifiedDate + '+07:00');
+      const modifiedDate = new Date(invoice.modifiedDate);
       fields[LARK_INVOICE_FIELDS.MODIFIED_DATE] = modifiedDate.getTime();
     }
 
