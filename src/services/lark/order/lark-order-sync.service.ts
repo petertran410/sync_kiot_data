@@ -388,6 +388,7 @@ export class LarkOrderSyncService {
       totalCreated += successRecords.length;
       totalFailed += failedRecords.length;
 
+      // Update database status - now using original order objects
       if (successRecords.length > 0) {
         await this.updateDatabaseStatus(successRecords, 'SYNCED');
       }
@@ -422,6 +423,7 @@ export class LarkOrderSyncService {
     let successCount = 0;
     let failedCount = 0;
     const createFallbacks: any[] = [];
+    const successfulOrders: any[] = [];
 
     const UPDATE_CHUNK_SIZE = 5;
 
@@ -435,7 +437,7 @@ export class LarkOrderSyncService {
 
             if (updated) {
               successCount++;
-              await this.updateDatabaseStatus([order], 'SYNCED');
+              successfulOrders.push(order);
             } else {
               createFallbacks.push(order);
             }
@@ -451,6 +453,11 @@ export class LarkOrderSyncService {
       if (i + UPDATE_CHUNK_SIZE < orders.length) {
         await new Promise((resolve) => setTimeout(resolve, 300));
       }
+    }
+
+    // Update database status for successful orders
+    if (successfulOrders.length > 0) {
+      await this.updateDatabaseStatus(successfulOrders, 'SYNCED');
     }
 
     if (createFallbacks.length > 0) {
@@ -486,12 +493,13 @@ export class LarkOrderSyncService {
         );
 
         if (response.data.code === 0) {
-          const successRecords = response.data.data.records || [];
+          const larkRecords = response.data.data.records || [];
+          const successOrders: any[] = [];
 
-          // Update database with record IDs
-          for (let i = 0; i < successRecords.length && i < orders.length; i++) {
+          // Update database with record IDs and track successful orders
+          for (let i = 0; i < larkRecords.length && i < orders.length; i++) {
             const order = orders[i];
-            const record = successRecords[i];
+            const record = larkRecords[i];
 
             if (record.record_id) {
               await this.prismaService.order.update({
@@ -505,13 +513,14 @@ export class LarkOrderSyncService {
                 record.record_id,
               );
               this.orderCodeCache.set(order.code, record.record_id);
+
+              // Add original order to success list
+              successOrders.push(order);
             }
           }
 
-          this.logger.debug(
-            `✅ Created ${successRecords.length} order records`,
-          );
-          return { successRecords, failedRecords: [] };
+          this.logger.debug(`✅ Created ${larkRecords.length} order records`);
+          return { successRecords: successOrders, failedRecords: [] };
         }
 
         if (this.AUTH_ERROR_CODES.includes(response.data.code)) {
@@ -625,8 +634,16 @@ export class LarkOrderSyncService {
     // Seller mapping
     if (order.soldById !== null && order.soldById !== undefined) {
       const sellerMapping = {
-        1015650: SALE_NAME.LE_ANH_TUAN,
-        1015652: SALE_NAME.NGUYEN_THI_PHUONG,
+        1015579: SALE_NAME.ADMIN,
+        1031177: SALE_NAME.DINH_THI_LY_LY,
+        1015592: SALE_NAME.TRAN_XUAN_PHUONG,
+        1015596: SALE_NAME.LE_THI_HONG_LIEN,
+        1015604: SALE_NAME.PHI_THI_PHUONG_THANH,
+        1015610: SALE_NAME.LE_XUAN_TUNG,
+        1015613: SALE_NAME.TA_THI_TRANG,
+        1015698: SALE_NAME.BANG_ANH_VU,
+        1015722: SALE_NAME.MAI_THI_VAN_ANH,
+        1015729: SALE_NAME.LINH_THU_TRANG,
         1015746: SALE_NAME.LY_THI_HONG_DAO,
         1015761: SALE_NAME.NGUYEN_HUYEN_TRANG,
         1015764: SALE_NAME.NGUYEN_THI_NGAN,
@@ -634,15 +651,7 @@ export class LarkOrderSyncService {
         1015781: SALE_NAME.VU_HUYEN_TRANG,
         1015788: SALE_NAME.LINH_THUY_DUONG,
         1016818: SALE_NAME.NGUYEN_THI_PHUONG,
-        1234567: SALE_NAME.MAI_THI_VAN_ANH,
-        1234568: SALE_NAME.BANG_ANH_VU,
-        1234569: SALE_NAME.TA_THI_TRANG,
-        1234570: SALE_NAME.LE_XUAN_TUNG,
-        1234571: SALE_NAME.PHI_THI_PHUONG_THANH,
-        1234572: SALE_NAME.LE_THI_HONG_LIEN,
-        1234573: SALE_NAME.TRAN_XUAN_PHUONG,
-        1234574: SALE_NAME.DINH_THI_LY_LY,
-        1234575: SALE_NAME.NGUYEN_HUU_TOAN,
+        383855: SALE_NAME.NGUYEN_HUU_TOAN,
       };
 
       fields[LARK_ORDER_FIELDS.SELLER] = sellerMapping[order.soldById] || '';
@@ -671,8 +680,9 @@ export class LarkOrderSyncService {
     }
 
     if (order.discountRatio !== null && order.discountRatio !== undefined) {
-      fields[LARK_ORDER_FIELDS.DISCOUNT_RATIO] =
-        Number(order.discountRatio || 0) / 100; // Convert to percentage for LarkBase
+      fields[LARK_ORDER_FIELDS.DISCOUNT_RATIO] = Number(
+        order.discountRatio || 0,
+      );
     }
 
     // Status mapping
@@ -724,15 +734,19 @@ export class LarkOrderSyncService {
     orders: any[],
     status: 'SYNCED' | 'FAILED',
   ): Promise<void> {
+    if (orders.length === 0) return;
+
     const orderIds = orders.map((o) => o.id);
+    const updateData = {
+      larkSyncStatus: status,
+      larkSyncedAt: new Date(),
+      ...(status === 'FAILED' && { larkSyncRetries: { increment: 1 } }),
+      ...(status === 'SYNCED' && { larkSyncRetries: 0 }),
+    };
 
     await this.prismaService.order.updateMany({
       where: { id: { in: orderIds } },
-      data: {
-        larkSyncStatus: status,
-        larkSyncedAt: status === 'SYNCED' ? new Date() : undefined,
-        larkSyncRetries: status === 'FAILED' ? { increment: 1 } : undefined,
-      },
+      data: updateData,
     });
   }
 

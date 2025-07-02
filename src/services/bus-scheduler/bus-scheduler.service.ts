@@ -54,7 +54,7 @@ export class BusSchedulerService implements OnModuleInit {
     }
 
     try {
-      this.logger.log('🚀 Starting 10-minute parallel sync cycle...');
+      this.logger.log('🚀 Starting 8-minute parallel sync cycle...');
       const startTime = Date.now();
 
       // Check if any critical sync is running
@@ -71,14 +71,14 @@ export class BusSchedulerService implements OnModuleInit {
 
       // ✅ Enhanced parallel execution with proper error handling
       const syncPromises = [
-        this.runCustomerSync().catch((error) => {
-          this.logger.error(`Customer sync failed: ${error.message}`);
-          return { status: 'rejected', reason: error.message };
-        }),
-        this.runInvoiceSync().catch((error) => {
-          this.logger.error(`Invoice sync failed: ${error.message}`);
-          return { status: 'rejected', reason: error.message };
-        }),
+        // this.runCustomerSync().catch((error) => {
+        //   this.logger.error(`Customer sync failed: ${error.message}`);
+        //   return { status: 'rejected', reason: error.message };
+        // }),
+        // this.runInvoiceSync().catch((error) => {
+        //   this.logger.error(`Invoice sync failed: ${error.message}`);
+        //   return { status: 'rejected', reason: error.message };
+        // }),
         this.runOrderSync().catch((error) => {
           this.logger.error(`Order sync failed: ${error.message}`);
 
@@ -444,14 +444,14 @@ export class BusSchedulerService implements OnModuleInit {
       this.logger.log('📋 Running parallel startup sync checks...');
 
       const startupPromises = [
-        this.runCustomerSync().catch((error) => {
-          this.logger.warn(`Customer startup check failed: ${error.message}`);
-          return Promise.resolve(); // Don't fail startup
-        }),
-        this.runInvoiceSync().catch((error) => {
-          this.logger.warn(`Invoice startup check failed: ${error.message}`);
-          return Promise.resolve(); // Don't fail startup
-        }),
+        // this.runCustomerSync().catch((error) => {
+        //   this.logger.warn(`Customer startup check failed: ${error.message}`);
+        //   return Promise.resolve(); // Don't fail startup
+        // }),
+        // this.runInvoiceSync().catch((error) => {
+        //   this.logger.warn(`Invoice startup check failed: ${error.message}`);
+        //   return Promise.resolve(); // Don't fail startup
+        // }),
         this.runOrderSync().catch((error) => {
           this.logger.warn(`Order startup check failed: ${error.message}`);
           return Promise.resolve(); // Don't fail startup
