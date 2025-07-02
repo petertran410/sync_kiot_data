@@ -16,6 +16,7 @@ import { KiotVietCategoryService } from './category/category.service';
 import { KiotVietProductService } from './product/product.service';
 import { LarkModule } from '../lark/lark.module';
 import { KiotVietInvoiceService } from './invoice/invoice.service';
+import { KiotVietOrderService } from './order/order.service';
 
 @Module({
   imports: [
@@ -40,6 +41,7 @@ import { KiotVietInvoiceService } from './invoice/invoice.service';
     KiotVietCategoryService,
     KiotVietProductService,
     KiotVietInvoiceService,
+    KiotVietOrderService,
   ],
   exports: [
     KiotVietAuthService,
@@ -54,6 +56,7 @@ import { KiotVietInvoiceService } from './invoice/invoice.service';
     KiotVietCategoryService,
     KiotVietProductService,
     KiotVietInvoiceService,
+    KiotVietOrderService,
   ],
 })
 export class KiotVietModule {}

@@ -356,20 +356,17 @@ model Order {
   cashierId         BigInt?
   customerId        Int?
   customer          Customer?          @relation(fields: [customerId], references: [id])
-  totalCostOfGoods  Decimal            @default(0) @db.Decimal(15,2)
-  otherRevenue      Decimal            @default(0) @db.Decimal(15,2)
   total             Decimal            @db.Decimal(15, 2)
-  totalAfterDiscount Decimal           @default(0) @db.Decimal(15,2)
   totalPayment      Decimal            @db.Decimal(15, 2)
   discount          Decimal?           @db.Decimal(15, 2)
   discountRatio     Float?
-  status            Int
+  status            Int?
+  statusValue       String?
   description       String?            @db.Text
   usingCod          Boolean            @default(false)
   saleChannelId     Int?
   saleChannel       SaleChannel?       @relation(fields: [saleChannelId], references: [id])
   expectedDelivery  DateTime?
-  makeInvoice       Boolean            @default(false)
   retailerId        Int?
   createdDate       DateTime           @default(now())
   modifiedDate      DateTime           @updatedAt

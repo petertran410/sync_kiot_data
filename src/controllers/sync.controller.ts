@@ -3,6 +3,7 @@ import { Controller, Get, Post, Query, Logger } from '@nestjs/common';
 import { BusSchedulerService } from '../services/bus-scheduler/bus-scheduler.service';
 import { KiotVietCustomerService } from '../services/kiot-viet/customer/customer.service';
 import { KiotVietInvoiceService } from '../services/kiot-viet/invoice/invoice.service';
+import { KiotVietOrderService } from 'src/services/kiot-viet/order/order.service';
 
 @Controller('sync')
 export class SyncController {
@@ -12,6 +13,7 @@ export class SyncController {
     private readonly busScheduler: BusSchedulerService,
     private readonly customerService: KiotVietCustomerService,
     private readonly invoiceService: KiotVietInvoiceService,
+    private readonly orderService: KiotVietOrderService,
   ) {}
 
   // ============================================================================
@@ -262,6 +264,119 @@ export class SyncController {
       };
     } catch (error) {
       this.logger.error(`Invoice 4-day test failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+  }
+
+  @Post('order/historical')
+  async triggerHistoricalOrder() {
+    try {
+      this.logger.log('🔧 Manual historical order sync triggered');
+      await this.orderService.enableHistoricalSync();
+      return {
+        success: true,
+        message: 'Historical order sync enabled and started',
+      };
+    } catch (error) {
+      this.logger.error(
+        `Manual historical order sync failed: ${error.message}`,
+      );
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+  }
+
+  @Post('order/recent')
+  async triggerRecentOrder(@Query('days') days?: string) {
+    try {
+      const syncDays = days ? parseInt(days, 10) : 7;
+      this.logger.log(
+        `🔧 Manual recent order sync triggered (${syncDays} days)`,
+      );
+
+      await this.orderService.syncRecentOrders(syncDays);
+
+      return {
+        success: true,
+        message: `Recent order sync completed (${syncDays} days)`,
+      };
+    } catch (error) {
+      this.logger.error(`Manual recent order sync failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+  }
+
+  @Post('order/test-4days')
+  async testOrderSync4Days() {
+    try {
+      this.logger.log('🧪 Testing order sync with 4 days...');
+
+      await this.orderService.syncRecentOrders(4);
+
+      return {
+        success: true,
+        message: 'Order sync test (4 days) completed successfully',
+        note: 'Check logs for detailed results',
+      };
+    } catch (error) {
+      this.logger.error(`Order 4-day test failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+  }
+
+  @Post('order/lark-sync')
+  async triggerOrderLarkSync() {
+    try {
+      this.logger.log('🔧 Manual order Lark sync triggered');
+
+      // Get LarkOrderSyncService through orderService
+      const larkOrderSyncService = this.orderService['larkOrderSyncService'];
+      if (!larkOrderSyncService) {
+        throw new Error('LarkOrderSyncService not available');
+      }
+
+      await larkOrderSyncService.syncOrdersToLark();
+
+      return {
+        success: true,
+        message: 'Order Lark sync completed successfully',
+      };
+    } catch (error) {
+      this.logger.error(`Manual order Lark sync failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+  }
+
+  @Get('order/stats')
+  async getOrderSyncStats() {
+    try {
+      const larkOrderSyncService = this.orderService['larkOrderSyncService'];
+      if (!larkOrderSyncService) {
+        throw new Error('LarkOrderSyncService not available');
+      }
+
+      const stats = await larkOrderSyncService.getOrderSyncStats();
+
+      return {
+        success: true,
+        data: stats,
+      };
+    } catch (error) {
+      this.logger.error(`Failed to get order sync stats: ${error.message}`);
       return {
         success: false,
         error: error.message,

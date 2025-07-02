@@ -25,6 +25,9 @@ export class LarkAuthService {
   private invoiceAccessToken: string | null = null;
   private invoiceTokenExpiry: Date | null = null;
 
+  private orderAccessToken: string | null = null;
+  private orderTokenExpiry: Date | null = null;
+
   constructor(
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
@@ -217,5 +220,99 @@ export class LarkAuthService {
     this.invoiceAccessToken = null;
     this.invoiceTokenExpiry = null;
     await this.refreshInvoiceToken();
+  }
+
+  // ============================================================================
+  // ORDER TOKEN MANAGEMENT
+  // ============================================================================
+
+  async getOrderHeaders(): Promise<Record<string, string>> {
+    const token = await this.getOrderAccessToken();
+    return {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    };
+  }
+
+  private async getOrderAccessToken(): Promise<string> {
+    // Check if token is still valid (with 5 minute buffer)
+    if (
+      this.orderAccessToken &&
+      this.orderTokenExpiry &&
+      this.orderTokenExpiry > new Date(Date.now() + 5 * 60 * 1000)
+    ) {
+      return this.orderAccessToken;
+    }
+
+    // Get new token
+    return await this.refreshOrderToken();
+  }
+
+  private async refreshOrderToken(): Promise<string> {
+    try {
+      this.logger.log('🔄 Refreshing LarkBase order access token...');
+
+      const appId = this.configService.get<string>('LARK_ORDER_SYNC_APP_ID');
+      const appSecret = this.configService.get<string>(
+        'LARK_ORDER_SYNC_APP_SECRET',
+      );
+
+      if (!appId || !appSecret) {
+        throw new Error('LarkBase order credentials not configured');
+      }
+
+      const url =
+        'https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal';
+
+      const response = await firstValueFrom(
+        this.httpService.post<TenantAccessTokenResponse>(
+          url,
+          {
+            app_id: appId,
+            app_secret: appSecret,
+          },
+          {
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            timeout: 10000,
+          },
+        ),
+      );
+
+      if (response.data.code !== 0) {
+        throw new Error(
+          `LarkBase auth failed: ${response.data.msg} (code: ${response.data.code})`,
+        );
+      }
+
+      this.orderAccessToken = response.data.tenant_access_token;
+      // Token expires in seconds, convert to milliseconds
+      this.orderTokenExpiry = new Date(
+        Date.now() + response.data.expire * 1000,
+      );
+
+      this.logger.log('✅ LarkBase order token refreshed successfully');
+      this.logger.debug(
+        `Token expires at: ${this.orderTokenExpiry.toISOString()}`,
+      );
+
+      return this.orderAccessToken;
+    } catch (error) {
+      this.logger.error(`❌ Failed to refresh order token: ${error.message}`);
+
+      // Reset tokens on error
+      this.orderAccessToken = null;
+      this.orderTokenExpiry = null;
+
+      throw new Error(`Token refresh failed: ${error.message}`);
+    }
+  }
+
+  // Force refresh (for error recovery)
+  async forceRefreshOrderToken(): Promise<void> {
+    this.orderAccessToken = null;
+    this.orderTokenExpiry = null;
+    await this.refreshOrderToken();
   }
 }

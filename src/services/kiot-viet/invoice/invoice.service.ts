@@ -159,7 +159,6 @@ export class KiotVietInvoiceService {
   async syncHistoricalInvoices(): Promise<void> {
     const syncName = 'invoice_historical';
 
-    // Declare all variables at function scope
     let currentItem = 0;
     let processedCount = 0;
     let totalInvoices = 0;
@@ -198,7 +197,7 @@ export class KiotVietInvoiceService {
             currentItem,
             pageSize: this.PAGE_SIZE,
             orderBy: 'id',
-            orderDirection: 'Asc',
+            orderDirection: 'ASC',
             includeInvoiceDelivery: true,
             includePayment: true,
             includeTotal: true,
@@ -258,7 +257,6 @@ export class KiotVietInvoiceService {
 
             // More flexible empty page handling
             if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
-              // Check if we've processed enough data relative to expected total
               const progressPercentage =
                 totalInvoices > 0 ? (processedCount / totalInvoices) * 100 : 0;
 
@@ -556,7 +554,7 @@ export class KiotVietInvoiceService {
       currentItem: (params.currentItem || 0).toString(),
       pageSize: (params.pageSize || this.PAGE_SIZE).toString(),
       orderBy: params.orderBy || 'id',
-      orderDirection: params.orderDirection || 'Asc',
+      orderDirection: params.orderDirection || 'DESC',
       includeInvoiceDelivery: (
         params.includeInvoiceDelivery || true
       ).toString(),
@@ -576,32 +574,6 @@ export class KiotVietInvoiceService {
   // ============================================================================
   // KIOTVIET API METHODS - EXISTING FUNCTIONS ENHANCED
   // ============================================================================
-
-  private async fetchInvoicePage(currentItem: number): Promise<any> {
-    try {
-      const headers = await this.authService.getRequestHeaders();
-
-      const response = await firstValueFrom(
-        this.httpService.get(`${this.baseUrl}/invoices`, {
-          headers,
-          params: {
-            pageSize: this.PAGE_SIZE,
-            currentItem,
-            includeInvoiceDelivery: true,
-            includePayment: true,
-            orderBy: 'id',
-            orderDirection: 'Asc',
-          },
-          timeout: 30000,
-        }),
-      );
-
-      return response.data;
-    } catch (error) {
-      this.logger.error(`Failed to fetch invoice page: ${error.message}`);
-      throw error;
-    }
-  }
 
   private async fetchRecentInvoices(fromDate: Date): Promise<any[]> {
     try {
@@ -702,11 +674,6 @@ export class KiotVietInvoiceService {
 
     for (const invoiceData of invoices) {
       try {
-        // ============================================================================
-        // SAFE FOREIGN KEY LOOKUPS - FIXED REFERENCES
-        // ============================================================================
-
-        // Customer lookup - SAFE
         const customer = invoiceData.customerId
           ? await this.prismaService.customer.findFirst({
               where: { kiotVietId: BigInt(invoiceData.customerId) },
@@ -720,11 +687,10 @@ export class KiotVietInvoiceService {
           select: { id: true },
         });
 
-        // ✅ FIX 1: User lookup for soldById - CORRECTED REFERENCE
         const soldBy = invoiceData.soldById
           ? await this.prismaService.user.findFirst({
               where: { kiotVietId: BigInt(invoiceData.soldById) },
-              select: { kiotVietId: true }, // ← FIXED: Get kiotVietId, not id
+              select: { kiotVietId: true },
             })
           : null;
 
@@ -744,19 +710,6 @@ export class KiotVietInvoiceService {
             })
           : null;
 
-        // ============================================================================
-        // STATUS MAPPING
-        // ============================================================================
-        const statusMap = {
-          1: 'COMPLETED',
-          2: 'CANCELLED',
-          3: 'PROCESSING',
-          5: 'DELIVERY_FAILED',
-        };
-
-        // ============================================================================
-        // ✅ FIXED INVOICE UPSERT - CORRECTED soldById REFERENCE
-        // ============================================================================
         const invoice = await this.prismaService.invoice.upsert({
           where: { kiotVietId: BigInt(invoiceData.id) },
           update: {

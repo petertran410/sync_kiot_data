@@ -62,6 +62,7 @@ const SALE_NAME = {
   TA_THI_TRANG: 'Tạ Thị Trang',
   LINH_THU_TRANG: 'Linh Thu Trang',
   LY_THI_HONG_DAO: 'Lý Thị Hồng Đào',
+  NGUYEN_HUU_TOAN: 'Nguyễn Hữu Toàn',
 };
 
 const SALE_CHANNEL_OPTIONS = {
@@ -170,7 +171,6 @@ export class LarkInvoiceSyncService {
     const lockKey = `lark_invoice_sync_lock_${Date.now()}`;
 
     try {
-      // ✅ FIX: Acquire lock properly with progress field
       await this.acquireSyncLock(lockKey);
 
       this.logger.log(
@@ -1159,6 +1159,7 @@ export class LarkInvoiceSyncService {
         1015781: SALE_NAME.VU_HUYEN_TRANG,
         1015788: SALE_NAME.LINH_THUY_DUONG,
         1016818: SALE_NAME.NGUYEN_THI_PHUONG,
+        383855: SALE_NAME.NGUYEN_HUU_TOAN,
       };
 
       fields[LARK_INVOICE_FIELDS.SELLER] =

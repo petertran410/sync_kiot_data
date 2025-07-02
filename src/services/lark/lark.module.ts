@@ -6,6 +6,7 @@ import { PrismaModule } from '../../prisma/prisma.module';
 import { LarkAuthService } from './auth/lark-auth.service';
 import { LarkCustomerSyncService } from './customer/lark-customer-sync.service';
 import { LarkInvoiceSyncService } from './invoice/lark-invoice-sync.service';
+import { LarkOrderSyncService } from './order/lark-order-sync.service';
 
 @Module({
   imports: [
@@ -16,7 +17,17 @@ import { LarkInvoiceSyncService } from './invoice/lark-invoice-sync.service';
     ConfigModule,
     PrismaModule,
   ],
-  providers: [LarkAuthService, LarkCustomerSyncService, LarkInvoiceSyncService],
-  exports: [LarkAuthService, LarkCustomerSyncService, LarkInvoiceSyncService],
+  providers: [
+    LarkAuthService,
+    LarkCustomerSyncService,
+    LarkInvoiceSyncService,
+    LarkOrderSyncService,
+  ],
+  exports: [
+    LarkAuthService,
+    LarkCustomerSyncService,
+    LarkInvoiceSyncService,
+    LarkOrderSyncService,
+  ],
 })
 export class LarkModule {}
