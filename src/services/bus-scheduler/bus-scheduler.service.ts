@@ -7,6 +7,9 @@ import { KiotVietCustomerGroupService } from '../kiot-viet/customer-group/custom
 import { KiotVietInvoiceService } from '../kiot-viet/invoice/invoice.service';
 import { LarkCustomerSyncService } from '../lark/customer/lark-customer-sync.service';
 import { LarkInvoiceSyncService } from '../lark/invoice/lark-invoice-sync.service';
+import { LarkOrderSyncService } from '../lark/order/lark-order-sync.service';
+import { error } from 'console';
+import { KiotVietOrderService } from '../kiot-viet/order/order.service';
 
 @Injectable()
 export class BusSchedulerService implements OnModuleInit {
@@ -19,8 +22,10 @@ export class BusSchedulerService implements OnModuleInit {
     private readonly customerService: KiotVietCustomerService,
     private readonly customerGroupService: KiotVietCustomerGroupService,
     private readonly invoiceService: KiotVietInvoiceService,
+    private readonly orderService: KiotVietOrderService,
     private readonly larkCustomerSyncService: LarkCustomerSyncService,
     private readonly larkInvoiceSyncService: LarkInvoiceSyncService,
+    private readonly larkOrderSyncService: LarkOrderSyncService,
   ) {}
 
   async onModuleInit() {
@@ -38,7 +43,7 @@ export class BusSchedulerService implements OnModuleInit {
   // MAIN 10-MINUTE SCHEDULER (Current: Customer & Invoice)
   // ============================================================================
 
-  @Cron('*/10 * * * *', {
+  @Cron('*/8 * * * *', {
     name: 'main_sync_cycle',
     timeZone: 'Asia/Ho_Chi_Minh',
   })
@@ -72,6 +77,11 @@ export class BusSchedulerService implements OnModuleInit {
         }),
         this.runInvoiceSync().catch((error) => {
           this.logger.error(`Invoice sync failed: ${error.message}`);
+          return { status: 'rejected', reason: error.message };
+        }),
+        this.runOrderSync().catch((error) => {
+          this.logger.error(`Order sync failed: ${error.message}`);
+
           return { status: 'rejected', reason: error.message };
         }),
       ];
@@ -216,6 +226,27 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
+  private async runOrderSync(): Promise<void> {
+    try {
+      this.logger.log('🧾 [Order] Starting parallel sync...');
+      const startTime = Date.now();
+
+      // ✅ Main sync
+      await this.orderService.checkAndRunAppropriateSync();
+
+      // ✅ FIX: Auto-trigger Lark sync if recent sync completed
+      await this.autoTriggerOrderLarkSync();
+
+      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+      this.logger.log(`✅ [Order] Parallel sync completed in ${duration}s`);
+
+      return Promise.resolve();
+    } catch (error) {
+      this.logger.error(`❌ [Order] Parallel sync failed: ${error.message}`);
+      throw new Error(`Order sync failed: ${error.message}`);
+    }
+  }
+
   private async runCustomerGroupSync(): Promise<void> {
     try {
       this.logger.log('👥 [CustomerGroup] Starting sync...');
@@ -321,6 +352,47 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
+  private async autoTriggerOrderLarkSync(): Promise<void> {
+    try {
+      const recentSync = await this.prismaService.syncControl.findFirst({
+        where: { name: 'order_recent' },
+      });
+
+      const larkSync = await this.prismaService.syncControl.findFirst({
+        where: { name: 'order_lark_sync' },
+      });
+
+      // ✅ FIX: Trigger if recent sync just completed and Lark sync is not running
+      if (
+        recentSync?.status === 'completed' &&
+        recentSync.isRunning === false &&
+        (!larkSync?.isRunning || larkSync.isRunning !== true)
+      ) {
+        this.logger.log('🔄 Auto-triggering order Lark sync...');
+
+        // Get recent invoices that need sync
+        const ordersToSync = await this.prismaService.order.findMany({
+          where: {
+            OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+          },
+          take: 1000, // Limit to prevent overload
+        });
+
+        if (ordersToSync.length > 0) {
+          await this.larkOrderSyncService.syncOrdersToLarkBase(ordersToSync);
+          this.logger.log(
+            `✅ Auto-triggered order Lark sync: ${ordersToSync.length} orders`,
+          );
+        }
+      }
+    } catch (error) {
+      this.logger.warn(
+        `⚠️ Auto-trigger order Lark sync failed: ${error.message}`,
+      );
+      // Don't throw - this shouldn't block main sync
+    }
+  }
+
   // ============================================================================
   // MANUAL SCHEDULER CONTROLS
   // ============================================================================
@@ -380,6 +452,10 @@ export class BusSchedulerService implements OnModuleInit {
           this.logger.warn(`Invoice startup check failed: ${error.message}`);
           return Promise.resolve(); // Don't fail startup
         }),
+        this.runOrderSync().catch((error) => {
+          this.logger.warn(`Order startup check failed: ${error.message}`);
+          return Promise.resolve(); // Don't fail startup
+        }),
       ];
 
       await Promise.allSettled(startupPromises);
@@ -428,8 +504,8 @@ export class BusSchedulerService implements OnModuleInit {
       scheduler: {
         mainScheduler: {
           enabled: this.isMainSchedulerEnabled,
-          nextRun: '10 minutes interval',
-          entities: ['customer', 'invoice'], // ← CẬP NHẬT
+          nextRun: '8 minutes interval',
+          entities: ['customer', 'invoice', 'order'], // ← CẬP NHẬT
         },
         weeklyScheduler: {
           enabled: this.isWeeklySchedulerEnabled,
@@ -484,7 +560,7 @@ export class BusSchedulerService implements OnModuleInit {
         name: cycleName,
         entities:
           cycleName === 'main_cycle'
-            ? ['customer', 'invoice'] // ← CẬP NHẬT
+            ? ['customer', 'invoice', 'order'] // ← CẬP NHẬT
             : ['customergroup'],
         syncMode: 'cycle',
         isRunning: status === 'running',
