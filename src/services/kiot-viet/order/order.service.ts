@@ -730,6 +730,14 @@ export class KiotVietOrderService {
             lastSyncedAt: new Date(),
             larkSyncStatus: 'PENDING' as const,
           } satisfies Prisma.OrderUncheckedCreateInput,
+          include: {
+            customer: {
+              select: {
+                code: true,
+                name: true,
+              },
+            },
+          },
         });
 
         // ============================================================================

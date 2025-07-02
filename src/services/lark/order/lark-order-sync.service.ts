@@ -622,10 +622,10 @@ export class LarkOrderSyncService {
     // Branch mapping
     if (order.branchId !== null && order.branchId !== undefined) {
       const branchMapping = {
-        1: BRANCH_OPTIONS.VAN_PHONG_HA_NOI,
+        1: BRANCH_OPTIONS.CUA_HANG_DIEP_TRA,
         2: BRANCH_OPTIONS.KHO_HA_NOI,
         3: BRANCH_OPTIONS.KHO_SAI_GON,
-        4: BRANCH_OPTIONS.CUA_HANG_DIEP_TRA,
+        4: BRANCH_OPTIONS.VAN_PHONG_HA_NOI,
       };
 
       fields[LARK_ORDER_FIELDS.BRANCH] = branchMapping[order.branchId] || '';
@@ -657,13 +657,12 @@ export class LarkOrderSyncService {
       fields[LARK_ORDER_FIELDS.SELLER] = sellerMapping[order.soldById] || '';
     }
 
-    // Customer fields
-    if (order.customerCode !== null && order.customerCode !== undefined) {
-      fields[LARK_ORDER_FIELDS.CUSTOMER_CODE] = order.customerCode || '';
+    if (order.customer?.code) {
+      fields[LARK_ORDER_FIELDS.CUSTOMER_CODE] = order.customer.code;
     }
 
-    if (order.customerName !== null && order.customerName !== undefined) {
-      fields[LARK_ORDER_FIELDS.CUSTOMER_NAME] = order.customerName || '';
+    if (order.customer?.name) {
+      fields[LARK_ORDER_FIELDS.CUSTOMER_NAME] = order.customer.name;
     }
 
     // Financial fields
@@ -812,6 +811,14 @@ export class LarkOrderSyncService {
         larkSyncRetries: { lt: 3 },
       },
       take: 100,
+      include: {
+        customer: {
+          select: {
+            code: true,
+            name: true,
+          },
+        },
+      },
     });
 
     if (failedOrders.length === 0) {
@@ -851,6 +858,14 @@ export class LarkOrderSyncService {
     const pendingOrders = await this.prismaService.order.findMany({
       where: { larkSyncStatus: 'PENDING' },
       take: 500,
+      include: {
+        customer: {
+          select: {
+            code: true,
+            name: true,
+          },
+        },
+      },
     });
 
     if (pendingOrders.length === 0) {
