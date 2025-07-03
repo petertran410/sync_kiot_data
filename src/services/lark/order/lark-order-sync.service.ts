@@ -14,13 +14,13 @@ const LARK_ORDER_FIELDS = {
   PRIMARY_CODE: 'Mã Đơn Hàng',
   KIOTVIET_ID: 'kiotVietId',
   BRANCH: 'Chi Nhánh',
+  CUSTOMER_NAME: 'Tên Khách Hàng',
+  CUSTOMER_CODE: 'Mã Khách Hàng',
   SELLER: 'Người Bán',
   CUSTOMER_NEED_PAY: 'Khách Cần Trả',
   CUSTOMER_PAID: 'Khách Đã Trả',
-  CUSTOMER_NAME: 'Tên Khách Hàng',
-  CUSTOMER_CODE: 'Mã Khách Hàng',
-  DISCOUNT_RATIO: 'Mức Độ Giảm Giá (%)',
   DISCOUNT: 'Giảm Giá',
+  DISCOUNT_RATIO: 'Mức Độ Giảm Giá (%)',
   STATUS: 'Tình Trạng',
   COMMENT: 'Ghi Chú',
   ORDER_DATE: 'Ngày Đặt Hàng',
@@ -809,11 +809,11 @@ export class LarkOrderSyncService {
     }
 
     if (order.customerCode) {
-      fields[LARK_ORDER_FIELDS.CUSTOMER_CODE] = order.customer.code;
+      fields[LARK_ORDER_FIELDS.CUSTOMER_CODE] = order.customerCode;
     }
 
     if (order.customerName) {
-      fields[LARK_ORDER_FIELDS.CUSTOMER_NAME] = order.customer.name;
+      fields[LARK_ORDER_FIELDS.CUSTOMER_NAME] = order.customerName;
     }
 
     // Financial fields
