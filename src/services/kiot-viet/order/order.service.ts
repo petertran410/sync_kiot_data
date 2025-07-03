@@ -141,7 +141,7 @@ export class KiotVietOrderService {
   }
 
   // ============================================================================
-  // HISTORICAL SYNC - EXACT COPY FROM INVOICE WITH ADVANCED ERROR HANDLING
+  // HISTORICAL SYNC - ENHANCED WITH RATE LIMITING
   // ============================================================================
 
   async syncHistoricalOrders(): Promise<void> {
@@ -325,6 +325,10 @@ export class KiotVietOrderService {
             `📈 Progress: ${processedCount}/${totalOrders} (${progressPercentage.toFixed(1)}%)`,
           );
 
+          // ✅ CRITICAL FIX: Rate limiting delay like Invoice service
+          this.logger.log('⏳ Rate limiting delay...');
+          await new Promise((resolve) => setTimeout(resolve, 2000)); // 2 second delay between pages
+
           // EARLY COMPLETION CHECK
           if (
             totalOrders > 0 &&
@@ -357,9 +361,18 @@ export class KiotVietOrderService {
             );
           }
 
-          // Exponential backoff
+          // ✅ ENHANCED: Exponential backoff with longer delays for rate limiting
+          const baseDelay =
+            error.message.includes('420') ||
+            error.message.includes('Too Many Requests')
+              ? 10000 // 10 seconds for rate limit errors
+              : RETRY_DELAY_MS;
+
           const backoffDelay =
-            RETRY_DELAY_MS * Math.pow(2, consecutiveErrorPages - 1);
+            baseDelay * Math.pow(2, consecutiveErrorPages - 1);
+          this.logger.log(
+            `⏳ Retrying after ${backoffDelay}ms delay (attempt ${totalRetries}/${MAX_TOTAL_RETRIES})...`,
+          );
           await new Promise((resolve) => setTimeout(resolve, backoffDelay));
         }
       }
@@ -403,7 +416,7 @@ export class KiotVietOrderService {
   }
 
   // ============================================================================
-  // RECENT SYNC - EXACT COPY FROM INVOICE
+  // RECENT SYNC - ENHANCED WITH RATE LIMITING
   // ============================================================================
 
   async syncRecentOrders(days: number = 7): Promise<void> {
@@ -475,7 +488,7 @@ export class KiotVietOrderService {
   }
 
   // ============================================================================
-  // API METHODS with Retry Logic - EXACT COPY FROM INVOICE
+  // API METHODS with ENHANCED Rate Limiting & Retry Logic
   // ============================================================================
 
   async fetchOrdersListWithRetry(
@@ -487,7 +500,7 @@ export class KiotVietOrderService {
       includeOrderDelivery?: boolean;
       includePayment?: boolean;
     },
-    maxRetries: number = 3,
+    maxRetries: number = 5, // ✅ INCREASED: More retries for rate limiting
   ): Promise<any> {
     let lastError: Error | undefined;
 
@@ -496,12 +509,23 @@ export class KiotVietOrderService {
         return await this.fetchOrdersList(params);
       } catch (error) {
         lastError = error as Error;
+
+        // ✅ ENHANCED: Special handling for rate limiting
+        const isRateLimit =
+          error.response?.status === 420 ||
+          error.message?.includes('420') ||
+          error.message?.includes('Too Many Requests');
+
         this.logger.warn(
-          `⚠️ API attempt ${attempt}/${maxRetries} failed: ${error.message}`,
+          `⚠️ API attempt ${attempt}/${maxRetries} failed: ${error.message}${isRateLimit ? ' (RATE LIMITED)' : ''}`,
         );
 
         if (attempt < maxRetries) {
-          const delay = 1000 * attempt; // Progressive delay
+          // ✅ ENHANCED: Longer delays for rate limiting
+          const baseDelay = isRateLimit ? 10000 : 1000; // 10s for rate limit, 1s for others
+          const delay = baseDelay * attempt; // Progressive delay
+
+          this.logger.log(`⏳ Waiting ${delay}ms before retry...`);
           await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }
@@ -591,6 +615,11 @@ export class KiotVietOrderService {
           // Check if we have more data
           hasMore =
             orders.length < total && pageOrders.length === this.PAGE_SIZE;
+
+          // ✅ ADDED: Rate limiting delay for recent orders too
+          if (hasMore) {
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+          }
         } else {
           hasMore = false;
         }
@@ -622,6 +651,9 @@ export class KiotVietOrderService {
         }
 
         enrichedOrders.push(detailedOrder);
+
+        // ✅ ADDED: Small delay between detail fetches to avoid rate limiting
+        await new Promise((resolve) => setTimeout(resolve, 200));
       } catch (error) {
         this.logger.warn(
           `⚠️ Failed to enrich order ${order.id}: ${error.message}`,
@@ -752,7 +784,7 @@ export class KiotVietOrderService {
       startedAt: Date;
       completedAt: Date;
       lastRunAt: Date;
-      progress: any;
+      progress: any; // ✅ FIX: Use progress instead of metadata
     }>,
   ): Promise<void> {
     await this.prismaService.syncControl.upsert({
