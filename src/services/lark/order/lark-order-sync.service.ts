@@ -808,11 +808,11 @@ export class LarkOrderSyncService {
       fields[LARK_ORDER_FIELDS.SELLER] = sellerMapping[order.soldById] || '';
     }
 
-    if (order.customer?.code) {
+    if (order.customerCode) {
       fields[LARK_ORDER_FIELDS.CUSTOMER_CODE] = order.customer.code;
     }
 
-    if (order.customer?.name) {
+    if (order.customerName) {
       fields[LARK_ORDER_FIELDS.CUSTOMER_NAME] = order.customer.name;
     }
 
