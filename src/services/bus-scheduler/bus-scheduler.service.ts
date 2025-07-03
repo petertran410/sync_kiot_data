@@ -81,7 +81,6 @@ export class BusSchedulerService implements OnModuleInit {
         }),
         this.runOrderSync().catch((error) => {
           this.logger.error(`Order sync failed: ${error.message}`);
-
           return { status: 'rejected', reason: error.message };
         }),
       ];
@@ -96,7 +95,17 @@ export class BusSchedulerService implements OnModuleInit {
 
       for (let i = 0; i < results.length; i++) {
         const result = results[i];
-        const syncName = i === 0 ? 'Customer' : 'Invoice';
+        // const syncName = i === 0 ? 'Customer' : 'Invoice';
+
+        const syncName = i;
+
+        if (syncName === 0) {
+          return 'Customer';
+        } else if (syncName === 1) {
+          return 'Invoice';
+        } else if (syncName === 2) {
+          return 'Order';
+        }
 
         if (result.status === 'fulfilled') {
           successCount++;
@@ -399,12 +408,12 @@ export class BusSchedulerService implements OnModuleInit {
 
   enableMainScheduler() {
     this.isMainSchedulerEnabled = true;
-    this.logger.log('✅ Main scheduler (10-minute cycle) enabled');
+    this.logger.log('✅ Main scheduler (8-minute cycle) enabled');
   }
 
   disableMainScheduler() {
     this.isMainSchedulerEnabled = false;
-    this.logger.log('🔇 Main scheduler (10-minute cycle) disabled');
+    this.logger.log('🔇 Main scheduler (8-minute cycle) disabled');
   }
 
   enableWeeklyScheduler() {
