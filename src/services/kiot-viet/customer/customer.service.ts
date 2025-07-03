@@ -616,6 +616,9 @@ export class KiotVietCustomerService {
               : null,
             retailerId: customerData.retailerId,
             branchId: internalBranchId,
+            createdDate: customerData.createdDate
+              ? new Date(customerData.createdDate)
+              : new Date(),
             modifiedDate: customerData.modifiedDate
               ? new Date(customerData.modifiedDate)
               : new Date(),
@@ -655,6 +658,9 @@ export class KiotVietCustomerService {
               : null,
             retailerId: customerData.retailerId,
             branchId: internalBranchId,
+            createdDate: customerData.createdDate
+              ? new Date(customerData.createdDate)
+              : new Date(),
             modifiedDate: customerData.modifiedDate
               ? new Date(customerData.modifiedDate)
               : new Date(),

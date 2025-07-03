@@ -867,7 +867,7 @@ export class LarkOrderSyncService {
       ).getTime();
     }
 
-    if (order.modifiedDate) {
+    if (order.modifiedDate !== null && order.modifiedDate !== undefined) {
       fields[LARK_ORDER_FIELDS.MODIFIED_DATE] = new Date(
         order.modifiedDate,
       ).getTime();

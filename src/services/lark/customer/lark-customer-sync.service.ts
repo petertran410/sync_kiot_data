@@ -930,15 +930,13 @@ export class LarkCustomerSyncService {
     }
 
     if (customer.totalPoint !== null && customer.totalPoint !== undefined) {
-      fields[LARK_CUSTOMER_FIELDS.TOTAL_POINTS] = Number(
-        customer.totalPoint || 0,
-      );
+      fields[LARK_CUSTOMER_FIELDS.TOTAL_POINTS] =
+        Number(customer.totalPoint) || 0;
     }
 
     if (customer.totalRevenue !== null && customer.totalRevenue !== undefined) {
-      fields[LARK_CUSTOMER_FIELDS.TOTAL_REVENUE] = Number(
-        customer.totalRevenue || 0,
-      );
+      fields[LARK_CUSTOMER_FIELDS.TOTAL_REVENUE] =
+        Number(customer.totalRevenue) || 0;
     }
 
     if (customer.gender !== null && customer.gender !== undefined) {
@@ -964,18 +962,16 @@ export class LarkCustomerSyncService {
     }
 
     if (customer.rewardPoint !== null && customer.rewardPoint !== undefined) {
-      fields[LARK_CUSTOMER_FIELDS.CURRENT_POINTS] = this.safeBigIntToNumber(
-        customer.rewardPoint || 0,
-      );
+      fields[LARK_CUSTOMER_FIELDS.CURRENT_POINTS] =
+        this.safeBigIntToNumber(customer.rewardPoint) || 0;
     }
 
     if (
       customer.totalInvoiced !== null &&
       customer.totalInvoiced !== undefined
     ) {
-      fields[LARK_CUSTOMER_FIELDS.TOTAL_INVOICED] = Number(
-        customer.totalInvoiced || 0,
-      );
+      fields[LARK_CUSTOMER_FIELDS.TOTAL_INVOICED] =
+        Number(customer.totalInvoiced) || 0;
     }
 
     if (customer.comments) {

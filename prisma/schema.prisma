@@ -230,8 +230,8 @@ model Customer {
   retailerId        Int?
   branchId         Int?
   branch           Branch?               @relation(fields: [branchId], references: [id])
-  createdDate       DateTime           @default(now())
-  modifiedDate      DateTime           @updatedAt
+  createdDate       DateTime?
+  modifiedDate      DateTime?
   lastSyncedAt      DateTime           @default(now())
   
   // NEW: LarkBase sync tracking
@@ -370,8 +370,8 @@ model Order {
   saleChannel       SaleChannel?       @relation(fields: [saleChannelId], references: [id])
   expectedDelivery  DateTime?
   retailerId        Int?
-  createdDate       DateTime           @default(now())
-  modifiedDate      DateTime
+  createdDate       DateTime?
+  modifiedDate      DateTime?
   lastSyncedAt      DateTime           @default(now())
   larkRecordId      String?
   larkSyncStatus    LarkSyncStatus     @default(PENDING)
@@ -480,8 +480,8 @@ model Invoice {
   saleChannel       SaleChannel?       @relation(fields: [saleChannelId], references: [id])
   isApplyVoucher    Boolean            @default(false)
   retailerId        Int?
-  createdDate       DateTime           @default(now())
-  modifiedDate      DateTime
+  createdDate       DateTime?
+  modifiedDate      DateTime?
   lastSyncedAt      DateTime           @default(now())
 
   larkRecordId      String?
