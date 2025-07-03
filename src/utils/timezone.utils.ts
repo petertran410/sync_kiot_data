@@ -1,20 +1,20 @@
 // src/utils/timezone.utils.ts
 
 /**
- * Timezone Utility for handling KiotViet → LarkBase datetime conversion
+ * ✅ FIXED: Timezone Utility for handling KiotViet → LarkBase datetime conversion
  *
- * PROBLEM: KiotViet returns datetime in Vietnam timezone (UTC+7)
- * but system converts incorrectly causing -10 hour shift
+ * SOLUTION: Use proper timezone handling instead of manual adjustment
+ * Works correctly both in localhost and Docker container
  */
 
 export class TimezoneUtils {
   private static readonly VIETNAM_TIMEZONE = 'Asia/Ho_Chi_Minh';
-  private static readonly UTC_OFFSET_VIETNAM = 7; // UTC+7
 
   /**
-   * ✅ FIX: Convert KiotViet datetime string to correct timestamp for LarkBase
+   * ✅ PROPER FIX: Convert KiotViet datetime to LarkBase timestamp
+   * No manual timezone adjustment needed when Docker timezone is set correctly
    *
-   * @param kiotVietDateStr - Date string from KiotViet API (e.g., "2025-06-17T14:34:09.013")
+   * @param kiotVietDateStr - Date string from KiotViet API
    * @returns Timestamp for LarkBase (milliseconds)
    */
   static convertKiotVietDateToLarkTimestamp(
@@ -30,26 +30,27 @@ export class TimezoneUtils {
       if (kiotVietDateStr instanceof Date) {
         date = kiotVietDateStr;
       } else {
-        // ✅ FIX: Parse as Vietnam timezone
-        // KiotViet returns datetime in Vietnam timezone but without timezone info
-        // We need to explicitly handle this
-
-        // Method 1: Assume KiotViet string is in Vietnam timezone
+        // Clean the date string
         const cleanDateStr = kiotVietDateStr
           .replace('Z', '')
           .replace(/\.\d{3,7}/, '');
 
-        // Create date object and adjust for Vietnam timezone
-        const tempDate = new Date(cleanDateStr);
+        // Parse the date - when Docker timezone is set correctly,
+        // this will automatically handle Vietnam timezone
+        date = new Date(cleanDateStr);
 
-        // If the original parsing was treating it as UTC, we need to adjust
-        // Vietnam is UTC+7, so if it was parsed as UTC, we need to add 7 hours
-        date = new Date(tempDate.getTime() + 7 * 60 * 60 * 1000);
+        // Validate the parsed date
+        if (isNaN(date.getTime())) {
+          console.warn(
+            `[TIMEZONE] Invalid date: ${kiotVietDateStr}, using current time`,
+          );
+          date = new Date();
+        }
       }
 
       const timestamp = date.getTime();
 
-      // Debug logging
+      // Debug logging (can be removed in production)
       console.log(`[TIMEZONE] Original: ${kiotVietDateStr}`);
       console.log(`[TIMEZONE] Parsed Date: ${date.toISOString()}`);
       console.log(
@@ -68,18 +69,19 @@ export class TimezoneUtils {
   }
 
   /**
-   * ✅ ALTERNATIVE FIX: Force Vietnam timezone parsing
+   * ✅ ALTERNATIVE: Parse date explicitly in Vietnam timezone
+   * Use this if Docker timezone setting doesn't work
    */
-  static parseKiotVietDateAsVietnamTime(dateStr: string): Date {
+  static parseAsVietnamTime(dateStr: string): Date {
     if (!dateStr) {
       return new Date();
     }
 
     try {
-      // Remove timezone info if present and microseconds
+      // Remove timezone info and microseconds
       const cleanStr = dateStr.replace('Z', '').replace(/\.\d{3,7}/, '');
 
-      // Parse the date components manually
+      // Parse date components
       const parts = cleanStr.match(
         /(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/,
       );
@@ -90,63 +92,8 @@ export class TimezoneUtils {
 
       const [, year, month, day, hour, minute, second] = parts;
 
-      // Create date in Vietnam timezone
-      const vietnamDate = new Date();
-      vietnamDate.setFullYear(
-        parseInt(year),
-        parseInt(month) - 1,
-        parseInt(day),
-      );
-      vietnamDate.setHours(
-        parseInt(hour),
-        parseInt(minute),
-        parseInt(second),
-        0,
-      );
-
-      return vietnamDate;
-    } catch (error) {
-      console.error(`[TIMEZONE] Manual parsing failed: ${dateStr}`, error);
-      return new Date(dateStr);
-    }
-  }
-
-  /**
-   * ✅ DEBUG: Compare different parsing methods
-   */
-  static debugDateConversion(dateStr: string): {
-    original: string;
-    standardParse: string;
-    vietnamParse: string;
-    correctedTimestamp: number;
-    standardTimestamp: number;
-  } {
-    const standardDate = new Date(dateStr);
-    const vietnamDate = this.parseKiotVietDateAsVietnamTime(dateStr);
-    const correctedTimestamp = this.convertKiotVietDateToLarkTimestamp(dateStr);
-
-    return {
-      original: dateStr,
-      standardParse: standardDate.toISOString(),
-      vietnamParse: vietnamDate.toISOString(),
-      correctedTimestamp,
-      standardTimestamp: standardDate.getTime(),
-    };
-  }
-
-  /**
-   * ✅ DISPLAY: Format timestamp for debugging
-   */
-  static formatTimestampForDisplay(timestamp: number): {
-    utc: string;
-    vietnam: string;
-    larkBaseDisplay: string;
-  } {
-    const date = new Date(timestamp);
-
-    return {
-      utc: date.toISOString(),
-      vietnam: date.toLocaleString('en-US', {
+      // Create date in Vietnam timezone using Intl.DateTimeFormat
+      const vietnamTime = new Intl.DateTimeFormat('en-CA', {
         timeZone: TimezoneUtils.VIETNAM_TIMEZONE,
         year: 'numeric',
         month: '2-digit',
@@ -154,38 +101,95 @@ export class TimezoneUtils {
         hour: '2-digit',
         minute: '2-digit',
         second: '2-digit',
-      }),
-      larkBaseDisplay: `${date.getFullYear()}/${String(date.getMonth() + 1).padStart(2, '0')}/${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`,
+        hour12: false,
+      });
+
+      // Create a proper Vietnam timezone date
+      const tempDate = new Date(
+        `${year}-${month}-${day}T${hour}:${minute}:${second}`,
+      );
+
+      // Get UTC offset for Vietnam timezone
+      const vietnamOffset = 7 * 60; // UTC+7 in minutes
+      const localOffset = tempDate.getTimezoneOffset();
+
+      // Adjust for timezone difference
+      const adjustedDate = new Date(
+        tempDate.getTime() + (localOffset + vietnamOffset) * 60 * 1000,
+      );
+
+      return adjustedDate;
+    } catch (error) {
+      console.error(`[TIMEZONE] Vietnam parsing failed: ${dateStr}`, error);
+      return new Date(dateStr);
+    }
+  }
+
+  /**
+   * ✅ FORMAT: Display timestamp in Vietnam timezone
+   */
+  static formatForLarkBase(timestamp: number): string {
+    const date = new Date(timestamp);
+    return date.toLocaleString('en-US', {
+      timeZone: TimezoneUtils.VIETNAM_TIMEZONE,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    });
+  }
+
+  /**
+   * ✅ VALIDATION: Check if timezone conversion is working
+   */
+  static validateTimezoneSetup(): {
+    isCorrect: boolean;
+    currentTimezone: string;
+    expectedTimezone: string;
+    recommendation: string;
+  } {
+    const now = new Date();
+    const currentTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const expectedTimezone = TimezoneUtils.VIETNAM_TIMEZONE;
+
+    const isCorrect = currentTimezone === expectedTimezone;
+
+    return {
+      isCorrect,
+      currentTimezone,
+      expectedTimezone,
+      recommendation: isCorrect
+        ? 'Timezone is correctly set to Vietnam timezone'
+        : `Set TZ=${expectedTimezone} in Docker environment or use parseAsVietnamTime() method`,
     };
   }
 
   /**
-   * ✅ VALIDATION: Check if timezone conversion is working correctly
+   * ✅ DEBUG: Compare different timezone handling methods
    */
-  static validateDateConversion(
-    originalKiotVietStr: string,
-    expectedDisplayStr: string,
-  ): {
-    isCorrect: boolean;
-    difference: string;
+  static debugTimezoneConversion(dateStr: string): {
+    original: string;
+    standardConversion: number;
+    vietnamConversion: number;
+    difference: number;
     recommendation: string;
   } {
-    const correctedTimestamp =
-      this.convertKiotVietDateToLarkTimestamp(originalKiotVietStr);
-    const display = this.formatTimestampForDisplay(correctedTimestamp);
-
-    const isCorrect = display.larkBaseDisplay.includes(
-      expectedDisplayStr.substring(0, 10),
-    );
+    const standardTimestamp = this.convertKiotVietDateToLarkTimestamp(dateStr);
+    const vietnamTimestamp = this.parseAsVietnamTime(dateStr).getTime();
+    const difference = Math.abs(standardTimestamp - vietnamTimestamp);
 
     return {
-      isCorrect,
-      difference: isCorrect
-        ? 'None'
-        : `Expected: ${expectedDisplayStr}, Got: ${display.larkBaseDisplay}`,
-      recommendation: isCorrect
-        ? 'Timezone conversion is working correctly'
-        : 'Need to adjust timezone conversion logic',
+      original: dateStr,
+      standardConversion: standardTimestamp,
+      vietnamConversion: vietnamTimestamp,
+      difference,
+      recommendation:
+        difference > 1000
+          ? 'Use parseAsVietnamTime() method for consistent results'
+          : 'Standard conversion is working correctly',
     };
   }
 }

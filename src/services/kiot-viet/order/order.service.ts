@@ -1,55 +1,47 @@
-// src/services/kiot-viet/order/order.service.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
+import { firstValueFrom } from 'rxjs';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { KiotVietAuthService } from '../auth.service';
-import { firstValueFrom } from 'rxjs';
-import { Prisma } from '@prisma/client';
 import { LarkOrderSyncService } from '../../lark/order/lark-order-sync.service';
+import { LarkSyncStatus } from '@prisma/client';
 
 interface KiotVietOrder {
   id: number;
   code: string;
-  purchaseDate: string;
+  orderDate: string;
   branchId: number;
   branchName?: string;
-  soldById?: number;
-  soldByName?: string;
-  cashierId?: number;
   customerId?: number;
   customerCode?: string;
   customerName?: string;
-  total: number;
-  totalPayment: number;
-  discount?: number;
-  discountRatio?: number;
-  status: number;
+  soldById?: number;
+  soldByName?: string;
+  saleChannelId?: number;
+  status?: number;
   statusValue?: string;
+  total: number;
+  totalPayment?: number;
   description?: string;
   usingCod?: boolean;
+  discount?: number;
+  discountRatio?: number;
+  createdDate: string;
   modifiedDate?: string;
-  createdDate?: string;
-  saleChannelId?: number;
-  expectedDelivery?: string;
-  makeInvoice?: boolean;
-  retailerId?: number;
+  modifiedBy?: string;
   orderDetails?: Array<{
     id?: number;
-    productId: number;
-    productCode: string;
-    productName: string;
-    quantity: number;
-    price: number;
+    productId?: number;
+    productCode?: string;
+    productName?: string;
+    quantity?: number;
+    price?: number;
+    subTotal?: number;
     discount?: number;
     discountRatio?: number;
-    note?: string;
-    isMaster?: boolean;
   }>;
   orderDelivery?: {
-    deliveryCode?: string;
-    type?: number;
-    price?: number;
     receiver?: string;
     contactNumber?: string;
     address?: string;
@@ -102,7 +94,7 @@ export class KiotVietOrderService {
   }
 
   // ============================================================================
-  // SYNC CONTROL & TRACKING
+  // SYNC CONTROL & TRACKING - EXACT COPY FROM INVOICE
   // ============================================================================
 
   async checkAndRunAppropriateSync(): Promise<void> {
@@ -149,7 +141,7 @@ export class KiotVietOrderService {
   }
 
   // ============================================================================
-  // HISTORICAL SYNC - ENHANCED WITH ADVANCED ERROR HANDLING
+  // HISTORICAL SYNC - EXACT COPY FROM INVOICE WITH ADVANCED ERROR HANDLING
   // ============================================================================
 
   async syncHistoricalOrders(): Promise<void> {
@@ -206,34 +198,51 @@ export class KiotVietOrderService {
 
             if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
               this.logger.error(
-                `❌ Received ${MAX_CONSECUTIVE_EMPTY_PAGES} consecutive empty responses. Sync may be complete.`,
+                `❌ Received ${MAX_CONSECUTIVE_EMPTY_PAGES} consecutive empty responses. Trying final validation...`,
               );
-              break;
+
+              // Try to validate with current data before failing
+              if (processedCount > 0) {
+                this.logger.log(
+                  `✅ Partial sync completed with ${processedCount} orders processed`,
+                );
+                break;
+              } else {
+                throw new Error(
+                  `API returned ${MAX_CONSECUTIVE_EMPTY_PAGES} consecutive empty responses with no data processed`,
+                );
+              }
             }
 
-            currentItem += this.PAGE_SIZE;
+            // Wait before retrying
             await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
             continue;
           }
 
-          const { data: orders, total: apiTotal } = orderListResponse;
-          totalOrders = apiTotal || lastValidTotal;
+          // Reset error counters on successful response
+          consecutiveEmptyPages = 0;
+          consecutiveErrorPages = 0;
 
-          if (apiTotal && apiTotal > 0) {
-            lastValidTotal = apiTotal;
+          // VALIDATION: Check data structure
+          const { total, data: orders } = orderListResponse;
+
+          if (total !== undefined && total !== null) {
+            totalOrders = total;
+            lastValidTotal = total;
+          } else if (lastValidTotal > 0) {
+            totalOrders = lastValidTotal;
           }
 
-          this.logger.log(
-            `📦 Received ${orders?.length || 0} orders. Total from API: ${apiTotal}`,
-          );
+          this.logger.log(`📊 Total orders in system: ${totalOrders}`);
 
-          // EMPTY PAGE DETECTION
+          // Handle empty data array
           if (!orders || orders.length === 0) {
-            consecutiveEmptyPages++;
             this.logger.warn(
-              `⚠️ Empty page ${currentPage} (${consecutiveEmptyPages}/${MAX_CONSECUTIVE_EMPTY_PAGES})`,
+              `⚠️ Empty page received. Consecutive empty pages: ${consecutiveEmptyPages + 1}`,
             );
+            consecutiveEmptyPages++;
 
+            // GRACEFUL COMPLETION CHECK
             if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
               const progressPercentage =
                 totalOrders > 0 ? (processedCount / totalOrders) * 100 : 0;
@@ -263,7 +272,7 @@ export class KiotVietOrderService {
             continue;
           }
 
-          // Handle duplicate detection at page level
+          // Handle duplicate detection at page level - EXACT COPY FROM INVOICE
           const newOrders = orders.filter(
             (order) => !processedOrderIds.has(order.id),
           );
@@ -283,7 +292,7 @@ export class KiotVietOrderService {
             continue;
           }
 
-          // Add to processed set
+          // Add to processed set - EXACT COPY FROM INVOICE
           newOrders.forEach((order) => processedOrderIds.add(order.id));
 
           this.logger.log(
@@ -310,45 +319,35 @@ export class KiotVietOrderService {
 
           // Progress tracking
           const progressPercentage =
-            totalOrders > 0 ? (processedCount / totalOrders) * 100 : 100;
+            totalOrders > 0 ? (processedCount / totalOrders) * 100 : 0;
 
-          if (processedCount % 50 === 0) {
-            this.logger.log(
-              `⏳ Progress: ${processedCount}/${totalOrders} orders (${progressPercentage.toFixed(1)}%)`,
-            );
+          this.logger.log(
+            `📈 Progress: ${processedCount}/${totalOrders} (${progressPercentage.toFixed(1)}%)`,
+          );
 
-            await this.updateSyncControl(syncName, {
-              progress: {
-                processedCount,
-                totalExpected: totalOrders,
-                progressPercentage,
-              },
-            });
-          }
-
-          // COMPLETION CONDITION: Multiple criteria for safety
+          // EARLY COMPLETION CHECK
           if (
+            totalOrders > 0 &&
             processedCount >= totalOrders &&
-            totalOrders > MIN_EXPECTED_ORDERS
+            consecutiveEmptyPages === 0
           ) {
-            this.logger.log(
-              `✅ Reached expected total: ${processedCount}/${totalOrders}`,
-            );
+            this.logger.log('✅ All orders processed successfully');
             break;
           }
 
-          // Add rate limiting
-          await new Promise((resolve) => setTimeout(resolve, 500));
+          // Reset consecutive errors on successful processing
+          totalRetries = 0;
         } catch (error) {
+          this.logger.error(
+            `❌ Page ${currentPage} processing failed: ${error.message}`,
+          );
+
           consecutiveErrorPages++;
           totalRetries++;
-          this.logger.error(
-            `❌ Page ${currentPage} failed: ${error.message} (Error ${consecutiveErrorPages}/${MAX_CONSECUTIVE_ERROR_PAGES})`,
-          );
 
           if (consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES) {
             throw new Error(
-              `Too many consecutive errors (${MAX_CONSECUTIVE_ERROR_PAGES}). Aborting historical sync.`,
+              `Maximum consecutive error pages (${MAX_CONSECUTIVE_ERROR_PAGES}) reached. Aborting historical sync.`,
             );
           }
 
@@ -404,7 +403,7 @@ export class KiotVietOrderService {
   }
 
   // ============================================================================
-  // RECENT SYNC
+  // RECENT SYNC - EXACT COPY FROM INVOICE
   // ============================================================================
 
   async syncRecentOrders(days: number = 7): Promise<void> {
@@ -476,7 +475,7 @@ export class KiotVietOrderService {
   }
 
   // ============================================================================
-  // API METHODS with Retry Logic - NEW ENHANCED FUNCTIONS
+  // API METHODS with Retry Logic - EXACT COPY FROM INVOICE
   // ============================================================================
 
   async fetchOrdersListWithRetry(
@@ -490,13 +489,13 @@ export class KiotVietOrderService {
     },
     maxRetries: number = 3,
   ): Promise<any> {
-    let lastError: Error | undefined; // Initialize as undefined
+    let lastError: Error | undefined;
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         return await this.fetchOrdersList(params);
       } catch (error) {
-        lastError = error as Error; // Cast to Error type
+        lastError = error as Error;
         this.logger.warn(
           `⚠️ API attempt ${attempt}/${maxRetries} failed: ${error.message}`,
         );
@@ -508,7 +507,7 @@ export class KiotVietOrderService {
       }
     }
 
-    throw lastError; // Now guaranteed to be defined
+    throw lastError;
   }
 
   async fetchOrdersList(params: {
@@ -519,114 +518,115 @@ export class KiotVietOrderService {
     includeOrderDelivery?: boolean;
     includePayment?: boolean;
   }): Promise<any> {
-    const headers = await this.authService.getRequestHeaders();
+    const accessToken = await this.authService.getAccessToken();
 
     const queryParams = new URLSearchParams({
       currentItem: (params.currentItem || 0).toString(),
       pageSize: (params.pageSize || this.PAGE_SIZE).toString(),
       orderBy: params.orderBy || 'id',
-      orderDirection: params.orderDirection || 'Asc',
-      includeOrderDelivery: (params.includeOrderDelivery || true).toString(),
-      includePayment: (params.includePayment || true).toString(),
+      orderDirection: params.orderDirection || 'ASC',
+      includeOrderDelivery: (params.includeOrderDelivery || false).toString(),
+      includePayment: (params.includePayment || false).toString(),
     });
 
+    const url = `${this.baseUrl}/orders?${queryParams}`;
+
     const response = await firstValueFrom(
-      this.httpService.get(`${this.baseUrl}/orders?${queryParams}`, {
-        headers,
-        timeout: 30000, // Increased timeout
+      this.httpService.get(url, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: 30000,
       }),
     );
 
     return response.data;
   }
 
-  // ============================================================================
-  // KIOTVIET API METHODS - EXISTING FUNCTIONS ENHANCED
-  // ============================================================================
+  async fetchRecentOrders(fromDate: Date): Promise<KiotVietOrder[]> {
+    this.logger.log(
+      `🔍 Fetching orders modified since: ${fromDate.toISOString()}`,
+    );
 
-  private async fetchRecentOrders(fromDate: Date): Promise<any[]> {
-    try {
-      const allOrders: any[] = [];
-      let currentItem = 0;
-      let hasMoreData = true;
+    const accessToken = await this.authService.getAccessToken();
+    const orders: KiotVietOrder[] = [];
+    let currentItem = 0;
+    let hasMore = true;
 
-      while (hasMoreData) {
-        const response = await this.fetchRecentOrdersPage(
-          fromDate,
-          currentItem,
+    while (hasMore) {
+      const queryParams = new URLSearchParams({
+        currentItem: currentItem.toString(),
+        pageSize: this.PAGE_SIZE.toString(),
+        fromModifiedDate: fromDate.toISOString(),
+        orderBy: 'modifiedDate',
+        orderDirection: 'DESC',
+        includeOrderDelivery: 'true',
+        includePayment: 'true',
+      });
+
+      const url = `${this.baseUrl}/orders?${queryParams}`;
+
+      try {
+        const response = await firstValueFrom(
+          this.httpService.get(url, {
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              'Content-Type': 'application/json',
+            },
+            timeout: 30000,
+          }),
         );
 
-        if (!response.data || response.data.length === 0) {
-          hasMoreData = false;
-          break;
+        const { data: pageOrders, total } = response.data;
+
+        if (pageOrders && pageOrders.length > 0) {
+          orders.push(...pageOrders);
+          currentItem += pageOrders.length;
+
+          this.logger.log(
+            `📥 Fetched ${pageOrders.length} recent orders (Total: ${orders.length}/${total})`,
+          );
+
+          // Check if we have more data
+          hasMore =
+            orders.length < total && pageOrders.length === this.PAGE_SIZE;
+        } else {
+          hasMore = false;
         }
-
-        allOrders.push(...response.data);
-        currentItem += response.data.length;
-
-        // Check if more data
-        hasMoreData = response.data.length === this.PAGE_SIZE;
-
-        // Rate limiting
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+      } catch (error) {
+        this.logger.error(`Failed to fetch recent orders: ${error.message}`);
+        throw error;
       }
-
-      return allOrders;
-    } catch (error) {
-      this.logger.error(`Failed to fetch recent orders: ${error.message}`);
-      throw error;
     }
+
+    return orders;
   }
 
-  private async fetchRecentOrdersPage(
-    fromDate: Date,
-    currentItem: number,
-  ): Promise<any> {
-    try {
-      const headers = await this.authService.getRequestHeaders();
+  // ============================================================================
+  // ORDER ENRICHMENT & DATABASE OPERATIONS - ADAPTED FROM INVOICE
+  // ============================================================================
 
-      const response = await firstValueFrom(
-        this.httpService.get(`${this.baseUrl}/orders`, {
-          headers,
-          params: {
-            pageSize: this.PAGE_SIZE,
-            currentItem,
-            includeOrderDelivery: true,
-            includePayment: true,
-            lastModifiedFrom: fromDate.toISOString(),
-            orderBy: 'modifiedDate',
-            orderDirection: 'Desc',
-          },
-          timeout: 30000,
-        }),
-      );
-
-      return response.data;
-    } catch (error) {
-      this.logger.error(`Failed to fetch recent orders: ${error.message}`);
-      throw error;
-    }
-  }
-
-  private async enrichOrdersWithDetails(orders: any[]): Promise<any[]> {
+  private async enrichOrdersWithDetails(
+    orders: KiotVietOrder[],
+  ): Promise<any[]> {
     const enrichedOrders: any[] = [];
 
     for (const order of orders) {
       try {
-        const headers = await this.authService.getRequestHeaders();
+        // Fetch detailed order information if needed
+        let detailedOrder = order;
 
-        const response = await firstValueFrom(
-          this.httpService.get(`${this.baseUrl}/orders/${order.id}`, {
-            headers,
-            timeout: 15000,
-          }),
-        );
+        if (!order.orderDetails || order.orderDetails.length === 0) {
+          detailedOrder = await this.fetchOrderDetails(order.id);
+        }
 
-        enrichedOrders.push(response.data);
+        enrichedOrders.push(detailedOrder);
       } catch (error) {
         this.logger.warn(
-          `Failed to enrich order ${order.code}: ${error.message}`,
+          `⚠️ Failed to enrich order ${order.id}: ${error.message}`,
         );
+        // Use original order data if enrichment fails
         enrichedOrders.push(order);
       }
     }
@@ -634,317 +634,84 @@ export class KiotVietOrderService {
     return enrichedOrders;
   }
 
-  // ============================================================================
-  // DATABASE OPERATIONS
-  // ============================================================================
+  private async fetchOrderDetails(orderId: number): Promise<KiotVietOrder> {
+    const accessToken = await this.authService.getAccessToken();
+    const url = `${this.baseUrl}/orders/${orderId}`;
 
-  // ============================================================================
-  // FILE: src/services/kiot-viet/order/order.service.ts
-  // ✅ EXACT Invoice Pattern Implementation for Order
-  // ============================================================================
+    const response = await firstValueFrom(
+      this.httpService.get(url, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: 15000,
+      }),
+    );
+
+    return response.data;
+  }
 
   private async saveOrdersToDatabase(orders: any[]): Promise<any[]> {
     const savedOrders: any[] = [];
 
-    for (const orderData of orders) {
+    for (const order of orders) {
       try {
-        const customer = orderData.customerId
-          ? await this.prismaService.customer.findFirst({
-              where: { kiotVietId: BigInt(orderData.customerId) },
-              select: { id: true },
-            })
-          : null;
+        const orderData = {
+          kiotVietId: BigInt(order.id),
+          code: order.code,
+          purchaseDate: new Date(order.orderDate || order.purchaseDate),
+          branchId: order.branchId,
+          branchName: order.branchName || null,
+          customerId: order.customerId || null,
+          customerCode: order.customerCode || null,
+          customerName: order.customerName || null,
+          soldById: order.soldById || null,
+          soldByName: order.soldByName || null,
+          saleChannelId: order.saleChannelId || null,
+          status: order.status || null,
+          statusValue: order.statusValue || null,
+          total: order.total || 0,
+          totalPayment: order.totalPayment || 0,
+          description: order.description || null,
+          usingCod: order.usingCod || false,
+          discount: order.discount || 0,
+          discountRatio: order.discountRatio || 0,
+          createdDate: new Date(order.createdDate),
+          modifiedDate: order.modifiedDate
+            ? new Date(order.modifiedDate)
+            : new Date(),
+          lastSyncedAt: new Date(),
+          larkRecordId: null,
+          larkSyncStatus: LarkSyncStatus.PENDING,
+          larkSyncedAt: null,
+          larkSyncRetries: 0,
+        };
 
-        // Branch lookup - SAFE
-        const branch = await this.prismaService.branch.findFirst({
-          where: { kiotVietId: orderData.branchId },
-          select: { id: true },
-        });
-
-        const soldBy = orderData.soldById
-          ? await this.prismaService.user.findFirst({
-              where: { kiotVietId: BigInt(orderData.soldById) },
-              select: { kiotVietId: true },
-            })
-          : null;
-
-        // SaleChannel lookup - SAFE
-        const saleChannel = orderData.saleChannelId
-          ? await this.prismaService.saleChannel.findFirst({
-              where: { kiotVietId: orderData.saleChannelId },
-              select: { id: true },
-            })
-          : null;
-
-        // ✅ EXACT Invoice Pattern: Complete upsert with satisfies constraint
-        const order = await this.prismaService.order.upsert({
-          where: { kiotVietId: BigInt(orderData.id) },
+        const savedOrder = await this.prismaService.order.upsert({
+          where: { kiotVietId: orderData.kiotVietId },
           update: {
-            code: orderData.code,
-            purchaseDate: new Date(orderData.purchaseDate),
-            branchId: branch?.id ?? null,
-            soldById: soldBy?.kiotVietId ?? null,
-            cashierId: orderData.cashierId ? BigInt(orderData.cashierId) : null,
-            customerId: customer?.id ?? null,
-            total: new Prisma.Decimal(orderData.total || 0),
-            totalPayment: new Prisma.Decimal(orderData.totalPayment || 0),
-            discount: orderData.discount
-              ? new Prisma.Decimal(orderData.discount)
-              : null,
-            discountRatio: orderData.discountRatio || null,
-            status: orderData.status,
-            statusValue: orderData.statusValue || null,
-            description: orderData.description || null,
-            usingCod: orderData.usingCod || false,
-            saleChannelId: saleChannel?.id ?? null,
-            expectedDelivery: orderData.expectedDelivery
-              ? new Date(orderData.expectedDelivery)
-              : null,
-            retailerId: orderData.retailerId || null,
-            modifiedDate: orderData.modifiedDate
-              ? new Date(orderData.modifiedDate)
-              : new Date(),
-            lastSyncedAt: new Date(),
-            larkSyncStatus: 'PENDING' as const,
+            ...orderData,
+            modifiedDate: new Date(),
           },
           create: {
-            kiotVietId: BigInt(orderData.id),
-            code: orderData.code,
-            purchaseDate: new Date(orderData.purchaseDate),
-            branchId: branch?.id ?? null,
-            soldById: soldBy?.kiotVietId ?? null,
-            cashierId: orderData.cashierId ? BigInt(orderData.cashierId) : null,
-            customerId: customer?.id ?? null,
-            total: new Prisma.Decimal(orderData.total || 0),
-            totalPayment: new Prisma.Decimal(orderData.totalPayment || 0),
-            discount: orderData.discount
-              ? new Prisma.Decimal(orderData.discount)
-              : null,
-            discountRatio: orderData.discountRatio || null,
-            status: orderData.status,
-            statusValue: orderData.statusValue || null,
-            description: orderData.description || null,
-            usingCod: orderData.usingCod || false,
-            saleChannelId: saleChannel?.id ?? null,
-            expectedDelivery: orderData.expectedDelivery
-              ? new Date(orderData.expectedDelivery)
-              : null,
-            retailerId: orderData.retailerId || null,
-            modifiedDate: orderData.modifiedDate
-              ? new Date(orderData.modifiedDate)
-              : new Date(),
-            createdDate: orderData.createdDate
-              ? new Date(orderData.createdDate)
-              : new Date(),
-            lastSyncedAt: new Date(),
-            larkSyncStatus: 'PENDING' as const,
-          } satisfies Prisma.OrderUncheckedCreateInput,
+            ...orderData,
+          },
         });
 
-        // ============================================================================
-        // SAVE ORDER DETAILS
-        // ============================================================================
-        if (orderData.orderDetails && orderData.orderDetails.length > 0) {
-          for (const detail of orderData.orderDetails) {
-            const product = await this.prismaService.product.findFirst({
-              where: { kiotVietId: BigInt(detail.productId) },
-              select: { id: true },
-            });
-
-            if (product) {
-              await this.prismaService.orderDetail.upsert({
-                where: {
-                  kiotVietId: detail.id ? BigInt(detail.id) : BigInt(0),
-                },
-                update: {
-                  quantity: detail.quantity,
-                  price: new Prisma.Decimal(detail.price),
-                  discount: detail.discount
-                    ? new Prisma.Decimal(detail.discount)
-                    : null,
-                  discountRatio: detail.discountRatio,
-                  note: detail.note,
-                  isMaster: detail.isMaster ?? true,
-                },
-                create: {
-                  kiotVietId: detail.id ? BigInt(detail.id) : null,
-                  orderId: order.id,
-                  productId: product.id,
-                  quantity: detail.quantity,
-                  price: new Prisma.Decimal(detail.price),
-                  discount: detail.discount
-                    ? new Prisma.Decimal(detail.discount)
-                    : null,
-                  discountRatio: detail.discountRatio,
-                  note: detail.note,
-                  isMaster: detail.isMaster ?? true,
-                },
-              });
-            }
-          }
-        }
-
-        // ============================================================================
-        // SAVE ORDER DELIVERY (OPTIONAL)
-        // ============================================================================
-        if (orderData.orderDelivery) {
-          await this.prismaService.orderDelivery.upsert({
-            where: { orderId: order.id },
-            update: {
-              deliveryCode: orderData.orderDelivery.deliveryCode,
-              type: orderData.orderDelivery.type,
-              price: orderData.orderDelivery.price
-                ? new Prisma.Decimal(orderData.orderDelivery.price)
-                : null,
-              receiver: orderData.orderDelivery.receiver,
-              contactNumber: orderData.orderDelivery.contactNumber,
-              address: orderData.orderDelivery.address,
-              locationId: orderData.orderDelivery.locationId,
-              locationName: orderData.orderDelivery.locationName,
-              wardName: orderData.orderDelivery.wardName,
-              weight: orderData.orderDelivery.weight,
-              length: orderData.orderDelivery.length,
-              width: orderData.orderDelivery.width,
-              height: orderData.orderDelivery.height,
-              partnerDeliveryId: orderData.orderDelivery.partnerDeliveryId
-                ? BigInt(orderData.orderDelivery.partnerDeliveryId)
-                : null,
-            },
-            create: {
-              orderId: order.id,
-              deliveryCode: orderData.orderDelivery.deliveryCode,
-              type: orderData.orderDelivery.type,
-              price: orderData.orderDelivery.price
-                ? new Prisma.Decimal(orderData.orderDelivery.price)
-                : null,
-              receiver: orderData.orderDelivery.receiver,
-              contactNumber: orderData.orderDelivery.contactNumber,
-              address: orderData.orderDelivery.address,
-              locationId: orderData.orderDelivery.locationId,
-              locationName: orderData.orderDelivery.locationName,
-              wardName: orderData.orderDelivery.wardName,
-              weight: orderData.orderDelivery.weight,
-              length: orderData.orderDelivery.length,
-              width: orderData.orderDelivery.width,
-              height: orderData.orderDelivery.height,
-              partnerDeliveryId: orderData.orderDelivery.partnerDeliveryId
-                ? BigInt(orderData.orderDelivery.partnerDeliveryId)
-                : null,
-            },
-          });
-        }
-
-        if (orderData.payments && orderData.payments.length > 0) {
-          for (const payment of orderData.payments) {
-            const bankAccount = payment.accountId
-              ? await this.prismaService.bankAccount.findFirst({
-                  where: { kiotVietId: payment.accountId },
-                  select: { id: true },
-                })
-              : null;
-
-            await this.prismaService.payment.upsert({
-              where: {
-                kiotVietId: payment.id ? BigInt(payment.id) : BigInt(0),
-              },
-              update: {
-                code: payment.code,
-                amount: new Prisma.Decimal(payment.amount),
-                method: payment.method,
-                status: payment.status,
-                transDate: new Date(payment.transDate),
-                accountId: bankAccount?.id ?? null, // ✅ FIXED: Use internal BankAccount.id
-                description: payment.description,
-                orderId: order.id,
-              },
-              create: {
-                kiotVietId: payment.id ? BigInt(payment.id) : null,
-                orderId: order.id,
-                code: payment.code,
-                amount: new Prisma.Decimal(payment.amount),
-                method: payment.method,
-                status: payment.status,
-                transDate: new Date(payment.transDate),
-                accountId: bankAccount?.id ?? null, // ✅ FIXED: Use internal BankAccount.id
-                description: payment.description,
-              },
-            });
-          }
-        }
-
-        // ============================================================================
-        // SAVE ORDER SURCHARGES (OPTIONAL)
-        // ============================================================================
-        if (
-          orderData.invoiceOrderSurcharges &&
-          orderData.invoiceOrderSurcharges.length > 0
-        ) {
-          for (const surcharge of orderData.invoiceOrderSurcharges) {
-            // Lookup surcharge by ID
-            const surchargeRecord = surcharge.surchargeId
-              ? await this.prismaService.surcharge.findFirst({
-                  where: { kiotVietId: surcharge.surchargeId },
-                  select: { id: true },
-                })
-              : null;
-
-            await this.prismaService.orderSurcharge.upsert({
-              where: {
-                kiotVietId: surcharge.id ? BigInt(surcharge.id) : BigInt(0),
-              },
-              update: {
-                surchargeName: surcharge.surchargeName,
-                surValue: surcharge.surValue
-                  ? new Prisma.Decimal(surcharge.surValue)
-                  : null,
-                price: surcharge.price
-                  ? new Prisma.Decimal(surcharge.price)
-                  : null,
-              },
-              create: {
-                kiotVietId: surcharge.id ? BigInt(surcharge.id) : null,
-                orderId: order.id,
-                surchargeId: surchargeRecord?.id ?? null,
-                surchargeName: surcharge.surchargeName,
-                surValue: surcharge.surValue
-                  ? new Prisma.Decimal(surcharge.surValue)
-                  : null,
-                price: surcharge.price
-                  ? new Prisma.Decimal(surcharge.price)
-                  : null,
-                createdDate: new Date(),
-              },
-            });
-          }
-        }
-
-        savedOrders.push(order);
+        savedOrders.push(savedOrder);
       } catch (error) {
         this.logger.error(
-          `Failed to save order ${orderData.id}: ${error.message}`,
+          `💥 Failed to save order ${order.id}: ${error.message}`,
         );
-        // Log detailed error for debugging
-        this.logger.debug(
-          `Order data: ${JSON.stringify({
-            id: orderData.id,
-            soldById: orderData.soldById,
-            customerId: orderData.customerId,
-            branchId: orderData.branchId,
-            payments: orderData.payments?.map((p) => ({
-              id: p.id,
-              accountId: p.accountId,
-            })),
-          })}`,
-        );
+        // Continue with other orders
       }
     }
 
+    this.logger.log(
+      `💾 Saved ${savedOrders.length}/${orders.length} orders to database`,
+    );
     return savedOrders;
   }
-
-  // ============================================================================
-  // LARKBASE INTEGRATION
-  // ============================================================================
 
   private async syncOrdersToLarkBase(orders: any[]): Promise<void> {
     if (orders.length === 0) return;
@@ -952,38 +719,42 @@ export class KiotVietOrderService {
     try {
       await this.larkOrderSyncService.syncOrdersToLarkBase(orders);
     } catch (error) {
-      this.logger.error(`LarkBase sync failed: ${error.message}`);
-      // Don't throw error to prevent blocking database sync
+      this.logger.error(`Failed to sync orders to LarkBase: ${error.message}`);
+      // Update orders with failed status
+      await this.updateOrdersSyncStatus(orders, LarkSyncStatus.FAILED);
+      throw error;
     }
   }
 
+  private async updateOrdersSyncStatus(
+    orders: any[],
+    status: LarkSyncStatus,
+  ): Promise<void> {
+    const orderIds = orders.map((order) => order.kiotVietId);
+
+    await this.prismaService.order.updateMany({
+      where: { kiotVietId: { in: orderIds } },
+      data: { larkSyncStatus: status },
+    });
+  }
+
   // ============================================================================
-  // SYNC CONTROL UTILITIES
+  // SYNC CONTROL UTILITIES - EXACT COPY FROM INVOICE
   // ============================================================================
 
-  private async updateSyncControl(
-    name: string,
-    data: Partial<{
-      isRunning: boolean;
-      isEnabled: boolean;
-      status: string;
-      error: string | null;
-      startedAt: Date;
-      completedAt: Date;
-      lastRunAt: Date;
-      progress: any; // ✅ FIX: Use progress instead of metadata
-    }>,
-  ): Promise<void> {
+  private async updateSyncControl(name: string, data: any): Promise<void> {
     await this.prismaService.syncControl.upsert({
       where: { name },
+      update: {
+        ...data,
+        updatedAt: new Date(),
+      },
       create: {
         name,
-        entities: ['order'],
-        syncMode: name.includes('historical') ? 'historical' : 'recent',
-        status: 'idle',
         ...data,
+        createdAt: new Date(),
+        updatedAt: new Date(),
       },
-      update: data,
     });
   }
 }
