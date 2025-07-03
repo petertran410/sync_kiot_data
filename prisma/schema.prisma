@@ -371,7 +371,7 @@ model Order {
   expectedDelivery  DateTime?
   retailerId        Int?
   createdDate       DateTime           @default(now())
-  modifiedDate      DateTime           @updatedAt
+  modifiedDate      DateTime
   lastSyncedAt      DateTime           @default(now())
   larkRecordId      String?
   larkSyncStatus    LarkSyncStatus     @default(PENDING)
@@ -481,7 +481,7 @@ model Invoice {
   isApplyVoucher    Boolean            @default(false)
   retailerId        Int?
   createdDate       DateTime           @default(now())
-  modifiedDate      DateTime           @updatedAt
+  modifiedDate      DateTime
   lastSyncedAt      DateTime           @default(now())
 
   larkRecordId      String?

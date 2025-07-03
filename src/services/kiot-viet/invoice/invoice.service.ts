@@ -735,9 +735,7 @@ export class KiotVietInvoiceService {
             saleChannelId: saleChannel?.id ?? null,
             isApplyVoucher: invoiceData.isApplyVoucher || false,
             retailerId: invoiceData.retailerId || null,
-            modifiedDate: invoiceData.modifiedDate
-              ? new Date(invoiceData.modifiedDate)
-              : new Date(),
+            modifiedDate: new Date(invoiceData.modifiedDate),
             lastSyncedAt: new Date(),
             larkRecordId: null,
             larkSyncStatus: 'PENDING' as const,
@@ -766,9 +764,7 @@ export class KiotVietInvoiceService {
             saleChannelId: saleChannel?.id ?? null,
             isApplyVoucher: invoiceData.isApplyVoucher || false,
             retailerId: invoiceData.retailerId || null,
-            modifiedDate: invoiceData.modifiedDate
-              ? new Date(invoiceData.modifiedDate)
-              : new Date(),
+            modifiedDate: new Date(invoiceData.modifiedDate),
             lastSyncedAt: new Date(),
             larkSyncStatus: 'PENDING' as const,
           } satisfies Prisma.InvoiceUncheckedCreateInput,

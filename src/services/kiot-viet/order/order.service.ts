@@ -697,9 +697,7 @@ export class KiotVietOrderService {
             usingCod: orderData.usingCod || false,
             discount: orderData.discoun || null,
             discountRatio: orderData.discountRatio || null,
-            modifiedDate: orderData.modifiedDate
-              ? new Date(orderData.modifiedDate)
-              : new Date(),
+            modifiedDate: new Date(orderData.modifiedDate),
             lastSyncedAt: new Date(),
             larkRecordId: null,
             larkSyncStatus: 'PENDING' as const,
@@ -722,9 +720,7 @@ export class KiotVietOrderService {
             usingCod: orderData.usingCod || false,
             discount: orderData.discoun || null,
             discountRatio: orderData.discountRatio || null,
-            modifiedDate: orderData.modifiedDate
-              ? new Date(orderData.modifiedDate)
-              : new Date(),
+            modifiedDate: new Date(orderData.modifiedDate),
             lastSyncedAt: new Date(),
             larkRecordId: null,
             larkSyncStatus: 'PENDING' as const,
