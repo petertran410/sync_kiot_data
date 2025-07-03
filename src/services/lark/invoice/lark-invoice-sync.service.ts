@@ -1319,7 +1319,7 @@ export class LarkInvoiceSyncService {
     if (invoice.modifiedDate) {
       fields[LARK_INVOICE_FIELDS.MODIFIED_DATE] = new Date(
         invoice.modifiedDate,
-      ).getTime;
+      ).getTime();
     }
 
     return fields;
