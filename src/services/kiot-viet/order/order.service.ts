@@ -638,6 +638,11 @@ export class KiotVietOrderService {
   // DATABASE OPERATIONS
   // ============================================================================
 
+  // ============================================================================
+  // FILE: src/services/kiot-viet/order/order.service.ts
+  // ✅ EXACT Invoice Pattern Implementation for Order
+  // ============================================================================
+
   private async saveOrdersToDatabase(orders: any[]): Promise<any[]> {
     const savedOrders: any[] = [];
 
@@ -671,13 +676,14 @@ export class KiotVietOrderService {
             })
           : null;
 
+        // ✅ EXACT Invoice Pattern: Complete upsert with satisfies constraint
         const order = await this.prismaService.order.upsert({
           where: { kiotVietId: BigInt(orderData.id) },
           update: {
             code: orderData.code,
             purchaseDate: new Date(orderData.purchaseDate),
             branchId: branch?.id ?? null,
-            soldById: soldBy?.kiotVietId ?? null, // ✅ FIXED: Use kiotVietId, not id
+            soldById: soldBy?.kiotVietId ?? null,
             cashierId: orderData.cashierId ? BigInt(orderData.cashierId) : null,
             customerId: customer?.id ?? null,
             total: new Prisma.Decimal(orderData.total || 0),
@@ -698,15 +704,15 @@ export class KiotVietOrderService {
             modifiedDate: orderData.modifiedDate
               ? new Date(orderData.modifiedDate)
               : new Date(),
-            larkSyncStatus: 'PENDING',
             lastSyncedAt: new Date(),
+            larkSyncStatus: 'PENDING' as const,
           },
           create: {
             kiotVietId: BigInt(orderData.id),
             code: orderData.code,
             purchaseDate: new Date(orderData.purchaseDate),
             branchId: branch?.id ?? null,
-            soldById: soldBy?.kiotVietId ?? null, // ✅ FIXED: Use kiotVietId, not id
+            soldById: soldBy?.kiotVietId ?? null,
             cashierId: orderData.cashierId ? BigInt(orderData.cashierId) : null,
             customerId: customer?.id ?? null,
             total: new Prisma.Decimal(orderData.total || 0),
@@ -727,17 +733,12 @@ export class KiotVietOrderService {
             modifiedDate: orderData.modifiedDate
               ? new Date(orderData.modifiedDate)
               : new Date(),
-            larkSyncStatus: 'PENDING',
+            createdDate: orderData.createdDate
+              ? new Date(orderData.createdDate)
+              : new Date(),
             lastSyncedAt: new Date(),
+            larkSyncStatus: 'PENDING' as const,
           } satisfies Prisma.OrderUncheckedCreateInput,
-          include: {
-            customer: {
-              select: {
-                code: true,
-                name: true,
-              },
-            },
-          },
         });
 
         // ============================================================================
@@ -833,12 +834,8 @@ export class KiotVietOrderService {
           });
         }
 
-        // ============================================================================
-        // SAVE PAYMENTS (OPTIONAL)
-        // ============================================================================
         if (orderData.payments && orderData.payments.length > 0) {
           for (const payment of orderData.payments) {
-            // Lookup BankAccount by kiotVietId
             const bankAccount = payment.accountId
               ? await this.prismaService.bankAccount.findFirst({
                   where: { kiotVietId: payment.accountId },
@@ -950,38 +947,13 @@ export class KiotVietOrderService {
   // ============================================================================
 
   private async syncOrdersToLarkBase(orders: any[]): Promise<void> {
+    if (orders.length === 0) return;
+
     try {
-      if (orders.length === 0) {
-        this.logger.log('📋 No orders to sync to LarkBase');
-        return;
-      }
-
-      this.logger.log(
-        `🔄 Starting LarkBase sync for ${orders.length} orders...`,
-      );
-
-      // ✅ FIX: Set pending status before sync
-      const orderIds = orders.map((order) => order.id);
-      await this.prismaService.order.updateMany({
-        where: { id: { in: orderIds } },
-        data: { larkSyncStatus: 'PENDING' },
-      });
-
-      // Call LarkBase sync service
       await this.larkOrderSyncService.syncOrdersToLarkBase(orders);
-
-      this.logger.log(`✅ LarkBase sync completed for ${orders.length} orders`);
     } catch (error) {
-      this.logger.error(`❌ LarkBase sync failed: ${error.message}`);
-
-      // ✅ FIX: Mark failed orders
-      const orderIds = orders.map((order) => order.id);
-      await this.prismaService.order.updateMany({
-        where: { id: { in: orderIds } },
-        data: { larkSyncStatus: 'FAILED' },
-      });
-
-      throw error;
+      this.logger.error(`LarkBase sync failed: ${error.message}`);
+      // Don't throw error to prevent blocking database sync
     }
   }
 
