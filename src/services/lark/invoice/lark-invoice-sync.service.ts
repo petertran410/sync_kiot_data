@@ -26,7 +26,7 @@ const LARK_INVOICE_FIELDS = {
   APPLY_VOUCHER: 'Áp Mã Voucher',
   CREATED_DATE: 'Ngày Tạo',
   PURCHASE_DATE: 'Ngày Mua',
-  MODIFIED_DATE: 'Ngày Cập Nhật',
+  // MODIFIED_DATE: 'Ngày Cập Nhật',
 } as const;
 
 const BRANCH_OPTIONS = {
@@ -1316,11 +1316,11 @@ export class LarkInvoiceSyncService {
       ).getTime();
     }
 
-    if (invoice.modifiedDate) {
-      fields[LARK_INVOICE_FIELDS.MODIFIED_DATE] = new Date(
-        invoice.modifiedDate,
-      ).getTime();
-    }
+    // if (invoice.modifiedDate) {
+    //   fields[LARK_INVOICE_FIELDS.MODIFIED_DATE] = new Date(
+    //     invoice.modifiedDate,
+    //   ).getTime();
+    // }
 
     return fields;
   }

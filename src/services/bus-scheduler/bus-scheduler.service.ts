@@ -71,16 +71,16 @@ export class BusSchedulerService implements OnModuleInit {
 
       // ✅ Enhanced parallel execution with proper error handling
       const syncPromises = [
+        this.runOrderSync().catch((error) => {
+          this.logger.error(`Order sync failed: ${error.message}`);
+          return { status: 'rejected', reason: error.message };
+        }),
         this.runCustomerSync().catch((error) => {
           this.logger.error(`Customer sync failed: ${error.message}`);
           return { status: 'rejected', reason: error.message };
         }),
         this.runInvoiceSync().catch((error) => {
           this.logger.error(`Invoice sync failed: ${error.message}`);
-          return { status: 'rejected', reason: error.message };
-        }),
-        this.runOrderSync().catch((error) => {
-          this.logger.error(`Order sync failed: ${error.message}`);
           return { status: 'rejected', reason: error.message };
         }),
       ];
@@ -239,9 +239,6 @@ export class BusSchedulerService implements OnModuleInit {
     try {
       this.logger.log('🧾 [Order] Starting parallel sync...');
       const startTime = Date.now();
-
-      // ✅ NEW: Check for stuck sync and reset if needed
-      await this.checkAndResetStuckOrderSync();
 
       // ✅ Main sync
       await this.orderService.checkAndRunAppropriateSync();
@@ -491,41 +488,6 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
-  private async checkAndResetStuckOrderSync(): Promise<void> {
-    try {
-      const stuckThresholdMinutes = 60; // 1 hour
-      const stuckThreshold = new Date(
-        Date.now() - stuckThresholdMinutes * 60 * 1000,
-      );
-
-      const stuckOrderSync = await this.prismaService.syncControl.findFirst({
-        where: {
-          name: 'order_recent',
-          isRunning: true,
-          startedAt: {
-            lt: stuckThreshold,
-          },
-        },
-      });
-
-      if (stuckOrderSync) {
-        await this.prismaService.syncControl.update({
-          where: { name: 'order_recent' },
-          data: {
-            isRunning: false,
-            status: 'interrupted',
-            error: 'Auto-reset due to timeout',
-            completedAt: new Date(),
-          },
-        });
-
-        this.logger.log('✅ Reset stuck order sync - will retry normally');
-      }
-    } catch (error) {
-      this.logger.warn(`⚠️ Failed to check stuck order sync: ${error.message}`);
-    }
-  }
-
   // ============================================================================
   // MANUAL SCHEDULER CONTROLS
   // ============================================================================
@@ -577,16 +539,16 @@ export class BusSchedulerService implements OnModuleInit {
       this.logger.log('📋 Running parallel startup sync checks...');
 
       const startupPromises = [
+        this.runOrderSync().catch((error) => {
+          this.logger.warn(`Order startup check failed: ${error.message}`);
+          return Promise.resolve(); // Don't fail startup
+        }),
         this.runCustomerSync().catch((error) => {
           this.logger.warn(`Customer startup check failed: ${error.message}`);
           return Promise.resolve(); // Don't fail startup
         }),
         this.runInvoiceSync().catch((error) => {
           this.logger.warn(`Invoice startup check failed: ${error.message}`);
-          return Promise.resolve(); // Don't fail startup
-        }),
-        this.runOrderSync().catch((error) => {
-          this.logger.warn(`Order startup check failed: ${error.message}`);
           return Promise.resolve(); // Don't fail startup
         }),
       ];
@@ -638,7 +600,7 @@ export class BusSchedulerService implements OnModuleInit {
         mainScheduler: {
           enabled: this.isMainSchedulerEnabled,
           nextRun: '8 minutes interval',
-          entities: ['customer', 'invoice', 'order'], // ← CẬP NHẬT
+          entities: ['order', 'customer', 'invoice'], // ← CẬP NHẬT
         },
         weeklyScheduler: {
           enabled: this.isWeeklySchedulerEnabled,
@@ -693,7 +655,7 @@ export class BusSchedulerService implements OnModuleInit {
         name: cycleName,
         entities:
           cycleName === 'main_cycle'
-            ? ['customer', 'invoice', 'order'] // ← CẬP NHẬT
+            ? ['order', 'customer', 'invoice'] // ← CẬP NHẬT
             : ['customergroup'],
         syncMode: 'cycle',
         isRunning: status === 'running',
