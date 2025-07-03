@@ -240,6 +240,9 @@ export class BusSchedulerService implements OnModuleInit {
       this.logger.log('🧾 [Order] Starting parallel sync...');
       const startTime = Date.now();
 
+      // ✅ NEW: Check for stuck sync and reset if needed
+      await this.checkAndResetStuckOrderSync();
+
       // ✅ Main sync
       await this.orderService.checkAndRunAppropriateSync();
 
@@ -371,34 +374,155 @@ export class BusSchedulerService implements OnModuleInit {
         where: { name: 'order_lark_sync' },
       });
 
-      // ✅ FIX: Trigger if recent sync just completed and Lark sync is not running
-      if (
+      this.logger.debug(
+        `🔍 Order sync status check: recent=${recentSync?.status}, lark=${larkSync?.status}`,
+      );
+
+      // ✅ FIX: Improved trigger conditions
+      const shouldTrigger =
         recentSync?.status === 'completed' &&
         recentSync.isRunning === false &&
-        (!larkSync?.isRunning || larkSync.isRunning !== true)
-      ) {
+        (!larkSync?.isRunning || larkSync.isRunning !== true);
+
+      if (shouldTrigger) {
         this.logger.log('🔄 Auto-triggering order Lark sync...');
 
-        // Get recent invoices that need sync
+        // ✅ FIX: Create lark sync control if not exists
+        await this.prismaService.syncControl.upsert({
+          where: { name: 'order_lark_sync' },
+          create: {
+            name: 'order_lark_sync',
+            entities: ['order'],
+            syncMode: 'lark_sync',
+            isEnabled: true,
+            isRunning: true,
+            status: 'running',
+            startedAt: new Date(),
+          },
+          update: {
+            isRunning: true,
+            status: 'running',
+            startedAt: new Date(),
+            error: null,
+          },
+        });
+
+        // Get recent orders that need sync
         const ordersToSync = await this.prismaService.order.findMany({
           where: {
-            OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+            OR: [
+              { larkSyncStatus: 'PENDING' },
+              { larkSyncStatus: 'FAILED' }, // ✅ FIX: Include null status
+            ],
           },
           take: 1000, // Limit to prevent overload
         });
 
         if (ordersToSync.length > 0) {
-          await this.larkOrderSyncService.syncOrdersToLarkBase(ordersToSync);
-          this.logger.log(
-            `✅ Auto-triggered order Lark sync: ${ordersToSync.length} orders`,
-          );
+          try {
+            await this.larkOrderSyncService.syncOrdersToLarkBase(ordersToSync);
+
+            // ✅ FIX: Mark lark sync as completed
+            await this.prismaService.syncControl.update({
+              where: { name: 'order_lark_sync' },
+              data: {
+                isRunning: false,
+                status: 'completed',
+                completedAt: new Date(),
+                lastRunAt: new Date(),
+              },
+            });
+
+            this.logger.log(
+              `✅ Auto-triggered order Lark sync: ${ordersToSync.length} orders`,
+            );
+          } catch (larkError) {
+            // ✅ FIX: Handle lark sync errors properly
+            await this.prismaService.syncControl.update({
+              where: { name: 'order_lark_sync' },
+              data: {
+                isRunning: false,
+                status: 'failed',
+                error: larkError.message,
+              },
+            });
+            throw larkError;
+          }
+        } else {
+          // ✅ FIX: Mark as completed even if no orders to sync
+          await this.prismaService.syncControl.update({
+            where: { name: 'order_lark_sync' },
+            data: {
+              isRunning: false,
+              status: 'completed',
+              completedAt: new Date(),
+              lastRunAt: new Date(),
+            },
+          });
+          this.logger.log('📋 No orders need Lark sync - marked as completed');
         }
+      } else {
+        this.logger.debug(
+          `⏸️ Order Lark sync conditions not met: recent=${recentSync?.status}(${recentSync?.isRunning}), lark=${larkSync?.status}(${larkSync?.isRunning})`,
+        );
       }
     } catch (error) {
-      this.logger.warn(
-        `⚠️ Auto-trigger order Lark sync failed: ${error.message}`,
+      this.logger.error(
+        `❌ Auto-trigger order Lark sync failed: ${error.message}`,
       );
+
+      // ✅ FIX: Ensure lark sync status is updated on error
+      try {
+        await this.prismaService.syncControl.update({
+          where: { name: 'order_lark_sync' },
+          data: {
+            isRunning: false,
+            status: 'failed',
+            error: error.message,
+          },
+        });
+      } catch (updateError) {
+        this.logger.error(
+          `Failed to update order lark sync status: ${updateError.message}`,
+        );
+      }
+
       // Don't throw - this shouldn't block main sync
+    }
+  }
+
+  private async checkAndResetStuckOrderSync(): Promise<void> {
+    try {
+      const stuckThresholdMinutes = 60; // 1 hour
+      const stuckThreshold = new Date(
+        Date.now() - stuckThresholdMinutes * 60 * 1000,
+      );
+
+      const stuckOrderSync = await this.prismaService.syncControl.findFirst({
+        where: {
+          name: 'order_recent',
+          isRunning: true,
+          startedAt: {
+            lt: stuckThreshold,
+          },
+        },
+      });
+
+      if (stuckOrderSync) {
+        await this.prismaService.syncControl.update({
+          where: { name: 'order_recent' },
+          data: {
+            isRunning: false,
+            status: 'interrupted',
+            error: 'Auto-reset due to timeout',
+            completedAt: new Date(),
+          },
+        });
+
+        this.logger.log('✅ Reset stuck order sync - will retry normally');
+      }
+    } catch (error) {
+      this.logger.warn(`⚠️ Failed to check stuck order sync: ${error.message}`);
     }
   }
 

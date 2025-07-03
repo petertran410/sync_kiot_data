@@ -698,8 +698,8 @@ export class KiotVietOrderService {
             modifiedDate: orderData.modifiedDate
               ? new Date(orderData.modifiedDate)
               : new Date(),
+            larkSyncStatus: 'PENDING',
             lastSyncedAt: new Date(),
-            larkSyncStatus: 'PENDING' as const,
           },
           create: {
             kiotVietId: BigInt(orderData.id),
@@ -727,8 +727,8 @@ export class KiotVietOrderService {
             modifiedDate: orderData.modifiedDate
               ? new Date(orderData.modifiedDate)
               : new Date(),
+            larkSyncStatus: 'PENDING',
             lastSyncedAt: new Date(),
-            larkSyncStatus: 'PENDING' as const,
           } satisfies Prisma.OrderUncheckedCreateInput,
           include: {
             customer: {
@@ -950,13 +950,38 @@ export class KiotVietOrderService {
   // ============================================================================
 
   private async syncOrdersToLarkBase(orders: any[]): Promise<void> {
-    if (orders.length === 0) return;
-
     try {
+      if (orders.length === 0) {
+        this.logger.log('📋 No orders to sync to LarkBase');
+        return;
+      }
+
+      this.logger.log(
+        `🔄 Starting LarkBase sync for ${orders.length} orders...`,
+      );
+
+      // ✅ FIX: Set pending status before sync
+      const orderIds = orders.map((order) => order.id);
+      await this.prismaService.order.updateMany({
+        where: { id: { in: orderIds } },
+        data: { larkSyncStatus: 'PENDING' },
+      });
+
+      // Call LarkBase sync service
       await this.larkOrderSyncService.syncOrdersToLarkBase(orders);
+
+      this.logger.log(`✅ LarkBase sync completed for ${orders.length} orders`);
     } catch (error) {
-      this.logger.error(`LarkBase sync failed: ${error.message}`);
-      // Don't throw error to prevent blocking database sync
+      this.logger.error(`❌ LarkBase sync failed: ${error.message}`);
+
+      // ✅ FIX: Mark failed orders
+      const orderIds = orders.map((order) => order.id);
+      await this.prismaService.order.updateMany({
+        where: { id: { in: orderIds } },
+        data: { larkSyncStatus: 'FAILED' },
+      });
+
+      throw error;
     }
   }
 
