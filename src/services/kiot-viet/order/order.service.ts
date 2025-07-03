@@ -185,7 +185,7 @@ export class KiotVietOrderService {
             currentItem,
             pageSize: this.PAGE_SIZE,
             orderBy: 'id',
-            orderDirection: 'Asc',
+            orderDirection: 'ASC',
             includeOrderDelivery: true,
             includePayment: true,
           });
@@ -742,19 +742,29 @@ export class KiotVietOrderService {
   // SYNC CONTROL UTILITIES - EXACT COPY FROM INVOICE
   // ============================================================================
 
-  private async updateSyncControl(name: string, data: any): Promise<void> {
+  private async updateSyncControl(
+    name: string,
+    data: Partial<{
+      isRunning: boolean;
+      isEnabled: boolean;
+      status: string;
+      error: string | null;
+      startedAt: Date;
+      completedAt: Date;
+      lastRunAt: Date;
+      progress: any;
+    }>,
+  ): Promise<void> {
     await this.prismaService.syncControl.upsert({
       where: { name },
-      update: {
-        ...data,
-        updatedAt: new Date(),
-      },
       create: {
         name,
+        entities: ['order'],
+        syncMode: name.includes('historical') ? 'historical' : 'recent',
+        status: 'idle',
         ...data,
-        createdAt: new Date(),
-        updatedAt: new Date(),
       },
+      update: data,
     });
   }
 }
