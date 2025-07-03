@@ -180,7 +180,6 @@ export class KiotVietInvoiceService {
       // COMPLETION DETECTION with more flexible thresholds
       const MAX_CONSECUTIVE_EMPTY_PAGES = 5; // Increased from 3
       const MAX_CONSECUTIVE_ERROR_PAGES = 3;
-      const MIN_EXPECTED_INVOICES = 10;
       const RETRY_DELAY_MS = 2000; // 2 seconds delay between retries
       const MAX_TOTAL_RETRIES = 10; // Total retries allowed across the entire sync
 
@@ -335,6 +334,7 @@ export class KiotVietInvoiceService {
           // Progress tracking
           const progressPercentage =
             totalInvoices > 0 ? (processedCount / totalInvoices) * 100 : 0;
+
           this.logger.log(
             `📈 Progress: ${processedCount}/${totalInvoices} (${progressPercentage.toFixed(1)}%)`,
           );
@@ -739,6 +739,7 @@ export class KiotVietInvoiceService {
               ? new Date(invoiceData.modifiedDate)
               : new Date(),
             lastSyncedAt: new Date(),
+            larkRecordId: null,
             larkSyncStatus: 'PENDING' as const,
           },
           create: {

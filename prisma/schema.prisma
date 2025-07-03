@@ -355,6 +355,8 @@ model Order {
   soldBy            User?              @relation("OrderSoldBy", fields: [soldById], references: [kiotVietId])
   cashierId         BigInt?
   customerId        Int?
+  customerCode      String?
+  customerName      String?
   customer          Customer?          @relation(fields: [customerId], references: [id])
   total             Decimal            @db.Decimal(15, 2)
   totalPayment      Decimal            @db.Decimal(15, 2)

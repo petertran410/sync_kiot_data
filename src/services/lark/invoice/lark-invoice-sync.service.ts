@@ -1104,12 +1104,12 @@ export class LarkInvoiceSyncService {
     }
   }
 
-  private adjustTimeForLarkBase(dateInput: string | Date): number {
-    const date = new Date(dateInput);
-    // Subtract 7 hours (7 * 60 * 60 * 1000 = 25200000 milliseconds)
-    const adjustedDate = new Date(date.getTime() - 7 * 60 * 60 * 1000);
-    return adjustedDate.getTime();
-  }
+  // private adjustTimeForLarkBase(dateInput: string | Date): number {
+  //   const date = new Date(dateInput);
+  //   // Subtract 7 hours (7 * 60 * 60 * 1000 = 25200000 milliseconds)
+  //   const adjustedDate = new Date(date.getTime() - 7 * 60 * 60 * 1000);
+  //   return adjustedDate.getTime();
+  // }
 
   private mapInvoiceToLarkBase(invoice: any): Record<string, any> {
     const fields: Record<string, any> = {};
@@ -1128,9 +1128,9 @@ export class LarkInvoiceSyncService {
     }
 
     if (invoice.purchaseDate) {
-      fields[LARK_INVOICE_FIELDS.PURCHASE_DATE] = this.adjustTimeForLarkBase(
+      fields[LARK_INVOICE_FIELDS.PURCHASE_DATE] = new Date(
         invoice.purchaseDate,
-      );
+      ).getTime();
     }
 
     // Branch mapping
@@ -1311,15 +1311,15 @@ export class LarkInvoiceSyncService {
 
     // Dates
     if (invoice.createdDate) {
-      fields[LARK_INVOICE_FIELDS.CREATED_DATE] = this.adjustTimeForLarkBase(
+      fields[LARK_INVOICE_FIELDS.CREATED_DATE] = new Date(
         invoice.createdDate,
-      );
+      ).getTime();
     }
 
     if (invoice.modifiedDate) {
-      fields[LARK_INVOICE_FIELDS.MODIFIED_DATE] = this.adjustTimeForLarkBase(
+      fields[LARK_INVOICE_FIELDS.MODIFIED_DATE] = new Date(
         invoice.modifiedDate,
-      );
+      ).getTime;
     }
 
     return fields;

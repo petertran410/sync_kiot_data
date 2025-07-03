@@ -223,111 +223,165 @@ export class LarkOrderSyncService {
     const maxRetries = 3;
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
+        this.logger.log(
+          `📥 Loading cache (attempt ${attempt}/${maxRetries})...`,
+        );
+
+        if (this.isCacheValid()) {
+          this.logger.log('✅ Using existing valid cache');
+          return true;
+        }
+
+        this.clearCache();
+
         await this.loadExistingRecords();
-        return true;
+
+        if (this.existingRecordsCache.size > 0) {
+          this.logger.log(
+            `✅ Cache loaded successfully: ${this.existingRecordsCache.size} records`,
+          );
+          this.lastCacheLoadTime = new Date();
+          return true;
+        }
+
+        this.logger.warn(`⚠️ Cache empty on attempt ${attempt}`);
       } catch (error) {
         this.logger.warn(
-          `Cache load attempt ${attempt}/${maxRetries} failed: ${error.message}`,
+          `❌ Cache loading attempt ${attempt} failed: ${error.message}`,
         );
         if (attempt < maxRetries) {
-          await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
+          const delay = attempt * 3000;
+          this.logger.log(`⏳ Waiting ${delay / 1000}s before retry...`);
+          await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }
     }
     return false;
   }
 
-  private async loadExistingRecords(): Promise<void> {
-    const now = new Date();
-
-    // Check cache validity
-    if (
-      this.cacheLoaded &&
-      this.lastCacheLoadTime &&
-      now.getTime() - this.lastCacheLoadTime.getTime() <
-        this.CACHE_VALIDITY_MINUTES * 60 * 1000
-    ) {
-      return; // Cache is still valid
+  private isCacheValid(): boolean {
+    if (!this.cacheLoaded || !this.lastCacheLoadTime) {
+      return false;
     }
 
-    this.logger.log('🔄 Loading existing order records from LarkBase...');
+    const cacheAge = Date.now() - this.lastCacheLoadTime.getTime();
+    const maxAge = this.CACHE_VALIDITY_MINUTES * 60 * 1000;
 
-    this.existingRecordsCache.clear();
-    this.orderCodeCache.clear();
+    return cacheAge < maxAge && this.existingRecordsCache.size > 0;
+  }
 
-    let pageToken: string | undefined;
-    let totalRecords = 0;
-    let authRetries = 0;
+  private async loadExistingRecords(): Promise<void> {
+    try {
+      const headers = await this.larkAuthService.getOrderHeaders();
+      let page_token = '';
+      let totalLoaded = 0;
+      let cacheBuilt = 0;
+      let stringConversions = 0;
+      const pageSize = 100;
 
-    while (authRetries < this.MAX_AUTH_RETRIES) {
-      try {
-        do {
-          const headers = await this.larkAuthService.getOrderHeaders();
-          let url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records?page_size=500`;
+      do {
+        const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records`;
+        const params = new URLSearchParams({
+          page_size: pageSize.toString(),
+          ...(page_token && { page_token }),
+        });
 
-          if (pageToken) {
-            url += `&page_token=${pageToken}`;
-          }
+        const startTime = Date.now();
 
+        try {
           const response = await firstValueFrom(
-            this.httpService.get(url, { headers, timeout: 30000 }),
+            this.httpService.get<LarkBatchResponse>(`${url}?${params}`, {
+              headers,
+              timeout: 60000,
+            }),
           );
 
+          const loadTime = Date.now() - startTime;
+
           if (response.data.code === 0) {
-            const records = response.data.data.records || [];
-            totalRecords += records.length;
+            const records = response.data.data?.items || [];
 
             for (const record of records) {
-              const kiotVietId = record.fields[LARK_ORDER_FIELDS.KIOTVIET_ID];
-              const orderCode = record.fields[LARK_ORDER_FIELDS.PRIMARY_CODE];
+              // Handle string kiotVietId
+              const kiotVietIdRaw =
+                record.fields[LARK_ORDER_FIELDS.KIOTVIET_ID];
 
-              if (kiotVietId) {
-                this.existingRecordsCache.set(
-                  Number(kiotVietId),
+              let kiotVietId = 0;
+
+              if (kiotVietIdRaw !== null && kiotVietIdRaw !== undefined) {
+                if (typeof kiotVietIdRaw === 'string') {
+                  const trimmed = kiotVietIdRaw.trim();
+                  if (trimmed !== '') {
+                    const parsed = parseInt(trimmed, 10);
+                    if (!isNaN(parsed) && parsed > 0) {
+                      kiotVietId = parsed;
+                      stringConversions++;
+                    }
+                  }
+                } else if (typeof kiotVietIdRaw === 'number') {
+                  kiotVietId = Math.floor(kiotVietIdRaw);
+                }
+              }
+
+              if (kiotVietId > 0) {
+                this.existingRecordsCache.set(kiotVietId, record.record_id);
+                cacheBuilt++;
+              }
+
+              // Also cache by order code
+              const orderCode = record.fields[LARK_ORDER_FIELDS.PRIMARY_CODE];
+              if (orderCode) {
+                this.orderCodeCache.set(
+                  String(orderCode).trim(),
                   record.record_id,
                 );
               }
-              if (orderCode) {
-                this.orderCodeCache.set(orderCode, record.record_id);
-              }
             }
 
-            pageToken = response.data.data.has_more
-              ? response.data.data.page_token
-              : undefined;
+            totalLoaded += records.length;
+            page_token = response.data.data?.page_token || '';
 
-            if (records.length > 0) {
-              await new Promise((resolve) => setTimeout(resolve, 300));
+            this.logger.debug(
+              `📥 Loaded ${records.length} records in ${loadTime}ms (total: ${totalLoaded}, cached: ${cacheBuilt})`,
+            );
+
+            if (totalLoaded % 1000 === 0 || !page_token) {
+              this.logger.log(
+                `📊 Cache progress: ${cacheBuilt}/${totalLoaded} records processed (${stringConversions} string conversions)`,
+              );
             }
-          } else if (this.AUTH_ERROR_CODES.includes(response.data.code)) {
-            authRetries++;
-            await this.larkAuthService.forceRefreshOrderToken();
-            await new Promise((resolve) => setTimeout(resolve, 2000));
-            break; // Break inner loop, retry outer loop
           } else {
             throw new Error(
-              `API Error: ${response.data.msg} (${response.data.code})`,
+              `LarkBase API error: ${response.data.msg} (code: ${response.data.code})`,
             );
           }
-        } while (pageToken);
-
-        // If we reach here, the operation was successful
-        this.cacheLoaded = true;
-        this.lastCacheLoadTime = now;
-        this.logger.log(`✅ Cached ${totalRecords} existing order records`);
-        return;
-      } catch (error) {
-        if (error.response?.status === 401 || error.response?.status === 403) {
-          authRetries++;
-          await this.larkAuthService.forceRefreshOrderToken();
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-        } else {
+        } catch (error) {
+          if (error.code === 'ECONNABORTED') {
+            throw new Error(
+              'Request timeout - LarkBase took too long to respond',
+            );
+          }
+          if (error.response?.status === 400) {
+            throw new Error(
+              'Bad request - check table permissions and field names',
+            );
+          }
           throw error;
         }
-      }
-    }
+      } while (page_token);
 
-    throw new Error('Failed to load existing records after auth retries');
+      this.cacheLoaded = true;
+
+      const successRate =
+        totalLoaded > 0 ? Math.round((cacheBuilt / totalLoaded) * 100) : 0;
+
+      this.logger.log(
+        `✅ Cache loaded: ${this.existingRecordsCache.size} by ID, ${this.orderCodeCache.size} by code (${successRate}% success)`,
+      );
+    } catch (error) {
+      this.logger.error(`❌ Cache loading failed: ${error.message}`);
+      throw error;
+    }
   }
 
   // ============================================================================
@@ -342,18 +396,20 @@ export class LarkOrderSyncService {
     const updateOrders: any[] = [];
 
     for (const order of orders) {
-      const kiotVietId = Number(order.kiotVietId);
-      const orderCode = order.code;
+      const kiotVietId = this.safeBigIntToNumber(order.kiotVietId);
 
-      const recordIdByKiotVietId = this.existingRecordsCache.get(kiotVietId);
-      const recordIdByCode = this.orderCodeCache.get(orderCode);
+      let existingRecordId = this.existingRecordsCache.get(kiotVietId);
 
-      if (recordIdByKiotVietId || recordIdByCode) {
-        // Record exists - mark for update
-        order.larkRecordId = recordIdByKiotVietId || recordIdByCode;
-        updateOrders.push(order);
+      if (!existingRecordId && order.code) {
+        existingRecordId = this.orderCodeCache.get(String(order.code).trim());
+      }
+
+      if (existingRecordId) {
+        updateOrders.push({
+          ...order,
+          larkRecordId: existingRecordId,
+        });
       } else {
-        // New record
         newOrders.push(order);
       }
     }
@@ -370,11 +426,7 @@ export class LarkOrderSyncService {
 
     this.logger.log(`📝 Creating ${orders.length} new orders...`);
 
-    const batches: any[][] = [];
-    for (let i = 0; i < orders.length; i += this.batchSize) {
-      batches.push(orders.slice(i, i + this.batchSize));
-    }
-
+    const batches = this.chunkArray(orders, this.batchSize);
     let totalCreated = 0;
     let totalFailed = 0;
 
@@ -384,19 +436,18 @@ export class LarkOrderSyncService {
         `Creating batch ${i + 1}/${batches.length} (${batch.length} orders)...`,
       );
 
-      const result = await this.createOrderBatch(batch);
-      const { successRecords, failedRecords } = result;
+      const { successRecords, failedRecords } =
+        await this.batchCreateOrders(batch);
 
       totalCreated += successRecords.length;
       totalFailed += failedRecords.length;
 
-      // Update database status
       if (successRecords.length > 0) {
-        await this.updateDatabaseStatus(successRecords, LarkSyncStatus.SYNCED);
+        await this.updateDatabaseStatus(successRecords, 'SYNCED');
       }
 
       if (failedRecords.length > 0) {
-        await this.updateDatabaseStatus(failedRecords, LarkSyncStatus.FAILED);
+        await this.updateDatabaseStatus(failedRecords, 'FAILED');
       }
 
       this.logger.log(
@@ -425,7 +476,6 @@ export class LarkOrderSyncService {
     let successCount = 0;
     let failedCount = 0;
     const createFallbacks: any[] = [];
-    const successfulOrders: any[] = [];
 
     const UPDATE_CHUNK_SIZE = 5;
 
@@ -439,7 +489,7 @@ export class LarkOrderSyncService {
 
             if (updated) {
               successCount++;
-              successfulOrders.push(order);
+              await this.updateDatabaseStatus([order], 'SYNCED');
             } else {
               createFallbacks.push(order);
             }
@@ -465,108 +515,142 @@ export class LarkOrderSyncService {
       await this.processNewOrders(createFallbacks);
     }
 
-    // Update successful orders in database
-    if (successfulOrders.length > 0) {
-      await this.updateDatabaseStatus(successfulOrders, LarkSyncStatus.SYNCED);
-    }
-
     this.logger.log(
       `📝 Update complete: ${successCount} updated, ${createFallbacks.length} fallback to create`,
     );
+  }
+
+  private async batchCreateOrders(orders: any[]): Promise<BatchResult> {
+    const records = orders.map((order) => ({
+      fields: this.mapOrderToLarkBase(order),
+    }));
+
+    let authRetries = 0;
+
+    while (authRetries < this.MAX_AUTH_RETRIES) {
+      try {
+        const headers = await this.larkAuthService.getOrderHeaders();
+        const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/batch_create`;
+
+        const response = await firstValueFrom(
+          this.httpService.post<LarkBatchResponse>(
+            url,
+            { records },
+            { headers, timeout: 30000 },
+          ),
+        );
+
+        if (response.data.code === 0) {
+          const createdRecords = response.data.data?.records || [];
+          const successCount = createdRecords.length;
+          const successRecords = orders.slice(0, successCount);
+          const failedRecords = orders.slice(successCount);
+
+          // Update cache
+          for (
+            let i = 0;
+            i < Math.min(successRecords.length, createdRecords.length);
+            i++
+          ) {
+            const order = successRecords[i];
+            const createdRecord = createdRecords[i];
+
+            const kiotVietId = this.safeBigIntToNumber(order.kiotVietId);
+            if (kiotVietId > 0) {
+              this.existingRecordsCache.set(
+                kiotVietId,
+                createdRecord.record_id,
+              );
+            }
+
+            if (order.code) {
+              this.orderCodeCache.set(
+                String(order.code).trim(),
+                createdRecord.record_id,
+              );
+            }
+          }
+
+          return { successRecords, failedRecords };
+        }
+
+        if (this.AUTH_ERROR_CODES.includes(response.data.code)) {
+          authRetries++;
+          await this.larkAuthService.forceRefreshOrderToken();
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          continue;
+        }
+
+        this.logger.warn(
+          `⚠️ Batch create failed: ${response.data.msg} (Code: ${response.data.code})`,
+        );
+        return { successRecords: [], failedRecords: orders };
+      } catch (error) {
+        if (error.response?.status === 401 || error.response?.status === 403) {
+          authRetries++;
+          await this.larkAuthService.forceRefreshOrderToken();
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          continue;
+        }
+
+        this.logger.error(`❌ Batch create error: ${error.message}`);
+        return { successRecords: [], failedRecords: orders };
+      }
+    }
+
+    return { successRecords: [], failedRecords: orders };
   }
 
   // ============================================================================
   // LARKBASE API OPERATIONS - ADAPTED FOR ORDERS
   // ============================================================================
 
-  private async createOrderBatch(orders: any[]): Promise<{
-    successRecords: any[];
-    failedRecords: any[];
-  }> {
-    const headers = await this.larkAuthService.getOrderHeaders();
-    const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/batch_create`;
-
-    const records = orders.map((order) => ({
-      fields: this.mapOrderToLarkBase(order),
-    }));
-
-    try {
-      const response = await firstValueFrom(
-        this.httpService.post(url, { records }, { headers, timeout: 30000 }),
-      );
-
-      if (response.data.code === 0) {
-        const createdRecords = response.data.data.records || [];
-        this.logger.log(`✅ Created ${createdRecords.length} order records`);
-
-        // Update cache
-        createdRecords.forEach((record, index) => {
-          const order = orders[index];
-          if (order && record.record_id) {
-            const kiotVietId = Number(order.kiotVietId);
-            this.existingRecordsCache.set(kiotVietId, record.record_id);
-
-            if (order.code) {
-              this.orderCodeCache.set(order.code, record.record_id);
-            }
-          }
-        });
-
-        return {
-          successRecords: orders,
-          failedRecords: [],
-        };
-      } else {
-        throw new Error(`LarkBase API Error: ${response.data.msg}`);
-      }
-    } catch (error) {
-      this.logger.error(`Batch create failed: ${error.message}`);
-      return {
-        successRecords: [],
-        failedRecords: orders,
-      };
-    }
-  }
-
   private async updateSingleOrder(order: any): Promise<boolean> {
-    const maxRetries = 3;
+    let authRetries = 0;
 
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    while (authRetries < this.MAX_AUTH_RETRIES) {
       try {
         const headers = await this.larkAuthService.getOrderHeaders();
         const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/${order.larkRecordId}`;
 
-        const updateData = {
-          fields: this.mapOrderToLarkBase(order),
-        };
-
         const response = await firstValueFrom(
-          this.httpService.put(url, updateData, { headers, timeout: 15000 }),
+          this.httpService.put(
+            url,
+            { fields: this.mapOrderToLarkBase(order) },
+            { headers, timeout: 15000 },
+          ),
         );
 
         if (response.data.code === 0) {
+          this.logger.debug(
+            `✅ Updated record ${order.larkRecordId} for order ${order.code}`,
+          );
           return true;
-        } else if (this.AUTH_ERROR_CODES.includes(response.data.code)) {
+        }
+
+        if (this.AUTH_ERROR_CODES.includes(response.data.code)) {
+          authRetries++;
           await this.larkAuthService.forceRefreshOrderToken();
           await new Promise((resolve) => setTimeout(resolve, 2000));
           continue;
         }
 
-        this.logger.error(
-          `Update error: ${response.data.msg || 'Unknown error'}`,
-        );
+        this.logger.warn(`Update failed: ${response.data.msg}`);
         return false;
       } catch (error) {
         if (error.response?.status === 401 || error.response?.status === 403) {
+          authRetries++;
           await this.larkAuthService.forceRefreshOrderToken();
           await new Promise((resolve) => setTimeout(resolve, 2000));
           continue;
         }
 
-        this.logger.error(
-          `Update error: ${error instanceof Error ? error.message : String(error)}`,
-        );
-        return false;
+        if (error.response?.status === 404) {
+          this.logger.warn(`Record not found: ${order.larkRecordId}`);
+          return false;
+        }
+
+        throw error;
       }
     }
 
@@ -574,12 +658,99 @@ export class LarkOrderSyncService {
   }
 
   // ============================================================================
-  // TIMEZONE FIXED: Use TimezoneUtils instead of manual adjustment
+  // DATA ANALYSIS METHODS
   // ============================================================================
 
-  private convertDateForLarkBase(dateInput: string | Date): number {
-    // ✅ FIXED: Use proper timezone conversion instead of manual -7 hours
-    return TimezoneUtils.convertKiotVietDateToLarkTimestamp(dateInput);
+  async analyzeMissingData(): Promise<{
+    missing: any[];
+    exists: any[];
+    duplicates: any[];
+    summary: any;
+  }> {
+    this.logger.log(
+      '🔍 Analyzing missing data between Database and LarkBase...',
+    );
+
+    // Load cache để có data LarkBase
+    await this.loadExistingRecordsWithRetry();
+
+    // Get all database records
+    const dbOrders = await this.prismaService.order.findMany({
+      select: {
+        id: true,
+        kiotVietId: true,
+        code: true,
+        larkSyncStatus: true,
+        larkSyncedAt: true,
+      },
+      orderBy: { kiotVietId: 'asc' },
+    });
+
+    const missing: any[] = [];
+    const exists: any[] = [];
+    const duplicates: Map<number, number> = new Map();
+
+    // Analyze each database record
+    for (const order of dbOrders) {
+      const kiotVietId = this.safeBigIntToNumber(order.kiotVietId);
+      const existsInLark = this.existingRecordsCache.has(kiotVietId);
+
+      if (existsInLark) {
+        exists.push({
+          dbId: order.id,
+          kiotVietId,
+          code: order.code,
+          larkRecordId: this.existingRecordsCache.get(kiotVietId),
+          syncStatus: order.larkSyncStatus,
+        });
+
+        // Count occurrences for duplicate detection
+        duplicates.set(kiotVietId, (duplicates.get(kiotVietId) || 0) + 1);
+      } else {
+        missing.push({
+          dbId: order.id,
+          kiotVietId,
+          code: order.code,
+          syncStatus: order.larkSyncStatus,
+          lastSyncAttempt: order.larkSyncedAt,
+        });
+      }
+    }
+
+    // Find actual duplicates
+    const duplicatesList: any[] = [];
+    for (const [kiotVietId, count] of duplicates.entries()) {
+      if (count > 1) {
+        duplicatesList.push({ kiotVietId, count });
+      }
+    }
+
+    const summary = {
+      totalDatabase: dbOrders.length,
+      totalLarkBase: this.existingRecordsCache.size,
+      existsInBoth: exists.length,
+      missingInLarkBase: missing.length,
+      duplicatesFound: duplicatesList.length,
+      syncStatusBreakdown: {
+        SYNCED: missing.filter((m) => m.syncStatus === 'SYNCED').length,
+        PENDING: missing.filter((m) => m.syncStatus === 'PENDING').length,
+        FAILED: missing.filter((m) => m.syncStatus === 'FAILED').length,
+      },
+    };
+
+    this.logger.log('📊 Analysis Summary:');
+    this.logger.log(`- Total in Database: ${summary.totalDatabase}`);
+    this.logger.log(`- Total in LarkBase: ${summary.totalLarkBase}`);
+    this.logger.log(`- Exists in both: ${summary.existsInBoth}`);
+    this.logger.log(`- Missing in LarkBase: ${summary.missingInLarkBase}`);
+    this.logger.log(`- Duplicates found: ${summary.duplicatesFound}`);
+
+    return {
+      missing: missing.slice(0, 100), // First 100 for readability
+      exists: exists.slice(0, 20), // Sample of existing
+      duplicates: duplicatesList,
+      summary,
+    };
   }
 
   // ============================================================================
@@ -685,24 +856,51 @@ export class LarkOrderSyncService {
 
     // Date fields
     if (order.purchaseDate) {
-      fields[LARK_ORDER_FIELDS.ORDER_DATE] = this.convertDateForLarkBase(
+      fields[LARK_ORDER_FIELDS.ORDER_DATE] = new Date(
         order.purchaseDate,
-      );
+      ).getTime();
     }
 
     if (order.createdDate) {
-      fields[LARK_ORDER_FIELDS.CREATED_DATE] = this.convertDateForLarkBase(
+      fields[LARK_ORDER_FIELDS.CREATED_DATE] = new Date(
         order.createdDate,
-      );
+      ).getTime();
     }
 
     if (order.modifiedDate) {
-      fields[LARK_ORDER_FIELDS.MODIFIED_DATE] = this.convertDateForLarkBase(
+      fields[LARK_ORDER_FIELDS.MODIFIED_DATE] = new Date(
         order.modifiedDate,
-      );
+      ).getTime();
     }
 
     return fields;
+  }
+
+  async getSyncProgress(): Promise<any> {
+    const total = await this.prismaService.order.count();
+    const synced = await this.prismaService.order.count({
+      where: { larkSyncStatus: 'SYNCED' },
+    });
+    const pending = await this.prismaService.order.count({
+      where: { larkSyncStatus: 'PENDING' },
+    });
+    const failed = await this.prismaService.order.count({
+      where: { larkSyncStatus: 'FAILED' },
+    });
+
+    const progress = total > 0 ? Math.round((synced / total) * 100) : 0;
+
+    const canRetryFailed = failed > 0;
+
+    return {
+      total,
+      synced,
+      pending,
+      failed,
+      progress,
+      canRetryFailed,
+      summary: `${synced}/${total} synced (${progress}%)`,
+    };
   }
 
   // ============================================================================
@@ -711,43 +909,150 @@ export class LarkOrderSyncService {
 
   private async updateDatabaseStatus(
     orders: any[],
-    status: LarkSyncStatus,
+    status: 'SYNCED' | 'FAILED',
   ): Promise<void> {
-    const orderIds = orders.map((order) =>
-      typeof order.kiotVietId === 'bigint'
-        ? order.kiotVietId
-        : BigInt(order.kiotVietId),
-    );
+    if (orders.length === 0) return;
+
+    const orderIds = orders.map((i) => i.id);
+    const updateData = {
+      larkSyncStatus: status,
+      larkSyncedAt: new Date(),
+      ...(status === 'FAILED' && { larkSyncRetries: { increment: 1 } }),
+      ...(status === 'SYNCED' && { larkSyncRetries: 0 }),
+    };
 
     await this.prismaService.order.updateMany({
-      where: { kiotVietId: { in: orderIds } },
-      data: { larkSyncStatus: status },
+      where: { id: { in: orderIds } },
+      data: updateData,
     });
   }
 
+  private clearCache(): void {
+    this.existingRecordsCache.clear();
+    this.orderCodeCache.clear();
+    this.cacheLoaded = false;
+    this.lastCacheLoadTime = null;
+    this.logger.debug('🧹 Cache cleared');
+  }
+
   private async testLarkBaseConnection(): Promise<void> {
-    try {
-      const headers = await this.larkAuthService.getOrderHeaders();
-      const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records?page_size=1`;
+    const maxRetries = 3;
 
-      await firstValueFrom(
-        this.httpService.get(url, { headers, timeout: 10000 }),
-      );
+    for (let retryCount = 0; retryCount <= maxRetries; retryCount++) {
+      try {
+        this.logger.log(
+          `🔍 Testing LarkBase connection (attempt ${retryCount + 1}/${maxRetries + 1})...`,
+        );
 
-      this.logger.log('✅ LarkBase connection test successful');
-    } catch (error) {
-      this.logger.error(`❌ LarkBase connection test failed: ${error.message}`);
-      throw new Error(`LarkBase connectivity issue: ${error.message}`);
+        const headers = await this.larkAuthService.getOrderHeaders();
+        const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records`;
+        const params = new URLSearchParams({ page_size: '1' });
+
+        const response = await firstValueFrom(
+          this.httpService.get(`${url}?${params}`, {
+            headers,
+            timeout: 30000,
+          }),
+        );
+
+        if (response.data.code === 0) {
+          const totalRecords = response.data.data?.total || 0;
+          this.logger.log(`✅ LarkBase connection successful`);
+          this.logger.log(
+            `📊 LarkBase table has ${totalRecords} existing records`,
+          );
+          return;
+        }
+
+        throw new Error(`Connection test failed: ${response.data.msg}`);
+      } catch (error) {
+        if (retryCount < maxRetries) {
+          const delay = (retryCount + 1) * 2000;
+          this.logger.warn(
+            `⚠️ Connection attempt ${retryCount + 1} failed: ${error.message}`,
+          );
+          this.logger.log(`🔄 Retrying in ${delay / 1000}s...`);
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        } else {
+          this.logger.error(
+            '❌ LarkBase connection test failed after all retries',
+          );
+          throw new Error(`Cannot connect to LarkBase: ${error.message}`);
+        }
+      }
     }
   }
 
   private async acquireSyncLock(lockKey: string): Promise<void> {
-    // Simple lock implementation - can be enhanced with Redis if needed
+    const existingLock = await this.prismaService.syncControl.findFirst({
+      where: {
+        name: 'order_lark_sync',
+        isRunning: true,
+      },
+    });
+
+    if (existingLock && existingLock.startedAt) {
+      const lockAge = Date.now() - existingLock.startedAt.getTime();
+      if (lockAge < 30 * 60 * 1000) {
+        throw new Error('Another sync is already running');
+      }
+      this.logger.warn('🔓 Clearing stale lock');
+    }
+
+    await this.prismaService.syncControl.upsert({
+      where: { name: 'order_lark_sync' },
+      create: {
+        name: 'order_lark_sync',
+        entities: ['order'],
+        syncMode: 'lark_sync',
+        isEnabled: true,
+        isRunning: true,
+        status: 'running',
+        lastRunAt: new Date(),
+        startedAt: new Date(),
+        progress: { lockKey },
+      },
+      update: {
+        isRunning: true,
+        status: 'running',
+        lastRunAt: new Date(),
+        startedAt: new Date(),
+        progress: { lockKey },
+      },
+    });
+
     this.logger.debug(`🔒 Acquired sync lock: ${lockKey}`);
   }
 
   private async releaseSyncLock(lockKey: string): Promise<void> {
-    this.logger.debug(`🔓 Released sync lock: ${lockKey}`);
+    const lockRecord = await this.prismaService.syncControl.findFirst({
+      where: {
+        name: 'order_lark_sync',
+        isRunning: true,
+      },
+    });
+
+    if (
+      lockRecord &&
+      lockRecord.progress &&
+      typeof lockRecord.progress === 'object' &&
+      'lockKey' in lockRecord.progress &&
+      lockRecord.progress.lockKey === lockKey
+    ) {
+      await this.prismaService.syncControl.update({
+        where: {
+          id: lockRecord.id,
+        },
+        data: {
+          isRunning: false,
+          status: 'completed',
+          completedAt: new Date(),
+          progress: {},
+        },
+      });
+
+      this.logger.debug(`🔓 Released sync lock: ${lockKey}`);
+    }
   }
 
   // ============================================================================
@@ -803,86 +1108,148 @@ export class LarkOrderSyncService {
     return { pending, synced, failed, total };
   }
 
-  async syncMissingDataOnly(): Promise<void> {
+  async syncMissingDataOnly(): Promise<{
+    attempted: number;
+    success: number;
+    failed: number;
+    details: any[];
+  }> {
     this.logger.log('🔍 Starting missing data sync...');
 
     // Get orders that exist in database but not in LarkBase
-    const pendingOrders = await this.prismaService.order.findMany({
-      where: { larkSyncStatus: 'PENDING' },
-      take: 500,
-      include: {
-        customer: {
-          select: {
-            code: true,
-            name: true,
-          },
-        },
+    const analysis = await this.analyzeMissingData();
+    const missingOrders = analysis.missing;
+
+    if (missingOrders.length === 0) {
+      this.logger.log(
+        '✅ No missing data found! Database and LarkBase are in sync.',
+      );
+      return {
+        attempted: 0,
+        success: 0,
+        failed: 0,
+        details: [],
+      };
+    }
+
+    // Get full order data for missing records
+    const missingIds = missingOrders.map((m) => m.dbId);
+    const ordersToSync = await this.prismaService.order.findMany({
+      where: { id: { in: missingIds } },
+    });
+
+    this.logger.log(`📋 Found ${ordersToSync.length} missing order to sync`);
+
+    // Reset their status to PENDING for fresh sync
+    await this.prismaService.order.updateMany({
+      where: { id: { in: missingIds } },
+      data: {
+        larkSyncStatus: 'PENDING',
+        larkSyncRetries: 0,
       },
     });
 
-    if (pendingOrders.length === 0) {
-      this.logger.log('✅ No missing orders to sync');
-      return;
+    // Sync in small batches
+    const BATCH_SIZE = 25;
+    let totalSuccess = 0;
+    let totalFailed = 0;
+    const syncDetails: any[] = [];
+
+    for (let i = 0; i < ordersToSync.length; i += BATCH_SIZE) {
+      const batch = ordersToSync.slice(i, i + BATCH_SIZE);
+      const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
+      const totalBatches = Math.ceil(ordersToSync.length / BATCH_SIZE);
+
+      this.logger.log(
+        `🔄 Processing batch ${batchNumber}/${totalBatches} (${batch.length} orders)`,
+      );
+
+      try {
+        // Process this batch
+        const { successRecords, failedRecords } =
+          await this.batchCreateOrders(batch);
+
+        totalSuccess += successRecords.length;
+        totalFailed += failedRecords.length;
+
+        // Update database status
+        if (successRecords.length > 0) {
+          await this.updateDatabaseStatus(successRecords, 'SYNCED');
+        }
+
+        if (failedRecords.length > 0) {
+          await this.updateDatabaseStatus(failedRecords, 'FAILED');
+        }
+
+        syncDetails.push({
+          batch: batchNumber,
+          success: successRecords.length,
+          failed: failedRecords.length,
+          failedCodes: failedRecords.map((f) => f.code),
+        });
+
+        // Small delay between batches
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      } catch (error) {
+        this.logger.error(`❌ Batch ${batchNumber} failed: ${error.message}`);
+        totalFailed += batch.length;
+
+        syncDetails.push({
+          batch: batchNumber,
+          success: 0,
+          failed: batch.length,
+          error: error.message,
+        });
+      }
     }
 
-    await this.syncOrdersToLarkBase(pendingOrders);
-  }
-
-  async validateDataIntegrity(): Promise<{
-    isComplete: boolean;
-    discrepancies: any[];
-    recommendations: string[];
-  }> {
-    this.logger.log(
-      '🔍 Validating data integrity between Database and LarkBase...',
-    );
-
-    const dbStats = await this.getOrderSyncStats();
-
-    // Load all LarkBase records
-    await this.loadExistingRecords();
-    const larkRecordCount = this.existingRecordsCache.size;
-
-    const discrepancies: any[] = [];
-    const recommendations: string[] = [];
-
-    // Check total counts
-    if (dbStats.total !== larkRecordCount) {
-      discrepancies.push({
-        type: 'count_mismatch',
-        database: dbStats.total,
-        larkbase: larkRecordCount,
-        difference: Math.abs(dbStats.total - larkRecordCount),
-      });
-    }
-
-    // Check sync status
-    if (dbStats.pending > 0) {
-      discrepancies.push({
-        type: 'pending_syncs',
-        count: dbStats.pending,
-      });
-    }
-
-    if (dbStats.failed > 0) {
-      discrepancies.push({
-        type: 'failed_syncs',
-        count: dbStats.failed,
-      });
-    }
-
-    const isComplete = discrepancies.length === 0;
-
-    if (isComplete) {
-      recommendations.push('Database and LarkBase are fully synchronized.');
-    } else {
-      recommendations.push('Run syncMissingDataOnly() to sync missing records');
-    }
+    this.logger.log('🎯 Missing data sync completed:');
+    this.logger.log(`- Attempted: ${ordersToSync.length}`);
+    this.logger.log(`- Success: ${totalSuccess}`);
+    this.logger.log(`- Failed: ${totalFailed}`);
 
     return {
-      isComplete,
-      discrepancies,
-      recommendations,
+      attempted: ordersToSync.length,
+      success: totalSuccess,
+      failed: totalFailed,
+      details: syncDetails,
     };
+  }
+
+  private chunkArray<T>(array: T[], size: number): T[][] {
+    return Array.from({ length: Math.ceil(array.length / size) }, (_, i) =>
+      array.slice(i * size, i * size + size),
+    );
+  }
+
+  private safeBigIntToNumber(value: any): number {
+    if (value === null || value === undefined) return 0;
+
+    if (typeof value === 'bigint') {
+      return Number(value);
+    }
+
+    if (typeof value === 'number') {
+      return Math.floor(value);
+    }
+
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (trimmed === '') return 0;
+      const parsed = parseInt(trimmed, 10);
+      return isNaN(parsed) ? 0 : parsed;
+    }
+
+    if (typeof value === 'boolean') {
+      return value ? 1 : 0;
+    }
+
+    try {
+      const asString = String(value).trim();
+      const parsed = parseInt(asString, 10);
+      return isNaN(parsed) ? 0 : parsed;
+    } catch {
+      return 0;
+    }
   }
 }
