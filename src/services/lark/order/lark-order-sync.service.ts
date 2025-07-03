@@ -602,6 +602,13 @@ export class LarkOrderSyncService {
     return false;
   }
 
+  private adjustTimeForLarkBase(dateInput: string | Date): number {
+    const date = new Date(dateInput);
+    // Subtract 7 hours (7 * 60 * 60 * 1000 = 25200000 milliseconds)
+    const adjustedDate = new Date(date.getTime() - 7 * 60 * 60 * 1000);
+    return adjustedDate.getTime();
+  }
+
   // ============================================================================
   // MAPPING ORDER TO LARKBASE FIELDS
   // ============================================================================
@@ -705,21 +712,21 @@ export class LarkOrderSyncService {
 
     // Date fields
     if (order.purchaseDate) {
-      fields[LARK_ORDER_FIELDS.ORDER_DATE] = new Date(
+      fields[LARK_ORDER_FIELDS.ORDER_DATE] = this.adjustTimeForLarkBase(
         order.purchaseDate,
-      ).getTime();
+      );
     }
 
     if (order.createdDate) {
-      fields[LARK_ORDER_FIELDS.CREATED_DATE] = new Date(
+      fields[LARK_ORDER_FIELDS.CREATED_DATE] = this.adjustTimeForLarkBase(
         order.createdDate,
-      ).getTime();
+      );
     }
 
     if (order.modifiedDate) {
-      fields[LARK_ORDER_FIELDS.MODIFIED_DATE] = new Date(
+      fields[LARK_ORDER_FIELDS.MODIFIED_DATE] = this.adjustTimeForLarkBase(
         order.modifiedDate,
-      ).getTime();
+      );
     }
 
     return fields;

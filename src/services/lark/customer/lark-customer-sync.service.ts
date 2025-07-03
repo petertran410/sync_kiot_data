@@ -885,6 +885,13 @@ export class LarkCustomerSyncService {
     }
   }
 
+  private adjustTimeForLarkBase(dateInput: string | Date): number {
+    const date = new Date(dateInput);
+    // Subtract 7 hours (7 * 60 * 60 * 1000 = 25200000 milliseconds)
+    const adjustedDate = new Date(date.getTime() - 7 * 60 * 60 * 1000);
+    return adjustedDate.getTime();
+  }
+
   private mapCustomerToLarkBase(customer: any): Record<string, any> {
     const fields: Record<string, any> = {};
 
@@ -983,13 +990,15 @@ export class LarkCustomerSyncService {
     }
 
     if (customer.modifiedDate) {
-      fields[LARK_CUSTOMER_FIELDS.MODIFIED_DATE] =
-        customer.modifiedDate.getTime();
+      fields[LARK_CUSTOMER_FIELDS.MODIFIED_DATE] = this.adjustTimeForLarkBase(
+        customer.modifiedDate,
+      );
     }
 
     if (customer.createdDate) {
-      fields[LARK_CUSTOMER_FIELDS.CREATED_DATE] =
-        customer.createdDate.getTime();
+      fields[LARK_CUSTOMER_FIELDS.CREATED_DATE] = this.adjustTimeForLarkBase(
+        customer.createdDate,
+      );
     }
 
     if (customer.locationName) {
