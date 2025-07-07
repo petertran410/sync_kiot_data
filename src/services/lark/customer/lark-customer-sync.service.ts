@@ -959,7 +959,7 @@ export class LarkCustomerSyncService {
       }
     }
 
-    if (customer.groups) {
+    if (customer.groups !== null && customer.groups !== undefined) {
       fields[LARK_CUSTOMER_FIELDS.CUSTOMER_GROUPS] = customer.groups || '';
     }
 
