@@ -30,6 +30,8 @@ const LARK_CUSTOMER_FIELDS = {
   CREATED_DATE: 'Thời Gian Tạo',
   FACEBOOK_ID: 'Facebook Khách Hàng',
   LOCATION_NAME: 'Khu Vực',
+  CUSTOMER_GROUPS: 'Nhóm Khách Hàng',
+  DATE_OF_BIRTH: 'Ngày Sinh',
 } as const;
 
 const GENDER_OPTIONS = {
@@ -957,6 +959,10 @@ export class LarkCustomerSyncService {
       }
     }
 
+    if (customer.groups) {
+      fields[LARK_CUSTOMER_FIELDS.CUSTOMER_GROUPS] = customer.groups || '';
+    }
+
     if (customer.wardName) {
       fields[LARK_CUSTOMER_FIELDS.WARD_NAME] = customer.wardName || '';
     }
@@ -976,6 +982,11 @@ export class LarkCustomerSyncService {
 
     if (customer.comments) {
       fields[LARK_CUSTOMER_FIELDS.COMMENTS] = customer.comments || '';
+    }
+    if (customer.birthDate) {
+      fields[LARK_CUSTOMER_FIELDS.DATE_OF_BIRTH] = new Date(
+        customer.birthDate,
+      ).getTime();
     }
 
     if (customer.modifiedDate) {

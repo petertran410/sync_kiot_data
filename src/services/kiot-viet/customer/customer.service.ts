@@ -520,6 +520,9 @@ export class KiotVietCustomerService {
       pageSize: '1000',
       orderBy: 'modifiedDate',
       orderDirection: 'DESC',
+      includeCustomerGroup: 'true',
+      includeTotal: 'true',
+      includeCustomerSocial: 'true',
     });
 
     const response = await firstValueFrom(
@@ -600,6 +603,7 @@ export class KiotVietCustomerService {
             organization: customerData.organization,
             comments: customerData.comments,
             taxCode: customerData.taxCode,
+            groups: customerData.groups || '',
             debt: customerData.debt ? new Prisma.Decimal(customerData.debt) : 0,
             totalInvoiced: customerData.totalInvoiced
               ? new Prisma.Decimal(customerData.totalInvoiced)
@@ -642,6 +646,7 @@ export class KiotVietCustomerService {
             organization: customerData.organization,
             comments: customerData.comments,
             taxCode: customerData.taxCode,
+            groups: customerData.groups || '',
             debt: customerData.debt ? new Prisma.Decimal(customerData.debt) : 0,
             totalInvoiced: customerData.totalInvoiced
               ? new Prisma.Decimal(customerData.totalInvoiced)

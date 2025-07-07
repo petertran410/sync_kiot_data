@@ -220,6 +220,7 @@ model Customer {
   organization      String?
   comments          String?            @db.Text
   taxCode           String?
+  groups            String?
   debt              Decimal?           @db.Decimal(15, 2)
   totalInvoiced     Decimal?           @db.Decimal(15, 2)
   totalPoint        Float?
@@ -248,6 +249,7 @@ model Customer {
   @@index([lastSyncedAt])
   @@index([larkSyncStatus])
   @@index([branchId])
+  @@index([groups])
   CustomerGroupRelation CustomerGroupRelation[]
   Return Return[]
 }
