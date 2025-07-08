@@ -141,9 +141,27 @@ export class KiotVietCustomerService {
 
       while (true) {
         const currentPage = Math.floor(currentItem / this.PAGE_SIZE) + 1;
-        this.logger.log(
-          `📄 Fetching customers page: ${currentPage} (currentItem: ${currentItem})`,
-        );
+
+        // 🆕 SMART COMPLETION DETECTION
+        if (totalCustomers > 0) {
+          // Check if we've reached the end based on known total
+          if (currentItem >= totalCustomers) {
+            this.logger.log(
+              `✅ Pagination complete. Processed: ${processedCount}/${totalCustomers} customers`,
+            );
+            break;
+          }
+
+          // Progress logging
+          const progressPercentage = (currentItem / totalCustomers) * 100;
+          this.logger.log(
+            `📄 Fetching page ${currentPage} (${currentItem}/${totalCustomers} - ${progressPercentage.toFixed(1)}%)`,
+          );
+        } else {
+          this.logger.log(
+            `📄 Fetching page ${currentPage} (currentItem: ${currentItem})`,
+          );
+        }
 
         try {
           const customerListResponse = await this.fetchCustomersListWithRetry({
@@ -160,27 +178,14 @@ export class KiotVietCustomerService {
           if (!customerListResponse) {
             this.logger.warn('⚠️ Received null response from KiotViet API');
             consecutiveEmptyPages++;
-            consecutiveErrorPages++;
 
             if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
-              this.logger.error(
-                `❌ Received ${MAX_CONSECUTIVE_EMPTY_PAGES} consecutive empty responses. Trying final validation...`,
+              this.logger.log(
+                `🔚 Reached end after ${consecutiveEmptyPages} empty pages`,
               );
-
-              // Try to validate with current data before failing
-              if (processedCount > 0) {
-                this.logger.log(
-                  `✅ Partial sync completed with ${processedCount} customers processed`,
-                );
-                break;
-              } else {
-                throw new Error(
-                  `API returned ${MAX_CONSECUTIVE_EMPTY_PAGES} consecutive empty responses with no data processed`,
-                );
-              }
+              break;
             }
 
-            // Wait before retrying
             await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
             continue;
           }
@@ -189,126 +194,136 @@ export class KiotVietCustomerService {
           consecutiveEmptyPages = 0;
           consecutiveErrorPages = 0;
 
-          // VALIDATION: Check data structure
+          // Extract data
           const { total, data: customers } = customerListResponse;
 
+          // Update total count (first response or if changed)
           if (total !== undefined && total !== null) {
-            totalCustomers = total;
+            if (totalCustomers === 0) {
+              totalCustomers = total;
+              this.logger.log(`📊 Total customers detected: ${totalCustomers}`);
+            } else if (total !== totalCustomers) {
+              this.logger.warn(
+                `⚠️ Total count changed: ${totalCustomers} -> ${total}. Using latest.`,
+              );
+              totalCustomers = total;
+            }
             lastValidTotal = total;
-          } else if (lastValidTotal > 0) {
-            totalCustomers = lastValidTotal;
           }
-
-          this.logger.log(`📊 Total customers in system: ${totalCustomers}`);
 
           // Handle empty data array
           if (!customers || customers.length === 0) {
             this.logger.warn(
-              `⚠️ Empty page received. Count: ${consecutiveEmptyPages + 1}`,
+              `⚠️ Empty page received at position ${currentItem}`,
             );
             consecutiveEmptyPages++;
 
-            // More flexible empty page handling
+            // If we know the total and we're past it, stop
+            if (totalCustomers > 0 && currentItem >= totalCustomers) {
+              this.logger.log('✅ Reached end of data (empty page past total)');
+              break;
+            }
+
+            // If too many consecutive empty pages, stop
             if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
-              // Check if we've processed enough data relative to expected total
-              const progressPercentage =
-                totalCustomers > 0
-                  ? (processedCount / totalCustomers) * 100
-                  : 0;
-
-              if (progressPercentage >= 95) {
-                this.logger.log(
-                  `✅ Sync nearly complete (${progressPercentage.toFixed(1)}%). Ending gracefully.`,
-                );
-                break;
-              } else if (processedCount > 0) {
-                this.logger.log(
-                  `⚠️ Partial completion (${progressPercentage.toFixed(1)}%). Ending with partial data.`,
-                );
-                break;
-              } else {
-                throw new Error(
-                  `Too many empty pages with minimal progress: ${processedCount}/${totalCustomers}`,
-                );
-              }
+              this.logger.log(
+                `🔚 Stopping after ${consecutiveEmptyPages} consecutive empty pages`,
+              );
+              break;
             }
 
-            // Smart pagination increment on empty pages
-            if (currentItem < totalCustomers * 0.9) {
-              // Only skip if we're not near the end
-              currentItem += this.PAGE_SIZE;
-            }
+            // Move to next page
+            currentItem += this.PAGE_SIZE;
             continue;
           }
 
-          // Handle duplicate detection at page level
-          const newCustomers = customers.filter(
-            (customer) => !processedCustomerIds.has(customer.id),
-          );
-          const duplicateCount = customers.length - newCustomers.length;
+          // 🆕 DUPLICATE DETECTION
+          const newCustomers = customers.filter((customer) => {
+            if (processedCustomerIds.has(customer.id)) {
+              this.logger.debug(
+                `⚠️ Duplicate customer ID detected: ${customer.id} (${customer.code})`,
+              );
+              return false;
+            }
+            processedCustomerIds.add(customer.id);
+            return true;
+          });
 
-          if (duplicateCount > 0) {
+          if (newCustomers.length !== customers.length) {
             this.logger.warn(
-              `⚠️ Found ${duplicateCount} duplicate customers in page ${currentPage}. Processing ${newCustomers.length} new customers.`,
+              `🔄 Filtered out ${customers.length - newCustomers.length} duplicate customers on page ${currentPage}`,
             );
           }
 
+          // Skip if no new customers after deduplication
           if (newCustomers.length === 0) {
-            this.logger.warn(
-              `⚠️ All customers in current page already processed. Moving to next page.`,
+            this.logger.log(
+              `⏭️ Skipping page ${currentPage} - all customers already processed`,
             );
             currentItem += this.PAGE_SIZE;
             continue;
           }
 
+          // Process customers
           this.logger.log(
-            `📊 Processing ${newCustomers.length} customers (Page: ${currentPage}, Processed: ${processedCount}/${totalCustomers})`,
+            `🔄 Processing ${newCustomers.length} customers from page ${currentPage}...`,
           );
 
-          // Add processed IDs to tracking set
-          newCustomers.forEach((customer) =>
-            processedCustomerIds.add(customer.id),
-          );
-
-          // Process customers with detailed enrichment
           const customersWithDetails =
             await this.enrichCustomersWithDetails(newCustomers);
           const savedCustomers =
             await this.saveCustomersToDatabase(customersWithDetails);
 
-          // Safer LarkBase sync with better error handling
-          try {
-            await this.syncCustomersToLarkBase(savedCustomers);
-          } catch (larkError) {
-            this.logger.error(
-              `❌ LarkBase sync failed for page ${currentPage}: ${larkError.message}`,
-            );
-            // Continue with database sync even if LarkBase fails
-          }
-
-          processedCount += newCustomers.length;
+          // Track progress
+          processedCount += savedCustomers.length;
           currentItem += this.PAGE_SIZE;
 
-          // Progress reporting
-          const progressPercentage =
-            totalCustomers > 0 ? (processedCount / totalCustomers) * 100 : 0;
-          this.logger.log(
-            `📈 Progress: ${processedCount}/${totalCustomers} (${progressPercentage.toFixed(1)}%)`,
-          );
-
-          // Dynamic completion check
-          if (totalCustomers > 0 && processedCount >= totalCustomers) {
-            this.logger.log('🎉 All customers processed successfully!');
-            break;
-          }
-
-          // Safety limit to prevent infinite loops
-          if (currentItem > totalCustomers * 1.5) {
-            this.logger.warn(
-              `⚠️ Safety limit reached. Processed: ${processedCount}/${totalCustomers}`,
+          // Progress update
+          if (totalCustomers > 0) {
+            const completionPercentage =
+              (processedCount / totalCustomers) * 100;
+            this.logger.log(
+              `📈 Progress: ${processedCount}/${totalCustomers} (${completionPercentage.toFixed(1)}%)`,
             );
-            break;
+
+            // Early completion check
+            if (processedCount >= totalCustomers) {
+              this.logger.log('🎉 All customers processed successfully!');
+              break;
+            }
           }
+
+          // Sync to LarkBase (optional - can be done in batches)
+          if (savedCustomers.length > 0) {
+            try {
+              await this.syncCustomersToLarkBase(savedCustomers);
+              this.logger.log(
+                `🚀 Synced ${savedCustomers.length} customers to LarkBase`,
+              );
+            } catch (larkError) {
+              this.logger.warn(
+                `⚠️ LarkBase sync failed for page ${currentPage}: ${larkError.message}`,
+              );
+              // Continue with next page even if LarkBase sync fails
+            }
+          }
+
+          // 🆕 SMART BREAK CONDITIONS
+          if (totalCustomers > 0) {
+            // If we've processed enough and are past the expected range
+            if (
+              currentItem >= totalCustomers &&
+              processedCount >= totalCustomers * 0.95
+            ) {
+              this.logger.log(
+                '✅ Sync completed - reached expected data range',
+              );
+              break;
+            }
+          }
+
+          // Respect rate limits
+          await new Promise((resolve) => setTimeout(resolve, 100));
         } catch (error) {
           consecutiveErrorPages++;
           totalRetries++;
