@@ -968,25 +968,47 @@ export class LarkInvoiceSyncService {
   }
 
   private async acquireSyncLock(lockKey: string): Promise<void> {
+    const syncName = 'invoice_lark_sync';
+
     const existingLock = await this.prismaService.syncControl.findFirst({
       where: {
-        name: 'invoice_lark_sync',
+        name: syncName,
         isRunning: true,
       },
     });
 
     if (existingLock && existingLock.startedAt) {
       const lockAge = Date.now() - existingLock.startedAt.getTime();
-      if (lockAge < 30 * 60 * 1000) {
-        throw new Error('Another sync is already running');
+
+      // 🆕 ENHANCED: More aggressive stale lock cleanup
+      if (lockAge < 10 * 60 * 1000) {
+        // Reduced from 30min to 10min
+        // 🆕 ADDED: Check if the process is actually active
+        const isProcessActive = await this.isLockProcessActive(existingLock);
+
+        if (isProcessActive) {
+          throw new Error('Another sync is already running');
+        } else {
+          this.logger.warn(
+            `🔓 Clearing inactive lock (age: ${Math.round(lockAge / 1000)}s)`,
+          );
+          await this.forceReleaseLock(syncName);
+        }
+      } else {
+        this.logger.warn(
+          `🔓 Clearing stale lock (age: ${Math.round(lockAge / 60000)}min)`,
+        );
+        await this.forceReleaseLock(syncName);
       }
-      this.logger.warn('🔓 Clearing stale lock');
     }
 
+    // 🆕 ADDED: Wait for any competing processes
+    await this.waitForLockAvailability(syncName);
+
     await this.prismaService.syncControl.upsert({
-      where: { name: 'invoice_lark_sync' },
+      where: { name: syncName },
       create: {
-        name: 'invoice_lark_sync',
+        name: syncName,
         entities: ['invoice'],
         syncMode: 'lark_sync',
         isEnabled: true,
@@ -994,18 +1016,92 @@ export class LarkInvoiceSyncService {
         status: 'running',
         lastRunAt: new Date(),
         startedAt: new Date(),
-        progress: { lockKey },
+        progress: {
+          lockKey,
+          processId: process.pid, // 🆕 ADDED: Track process ID
+          hostname: require('os').hostname(), // 🆕 ADDED: Track hostname
+        },
       },
       update: {
         isRunning: true,
         status: 'running',
         lastRunAt: new Date(),
         startedAt: new Date(),
-        progress: { lockKey },
+        progress: {
+          lockKey,
+          processId: process.pid,
+          hostname: require('os').hostname(),
+        },
       },
     });
 
-    this.logger.debug(`🔒 Acquired sync lock: ${lockKey}`);
+    this.logger.debug(
+      `🔒 Acquired sync lock: ${lockKey} (PID: ${process.pid})`,
+    );
+  }
+
+  // 🆕 ADD these new methods after acquireSyncLock:
+
+  private async isLockProcessActive(lockRecord: any): Promise<boolean> {
+    try {
+      if (!lockRecord.progress?.processId) {
+        return false; // No process ID stored = inactive
+      }
+
+      const currentHostname = require('os').hostname();
+      if (lockRecord.progress.hostname !== currentHostname) {
+        return false; // Different machine = inactive
+      }
+
+      // Check if process exists (simple heuristic)
+      const lockAge = Date.now() - lockRecord.startedAt.getTime();
+      if (lockAge > 5 * 60 * 1000) {
+        // 5 minutes without update = likely stuck
+        return false;
+      }
+
+      return true;
+    } catch (error) {
+      this.logger.warn(`Could not verify lock process: ${error.message}`);
+      return false; // Assume inactive if can't verify
+    }
+  }
+
+  private async waitForLockAvailability(
+    syncName: string,
+    maxWaitMs: number = 30000,
+  ): Promise<void> {
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < maxWaitMs) {
+      const existingLock = await this.prismaService.syncControl.findFirst({
+        where: { name: syncName, isRunning: true },
+      });
+
+      if (!existingLock) {
+        return; // Lock is available
+      }
+
+      this.logger.debug(
+        `⏳ Waiting for lock release... (${Math.round((Date.now() - startTime) / 1000)}s)`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 2000)); // Check every 2 seconds
+    }
+
+    throw new Error(`Lock wait timeout after ${maxWaitMs / 1000}s`);
+  }
+
+  private async forceReleaseLock(syncName: string): Promise<void> {
+    await this.prismaService.syncControl.updateMany({
+      where: { name: syncName },
+      data: {
+        isRunning: false,
+        status: 'force_released',
+        error: 'Lock force released due to inactivity',
+        completedAt: new Date(),
+        progress: {},
+      },
+    });
   }
 
   private async releaseSyncLock(lockKey: string): Promise<void> {

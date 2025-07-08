@@ -115,65 +115,200 @@ export class BusSchedulerService implements OnModuleInit {
   private async executeParallelSyncs(): Promise<void> {
     const syncPromises = [
       this.runOrderSync().catch((error) => {
-        this.logger.error(`Order sync failed: ${error.message}`);
+        this.logger.error(`❌ [Order] Parallel sync failed: ${error.message}`);
         return { status: 'rejected', reason: error.message, sync: 'Order' };
       }),
       this.runCustomerSync().catch((error) => {
-        this.logger.error(`Customer sync failed: ${error.message}`);
+        this.logger.error(
+          `❌ [Customer] Parallel sync failed: ${error.message}`,
+        );
         return { status: 'rejected', reason: error.message, sync: 'Customer' };
       }),
       this.runInvoiceSync().catch((error) => {
-        this.logger.error(`Invoice sync failed: ${error.message}`);
+        this.logger.error(
+          `❌ [Invoice] Parallel sync failed: ${error.message}`,
+        );
         return { status: 'rejected', reason: error.message, sync: 'Invoice' };
       }),
     ];
 
     const results = await Promise.allSettled(syncPromises);
 
-    // Process results
-    let successCount = 0;
-    let failureCount = 0;
-    const syncResults: string[] = [];
+    // 🆕 ADDED: Stagger LarkBase sync to prevent collision
+    await this.executeStaggeredLarkSync(results);
+  }
 
-    results.forEach((result, i) => {
-      const syncNames = ['Order', 'Customer', 'Invoice'];
-      const syncName = syncNames[i];
+  // 🆕 ADD these new methods after executeParallelSyncs:
 
-      if (result.status === 'fulfilled') {
-        if (
-          result.value &&
-          typeof result.value === 'object' &&
-          'status' in result.value
-        ) {
-          // This was a caught error
-          failureCount++;
-          syncResults.push(`❌ ${syncName}: ${result.value.reason}`);
-          this.logger.error(
-            `❌ [${syncName}] Parallel sync failed: ${result.value.reason}`,
-          );
-        } else {
-          // This was a success
-          successCount++;
-          syncResults.push(`✅ ${syncName}: Success`);
-          this.logger.log(
-            `✅ [${syncName}] Parallel sync completed successfully`,
-          );
-        }
-      } else {
-        failureCount++;
-        syncResults.push(`❌ ${syncName}: ${result.reason}`);
-        this.logger.error(
-          `❌ [${syncName}] Parallel sync failed: ${result.reason}`,
+  private async executeStaggeredLarkSync(syncResults: any[]): Promise<void> {
+    this.logger.log('🚀 Starting staggered LarkBase sync...');
+
+    const successfulSyncs = syncResults
+      .map((result, index) => ({
+        result,
+        syncType: ['order', 'customer', 'invoice'][index],
+      }))
+      .filter(({ result }) => result.status === 'fulfilled' || !result.reason);
+
+    let delay = 0;
+
+    for (const { syncType } of successfulSyncs) {
+      if (delay > 0) {
+        this.logger.log(
+          `⏳ Waiting ${delay / 1000}s before ${syncType} LarkBase sync...`,
         );
+        await new Promise((resolve) => setTimeout(resolve, delay));
       }
+
+      try {
+        switch (syncType) {
+          case 'customer':
+            await this.runCustomerLarkSync();
+            break;
+          case 'invoice':
+            await this.runInvoiceLarkSync();
+            break;
+          case 'order':
+            await this.runOrderLarkSync();
+            break;
+        }
+        this.logger.log(`✅ ${syncType} LarkBase sync completed`);
+      } catch (error) {
+        this.logger.error(
+          `❌ Auto ${syncType} Lark sync failed: ${error.message}`,
+        );
+        // Continue with next sync even if one fails
+      }
+
+      delay += 15000; // 15 second delay between each LarkBase sync
+    }
+  }
+
+  private async runCustomerLarkSync(): Promise<void> {
+    const customersToSync = await this.prismaService.customer.findMany({
+      where: {
+        larkSyncStatus: { in: ['PENDING', 'FAILED'] },
+      },
+      take: 100, // Limit to prevent large batches
     });
 
-    this.logger.log(
-      `📊 Sync Results: ${successCount} success, ${failureCount} failed`,
-    );
-    this.logger.log(`📋 Details: ${syncResults.join(' | ')}`);
+    if (customersToSync.length > 0) {
+      await this.larkCustomerSyncService.syncCustomersToLarkBase(
+        customersToSync,
+      );
+    }
+  }
 
-    // Don't throw error - let individual syncs fail without breaking the cycle
+  private async runInvoiceLarkSync(): Promise<void> {
+    const invoicesToSync = await this.prismaService.invoice.findMany({
+      where: {
+        larkSyncStatus: { in: ['PENDING', 'FAILED'] },
+      },
+      take: 100,
+    });
+
+    if (invoicesToSync.length > 0) {
+      await this.larkInvoiceSyncService.syncInvoicesToLarkBase(invoicesToSync);
+    }
+  }
+
+  private async runOrderLarkSync(): Promise<void> {
+    const ordersToSync = await this.prismaService.order.findMany({
+      where: {
+        larkSyncStatus: { in: ['PENDING', 'FAILED'] },
+      },
+      take: 100,
+    });
+
+    if (ordersToSync.length > 0) {
+      await this.larkOrderSyncService.syncOrdersToLarkBase(ordersToSync);
+    }
+  }
+
+  // 🆕 ADD this new method for stuck sync cleanup:
+
+  async cleanupStuckSyncs(): Promise<number> {
+    this.logger.log('🧹 Starting stuck sync cleanup...');
+
+    const now = new Date();
+    const stuckThresholdMs = 2 * 60 * 60 * 1000; // 2 hours
+
+    // Find syncs running longer than threshold
+    const stuckSyncs = await this.prismaService.syncControl.findMany({
+      where: {
+        isRunning: true,
+        startedAt: {
+          not: null, // 🆕 ADDED: Ensure startedAt is not null
+          lt: new Date(now.getTime() - stuckThresholdMs),
+        },
+      },
+    });
+
+    if (stuckSyncs.length === 0) {
+      this.logger.log('✅ No stuck syncs found');
+      return 0;
+    }
+
+    this.logger.warn(`⚠️ Found ${stuckSyncs.length} stuck syncs`);
+
+    let cleanedCount = 0;
+
+    for (const sync of stuckSyncs) {
+      // 🆕 ADDED: Null check for startedAt (extra safety)
+      if (!sync.startedAt) {
+        this.logger.warn(
+          `⚠️ Skipping sync ${sync.name} - no startedAt timestamp`,
+        );
+        continue;
+      }
+
+      const stuckDuration = now.getTime() - sync.startedAt.getTime();
+      const stuckHours = Math.round(stuckDuration / (60 * 60 * 1000));
+
+      this.logger.warn(
+        `🔧 Cleaning stuck sync: ${sync.name} (running ${stuckHours}h)`,
+      );
+
+      try {
+        await this.prismaService.syncControl.update({
+          where: { id: sync.id },
+          data: {
+            isRunning: false,
+            status: 'force_stopped',
+            error: `Force stopped after ${stuckHours}h (stuck sync cleanup)`,
+            completedAt: now,
+            progress: {
+              ...((sync.progress as any) || {}),
+              forceStoppedAt: now.toISOString(),
+              stuckDuration: `${stuckHours}h`,
+            },
+          },
+        });
+
+        cleanedCount++;
+      } catch (error) {
+        this.logger.error(
+          `❌ Failed to cleanup sync ${sync.name}: ${error.message}`,
+        );
+      }
+    }
+
+    this.logger.log(`✅ Cleaned up ${cleanedCount} stuck syncs`);
+    return cleanedCount;
+  }
+
+  private async checkRunningSyncsWithNullSafety(): Promise<any[]> {
+    const runningSyncs = await this.prismaService.syncControl.findMany({
+      where: {
+        isRunning: true,
+        startedAt: { not: null }, // Ensure startedAt exists
+      },
+    });
+
+    // Filter out any syncs without proper timing
+    return runningSyncs.filter(
+      (sync) => sync.startedAt && sync.name && typeof sync.name === 'string',
+    );
   }
 
   // ============================================================================
@@ -723,55 +858,8 @@ export class BusSchedulerService implements OnModuleInit {
   // TRACKING & UTILITY METHODS - ENHANCED
   // ============================================================================
 
-  // ✅ ENHANCED: checkRunningSyncs with auto-cleanup
-  private async checkRunningSyncs() {
-    // ✅ Auto-cleanup stuck syncs before checking
-    const STUCK_TIMEOUT_HOURS = 2;
-    const stuckCutoff = new Date(
-      Date.now() - STUCK_TIMEOUT_HOURS * 60 * 60 * 1000,
-    );
-
-    try {
-      // Find and reset stuck syncs
-      const stuckSyncs = await this.prismaService.syncControl.findMany({
-        where: {
-          isRunning: true,
-          startedAt: { lt: stuckCutoff },
-        },
-      });
-
-      if (stuckSyncs.length > 0) {
-        this.logger.warn(
-          `🚨 Found ${stuckSyncs.length} stuck sync(s) running longer than ${STUCK_TIMEOUT_HOURS} hours`,
-        );
-
-        // Reset stuck syncs
-        await this.prismaService.syncControl.updateMany({
-          where: {
-            isRunning: true,
-            startedAt: { lt: stuckCutoff },
-          },
-          data: {
-            isRunning: false,
-            status: 'timeout',
-            completedAt: new Date(),
-            error: `Auto-reset: stuck for longer than ${STUCK_TIMEOUT_HOURS} hours`,
-          },
-        });
-
-        this.logger.log(
-          `🔄 Auto-reset ${stuckSyncs.length} stuck sync(s): ${stuckSyncs.map((s) => s.name).join(', ')}`,
-        );
-      }
-    } catch (error) {
-      this.logger.error(`❌ Failed to cleanup stuck syncs: ${error.message}`);
-    }
-
-    // Return currently running syncs (after cleanup)
-    return await this.prismaService.syncControl.findMany({
-      where: { isRunning: true },
-      select: { name: true, startedAt: true },
-    });
+  async checkRunningSyncs(): Promise<any[]> {
+    return this.checkRunningSyncsWithNullSafety();
   }
 
   // ✅ ENHANCED: updateCycleTracking with progress field fix

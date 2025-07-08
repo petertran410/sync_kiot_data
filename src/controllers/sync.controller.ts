@@ -71,6 +71,23 @@ export class SyncController {
     }
   }
 
+  @Post('cleanup-stuck')
+  async cleanupStuckSyncs() {
+    try {
+      const cleanedCount = await this.busScheduler.cleanupStuckSyncs();
+      return {
+        success: true,
+        message: `Cleaned up ${cleanedCount} stuck sync(s)`,
+        cleanedCount,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+  }
+
   // ============================================================================
   // MANUAL TRIGGERS - CUSTOMER
   // ============================================================================
