@@ -433,6 +433,7 @@ export class KiotVietInvoiceService {
 
   async syncRecentInvoices(days: number = 7): Promise<void> {
     const syncName = 'invoice_recent';
+    const SYNC_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes max
 
     try {
       await this.updateSyncControl(syncName, {
@@ -444,50 +445,23 @@ export class KiotVietInvoiceService {
 
       this.logger.log(`🔄 Starting recent invoice sync (${days} days)...`);
 
-      const fromDate = new Date();
-      fromDate.setDate(fromDate.getDate() - days);
-
-      const recentInvoices = await this.fetchRecentInvoices(fromDate);
-
-      if (recentInvoices.length === 0) {
-        this.logger.log('📋 No recent invoice updates found');
-        await this.updateSyncControl(syncName, {
-          isRunning: false,
-          status: 'completed',
-          completedAt: new Date(),
-          lastRunAt: new Date(),
-        });
-        return;
-      }
-
-      this.logger.log(
-        `🔄 Processing ${recentInvoices.length} recent invoices...`,
+      // 🆕 ADD: Timeout protection
+      const syncPromise = this.performRecentInvoiceSync(days);
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(
+          () =>
+            reject(
+              new Error(
+                `Invoice sync timeout after ${SYNC_TIMEOUT_MS / 60000} minutes`,
+              ),
+            ),
+          SYNC_TIMEOUT_MS,
+        ),
       );
 
-      // Enrich with details
-      const enrichedInvoices =
-        await this.enrichInvoicesWithDetails(recentInvoices);
+      await Promise.race([syncPromise, timeoutPromise]);
 
-      // Save to database
-      const savedInvoices = await this.saveInvoicesToDatabase(enrichedInvoices);
-
-      // Sync to LarkBase
-      await this.syncInvoicesToLarkBase(savedInvoices);
-
-      const totalProcessed = savedInvoices.length;
-      const duplicatesRemoved = recentInvoices.length - totalProcessed;
-
-      await this.updateSyncControl(syncName, {
-        isRunning: false,
-        status: 'completed',
-        completedAt: new Date(),
-        lastRunAt: new Date(),
-        progress: { totalProcessed, duplicatesRemoved },
-      });
-
-      this.logger.log(
-        `✅ Recent sync completed: ${recentInvoices.length} invoices processed`,
-      );
+      this.logger.log('✅ Recent invoice sync completed successfully');
     } catch (error) {
       this.logger.error(`❌ Recent sync failed: ${error.message}`);
 
@@ -500,6 +474,42 @@ export class KiotVietInvoiceService {
 
       throw error;
     }
+  }
+
+  private async performRecentInvoiceSync(days: number): Promise<void> {
+    const fromDate = new Date();
+    fromDate.setDate(fromDate.getDate() - days);
+
+    const recentInvoices = await this.fetchRecentInvoices(fromDate);
+
+    if (recentInvoices.length === 0) {
+      this.logger.log('📋 No recent invoice updates found');
+      await this.updateSyncControl('invoice_recent', {
+        isRunning: false,
+        status: 'completed',
+        completedAt: new Date(),
+        lastRunAt: new Date(),
+      });
+      return;
+    }
+
+    this.logger.log(`📊 Processing ${recentInvoices.length} recent invoices`);
+
+    const invoicesWithDetails =
+      await this.enrichInvoicesWithDetails(recentInvoices);
+    const savedInvoices =
+      await this.saveInvoicesToDatabase(invoicesWithDetails);
+
+    const totalProcessed = savedInvoices.length;
+    const duplicatesRemoved = recentInvoices.length - totalProcessed;
+
+    await this.updateSyncControl('invoice_recent', {
+      isRunning: false,
+      status: 'completed',
+      completedAt: new Date(),
+      lastRunAt: new Date(),
+      progress: { totalProcessed, duplicatesRemoved },
+    });
   }
 
   // ============================================================================

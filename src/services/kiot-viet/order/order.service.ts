@@ -423,6 +423,7 @@ export class KiotVietOrderService {
 
   async syncRecentOrders(days: number = 7): Promise<void> {
     const syncName = 'order_recent';
+    const SYNC_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes max
 
     try {
       await this.updateSyncControl(syncName, {
@@ -434,47 +435,23 @@ export class KiotVietOrderService {
 
       this.logger.log(`🔄 Starting recent order sync (${days} days)...`);
 
-      const fromDate = new Date();
-      fromDate.setDate(fromDate.getDate() - days);
-
-      const recentOrders = await this.fetchRecentOrders(fromDate);
-
-      if (recentOrders.length === 0) {
-        this.logger.log('📋 No recent order updates found');
-        await this.updateSyncControl(syncName, {
-          isRunning: false,
-          status: 'completed',
-          completedAt: new Date(),
-          lastRunAt: new Date(),
-        });
-        return;
-      }
-
-      this.logger.log(`🔄 Processing ${recentOrders.length} recent orders...`);
-
-      // Enrich with details
-      const enrichedOrders = await this.enrichOrdersWithDetails(recentOrders);
-
-      // Save to database
-      const savedOrders = await this.saveOrdersToDatabase(enrichedOrders);
-
-      // Sync to LarkBase
-      await this.syncOrdersToLarkBase(savedOrders);
-
-      const totalProcessed = savedOrders.length;
-      const duplicatesRemoved = recentOrders.length - totalProcessed;
-
-      await this.updateSyncControl(syncName, {
-        isRunning: false,
-        status: 'completed',
-        completedAt: new Date(),
-        lastRunAt: new Date(),
-        progress: { totalProcessed, duplicatesRemoved },
-      });
-
-      this.logger.log(
-        `✅ Recent sync completed: ${recentOrders.length} orders processed`,
+      // 🆕 ADD: Timeout protection
+      const syncPromise = this.performRecentOrderSync(days);
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(
+          () =>
+            reject(
+              new Error(
+                `Order sync timeout after ${SYNC_TIMEOUT_MS / 60000} minutes`,
+              ),
+            ),
+          SYNC_TIMEOUT_MS,
+        ),
       );
+
+      await Promise.race([syncPromise, timeoutPromise]);
+
+      this.logger.log('✅ Recent order sync completed successfully');
     } catch (error) {
       this.logger.error(`❌ Recent sync failed: ${error.message}`);
 
@@ -487,6 +464,42 @@ export class KiotVietOrderService {
 
       throw error;
     }
+  }
+
+  // 🆕 EXTRACT the core sync logic to separate method:
+
+  private async performRecentOrderSync(days: number): Promise<void> {
+    const fromDate = new Date();
+    fromDate.setDate(fromDate.getDate() - days);
+
+    const recentOrders = await this.fetchRecentOrders(fromDate);
+
+    if (recentOrders.length === 0) {
+      this.logger.log('📋 No recent order updates found');
+      await this.updateSyncControl('order_recent', {
+        isRunning: false,
+        status: 'completed',
+        completedAt: new Date(),
+        lastRunAt: new Date(),
+      });
+      return;
+    }
+
+    this.logger.log(`📊 Processing ${recentOrders.length} recent orders`);
+
+    const ordersWithDetails = await this.enrichOrdersWithDetails(recentOrders);
+    const savedOrders = await this.saveOrdersToDatabase(ordersWithDetails);
+
+    const totalProcessed = savedOrders.length;
+    const duplicatesRemoved = recentOrders.length - totalProcessed;
+
+    await this.updateSyncControl('order_recent', {
+      isRunning: false,
+      status: 'completed',
+      completedAt: new Date(),
+      lastRunAt: new Date(),
+      progress: { totalProcessed, duplicatesRemoved },
+    });
   }
 
   // ============================================================================

@@ -459,7 +459,7 @@ export class KiotVietCustomerService {
   // RECENT SYNC (Incremental updates)
   // ============================================================================
 
-  async syncRecentCustomers(days: number = 4): Promise<void> {
+  async syncRecentCustomers(days: number = 7): Promise<void> {
     const syncName = 'customer_recent';
 
     try {
