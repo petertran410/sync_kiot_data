@@ -32,6 +32,7 @@ const LARK_CUSTOMER_FIELDS = {
   LOCATION_NAME: 'Khu Vực',
   CUSTOMER_GROUPS: 'Nhóm Khách Hàng',
   DATE_OF_BIRTH: 'Ngày Sinh',
+  TYPE: 'Loại Khách Hàng',
 } as const;
 
 const GENDER_OPTIONS = {
@@ -44,6 +45,11 @@ const BRANCH_OPTIONS = {
   KHO_HA_NOI: 'Kho Hà Nội',
   KHO_SAI_GON: 'Kho Sài Gòn',
   VAN_PHONG_HA_NOI: 'Văn Phòng Hà Nội',
+};
+
+const TYPE_CUSTOMER = {
+  CONG_TY: 'Công Ty',
+  CA_NHAN: 'Cá Nhân',
 };
 
 interface LarkBaseRecord {
@@ -1064,6 +1070,15 @@ export class LarkCustomerSyncService {
     if (customer.rewardPoint !== null && customer.rewardPoint !== undefined) {
       fields[LARK_CUSTOMER_FIELDS.CURRENT_POINTS] =
         this.safeBigIntToNumber(customer.rewardPoint) || 0;
+    }
+
+    if (customer.type) {
+      const typeMapping = {
+        0: TYPE_CUSTOMER.CA_NHAN,
+        1: TYPE_CUSTOMER.CONG_TY,
+      };
+
+      fields[LARK_CUSTOMER_FIELDS.TYPE] = typeMapping[customer.type] || null;
     }
 
     if (
