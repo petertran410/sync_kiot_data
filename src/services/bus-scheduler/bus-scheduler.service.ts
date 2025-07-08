@@ -69,14 +69,14 @@ export class BusSchedulerService implements OnModuleInit {
       await this.updateCycleTracking('main_cycle', 'running');
 
       // ✅ ENHANCED: Add timeout protection for entire cycle
-      const CYCLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes max
+      const CYCLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes max
 
       try {
         // ✅ CONSOLIDATED: Inline parallel sync execution with timeout
         const cyclePromise = this.executeParallelSyncs();
         const timeoutPromise = new Promise<never>((_, reject) =>
           setTimeout(
-            () => reject(new Error('Cycle timeout after 30 minutes')),
+            () => reject(new Error('Cycle timeout after 10 minutes')),
             CYCLE_TIMEOUT_MS,
           ),
         );
@@ -95,11 +95,11 @@ export class BusSchedulerService implements OnModuleInit {
           timeoutError instanceof Error &&
           timeoutError.message.includes('timeout')
         ) {
-          this.logger.error(`⏰ Sync cycle timed out after 30 minutes`);
+          this.logger.error(`⏰ Sync cycle timed out after 10 minutes`);
           await this.updateCycleTracking(
             'main_cycle',
             'timeout',
-            'Cycle exceeded 30 minute timeout',
+            'Cycle exceeded 10 minute timeout',
           );
         } else {
           throw timeoutError; // Re-throw non-timeout errors
