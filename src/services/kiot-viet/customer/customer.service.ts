@@ -532,7 +532,7 @@ export class KiotVietCustomerService {
     const queryParams = new URLSearchParams({
       lastModifiedFrom: fromDateStr,
       currentItem: '0',
-      pageSize: '1000',
+      pageSize: '100',
       orderBy: 'modifiedDate',
       orderDirection: 'DESC',
       includeCustomerGroup: 'true',
@@ -543,6 +543,7 @@ export class KiotVietCustomerService {
     const response = await firstValueFrom(
       this.httpService.get(`${this.baseUrl}/customers?${queryParams}`, {
         headers,
+        timeout: 60000,
       }),
     );
 

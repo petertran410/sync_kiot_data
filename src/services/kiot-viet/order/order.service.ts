@@ -605,7 +605,7 @@ export class KiotVietOrderService {
             orderBy: 'modifiedDate',
             orderDirection: 'DESC',
           },
-          timeout: 30000,
+          timeout: 60000,
         }),
       );
       return response.data;

@@ -628,7 +628,7 @@ export class KiotVietInvoiceService {
             orderBy: 'modifiedDate',
             orderDirection: 'Desc',
           },
-          timeout: 30000,
+          timeout: 60000,
         }),
       );
 
