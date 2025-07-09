@@ -9,6 +9,7 @@ Dockerfile
 docker-compose.yml
 
 /ssl
+nginx.conf
 
 # Logs
 logs
