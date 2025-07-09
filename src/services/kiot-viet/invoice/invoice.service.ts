@@ -1,11 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
-import { firstValueFrom, from } from 'rxjs';
+import { firstValueFrom } from 'rxjs';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { KiotVietAuthService } from '../auth.service';
 import { LarkInvoiceSyncService } from '../../lark/invoice/lark-invoice-sync.service';
-import { Prisma, LarkSyncStatus } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 
 interface KiotVietInvoice {
   id: number;
@@ -152,7 +152,7 @@ export class KiotVietInvoiceService {
 
       // Default: recent sync
       this.logger.log('Running default recent invoice sync...');
-      await this.syncRecentInvoices(3);
+      await this.syncRecentInvoices(10);
     } catch (error) {
       this.logger.error(`Sync check failed: ${error.message}`);
       throw error;
@@ -258,7 +258,7 @@ export class KiotVietInvoiceService {
           if (total !== undefined && total !== null) {
             if (totalInvoices === 0) {
               totalInvoices = total;
-              this.logger.log(`📊 Total customers detected: ${totalInvoices}`);
+              this.logger.log(`📊 Total invoices detected: ${totalInvoices}`);
             } else if (total !== totalInvoices) {
               this.logger.warn(
                 `⚠️ Total count changed: ${totalInvoices} -> ${total}. Using latest.`,
@@ -347,7 +347,7 @@ export class KiotVietInvoiceService {
             try {
               await this.syncInvoicesToLarkBase(savedInvoices);
               this.logger.log(
-                `🚀 Synced ${savedInvoices.length} customers to LarkBase`,
+                `🚀 Synced ${savedInvoices.length} invoices to LarkBase`,
               );
             } catch (larkError) {
               this.logger.warn(

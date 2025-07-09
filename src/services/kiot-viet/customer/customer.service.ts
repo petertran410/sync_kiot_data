@@ -86,7 +86,7 @@ export class KiotVietCustomerService {
 
       // Default: recent sync
       this.logger.log('Running default recent customer sync...');
-      await this.syncRecentCustomers(3);
+      await this.syncRecentCustomers(10);
     } catch (error) {
       this.logger.error(`Sync check failed: ${error.message}`);
       throw error;

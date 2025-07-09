@@ -108,10 +108,6 @@ export class BusSchedulerService implements OnModuleInit {
 
   private async executeParallelSyncs(): Promise<void> {
     const syncPromises = [
-      // this.runOrderSync().catch((error) => {
-      //   this.logger.error(`❌ [Order] Parallel sync failed: ${error.message}`);
-      //   return { status: 'rejected', reason: error.message, sync: 'Order' };
-      // }),
       this.runCustomerSync().catch((error) => {
         this.logger.error(
           `❌ [Customer] Parallel sync failed: ${error.message}`,
@@ -123,6 +119,10 @@ export class BusSchedulerService implements OnModuleInit {
           `❌ [Invoice] Parallel sync failed: ${error.message}`,
         );
         return { status: 'rejected', reason: error.message, sync: 'Invoice' };
+      }),
+      this.runOrderSync().catch((error) => {
+        this.logger.error(`❌ [Order] Parallel sync failed: ${error.message}`);
+        return { status: 'rejected', reason: error.message, sync: 'Order' };
       }),
     ];
 
@@ -158,9 +158,9 @@ export class BusSchedulerService implements OnModuleInit {
           case 'invoice':
             await this.runInvoiceLarkSync();
             break;
-          // case 'order':
-          //   await this.runOrderLarkSync();
-          //   break;
+          case 'order':
+            await this.runOrderLarkSync();
+            break;
         }
         this.logger.log(`✅ ${syncType} LarkBase sync completed`);
       } catch (error) {
@@ -702,12 +702,12 @@ export class BusSchedulerService implements OnModuleInit {
 
   enableMainScheduler() {
     this.isMainSchedulerEnabled = true;
-    this.logger.log('✅ Main scheduler (8-minute cycle) enabled');
+    this.logger.log('✅ Main scheduler (7-minute cycle) enabled');
   }
 
   disableMainScheduler() {
     this.isMainSchedulerEnabled = false;
-    this.logger.log('🔇 Main scheduler (8-minute cycle) disabled');
+    this.logger.log('🔇 Main scheduler (7-minute cycle) disabled');
   }
 
   enableWeeklyScheduler() {
@@ -752,10 +752,10 @@ export class BusSchedulerService implements OnModuleInit {
           this.logger.warn(`Invoice startup check failed: ${error.message}`);
           return Promise.resolve();
         }),
-        // this.runOrderSync().catch((error) => {
-        //   this.logger.warn(`Order startup check failed: ${error.message}`);
-        //   return Promise.resolve();
-        // }),
+        this.runOrderSync().catch((error) => {
+          this.logger.warn(`Order startup check failed: ${error.message}`);
+          return Promise.resolve();
+        }),
       ];
 
       await Promise.allSettled(startupPromises);

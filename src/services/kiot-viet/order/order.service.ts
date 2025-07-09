@@ -8,45 +8,61 @@ import { KiotVietAuthService } from '../auth.service';
 import { LarkOrderSyncService } from '../../lark/order/lark-order-sync.service';
 import { Prisma } from '@prisma/client';
 
-// Interface definitions remain the same...
-interface OrderResponse {
-  data: any[];
-  total: number;
-  pageSize: number;
-  currentItem: number;
-}
-
-interface CreateOrderDto {
-  branchId: number;
+interface KiotVietOrder {
+  id: number;
+  code: string;
+  purchaseDate: string;
+  branchId?: number;
+  branchName?: string;
   customerId?: number;
   customerCode?: string;
   customerName?: string;
   soldById?: number;
   soldByName?: string;
   description?: string;
+  total?: number;
+  totalPayment?: number;
+  discountRatio?: number;
+  discount?: number;
+  statusValue: string;
   usingCod?: boolean;
   status?: number;
-  orderDetails: Array<{
+  retailerId: number;
+  modifiedDate?: string;
+  createdDate?: string;
+  saleChannelId?: number;
+  orderDetails: {
     productId: number;
     productCode?: string;
     productName?: string;
+    isMaster?: boolean;
     quantity: number;
     price: number;
     discount?: number;
     discountRatio?: number;
-  }>;
+    note?: string;
+  };
   orderDelivery?: {
+    deliveryCode?: string;
+    type?: number;
+    price?: number;
     receiver?: string;
     contactNumber?: string;
     address?: string;
     locationId?: number;
     locationName?: string;
-    wardName?: string;
     weight?: number;
     length?: number;
     width?: number;
     height?: number;
     partnerDeliveryId?: number;
+    partnerDelivery?: {
+      code?: string;
+      name?: string;
+      address?: string;
+      contactNumber?: string;
+      email?: string;
+    };
   };
   payments?: Array<{
     id?: number;
@@ -54,16 +70,19 @@ interface CreateOrderDto {
     amount: number;
     method: string;
     status?: number;
+    statusValue?: string;
     transDate: string;
     accountId?: number;
-    description?: string;
+    bankAcount?: string;
   }>;
   invoiceOrderSurcharges?: Array<{
     id?: number;
+    invoiceId?: number;
     surchargeId?: number;
     surchargeName?: string;
     surValue?: number;
     price?: number;
+    createdDate?: string;
   }>;
 }
 
@@ -71,7 +90,7 @@ interface CreateOrderDto {
 export class KiotVietOrderService {
   private readonly logger = new Logger(KiotVietOrderService.name);
   private readonly baseUrl: string;
-  private readonly PAGE_SIZE = 50; // ✅ REDUCED: 100 → 50 for better timeout handling
+  private readonly PAGE_SIZE = 100;
 
   constructor(
     private readonly httpService: HttpService,
@@ -111,13 +130,13 @@ export class KiotVietOrderService {
       // Then recent sync
       if (recentSync?.isEnabled && !recentSync.isRunning) {
         this.logger.log('Starting recent order sync...');
-        await this.syncRecentOrders(7); // Last 7 days
+        await this.syncRecentOrders(10);
         return;
       }
 
       // Default: recent sync
       this.logger.log('Running default recent order sync...');
-      await this.syncRecentOrders(7);
+      await this.syncRecentOrders(10);
     } catch (error) {
       this.logger.error(`Sync check failed: ${error.message}`);
       throw error;
@@ -147,7 +166,7 @@ export class KiotVietOrderService {
     let consecutiveEmptyPages = 0;
     let consecutiveErrorPages = 0;
     let lastValidTotal = 0;
-    let processedOrderIds = new Set<number>(); // Track processed IDs to avoid duplicates
+    let processedOrderIds = new Set<number>();
 
     try {
       await this.updateSyncControl(syncName, {
@@ -159,193 +178,176 @@ export class KiotVietOrderService {
 
       this.logger.log('🚀 Starting historical order sync...');
 
-      // COMPLETION DETECTION with more flexible thresholds
-      const MAX_CONSECUTIVE_EMPTY_PAGES = 5; // Increased from 3
+      const MAX_CONSECUTIVE_EMPTY_PAGES = 5;
       const MAX_CONSECUTIVE_ERROR_PAGES = 3;
-      const RETRY_DELAY_MS = 2000; // 2 seconds delay between retries
-      const MAX_TOTAL_RETRIES = 10; // Total retries allowed across the entire sync
+      const RETRY_DELAY_MS = 2000;
+      const MAX_TOTAL_RETRIES = 10;
 
       let totalRetries = 0;
 
       while (true) {
         const currentPage = Math.floor(currentItem / this.PAGE_SIZE) + 1;
-        this.logger.log(
-          `📄 Fetching orders page: ${currentPage} (currentItem: ${currentItem})`,
-        );
+
+        if (totalOrders > 0) {
+          if (currentItem >= totalOrders) {
+            this.logger.log(
+              `✅ Pagination complete. Processed: ${processedCount}/${totalOrders} orders`,
+            );
+            break;
+          }
+
+          const progressPercentage = (currentItem / totalOrders) * 100;
+          this.logger.log(
+            `📄 Fetching page ${currentPage} (${currentItem}/${totalOrders} - ${progressPercentage.toFixed(1)}%)`,
+          );
+        } else {
+          this.logger.log(
+            `📄 Fetching page ${currentPage} (currentItem: ${currentItem})`,
+          );
+        }
 
         try {
           const orderListResponse = await this.fetchOrdersListWithRetry({
             currentItem,
             pageSize: this.PAGE_SIZE,
-            orderBy: 'id',
-            orderDirection: 'ASC',
-            includeOrderDelivery: true,
+            orderBy: 'createdDate',
+            orderDirection: 'DESC',
             includePayment: true,
+            includeOrderDelivery: true,
           });
 
-          // VALIDATION: Check response structure
           if (!orderListResponse) {
             this.logger.warn('⚠️ Received null response from KiotViet API');
             consecutiveEmptyPages++;
-            consecutiveErrorPages++;
 
             if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
-              this.logger.error(
-                `❌ Received ${MAX_CONSECUTIVE_EMPTY_PAGES} consecutive empty responses. Trying final validation...`,
+              this.logger.log(
+                `🔚 Reached end after ${consecutiveEmptyPages} empty pages`,
               );
-
-              // Try to validate with current data before failing
-              if (processedCount > 0) {
-                this.logger.log(
-                  `✅ Partial sync completed with ${processedCount} orders processed`,
-                );
-                break;
-              } else {
-                throw new Error(
-                  `API returned ${MAX_CONSECUTIVE_EMPTY_PAGES} consecutive empty responses with no data processed`,
-                );
-              }
+              break;
             }
 
-            // Wait before retrying
             await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
             continue;
           }
 
-          // Reset error counters on successful response
           consecutiveEmptyPages = 0;
           consecutiveErrorPages = 0;
 
-          // VALIDATION: Check data structure
           const { total, data: orders } = orderListResponse;
 
           if (total !== undefined && total !== null) {
-            totalOrders = total;
+            if (totalOrders === 0) {
+              totalOrders = total;
+              this.logger.log(`📊 Total orders detected: ${totalOrders}`);
+            } else if (total !== totalOrders) {
+              this.logger.warn(
+                `⚠️ Total count changed: ${totalOrders} -> ${total}. Using latest.`,
+              );
+              totalOrders = total;
+            }
             lastValidTotal = total;
-          } else if (lastValidTotal > 0) {
-            totalOrders = lastValidTotal;
           }
 
-          this.logger.log(`📊 Total orders in system: ${totalOrders}`);
-
-          // Handle empty data array
           if (!orders || orders.length === 0) {
             this.logger.warn(
-              `⚠️ Empty page received. Consecutive empty pages: ${consecutiveEmptyPages + 1}`,
+              `⚠️ Empty page received at position ${currentItem}`,
             );
             consecutiveEmptyPages++;
 
-            // GRACEFUL COMPLETION CHECK
+            if (totalOrders > 0 && currentItem >= totalOrders) {
+              this.logger.log('✅ Reached end of data (empty page past total)');
+              break;
+            }
+
+            // If too many consecutive empty pages, stop
             if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
-              const progressPercentage =
-                totalOrders > 0 ? (processedCount / totalOrders) * 100 : 0;
-
-              if (progressPercentage >= 95) {
-                this.logger.log(
-                  `✅ Sync nearly complete (${progressPercentage.toFixed(1)}%). Ending gracefully.`,
-                );
-                break;
-              } else if (processedCount > 0) {
-                this.logger.log(
-                  `⚠️ Partial completion (${progressPercentage.toFixed(1)}%). Ending with partial data.`,
-                );
-                break;
-              } else {
-                throw new Error(
-                  `Too many empty pages with minimal progress: ${processedCount}/${totalOrders}`,
-                );
-              }
+              this.logger.log(
+                `🔚 Stopping after ${consecutiveEmptyPages} consecutive empty pages`,
+              );
+              break;
             }
 
-            // Smart pagination increment on empty pages
-            if (currentItem < totalOrders * 0.9) {
-              // Only skip if we're not near the end
-              currentItem += this.PAGE_SIZE;
-            }
+            // Move to next page
+            currentItem += this.PAGE_SIZE;
             continue;
           }
 
-          // Handle duplicate detection at page level - EXACT COPY FROM INVOICE
-          const newOrders = orders.filter(
-            (order) => !processedOrderIds.has(order.id),
-          );
-          const duplicateCount = orders.length - newOrders.length;
+          const newOrders = orders.filter((order) => {
+            if (processedOrderIds.has(order.id)) {
+              this.logger.debug(
+                `⚠️ Duplicate order ID detected: ${order.id} (${order.code})`,
+              );
+              return false;
+            }
+            processedOrderIds.add(order.id);
+            return true;
+          });
 
-          if (duplicateCount > 0) {
+          if (newOrders.length !== orders.length) {
             this.logger.warn(
-              `⚠️ Found ${duplicateCount} duplicate orders in page ${currentPage}. Processing ${newOrders.length} new orders.`,
+              `🔄 Filtered out ${orders.length - newOrders.length} duplicate orders on page ${currentPage}`,
             );
           }
 
           if (newOrders.length === 0) {
-            this.logger.warn(
-              `⚠️ All orders in current page already processed. Skipping...`,
+            this.logger.log(
+              `⏭️ Skipping page ${currentPage} - all orders already processed`,
             );
             currentItem += this.PAGE_SIZE;
             continue;
           }
 
-          // Add to processed set - EXACT COPY FROM INVOICE
-          newOrders.forEach((order) => processedOrderIds.add(order.id));
-
           this.logger.log(
-            `📊 Processing ${newOrders.length} orders (Page: ${currentPage}, Processed: ${processedCount}/${totalOrders})`,
+            `🔄 Processing ${newOrders.length} orders from page ${currentPage}...`,
           );
 
-          // Enrich with details
-          this.logger.log(
-            `🔍 Enriching ${newOrders.length} orders with details...`,
-          );
-          const enrichedOrders = await this.enrichOrdersWithDetails(newOrders);
+          const ordersWithDetails =
+            await this.enrichOrdersWithDetails(newOrders);
+          const savedOrders =
+            await this.saveOrdersToDatabase(ordersWithDetails);
 
-          // Save to database
-          this.logger.log(
-            `💾 Saving ${enrichedOrders.length} orders to database...`,
-          );
-          const savedOrders = await this.saveOrdersToDatabase(enrichedOrders);
-
-          // Sync to LarkBase
-          await this.syncOrdersToLarkBase(savedOrders);
-
-          processedCount += newOrders.length;
+          processedCount += savedOrders.length;
           currentItem += this.PAGE_SIZE;
 
-          // Progress tracking
-          const progressPercentage =
-            totalOrders > 0 ? (processedCount / totalOrders) * 100 : 0;
-
-          this.logger.log(
-            `📈 Progress: ${processedCount}/${totalOrders} (${progressPercentage.toFixed(1)}%)`,
-          );
-
-          await this.updateSyncControl(syncName, {
-            progress: {
-              current: processedCount,
-              total: totalOrders,
-              percentage: Math.round(progressPercentage),
-            },
-          });
-
-          // EARLY COMPLETION CHECK
-          if (
-            totalOrders > 0 &&
-            processedCount >= totalOrders &&
-            consecutiveEmptyPages === 0
-          ) {
-            this.logger.log('✅ All orders processed successfully');
-            break;
-          }
-
-          // Safety limit to prevent infinite loops
-          if (currentItem > totalOrders * 1.5) {
-            this.logger.warn(
-              `⚠️ Safety limit reached. Processed: ${processedCount}/${totalOrders}`,
+          if (totalOrders > 0) {
+            const completionPercentage = (processedCount / totalOrders) * 100;
+            this.logger.log(
+              `📈 Progress: ${processedCount}/${totalOrders} (${completionPercentage.toFixed(1)}%)`,
             );
-            break;
+
+            if (processedCount >= totalOrders) {
+              this.logger.log('🎉 All orders processed successfully!');
+              break;
+            }
           }
 
-          // Rate limiting
-          await new Promise((resolve) => setTimeout(resolve, 1500));
+          if (savedOrders.length > 0) {
+            try {
+              await this.syncOrdersToLarkBase(savedOrders);
+              this.logger.log(
+                `🚀 Synced ${savedOrders.length} orders to LarkBase`,
+              );
+            } catch (larkError) {
+              this.logger.warn(
+                `⚠️ LarkBase sync failed for page ${currentPage}: ${larkError.message}`,
+              );
+            }
+          }
+
+          if (totalOrders > 0) {
+            if (
+              currentItem >= totalOrders &&
+              processedCount >= totalOrders * 0.95
+            ) {
+              this.logger.log(
+                '✅ Sync completed - reached expected data range',
+              );
+              break;
+            }
+          }
+
+          await new Promise((resolve) => setTimeout(resolve, 100));
         } catch (error) {
           consecutiveErrorPages++;
           totalRetries++;
@@ -389,6 +391,7 @@ export class KiotVietOrderService {
 
       const completionRate =
         totalOrders > 0 ? (processedCount / totalOrders) * 100 : 100;
+
       this.logger.log(
         `✅ Historical order sync completed: ${processedCount}/${totalOrders} (${completionRate.toFixed(1)}% completion rate)`,
       );
@@ -413,9 +416,8 @@ export class KiotVietOrderService {
   // RECENT SYNC - ENHANCED WITH RATE LIMITING
   // ============================================================================
 
-  async syncRecentOrders(days: number = 7): Promise<void> {
+  async syncRecentOrders(days: number = 10): Promise<void> {
     const syncName = 'order_recent';
-    const SYNC_TIMEOUT_MS = 15 * 60 * 1000;
 
     try {
       await this.updateSyncControl(syncName, {
@@ -425,27 +427,41 @@ export class KiotVietOrderService {
         error: null,
       });
 
+      this.logger.log(`🔄 Starting recent order sync (${days} days)...`);
+
+      const fromDate = new Date();
+      fromDate.setDate(fromDate.getDate() - days);
+
+      const recentOrders = await this.fetchRecentOrders(fromDate);
+
+      if (recentOrders.length === 0) {
+        this.logger.log('📋 No recent orders updates found');
+        await this.updateSyncControl(syncName, {
+          isRunning: false,
+          status: 'completed',
+          completedAt: new Date(),
+          lastRunAt: new Date(),
+        });
+        return;
+      }
+
+      this.logger.log(`📊 Processing ${recentOrders.length} recent orders`);
+
+      const ordersWithDetails =
+        await this.enrichOrdersWithDetails(recentOrders);
+      const savedOrders = await this.saveOrdersToDatabase(ordersWithDetails);
+      await this.syncOrdersToLarkBase(savedOrders);
+
+      await this.updateSyncControl(syncName, {
+        isRunning: false,
+        status: 'completed',
+        completedAt: new Date(),
+        lastRunAt: new Date(),
+      });
+
       this.logger.log(
-        `🔄 Starting recent order sync (${days} days) with 15min timeout...`,
+        `✅ Recent order sync completed: ${ordersWithDetails.length} orders processed`,
       );
-
-      // ✅ ENHANCED: Extended timeout protection
-      const syncPromise = this.performRecentOrderSync(days);
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(
-          () =>
-            reject(
-              new Error(
-                `Order sync timeout after ${SYNC_TIMEOUT_MS / 60000} minutes`,
-              ),
-            ),
-          SYNC_TIMEOUT_MS,
-        ),
-      );
-
-      await Promise.race([syncPromise, timeoutPromise]);
-
-      this.logger.log('✅ Recent order sync completed successfully');
     } catch (error) {
       this.logger.error(`❌ Recent sync failed: ${error.message}`);
 
@@ -458,45 +474,6 @@ export class KiotVietOrderService {
 
       throw error;
     }
-  }
-
-  private async performRecentOrderSync(days: number): Promise<void> {
-    const fromDate = new Date();
-    fromDate.setDate(fromDate.getDate() - days);
-
-    this.logger.log(
-      `📊 Fetching recent orders since: ${fromDate.toISOString()}`,
-    );
-
-    // ✅ NEW: Chunked processing with progress tracking
-    const recentOrders = await this.fetchRecentOrdersChunked(fromDate);
-
-    if (recentOrders.length === 0) {
-      this.logger.log('📋 No recent order updates found');
-      await this.updateSyncControl('order_recent', {
-        isRunning: false,
-        status: 'completed',
-        completedAt: new Date(),
-        lastRunAt: new Date(),
-      });
-      return;
-    }
-
-    this.logger.log(`📊 Processing ${recentOrders.length} recent orders`);
-
-    const ordersWithDetails = await this.enrichOrdersWithDetails(recentOrders);
-    const savedOrders = await this.saveOrdersToDatabase(ordersWithDetails);
-
-    const totalProcessed = savedOrders.length;
-    const duplicatesRemoved = recentOrders.length - totalProcessed;
-
-    await this.updateSyncControl('order_recent', {
-      isRunning: false,
-      status: 'completed',
-      completedAt: new Date(),
-      lastRunAt: new Date(),
-      progress: { totalProcessed, duplicatesRemoved },
-    });
   }
 
   // ============================================================================
@@ -521,13 +498,12 @@ export class KiotVietOrderService {
         return await this.fetchOrdersList(params);
       } catch (error) {
         lastError = error as Error;
-
         this.logger.warn(
           `⚠️ API attempt ${attempt}/${maxRetries} failed: ${error.message}`,
         );
 
         if (attempt < maxRetries) {
-          const delay = 2000 * attempt; // ✅ INCREASED: 1s → 2s progressive delay
+          const delay = 2000 * attempt;
           this.logger.log(`⏳ Retrying after ${delay / 1000}s delay...`);
           await new Promise((resolve) => setTimeout(resolve, delay));
         }
@@ -559,140 +535,57 @@ export class KiotVietOrderService {
     const response = await firstValueFrom(
       this.httpService.get(`${this.baseUrl}/orders?${queryParams}`, {
         headers,
-        timeout: 45000, // ✅ INCREASED: 30s → 45s timeout
+        timeout: 45000,
       }),
     );
 
     return response.data;
   }
 
-  // ✅ NEW: Chunked fetching with progress tracking
-  async fetchRecentOrdersChunked(fromDate: Date): Promise<any[]> {
-    try {
-      const allOrders: any[] = [];
-      let currentItem = 0;
-      let hasMoreData = true;
-      let pageCount = 0;
-
-      while (hasMoreData) {
-        pageCount++;
-        this.logger.log(
-          `📄 Fetching orders page ${pageCount} (offset: ${currentItem})`,
-        );
-
-        const response = await this.fetchRecentOrdersPage(
-          fromDate,
-          currentItem,
-        );
-
-        if (!response.data || response.data.length === 0) {
-          this.logger.log('📋 No more data available');
-          hasMoreData = false;
-          break;
-        }
-
-        allOrders.push(...response.data);
-        currentItem += response.data.length;
-
-        this.logger.log(
-          `📊 Page ${pageCount}: ${response.data.length} orders (total: ${allOrders.length})`,
-        );
-
-        hasMoreData = response.data.length === this.PAGE_SIZE;
-
-        // ✅ INCREASED: Rate limiting delay 1s → 2s
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-      }
-
-      this.logger.log(
-        `✅ Fetched total ${allOrders.length} recent orders in ${pageCount} pages`,
-      );
-      return allOrders;
-    } catch (error) {
-      this.logger.error(`Failed to fetch recent orders: ${error.message}`);
-      throw error;
-    }
-  }
-
   async fetchRecentOrders(fromDate: Date): Promise<any[]> {
-    try {
-      const allOrders: any[] = [];
-      let currentItem = 0;
-      let hasMoreData = true;
+    const headers = await this.authService.getRequestHeaders();
+    const fromDateStr = fromDate.toISOString();
 
-      while (hasMoreData) {
-        const response = await this.fetchRecentOrdersPage(
-          fromDate,
-          currentItem,
-        );
+    const queryParams = new URLSearchParams({
+      lastModifiedFrom: fromDateStr,
+      currentItem: '0',
+      pageSize: '100',
+      orderBy: 'modifiedDate',
+      orderDirection: 'DESC',
+      includeOrderDelivery: 'true',
+      includePayment: 'true',
+    });
 
-        if (!response.data || response.data.length === 0) {
-          hasMoreData = false;
-          break;
-        }
+    const response = await firstValueFrom(
+      this.httpService.get(`${this.baseUrl}/orders?${queryParams}`, {
+        headers,
+        timeout: 60000,
+      }),
+    );
 
-        allOrders.push(...response.data);
-        currentItem += response.data.length;
-
-        hasMoreData = response.data.length === this.PAGE_SIZE;
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-      }
-
-      return allOrders;
-    } catch (error) {
-      this.logger.error(`Failed to fetch recent orders: ${error.message}`);
-      throw error;
-    }
+    return response.data?.data;
   }
 
-  private async fetchRecentOrdersPage(
-    fromDate: Date,
-    currentItem: number,
-  ): Promise<any> {
-    try {
-      const headers = await this.authService.getRequestHeaders();
+  private async enrichOrdersWithDetails(
+    orders: KiotVietOrder[],
+  ): Promise<KiotVietOrder[]> {
+    this.logger.log(`🔍 Enriching ${orders.length} orders with details...`);
 
-      const response = await firstValueFrom(
-        this.httpService.get(`${this.baseUrl}/orders`, {
-          headers,
-          params: {
-            pageSize: this.PAGE_SIZE,
-            currentItem,
-            includeOrderDelivery: 'true',
-            includePayment: 'true',
-            lastModifiedFrom: fromDate.toISOString(),
-            orderBy: 'modifiedDate',
-            orderDirection: 'DESC',
-          },
-          timeout: 75000,
-        }),
-      );
-      return response.data;
-    } catch (error) {
-      this.logger.error(`Failed to fetch recent orders page: ${error.message}`);
-      throw error;
-    }
-  }
-
-  // ============================================================================
-  // ORDER ENRICHMENT & DATABASE OPERATIONS - ADAPTED FROM INVOICE
-  // ============================================================================
-
-  private async enrichOrdersWithDetails(orders: any[]): Promise<any[]> {
     const enrichedOrders: any[] = [];
-
     for (const order of orders) {
       try {
         const headers = await this.authService.getRequestHeaders();
-
         const response = await firstValueFrom(
           this.httpService.get(`${this.baseUrl}/orders/${order.id}`, {
             headers,
-            timeout: 15000,
           }),
         );
-
-        enrichedOrders.push(response.data);
+        if (response.data) {
+          enrichedOrders.push(response.data);
+        } else {
+          enrichedOrders.push(order);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
       } catch (error) {
         this.logger.warn(
           `⚠️ Failed to enrich order ${order.id}: ${error.message}`,
@@ -705,6 +598,8 @@ export class KiotVietOrderService {
   }
 
   private async saveOrdersToDatabase(orders: any[]): Promise<any[]> {
+    this.logger.log(`💾 Saving ${orders.length} orders to database...`);
+
     const savedOrders: any[] = [];
 
     for (const orderData of orders) {
@@ -747,7 +642,7 @@ export class KiotVietOrderService {
             customerId: customer?.id ?? null,
             customerCode: orderData.customerCode || null,
             customerName: orderData.customerName || null,
-            saleChannelId: orderData.saleChannelId || null,
+            saleChannelId: saleChannel?.id ?? null,
             status: orderData.status,
             statusValue: orderData.statusValue || null,
             total: new Prisma.Decimal(orderData.total || 0),
@@ -772,7 +667,7 @@ export class KiotVietOrderService {
             customerId: customer?.id ?? null,
             customerCode: orderData.customerCode || null,
             customerName: orderData.customerName || null,
-            saleChannelId: orderData.saleChannelId || null,
+            saleChannelId: saleChannel?.id ?? null,
             status: orderData.status,
             statusValue: orderData.statusValue || null,
             total: new Prisma.Decimal(orderData.total || 0),
@@ -903,7 +798,7 @@ export class KiotVietOrderService {
                 method: payment.method,
                 status: payment.status,
                 transDate: new Date(payment.transDate),
-                accountId: bankAccount?.id ?? null, // ✅ FIXED: Use internal BankAccount.id
+                accountId: bankAccount?.id ?? null,
                 description: payment.description,
                 orderId: order.id,
               },
@@ -915,7 +810,7 @@ export class KiotVietOrderService {
                 method: payment.method,
                 status: payment.status,
                 transDate: new Date(payment.transDate),
-                accountId: bankAccount?.id ?? null, // ✅ FIXED: Use internal BankAccount.id
+                accountId: bankAccount?.id ?? null,
                 description: payment.description,
               },
             });
@@ -971,63 +866,59 @@ export class KiotVietOrderService {
         savedOrders.push(order);
       } catch (error) {
         this.logger.error(
-          `Failed to save order ${orderData.id}: ${error.message}`,
-        );
-        // Log detailed error for debugging
-        this.logger.debug(
-          `Order data: ${JSON.stringify({
-            id: orderData.id,
-            soldById: orderData.soldById,
-            customerId: orderData.customerId,
-            branchId: orderData.branchId,
-            payments: orderData.payments?.map((p) => ({
-              id: p.id,
-              accountId: p.accountId,
-            })),
-          })}`,
+          `❌ Failed to save order ${orderData.code}: ${error.message}`,
         );
       }
     }
+
+    this.logger.log(`💾 Saved ${savedOrders.length} orders to database`);
     return savedOrders;
   }
 
   private async syncOrdersToLarkBase(orders: any[]): Promise<void> {
-    if (orders.length === 0) return;
-
     try {
-      await this.larkOrderSyncService.syncOrdersToLarkBase(orders);
+      this.logger.log(
+        `🚀 Starting LarkBase sync for ${orders.length} orders...`,
+      );
+
+      const ordersToSync = orders.filter(
+        (c) => c.larkSyncStatus === 'PENDING' || c.larkSyncStatus === 'FAILED',
+      );
+
+      if (ordersToSync.length === 0) {
+        this.logger.log('No orders need LarkBase sync');
+        return;
+      }
+
+      await this.larkOrderSyncService.syncOrdersToLarkBase(ordersToSync);
+      this.logger.log(`✅ LarkBase sync completed successfully`);
     } catch (error) {
-      this.logger.error(`Failed to sync orders to LarkBase: ${error.message}`);
+      this.logger.error(`❌ LarkBase sync FAILED: ${error.message}`);
+      this.logger.error(`🛑 STOPPING sync to prevent data duplication`);
+
+      const invoiceIds = orders.map((c) => c.id);
+      await this.prismaService.invoice.updateMany({
+        where: { id: { in: invoiceIds } },
+        data: {
+          larkSyncStatus: 'FAILED',
+          larkSyncedAt: new Date(),
+        },
+      });
+
+      throw new Error(`LarkBase sync failed: ${error.message}`);
     }
   }
 
-  // ============================================================================
-  // SYNC CONTROL UTILITIES - EXACT COPY FROM INVOICE
-  // ============================================================================
-
-  private async updateSyncControl(
-    name: string,
-    data: Partial<{
-      isRunning: boolean;
-      isEnabled: boolean;
-      status: string;
-      error: string | null;
-      startedAt: Date;
-      completedAt: Date;
-      lastRunAt: Date;
-      progress: any; // ✅ FIX: Use progress instead of metadata
-    }>,
-  ): Promise<void> {
+  private async updateSyncControl(name: string, updates: any) {
     await this.prismaService.syncControl.upsert({
       where: { name },
       create: {
         name,
         entities: ['order'],
         syncMode: name.includes('historical') ? 'historical' : 'recent',
-        status: 'idle',
-        ...data,
+        ...updates,
       },
-      update: data,
+      update: updates,
     });
   }
 }
