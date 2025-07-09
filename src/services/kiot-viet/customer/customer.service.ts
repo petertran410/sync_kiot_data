@@ -62,7 +62,6 @@ export class KiotVietCustomerService {
 
   async checkAndRunAppropriateSync(): Promise<void> {
     try {
-      // Check tracking system
       const historicalSync = await this.prismaService.syncControl.findFirst({
         where: { name: 'customer_historical' },
       });
@@ -81,13 +80,13 @@ export class KiotVietCustomerService {
       // Then recent sync
       if (recentSync?.isEnabled && !recentSync.isRunning) {
         this.logger.log('Starting recent customer sync...');
-        await this.syncRecentCustomers(4);
+        await this.syncRecentCustomers(10);
         return;
       }
 
       // Default: recent sync
       this.logger.log('Running default recent customer sync...');
-      await this.syncRecentCustomers(4);
+      await this.syncRecentCustomers(3);
     } catch (error) {
       this.logger.error(`Sync check failed: ${error.message}`);
       throw error;
@@ -118,7 +117,7 @@ export class KiotVietCustomerService {
     let consecutiveEmptyPages = 0;
     let consecutiveErrorPages = 0;
     let lastValidTotal = 0;
-    let processedCustomerIds = new Set<number>(); // Track processed IDs to avoid duplicates
+    let processedCustomerIds = new Set<number>();
 
     try {
       await this.updateSyncControl(syncName, {
@@ -130,21 +129,17 @@ export class KiotVietCustomerService {
 
       this.logger.log('🚀 Starting historical customer sync...');
 
-      // COMPLETION DETECTION with more flexible thresholds
-      const MAX_CONSECUTIVE_EMPTY_PAGES = 5; // Increased from 3
+      const MAX_CONSECUTIVE_EMPTY_PAGES = 5;
       const MAX_CONSECUTIVE_ERROR_PAGES = 3;
-      const MIN_EXPECTED_CUSTOMERS = 10;
-      const RETRY_DELAY_MS = 2000; // 2 seconds delay between retries
-      const MAX_TOTAL_RETRIES = 10; // Total retries allowed across the entire sync
+      const RETRY_DELAY_MS = 2000;
+      const MAX_TOTAL_RETRIES = 10;
 
       let totalRetries = 0;
 
       while (true) {
         const currentPage = Math.floor(currentItem / this.PAGE_SIZE) + 1;
 
-        // 🆕 SMART COMPLETION DETECTION
         if (totalCustomers > 0) {
-          // Check if we've reached the end based on known total
           if (currentItem >= totalCustomers) {
             this.logger.log(
               `✅ Pagination complete. Processed: ${processedCount}/${totalCustomers} customers`,
@@ -197,7 +192,6 @@ export class KiotVietCustomerService {
           // Extract data
           const { total, data: customers } = customerListResponse;
 
-          // Update total count (first response or if changed)
           if (total !== undefined && total !== null) {
             if (totalCustomers === 0) {
               totalCustomers = total;
@@ -401,7 +395,7 @@ export class KiotVietCustomerService {
       includeCustomerGroup?: boolean;
       includeCustomerSocial?: boolean;
     },
-    maxRetries: number = 3,
+    maxRetries: number = 5,
   ): Promise<any> {
     let lastError: Error | undefined; // FIXED: Initialize as undefined
 
@@ -415,7 +409,7 @@ export class KiotVietCustomerService {
         );
 
         if (attempt < maxRetries) {
-          const delay = 1000 * attempt; // Progressive delay
+          const delay = 2000 * attempt;
           await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }
@@ -448,7 +442,7 @@ export class KiotVietCustomerService {
     const response = await firstValueFrom(
       this.httpService.get(`${this.baseUrl}/customers?${queryParams}`, {
         headers,
-        timeout: 30000, // Increased timeout
+        timeout: 45000,
       }),
     );
 
@@ -459,7 +453,7 @@ export class KiotVietCustomerService {
   // RECENT SYNC (Incremental updates)
   // ============================================================================
 
-  async syncRecentCustomers(days: number = 7): Promise<void> {
+  async syncRecentCustomers(days: number = 10): Promise<void> {
     const syncName = 'customer_recent';
 
     try {

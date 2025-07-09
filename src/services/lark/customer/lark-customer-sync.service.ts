@@ -954,17 +954,14 @@ export class LarkCustomerSyncService {
   private safeBigIntToNumber(value: any): number {
     if (value === null || value === undefined) return 0;
 
-    // Handle BigInt
     if (typeof value === 'bigint') {
       return Number(value);
     }
 
-    // Handle number
     if (typeof value === 'number') {
       return Math.floor(value);
     }
 
-    // Handle string
     if (typeof value === 'string') {
       const trimmed = value.trim();
       if (trimmed === '') return 0;
@@ -972,12 +969,10 @@ export class LarkCustomerSyncService {
       return isNaN(parsed) ? 0 : parsed;
     }
 
-    // Handle boolean
     if (typeof value === 'boolean') {
       return value ? 1 : 0;
     }
 
-    // Try to convert any other type
     try {
       const asString = String(value).trim();
       const parsed = parseInt(asString, 10);

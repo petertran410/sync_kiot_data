@@ -42,7 +42,7 @@ export class BusSchedulerService implements OnModuleInit {
   // MAIN 8-MINUTE SCHEDULER - ENHANCED WITH TIMEOUT PROTECTION
   // ============================================================================
 
-  @Cron('*/8 * * * *', {
+  @Cron('*/7 * * * *', {
     name: 'main_sync_cycle',
     timeZone: 'Asia/Ho_Chi_Minh',
   })
@@ -53,7 +53,7 @@ export class BusSchedulerService implements OnModuleInit {
     }
 
     try {
-      this.logger.log('🚀 Starting 8-minute parallel sync cycle...');
+      this.logger.log('🚀 Starting 7-minute parallel sync cycle...');
       const startTime = Date.now();
       const runningSyncs = await this.checkRunningSyncs();
       if (runningSyncs.length > 0) {
@@ -71,7 +71,7 @@ export class BusSchedulerService implements OnModuleInit {
         const cyclePromise = this.executeParallelSyncs();
         const timeoutPromise = new Promise<never>((_, reject) =>
           setTimeout(
-            () => reject(new Error('Cycle timeout after 20 minutes')),
+            () => reject(new Error('Cycle timeout after 25 minutes')),
             CYCLE_TIMEOUT_MS,
           ),
         );
@@ -90,11 +90,11 @@ export class BusSchedulerService implements OnModuleInit {
           timeoutError instanceof Error &&
           timeoutError.message.includes('timeout')
         ) {
-          this.logger.error(`⏰ Sync cycle timed out after 20 minutes`);
+          this.logger.error(`⏰ Sync cycle timed out after 25 minutes`);
           await this.updateCycleTracking(
             'main_cycle',
             'timeout',
-            'Cycle exceeded 20 minute timeout',
+            'Cycle exceeded 25 minute timeout',
           );
         } else {
           throw timeoutError;
@@ -108,10 +108,10 @@ export class BusSchedulerService implements OnModuleInit {
 
   private async executeParallelSyncs(): Promise<void> {
     const syncPromises = [
-      this.runOrderSync().catch((error) => {
-        this.logger.error(`❌ [Order] Parallel sync failed: ${error.message}`);
-        return { status: 'rejected', reason: error.message, sync: 'Order' };
-      }),
+      // this.runOrderSync().catch((error) => {
+      //   this.logger.error(`❌ [Order] Parallel sync failed: ${error.message}`);
+      //   return { status: 'rejected', reason: error.message, sync: 'Order' };
+      // }),
       this.runCustomerSync().catch((error) => {
         this.logger.error(
           `❌ [Customer] Parallel sync failed: ${error.message}`,
@@ -158,9 +158,9 @@ export class BusSchedulerService implements OnModuleInit {
           case 'invoice':
             await this.runInvoiceLarkSync();
             break;
-          case 'order':
-            await this.runOrderLarkSync();
-            break;
+          // case 'order':
+          //   await this.runOrderLarkSync();
+          //   break;
         }
         this.logger.log(`✅ ${syncType} LarkBase sync completed`);
       } catch (error) {
@@ -752,10 +752,10 @@ export class BusSchedulerService implements OnModuleInit {
           this.logger.warn(`Invoice startup check failed: ${error.message}`);
           return Promise.resolve();
         }),
-        this.runOrderSync().catch((error) => {
-          this.logger.warn(`Order startup check failed: ${error.message}`);
-          return Promise.resolve();
-        }),
+        // this.runOrderSync().catch((error) => {
+        //   this.logger.warn(`Order startup check failed: ${error.message}`);
+        //   return Promise.resolve();
+        // }),
       ];
 
       await Promise.allSettled(startupPromises);

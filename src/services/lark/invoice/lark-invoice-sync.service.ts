@@ -920,7 +920,7 @@ export class LarkInvoiceSyncService {
   // ============================================================================
 
   private async testLarkBaseConnection(): Promise<void> {
-    const maxRetries = 3;
+    const maxRetries = 10;
 
     for (let retryCount = 0; retryCount <= maxRetries; retryCount++) {
       try {
@@ -1199,13 +1199,6 @@ export class LarkInvoiceSyncService {
       return 0;
     }
   }
-
-  // private adjustTimeForLarkBase(dateInput: string | Date): number {
-  //   const date = new Date(dateInput);
-  //   // Subtract 7 hours (7 * 60 * 60 * 1000 = 25200000 milliseconds)
-  //   const adjustedDate = new Date(date.getTime() - 7 * 60 * 60 * 1000);
-  //   return adjustedDate.getTime();
-  // }
 
   private mapInvoiceToLarkBase(invoice: any): Record<string, any> {
     const fields: Record<string, any> = {};
