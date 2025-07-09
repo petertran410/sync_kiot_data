@@ -8,6 +8,8 @@ deploy-sync-kiot.sh
 Dockerfile
 docker-compose.yml
 
+/ssl
+
 # Logs
 logs
 *.log
