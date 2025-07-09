@@ -1072,13 +1072,13 @@ export class LarkCustomerSyncService {
         this.safeBigIntToNumber(customer.rewardPoint) || 0;
     }
 
-    if (customer.type) {
+    if (customer.type !== null && customer.type !== undefined) {
       const typeMapping = {
         0: TYPE_CUSTOMER.CA_NHAN,
         1: TYPE_CUSTOMER.CONG_TY,
       };
 
-      fields[LARK_CUSTOMER_FIELDS.TYPE] = typeMapping[customer.type] || null;
+      fields[LARK_CUSTOMER_FIELDS.TYPE] = typeMapping[customer.type];
     }
 
     if (
