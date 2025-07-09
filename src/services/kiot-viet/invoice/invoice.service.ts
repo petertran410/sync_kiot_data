@@ -576,7 +576,7 @@ export class KiotVietInvoiceService {
       lastModifiedFrom: fromDateStr,
       currentItem: '0',
       pageSize: '100',
-      orderBy: 'modifiedDate',
+      orderBy: 'purchaseDate',
       orderDirection: 'DESC',
       includeInvoiceDelivery: 'true',
       includePayment: 'true',
