@@ -55,8 +55,6 @@ export class BusSchedulerService implements OnModuleInit {
     try {
       this.logger.log('🚀 Starting 8-minute parallel sync cycle...');
       const startTime = Date.now();
-
-      // ✅ ENHANCED: Check with auto-cleanup of stuck syncs
       const runningSyncs = await this.checkRunningSyncs();
       if (runningSyncs.length > 0) {
         this.logger.log(
@@ -64,19 +62,16 @@ export class BusSchedulerService implements OnModuleInit {
         );
         return;
       }
-
-      // ✅ ENHANCED: Set cycle with timeout protection
       await this.updateCycleTracking('main_cycle', 'running');
 
       // ✅ ENHANCED: Add timeout protection for entire cycle
-      const CYCLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes max
+      const CYCLE_TIMEOUT_MS = 25 * 60 * 1000;
 
       try {
-        // ✅ CONSOLIDATED: Inline parallel sync execution with timeout
         const cyclePromise = this.executeParallelSyncs();
         const timeoutPromise = new Promise<never>((_, reject) =>
           setTimeout(
-            () => reject(new Error('Cycle timeout after 10 minutes')),
+            () => reject(new Error('Cycle timeout after 20 minutes')),
             CYCLE_TIMEOUT_MS,
           ),
         );
@@ -95,14 +90,14 @@ export class BusSchedulerService implements OnModuleInit {
           timeoutError instanceof Error &&
           timeoutError.message.includes('timeout')
         ) {
-          this.logger.error(`⏰ Sync cycle timed out after 10 minutes`);
+          this.logger.error(`⏰ Sync cycle timed out after 20 minutes`);
           await this.updateCycleTracking(
             'main_cycle',
             'timeout',
-            'Cycle exceeded 10 minute timeout',
+            'Cycle exceeded 20 minute timeout',
           );
         } else {
-          throw timeoutError; // Re-throw non-timeout errors
+          throw timeoutError;
         }
       }
     } catch (error) {
@@ -111,7 +106,6 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
-  // ✅ CONSOLIDATED: Inline parallel sync execution
   private async executeParallelSyncs(): Promise<void> {
     const syncPromises = [
       this.runOrderSync().catch((error) => {
@@ -133,12 +127,8 @@ export class BusSchedulerService implements OnModuleInit {
     ];
 
     const results = await Promise.allSettled(syncPromises);
-
-    // 🆕 ADDED: Stagger LarkBase sync to prevent collision
     await this.executeStaggeredLarkSync(results);
   }
-
-  // 🆕 ADD these new methods after executeParallelSyncs:
 
   private async executeStaggeredLarkSync(syncResults: any[]): Promise<void> {
     this.logger.log('🚀 Starting staggered LarkBase sync...');
@@ -146,7 +136,7 @@ export class BusSchedulerService implements OnModuleInit {
     const successfulSyncs = syncResults
       .map((result, index) => ({
         result,
-        syncType: ['order', 'customer', 'invoice'][index],
+        syncType: ['customer', 'invoice', 'order'][index],
       }))
       .filter(({ result }) => result.status === 'fulfilled' || !result.reason);
 
@@ -177,10 +167,9 @@ export class BusSchedulerService implements OnModuleInit {
         this.logger.error(
           `❌ Auto ${syncType} Lark sync failed: ${error.message}`,
         );
-        // Continue with next sync even if one fails
       }
 
-      delay += 15000; // 15 second delay between each LarkBase sync
+      delay += 30000;
     }
   }
 
@@ -189,7 +178,7 @@ export class BusSchedulerService implements OnModuleInit {
       where: {
         larkSyncStatus: { in: ['PENDING', 'FAILED'] },
       },
-      take: 100, // Limit to prevent large batches
+      take: 100,
     });
 
     if (customersToSync.length > 0) {
@@ -225,20 +214,17 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
-  // 🆕 ADD this new method for stuck sync cleanup:
-
   async cleanupStuckSyncs(): Promise<number> {
     this.logger.log('🧹 Starting stuck sync cleanup...');
 
     const now = new Date();
-    const stuckThresholdMs = 2 * 60 * 60 * 1000; // 2 hours
+    const stuckThresholdMs = 1 * 60 * 60 * 1000;
 
-    // Find syncs running longer than threshold
     const stuckSyncs = await this.prismaService.syncControl.findMany({
       where: {
         isRunning: true,
         startedAt: {
-          not: null, // 🆕 ADDED: Ensure startedAt is not null
+          not: null,
           lt: new Date(now.getTime() - stuckThresholdMs),
         },
       },
@@ -254,7 +240,6 @@ export class BusSchedulerService implements OnModuleInit {
     let cleanedCount = 0;
 
     for (const sync of stuckSyncs) {
-      // 🆕 ADDED: Null check for startedAt (extra safety)
       if (!sync.startedAt) {
         this.logger.warn(
           `⚠️ Skipping sync ${sync.name} - no startedAt timestamp`,
@@ -301,11 +286,10 @@ export class BusSchedulerService implements OnModuleInit {
     const runningSyncs = await this.prismaService.syncControl.findMany({
       where: {
         isRunning: true,
-        startedAt: { not: null }, // Ensure startedAt exists
+        startedAt: { not: null },
       },
     });
 
-    // Filter out any syncs without proper timing
     return runningSyncs.filter(
       (sync) => sync.startedAt && sync.name && typeof sync.name === 'string',
     );
@@ -744,7 +728,6 @@ export class BusSchedulerService implements OnModuleInit {
     try {
       this.logger.log('🔍 Running startup check...');
 
-      // Reset any stuck syncs from previous session
       const stuckSyncs = await this.prismaService.syncControl.updateMany({
         where: { isRunning: true },
         data: { isRunning: false, status: 'interrupted' },
@@ -756,22 +739,21 @@ export class BusSchedulerService implements OnModuleInit {
         );
       }
 
-      // Cleanup old sync patterns
       await this.cleanupOldSyncPatterns();
 
       this.logger.log('📋 Running parallel startup sync checks...');
 
       const startupPromises = [
-        this.runOrderSync().catch((error) => {
-          this.logger.warn(`Order startup check failed: ${error.message}`);
-          return Promise.resolve();
-        }),
         this.runCustomerSync().catch((error) => {
           this.logger.warn(`Customer startup check failed: ${error.message}`);
           return Promise.resolve();
         }),
         this.runInvoiceSync().catch((error) => {
           this.logger.warn(`Invoice startup check failed: ${error.message}`);
+          return Promise.resolve();
+        }),
+        this.runOrderSync().catch((error) => {
+          this.logger.warn(`Order startup check failed: ${error.message}`);
           return Promise.resolve();
         }),
       ];
@@ -792,10 +774,10 @@ export class BusSchedulerService implements OnModuleInit {
             in: [
               'customer_historical_lark',
               'customer_recent_lark',
-              'order_historical_lark',
-              'order_recent_lark',
               'invoice_historical_lark',
               'invoice_recent_lark',
+              'order_historical_lark',
+              'order_recent_lark',
             ],
           },
         },
@@ -821,7 +803,7 @@ export class BusSchedulerService implements OnModuleInit {
         mainScheduler: {
           enabled: this.isMainSchedulerEnabled,
           nextRun: '8 minutes interval',
-          entities: ['order', 'customer', 'invoice'],
+          entities: ['customer', 'invoice', 'order'],
         },
         weeklyScheduler: {
           enabled: this.isWeeklySchedulerEnabled,
@@ -862,7 +844,6 @@ export class BusSchedulerService implements OnModuleInit {
     return this.checkRunningSyncsWithNullSafety();
   }
 
-  // ✅ ENHANCED: updateCycleTracking with progress field fix
   private async updateCycleTracking(
     cycleName: string,
     status: string,
@@ -875,7 +856,7 @@ export class BusSchedulerService implements OnModuleInit {
           name: cycleName,
           entities:
             cycleName === 'main_cycle'
-              ? ['order', 'customer', 'invoice']
+              ? ['customer', 'invoice', 'order']
               : ['customergroup'],
           syncMode: 'cycle',
           isRunning: status === 'running',
@@ -885,7 +866,6 @@ export class BusSchedulerService implements OnModuleInit {
           startedAt: status === 'running' ? new Date() : undefined,
           completedAt: status !== 'running' ? new Date() : undefined,
           lastRunAt: new Date(),
-          // ✅ FIXED: Use progress instead of metadata
           progress:
             status === 'running'
               ? { stage: 'started', timestamp: new Date().toISOString() }
@@ -898,7 +878,6 @@ export class BusSchedulerService implements OnModuleInit {
           startedAt: status === 'running' ? new Date() : undefined,
           completedAt: status !== 'running' ? new Date() : undefined,
           lastRunAt: new Date(),
-          // ✅ FIXED: Use progress instead of metadata
           progress:
             status === 'running'
               ? { stage: 'started', timestamp: new Date().toISOString() }
@@ -909,7 +888,6 @@ export class BusSchedulerService implements OnModuleInit {
       this.logger.error(
         `❌ Failed to update cycle tracking for ${cycleName}: ${error.message}`,
       );
-      // Don't throw - prevent cascade failures
     }
   }
 }

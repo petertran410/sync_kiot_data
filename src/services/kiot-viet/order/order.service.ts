@@ -1,45 +1,37 @@
+// src/services/kiot-viet/order/order.service.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
-import { async, firstValueFrom } from 'rxjs';
+import { firstValueFrom } from 'rxjs';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { KiotVietAuthService } from '../auth.service';
 import { LarkOrderSyncService } from '../../lark/order/lark-order-sync.service';
-import { LarkSyncStatus, Prisma } from '@prisma/client';
-import { response } from 'express';
-import { url } from 'inspector';
+import { Prisma } from '@prisma/client';
 
-interface KiotVietOrder {
-  id: number;
-  code: string;
-  orderDate: string;
+// Interface definitions remain the same...
+interface OrderResponse {
+  data: any[];
+  total: number;
+  pageSize: number;
+  currentItem: number;
+}
+
+interface CreateOrderDto {
   branchId: number;
-  branchName?: string;
   customerId?: number;
   customerCode?: string;
   customerName?: string;
   soldById?: number;
   soldByName?: string;
-  saleChannelId?: number;
-  status?: number;
-  statusValue?: string;
-  total: number;
-  totalPayment?: number;
   description?: string;
   usingCod?: boolean;
-  discount?: number;
-  discountRatio?: number;
-  createdDate: string;
-  modifiedDate?: string;
-  modifiedBy?: string;
-  orderDetails?: Array<{
-    id?: number;
-    productId?: number;
+  status?: number;
+  orderDetails: Array<{
+    productId: number;
     productCode?: string;
     productName?: string;
-    quantity?: number;
-    price?: number;
-    subTotal?: number;
+    quantity: number;
+    price: number;
     discount?: number;
     discountRatio?: number;
   }>;
@@ -79,7 +71,7 @@ interface KiotVietOrder {
 export class KiotVietOrderService {
   private readonly logger = new Logger(KiotVietOrderService.name);
   private readonly baseUrl: string;
-  private readonly PAGE_SIZE = 100;
+  private readonly PAGE_SIZE = 50; // ✅ REDUCED: 100 → 50 for better timeout handling
 
   constructor(
     private readonly httpService: HttpService,
@@ -423,7 +415,7 @@ export class KiotVietOrderService {
 
   async syncRecentOrders(days: number = 7): Promise<void> {
     const syncName = 'order_recent';
-    const SYNC_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes max
+    const SYNC_TIMEOUT_MS = 15 * 60 * 1000;
 
     try {
       await this.updateSyncControl(syncName, {
@@ -433,9 +425,11 @@ export class KiotVietOrderService {
         error: null,
       });
 
-      this.logger.log(`🔄 Starting recent order sync (${days} days)...`);
+      this.logger.log(
+        `🔄 Starting recent order sync (${days} days) with 15min timeout...`,
+      );
 
-      // 🆕 ADD: Timeout protection
+      // ✅ ENHANCED: Extended timeout protection
       const syncPromise = this.performRecentOrderSync(days);
       const timeoutPromise = new Promise<never>((_, reject) =>
         setTimeout(
@@ -466,13 +460,16 @@ export class KiotVietOrderService {
     }
   }
 
-  // 🆕 EXTRACT the core sync logic to separate method:
-
   private async performRecentOrderSync(days: number): Promise<void> {
     const fromDate = new Date();
     fromDate.setDate(fromDate.getDate() - days);
 
-    const recentOrders = await this.fetchRecentOrders(fromDate);
+    this.logger.log(
+      `📊 Fetching recent orders since: ${fromDate.toISOString()}`,
+    );
+
+    // ✅ NEW: Chunked processing with progress tracking
+    const recentOrders = await this.fetchRecentOrdersChunked(fromDate);
 
     if (recentOrders.length === 0) {
       this.logger.log('📋 No recent order updates found');
@@ -515,7 +512,7 @@ export class KiotVietOrderService {
       includeOrderDelivery?: boolean;
       includePayment?: boolean;
     },
-    maxRetries: number = 5, // ✅ INCREASED: More retries for rate limiting
+    maxRetries: number = 5, // Keep existing retry count
   ): Promise<any> {
     let lastError: Error | undefined;
 
@@ -530,7 +527,8 @@ export class KiotVietOrderService {
         );
 
         if (attempt < maxRetries) {
-          const delay = 1000 * attempt; // Progressive delay
+          const delay = 2000 * attempt; // ✅ INCREASED: 1s → 2s progressive delay
+          this.logger.log(`⏳ Retrying after ${delay / 1000}s delay...`);
           await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }
@@ -561,11 +559,59 @@ export class KiotVietOrderService {
     const response = await firstValueFrom(
       this.httpService.get(`${this.baseUrl}/orders?${queryParams}`, {
         headers,
-        timeout: 30000, // Increased timeout
+        timeout: 45000, // ✅ INCREASED: 30s → 45s timeout
       }),
     );
 
     return response.data;
+  }
+
+  // ✅ NEW: Chunked fetching with progress tracking
+  async fetchRecentOrdersChunked(fromDate: Date): Promise<any[]> {
+    try {
+      const allOrders: any[] = [];
+      let currentItem = 0;
+      let hasMoreData = true;
+      let pageCount = 0;
+
+      while (hasMoreData) {
+        pageCount++;
+        this.logger.log(
+          `📄 Fetching orders page ${pageCount} (offset: ${currentItem})`,
+        );
+
+        const response = await this.fetchRecentOrdersPage(
+          fromDate,
+          currentItem,
+        );
+
+        if (!response.data || response.data.length === 0) {
+          this.logger.log('📋 No more data available');
+          hasMoreData = false;
+          break;
+        }
+
+        allOrders.push(...response.data);
+        currentItem += response.data.length;
+
+        this.logger.log(
+          `📊 Page ${pageCount}: ${response.data.length} orders (total: ${allOrders.length})`,
+        );
+
+        hasMoreData = response.data.length === this.PAGE_SIZE;
+
+        // ✅ INCREASED: Rate limiting delay 1s → 2s
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+
+      this.logger.log(
+        `✅ Fetched total ${allOrders.length} recent orders in ${pageCount} pages`,
+      );
+      return allOrders;
+    } catch (error) {
+      this.logger.error(`Failed to fetch recent orders: ${error.message}`);
+      throw error;
+    }
   }
 
   async fetchRecentOrders(fromDate: Date): Promise<any[]> {
@@ -618,12 +664,12 @@ export class KiotVietOrderService {
             orderBy: 'modifiedDate',
             orderDirection: 'DESC',
           },
-          timeout: 60000,
+          timeout: 75000,
         }),
       );
       return response.data;
     } catch (error) {
-      this.logger.error(`Failed to fetch recent orders: ${error.message}`);
+      this.logger.error(`Failed to fetch recent orders page: ${error.message}`);
       throw error;
     }
   }
