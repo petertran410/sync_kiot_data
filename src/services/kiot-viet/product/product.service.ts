@@ -1,4 +1,3 @@
-// src/services/kiot-viet/product/product.service.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
@@ -6,10 +5,19 @@ import { HttpService } from '@nestjs/axios';
 import { KiotVietAuthService } from '../auth.service';
 import { Prisma } from '@prisma/client';
 
+interface KiotVietProduct {
+  id: number;
+  code: string;
+  barCode?: string;
+  retailerId: number;
+  allowsSale?: boolean;
+  name?: string;
+}
+
 @Injectable()
 export class KiotVietProductService {
   private readonly logger = new Logger(KiotVietProductService.name);
-  private readonly PAGE_SIZE = 50;
+  private readonly PAGE_SIZE = 100;
 
   constructor(
     private readonly prismaService: PrismaService,
