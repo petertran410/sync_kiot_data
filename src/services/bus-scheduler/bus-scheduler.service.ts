@@ -9,6 +9,7 @@ import { LarkCustomerSyncService } from '../lark/customer/lark-customer-sync.ser
 import { LarkInvoiceSyncService } from '../lark/invoice/lark-invoice-sync.service';
 import { LarkOrderSyncService } from '../lark/order/lark-order-sync.service';
 import { KiotVietOrderService } from '../kiot-viet/order/order.service';
+import { KiotVietProductService } from '../kiot-viet/product/product.service';
 
 @Injectable()
 export class BusSchedulerService implements OnModuleInit {
@@ -25,6 +26,7 @@ export class BusSchedulerService implements OnModuleInit {
     private readonly larkCustomerSyncService: LarkCustomerSyncService,
     private readonly larkInvoiceSyncService: LarkInvoiceSyncService,
     private readonly larkOrderSyncService: LarkOrderSyncService,
+    private readonly productService: KiotVietProductService,
   ) {}
 
   async onModuleInit() {

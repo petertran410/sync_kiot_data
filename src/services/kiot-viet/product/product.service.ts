@@ -513,18 +513,508 @@ export class KiotVietProductService {
     products: KiotVietProduct[],
   ): Promise<any[]> {
     this.logger.log(`💾 Saving ${products.length} products to database...`);
+
+    const savedProducts: any[] = [];
+
+    for (const productData of products) {
+      try {
+        // Handle Category relationship
+        let internalCategoryId: number | null = null;
+        if (productData.categoryId) {
+          const category = await this.prismaService.category.findFirst({
+            where: { kiotVietId: productData.categoryId },
+          });
+          internalCategoryId = category?.id || null;
+        }
+
+        // Handle TradeMark relationship (NESTED DATA)
+        let internalTradeMarkId: number | null = null;
+        if (productData.tradeMarkId) {
+          // Process nested trademark data if available
+          await this.processNestedTradeMark(productData.tradeMarkId);
+
+          const tradeMark = await this.prismaService.tradeMark.findFirst({
+            where: { kiotVietId: productData.tradeMarkId },
+          });
+          internalTradeMarkId = tradeMark?.id || null;
+        }
+
+        // Handle Master Product relationship
+        let internalMasterProductId: number | null = null;
+        if (productData.masterProductId) {
+          const masterProduct = await this.prismaService.product.findFirst({
+            where: { kiotVietId: BigInt(productData.masterProductId) },
+          });
+          internalMasterProductId = masterProduct?.id || null;
+        }
+
+        // Core Product upsert
+        const product = await this.prismaService.product.upsert({
+          where: { kiotVietId: BigInt(productData.id) },
+          update: {
+            code: productData.code,
+            barCode: productData.barCode || null,
+            name: productData.name,
+            fullName: productData.fullName,
+            categoryId: internalCategoryId,
+            tradeMarkId: internalTradeMarkId,
+            type: productData.type || null,
+            description: productData.description || null,
+            allowsSale:
+              productData.allowsSale !== undefined
+                ? productData.allowsSale
+                : true,
+            hasVariants: productData.hasVariants || false,
+            basePrice: productData.basePrice
+              ? new Prisma.Decimal(productData.basePrice)
+              : new Prisma.Decimal(0),
+            unit: productData.unit || null,
+            masterProductId: internalMasterProductId,
+            masterUnitId: productData.masterUnitId
+              ? BigInt(productData.masterUnitId)
+              : null,
+            conversionValue: productData.conversionValue || null,
+            weight: productData.weight || null,
+            isLotSerialControl: productData.isLotSerialControl || false,
+            isBatchExpireControl: productData.isBatchExpireControl || false,
+            orderTemplate: productData.orderTemplate || null,
+            minQuantity: productData.minQuantity || null,
+            maxQuantity: productData.maxQuantity || null,
+            isRewardPoint:
+              productData.isRewardPoint !== undefined
+                ? productData.isRewardPoint
+                : true,
+            isActive:
+              productData.isActive !== undefined ? productData.isActive : true,
+            retailerId: productData.retailerId || null,
+            modifiedDate: productData.modifiedDate
+              ? new Date(productData.modifiedDate)
+              : new Date(),
+            lastSyncedAt: new Date(),
+            larkSyncStatus: 'PENDING',
+          },
+          create: {
+            kiotVietId: BigInt(productData.id),
+            code: productData.code,
+            barCode: productData.barCode || null,
+            name: productData.name,
+            fullName: productData.fullName,
+            categoryId: internalCategoryId,
+            tradeMarkId: internalTradeMarkId,
+            type: productData.type || null,
+            description: productData.description || null,
+            allowsSale:
+              productData.allowsSale !== undefined
+                ? productData.allowsSale
+                : true,
+            hasVariants: productData.hasVariants || false,
+            basePrice: productData.basePrice
+              ? new Prisma.Decimal(productData.basePrice)
+              : new Prisma.Decimal(0),
+            unit: productData.unit || null,
+            masterProductId: internalMasterProductId,
+            masterUnitId: productData.masterUnitId
+              ? BigInt(productData.masterUnitId)
+              : null,
+            conversionValue: productData.conversionValue || null,
+            weight: productData.weight || null,
+            isLotSerialControl: productData.isLotSerialControl || false,
+            isBatchExpireControl: productData.isBatchExpireControl || false,
+            orderTemplate: productData.orderTemplate || null,
+            minQuantity: productData.minQuantity || null,
+            maxQuantity: productData.maxQuantity || null,
+            isRewardPoint:
+              productData.isRewardPoint !== undefined
+                ? productData.isRewardPoint
+                : true,
+            isActive:
+              productData.isActive !== undefined ? productData.isActive : true,
+            retailerId: productData.retailerId || null,
+            createdDate: productData.createdDate
+              ? new Date(productData.createdDate)
+              : new Date(),
+            modifiedDate: productData.modifiedDate
+              ? new Date(productData.modifiedDate)
+              : new Date(),
+            lastSyncedAt: new Date(),
+            larkSyncStatus: 'PENDING',
+          },
+        });
+
+        // Process nested relations
+        await this.processProductNestedData(product.id, productData);
+
+        savedProducts.push(product);
+
+        this.logger.debug(
+          `✅ Saved product: ${product.code} (ID: ${product.id})`,
+        );
+      } catch (error) {
+        this.logger.error(
+          `❌ Failed to save product ${productData.id} (${productData.code}): ${error.message}`,
+        );
+      }
+    }
+
+    this.logger.log(
+      `✅ Successfully saved ${savedProducts.length}/${products.length} products to database`,
+    );
+    return savedProducts;
   }
 
+  private async processNestedTradeMark(tradeMarkId: number): Promise<void> {
+    try {
+      // Check if trademark already exists
+      const existingTradeMark = await this.prismaService.tradeMark.findFirst({
+        where: { kiotVietId: tradeMarkId },
+      });
+
+      if (!existingTradeMark) {
+        // Fetch trademark details if not exists
+        try {
+          const headers = await this.authService.getRequestHeaders();
+          const response = await firstValueFrom(
+            this.httpService.get(`${this.baseUrl}/trademark`, {
+              headers,
+              timeout: 30000,
+            }),
+          );
+
+          if (response.data?.data) {
+            const tradeMarkData = response.data.data.find(
+              (tm) => tm.id === tradeMarkId,
+            );
+
+            if (tradeMarkData) {
+              await this.prismaService.tradeMark.create({
+                data: {
+                  kiotVietId: tradeMarkData.id,
+                  name: tradeMarkData.name,
+                  retailerId: tradeMarkData.retailerId || null,
+                  createdDate: tradeMarkData.createdDate
+                    ? new Date(tradeMarkData.createdDate)
+                    : new Date(),
+                  modifiedDate: tradeMarkData.modifiedDate
+                    ? new Date(tradeMarkData.modifiedDate)
+                    : new Date(),
+                  lastSyncedAt: new Date(),
+                },
+              });
+
+              this.logger.debug(
+                `✅ Created trademark: ${tradeMarkData.name} (ID: ${tradeMarkData.id})`,
+              );
+            }
+          }
+        } catch (error) {
+          this.logger.warn(
+            `⚠️ Failed to fetch trademark ${tradeMarkId}: ${error.message}`,
+          );
+        }
+      }
+    } catch (error) {
+      this.logger.error(
+        `❌ Error processing trademark ${tradeMarkId}: ${error.message}`,
+      );
+    }
+  }
+
+  private async processProductNestedData(
+    productId: number,
+    productData: KiotVietProduct,
+  ): Promise<void> {
+    // Process Attributes
+    if (productData.attributes && productData.attributes.length > 0) {
+      await this.processProductAttributes(productId, productData.attributes);
+    }
+
+    // Process Inventories (from nested data)
+    if (productData.inventories && productData.inventories.length > 0) {
+      await this.processProductInventories(productId, productData.inventories);
+    }
+
+    // Process PriceBooks (NESTED DATA - NO SEPARATE ENDPOINT)
+    if (productData.priceBooks && productData.priceBooks.length > 0) {
+      await this.processProductPriceBooks(productId, productData.priceBooks);
+    }
+
+    // Process Images
+    if (productData.images && productData.images.length > 0) {
+      await this.processProductImages(productId, productData.images);
+    }
+
+    // Process Units
+    if (productData.units && productData.units.length > 0) {
+      await this.processProductUnits(productId, productData.units);
+    }
+  }
+
+  private async processProductAttributes(
+    productId: number,
+    attributes: any[],
+  ): Promise<void> {
+    try {
+      // Clear existing attributes
+      await this.prismaService.productAttribute.deleteMany({
+        where: { productId },
+      });
+
+      // Create new attributes
+      for (const attr of attributes) {
+        await this.prismaService.productAttribute.create({
+          data: {
+            productId,
+            attributeName: attr.attributeName,
+            attributeValue: attr.attributeValue,
+            lastSyncedAt: new Date(),
+          },
+        });
+      }
+
+      this.logger.debug(
+        `✅ Processed ${attributes.length} attributes for product ${productId}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `❌ Failed to process attributes for product ${productId}: ${error.message}`,
+      );
+    }
+  }
+
+  private async processProductInventories(
+    productId: number,
+    inventories: any[],
+  ): Promise<void> {
+    try {
+      // Clear existing inventories
+      await this.prismaService.productInventory.deleteMany({
+        where: { productId },
+      });
+
+      // Create new inventories
+      for (const inventory of inventories) {
+        const branch = await this.prismaService.branch.findFirst({
+          where: { kiotVietId: inventory.branchId },
+        });
+
+        if (branch) {
+          await this.prismaService.productInventory.create({
+            data: {
+              productId,
+              branchId: branch.id,
+              onHand: inventory.onHand || 0,
+              reserved: inventory.reserved || 0,
+              onOrder: 0, // Default value
+              cost: inventory.cost ? new Prisma.Decimal(inventory.cost) : null,
+              minQuantity: null,
+              maxQuantity: null,
+              lastSyncedAt: new Date(),
+            },
+          });
+        }
+      }
+
+      this.logger.debug(
+        `✅ Processed ${inventories.length} inventories for product ${productId}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `❌ Failed to process inventories for product ${productId}: ${error.message}`,
+      );
+    }
+  }
+
+  private async processProductPriceBooks(
+    productId: number,
+    priceBooks: any[],
+  ): Promise<void> {
+    try {
+      // Clear existing price book details for this product
+      await this.prismaService.priceBookDetail.deleteMany({
+        where: { productId },
+      });
+
+      for (const priceBookData of priceBooks) {
+        // Ensure PriceBook exists (nested data processing)
+        let priceBook = await this.prismaService.priceBook.findFirst({
+          where: { kiotVietId: priceBookData.priceBookId },
+        });
+
+        if (!priceBook) {
+          // Create PriceBook from nested data
+          priceBook = await this.prismaService.priceBook.create({
+            data: {
+              kiotVietId: priceBookData.priceBookId,
+              name:
+                priceBookData.priceBookName ||
+                `Price Book ${priceBookData.priceBookId}`,
+              isActive:
+                priceBookData.isActive !== undefined
+                  ? priceBookData.isActive
+                  : true,
+              isGlobal: false,
+              startDate: priceBookData.startDate
+                ? new Date(priceBookData.startDate)
+                : null,
+              endDate: priceBookData.endDate
+                ? new Date(priceBookData.endDate)
+                : null,
+              forAllCusGroup: false,
+              forAllUser: false,
+              retailerId: null,
+              createdDate: new Date(),
+              modifiedDate: new Date(),
+              lastSyncedAt: new Date(),
+            },
+          });
+
+          this.logger.debug(
+            `✅ Created PriceBook: ${priceBook.name} (ID: ${priceBook.kiotVietId})`,
+          );
+        }
+
+        // Create PriceBookDetail
+        await this.prismaService.priceBookDetail.create({
+          data: {
+            priceBookId: priceBook.id,
+            productId,
+            price: priceBookData.price
+              ? new Prisma.Decimal(priceBookData.price)
+              : new Prisma.Decimal(0),
+          },
+        });
+      }
+
+      this.logger.debug(
+        `✅ Processed ${priceBooks.length} price books for product ${productId}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `❌ Failed to process price books for product ${productId}: ${error.message}`,
+      );
+    }
+  }
+
+  private async processProductImages(
+    productId: number,
+    images: any[],
+  ): Promise<void> {
+    try {
+      // Clear existing images
+      await this.prismaService.productImage.deleteMany({
+        where: { productId },
+      });
+
+      // Create new images
+      for (let i = 0; i < images.length; i++) {
+        const image = images[i];
+        await this.prismaService.productImage.create({
+          data: {
+            productId,
+            imageUrl: image.image,
+            displayOrder: i,
+            lastSyncedAt: new Date(),
+          },
+        });
+      }
+
+      this.logger.debug(
+        `✅ Processed ${images.length} images for product ${productId}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `❌ Failed to process images for product ${productId}: ${error.message}`,
+      );
+    }
+  }
+
+  private async processProductUnits(
+    productId: number,
+    units: any[],
+  ): Promise<void> {
+    try {
+      // Note: ProductUnit table doesn't exist in schema, so we'll log for now
+      this.logger.debug(
+        `📋 Product has ${units.length} units (schema not implemented)`,
+      );
+
+      // If ProductUnit table is added to schema later, implement here:
+      // await this.prismaService.productUnit.deleteMany({ where: { productId } });
+      // for (const unit of units) { ... }
+    } catch (error) {
+      this.logger.error(
+        `❌ Failed to process units for product ${productId}: ${error.message}`,
+      );
+    }
+  }
+
+  // ============================================================================
+  // ADD syncProductsToLarkBase method - EXACT CUSTOMER PATTERN
+  // ============================================================================
+
+  async syncProductsToLarkBase(products: any[]): Promise<void> {
+    try {
+      this.logger.log(
+        `🚀 Starting LarkBase sync for ${products.length} products...`,
+      );
+
+      await this.larkProductSyncService.syncProductsToLarkBase(products);
+
+      this.logger.log('✅ LarkBase product sync completed');
+    } catch (error) {
+      this.logger.error(`❌ LarkBase product sync failed: ${error.message}`);
+
+      // Mark products as FAILED for retry
+      try {
+        const productIds = products
+          .map((p) => p.id)
+          .filter((id) => id !== undefined);
+        if (productIds.length > 0) {
+          await this.prismaService.product.updateMany({
+            where: { id: { in: productIds } },
+            data: { larkSyncStatus: 'FAILED' },
+          });
+        }
+      } catch (updateError) {
+        this.logger.error(
+          `Failed to update product status: ${updateError.message}`,
+        );
+      }
+
+      throw error;
+    }
+  }
+
+  // ============================================================================
+  // ENHANCED updateSyncControl method - COMPLETE CUSTOMER PATTERN
+  // ============================================================================
+
   private async updateSyncControl(name: string, data: any): Promise<void> {
-    await this.prismaService.syncControl.upsert({
-      where: { name },
-      create: {
-        name,
-        entities: ['product'],
-        syncMode: 'historical',
-        ...data,
-      },
-      update: data,
-    });
+    try {
+      await this.prismaService.syncControl.upsert({
+        where: { name },
+        create: {
+          name,
+          entities: ['product'],
+          syncMode: 'historical',
+          isRunning: false,
+          isEnabled: true,
+          status: 'idle',
+          ...data,
+        },
+        update: {
+          ...data,
+          lastRunAt:
+            data.status === 'completed' || data.status === 'failed'
+              ? new Date()
+              : undefined,
+        },
+      });
+    } catch (error) {
+      this.logger.error(
+        `Failed to update sync control '${name}': ${error.message}`,
+      );
+      throw error;
+    }
   }
 }

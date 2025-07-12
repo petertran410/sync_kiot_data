@@ -4,6 +4,7 @@ import { BusSchedulerService } from '../services/bus-scheduler/bus-scheduler.ser
 import { KiotVietCustomerService } from '../services/kiot-viet/customer/customer.service';
 import { KiotVietInvoiceService } from '../services/kiot-viet/invoice/invoice.service';
 import { KiotVietOrderService } from 'src/services/kiot-viet/order/order.service';
+import { KiotVietProductService } from 'src/services/kiot-viet/product/product.service';
 
 @Controller('sync')
 export class SyncController {
@@ -14,6 +15,7 @@ export class SyncController {
     private readonly customerService: KiotVietCustomerService,
     private readonly invoiceService: KiotVietInvoiceService,
     private readonly orderService: KiotVietOrderService,
+    private readonly productService: KiotVietProductService,
   ) {}
 
   // ============================================================================
@@ -261,6 +263,35 @@ export class SyncController {
       return {
         success: false,
         error: error.message,
+      };
+    }
+  }
+
+  @Post('product/historical')
+  async triggerHistoricalProduct() {
+    try {
+      this.logger.log('🔧 Manual historical product sync triggered');
+
+      await this.productService.enableHistoricalSync();
+
+      return {
+        success: true,
+        message: 'Historical product sync enabled and started',
+        estimatedDuration: '15-30 minutes',
+        phases: [
+          'Product sync',
+          'Nested data processing',
+          'LarkBase integration',
+        ],
+      };
+    } catch (error) {
+      this.logger.error(
+        `Manual historical product sync failed: ${error.message}`,
+      );
+      return {
+        success: false,
+        error: error.message,
+        stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
       };
     }
   }
