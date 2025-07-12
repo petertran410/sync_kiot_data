@@ -28,6 +28,9 @@ export class LarkAuthService {
   private orderAccessToken: string | null = null;
   private orderTokenExpiry: Date | null = null;
 
+  private productAccessToken: string | null = null;
+  private productTokenExpiry: Date | null = null;
+
   constructor(
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
@@ -314,5 +317,97 @@ export class LarkAuthService {
     this.orderAccessToken = null;
     this.orderTokenExpiry = null;
     await this.refreshOrderToken();
+  }
+
+  // ============================================================================
+  // PRODUCT TOKEN MANAGEMENT
+  // ============================================================================
+
+  async getProductHeaders(): Promise<Record<string, string>> {
+    const token = await this.getProductAccessToken();
+    return {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    };
+  }
+
+  private async getProductAccessToken(): Promise<string> {
+    // Check if token is still valid (with 5 minute buffer)
+    if (
+      this.productAccessToken &&
+      this.productTokenExpiry &&
+      this.productTokenExpiry > new Date(Date.now() + 5 * 60 * 1000)
+    ) {
+      return this.productAccessToken;
+    }
+
+    // Get new token
+    return await this.refreshProductToken();
+  }
+
+  private async refreshProductToken(): Promise<string> {
+    try {
+      this.logger.log('🔄 Refreshing LarkBase product access token...');
+
+      const appId = this.configService.get<string>('LARK_PRODUCT_SYNC_APP_ID');
+      const appSecret = this.configService.get<string>(
+        'LARK_PRODUCT_SYNC_APP_SECRET',
+      );
+
+      if (!appId || !appSecret) {
+        throw new Error('LarkBase product credentials not configured');
+      }
+
+      const url =
+        'https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal';
+
+      const response = await firstValueFrom(
+        this.httpService.post<TenantAccessTokenResponse>(
+          url,
+          {
+            app_id: appId,
+            app_secret: appSecret,
+          },
+          {
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            timeout: 10000,
+          },
+        ),
+      );
+
+      if (response.data.code !== 0) {
+        throw new Error(
+          `LarkBase auth failed: ${response.data.msg} (code: ${response.data.code})`,
+        );
+      }
+
+      this.productAccessToken = response.data.tenant_access_token;
+      this.productTokenExpiry = new Date(
+        Date.now() + response.data.expire * 1000,
+      );
+
+      this.logger.log('✅ LarkBase product token refreshed successfully');
+      this.logger.debug(
+        `Token expires at: ${this.productTokenExpiry.toISOString()}`,
+      );
+
+      return this.productAccessToken;
+    } catch (error) {
+      this.logger.error(`❌ Failed to refresh product token: ${error.message}`);
+
+      this.productAccessToken = null;
+      this.productTokenExpiry = null;
+
+      throw new Error(`Token refresh failed: ${error.message}`);
+    }
+  }
+
+  // Force refresh (for error recovery)
+  async forceRefreshProductToken(): Promise<void> {
+    this.productAccessToken = null;
+    this.productTokenExpiry = null;
+    await this.refreshProductToken();
   }
 }
