@@ -7,7 +7,9 @@ import { LarkAuthService } from '../auth/lark-auth.service';
 import { firstValueFrom } from 'rxjs';
 import { LarkSyncStatus } from '@prisma/client';
 
-// ✅ EXTRACTED từ product.rtf - LarkBase Product Field Mapping
+// ============================================================================
+// LARKBASE PRODUCT FIELD MAPPING - EXTRACTED FROM product.rtf
+// ============================================================================
 const LARK_PRODUCT_FIELDS = {
   // Primary & Core Fields
   PRIMARY_CODE: 'Mã Hàng Hoá', // fldU0X6CW5 (Primary)
@@ -16,26 +18,34 @@ const LARK_PRODUCT_FIELDS = {
   TRADEMARK: 'Thương Hiệu', // fld8rFauSn
   PRODUCT_NAME: 'Tên Hàng Hoá', // fldFANpN5f
   FULL_NAME: 'Tên Đầy Đủ', // fldhYfS0Sz
-  TYPE: 'Loại', // fldpriGtiy
+  TYPE: 'Loại', // fldpriGtiy (Category)
   ALLOWS_SALE: 'Cho Phép Bán', // fldXnGFbh6
   PRODUCT_TYPE: 'Loại Hàng Hoá', // fldHLOYoKM
 
-  // Cost Price Fields
+  // Cost Price Fields (from Inventories)
   COST_PRICE_DIEP_TRA: 'Giá Vốn (Cửa Hàng Diệp Trà)', // fldpijwGUd
   COST_PRICE_WAREHOUSE: 'Giá Vốn (Kho Bán Hàng)', // fld2Gll93e
 
-  // Price Book Fields
-  PRICE_STRATEGIC: 'Bảng Giá Chiến Lược', // fldFiZ0Ufn
-  PRICE_WHOLESALE_HN: 'Bảng Giá Buôn HN', // fldtGkhkFZ
-  PRICE_WHOLESALE_HCM: 'Bảng Giá Buôn HCM', // fld7yImXrJ
-  PRICE_LABOONG_CHAIN: 'Bảng Giá Chuỗi Laboong', // fldTJBkzvq
-  PRICE_SHANCHA_CHAIN: 'Bảng Giá Chuỗi ShanCha', // fldw7uJour
-  PRICE_CAFE_ACADEMY: 'Bảng Giá Học Viện Cafe', // fldALYEhYi
-  PRICE_HOANG_QUAN_HN: 'Bảng Giá Hoàng Quân Hà Nội', // fldmPPYQZI
-  PRICE_RETAIL_HCM: 'Bảng Giá Lẻ HCM', // fldZwlDjcW
+  // Price Book Fields (Real KiotViet PriceBook IDs)
+  PRICE_STRATEGIC: 'Bảng Giá Chiến Lược', // fldFiZ0Ufn - ID: 486881
+  PRICE_WHOLESALE_HN: 'Bảng Giá Buôn HN', // fldtGkhkFZ - ID: 486884
+  PRICE_WHOLESALE_HCM: 'Bảng Giá Buôn HCM', // fld7yImXrJ - ID: 486879
+  PRICE_LABOONG_CHAIN: 'Bảng Giá Chuỗi Laboong', // fldTJBkzvq - ID: 486920
+  PRICE_SHANCHA_CHAIN: 'Bảng Giá Chuỗi ShanCha', // fldw7uJour - ID: 487540
+  PRICE_CAFE_ACADEMY: 'Bảng Giá Học Viện Cafe', // fldALYEhYi - ID: 486890
+  PRICE_HOANG_QUAN_HN: 'Bảng Giá Hoàng Quân Hà Nội', // fldmPPYQZI - ID: 486889
+  PRICE_RETAIL_HCM: 'Bảng Giá Lẻ HCM', // fldZwlDjcW - ID: 486878
+  PRICE_DO_MINH_TAN: 'Bảng Giá Đỗ Minh Tân', // ID: 486887
+  PRICE_DO_MINH_TAN_8: 'Bảng Giá Đỗ Minh Tân 8%', // ID: 486888
+  PRICE_CHEESE_COFFEE: 'Bảng Giá Cheese Coffee', // ID: 487406
+  PRICE_SHOPEE: 'Bảng Giá Shopee', // ID: 487577
+  PRICE_KAFFA: 'Bảng Giá Kaffa', // ID: 487682
+  PRICE_CING_HU_TANG: 'Bảng Giá Cing Hu Tang', // ID: 487791
 } as const;
 
-// Options Mapping
+// ============================================================================
+// OPTIONS MAPPING
+// ============================================================================
 const ALLOWS_SALE_OPTIONS = {
   YES: 'Có', // optSDsIdAM
   NO: 'Không', // optnZaq1cn
@@ -47,18 +57,41 @@ const PRODUCT_TYPE_OPTIONS = {
   SERVICE: 'Dịch Vụ', // optoHK5n9S
 } as const;
 
-// PriceBook ID to Field Mapping (based on KiotViet PriceBook structure)
-const PRICEBOOK_FIELD_MAPPING = {
-  1: LARK_PRODUCT_FIELDS.PRICE_STRATEGIC, // Bảng Giá Chiến Lược
-  2: LARK_PRODUCT_FIELDS.PRICE_WHOLESALE_HN, // Bảng Giá Buôn HN
-  3: LARK_PRODUCT_FIELDS.PRICE_WHOLESALE_HCM, // Bảng Giá Buôn HCM
-  4: LARK_PRODUCT_FIELDS.PRICE_LABOONG_CHAIN, // Bảng Giá Chuỗi Laboong
-  5: LARK_PRODUCT_FIELDS.PRICE_SHANCHA_CHAIN, // Bảng Giá Chuỗi ShanCha
-  6: LARK_PRODUCT_FIELDS.PRICE_CAFE_ACADEMY, // Bảng Giá Học Viện Cafe
-  7: LARK_PRODUCT_FIELDS.PRICE_HOANG_QUAN_HN, // Bảng Giá Hoàng Quân Hà Nội
-  8: LARK_PRODUCT_FIELDS.PRICE_RETAIL_HCM, // Bảng Giá Lẻ HCM
+// ============================================================================
+// REAL PRICEBOOK ID MAPPING (from user's actual data)
+// ============================================================================
+const PRICEBOOK_FIELD_MAPPING: Record<number, string> = {
+  486878: LARK_PRODUCT_FIELDS.PRICE_RETAIL_HCM, // BẢNG GIÁ LẺ HCM
+  486879: LARK_PRODUCT_FIELDS.PRICE_WHOLESALE_HCM, // BẢNG GIÁ BUÔN HCM
+  486881: LARK_PRODUCT_FIELDS.PRICE_STRATEGIC, // BẢNG GIÁ CHIẾN LƯỢC
+  486884: LARK_PRODUCT_FIELDS.PRICE_WHOLESALE_HN, // BẢNG GIÁ BUÔN HN
+  486887: LARK_PRODUCT_FIELDS.PRICE_DO_MINH_TAN, // BẢNG GIÁ ĐỖ MINH TÂN
+  486888: LARK_PRODUCT_FIELDS.PRICE_DO_MINH_TAN_8, // BẢNG GIÁ ĐỖ MINH TÂN 8%
+  486889: LARK_PRODUCT_FIELDS.PRICE_HOANG_QUAN_HN, // BẢNG GIÁ HOÀNG QUÂN HÀ NỘI
+  486890: LARK_PRODUCT_FIELDS.PRICE_CAFE_ACADEMY, // BẢNG GIÁ HỌC VIỆN CAFE
+  486920: LARK_PRODUCT_FIELDS.PRICE_LABOONG_CHAIN, // BẢNG GIÁ CHUỖI LABOONG
+  487406: LARK_PRODUCT_FIELDS.PRICE_CHEESE_COFFEE, // BẢNG GIÁ CHEESE COFFEE
+  487540: LARK_PRODUCT_FIELDS.PRICE_SHANCHA_CHAIN, // BẢNG GIÁ CHUỖI SHANCHA
+  487577: LARK_PRODUCT_FIELDS.PRICE_SHOPEE, // BẢNG GIÁ SHOPEE
+  487682: LARK_PRODUCT_FIELDS.PRICE_KAFFA, // BẢNG GIÁ KAFFA
+  487791: LARK_PRODUCT_FIELDS.PRICE_CING_HU_TANG, // BẢNG GIÁ CING HU TANG
 } as const;
 
+// ============================================================================
+// BRANCH ID MAPPING (from user's inventory data)
+// ============================================================================
+const BRANCH_COST_MAPPING: Record<number, string> = {
+  635934: LARK_PRODUCT_FIELDS.COST_PRICE_DIEP_TRA, // Cửa Hàng Diệp Trà
+  635935: LARK_PRODUCT_FIELDS.COST_PRICE_WAREHOUSE, // Kho bán hàng
+  154833: LARK_PRODUCT_FIELDS.COST_PRICE_WAREHOUSE, // Kho Hà Nội
+  402819: LARK_PRODUCT_FIELDS.COST_PRICE_WAREHOUSE, // Kho Sài Gòn
+  631163: LARK_PRODUCT_FIELDS.COST_PRICE_WAREHOUSE, // Văn phòng Hà Nội
+  631164: LARK_PRODUCT_FIELDS.COST_PRICE_WAREHOUSE, // Kho Hà Nội
+} as const;
+
+// ============================================================================
+// INTERFACES
+// ============================================================================
 interface LarkBaseRecord {
   record_id?: string;
   fields: Record<string, any>;
@@ -86,6 +119,9 @@ interface BatchResult {
   failedRecords: any[];
 }
 
+// ============================================================================
+// MAIN SERVICE
+// ============================================================================
 @Injectable()
 export class LarkProductSyncService {
   private readonly logger = new Logger(LarkProductSyncService.name);
@@ -344,47 +380,74 @@ export class LarkProductSyncService {
   private async processNewProducts(products: any[]): Promise<void> {
     if (products.length === 0) return;
 
-    this.logger.log(`📝 Creating ${products.length} new products...`);
+    this.logger.log(`📝 Creating ${products.length} new products in LarkBase`);
 
     const batches = this.createBatches(products, this.batchSize);
-    let totalCreated = 0;
-    let totalFailed = 0;
+    let totalSuccessCount = 0;
+    let totalFailedCount = 0;
 
     for (let i = 0; i < batches.length; i++) {
       const batch = batches[i];
+      this.logger.log(
+        `🔄 Processing batch ${i + 1}/${batches.length} (${batch.length} products)`,
+      );
 
       try {
-        const result = await this.batchCreateProducts(batch);
-        const successCount = result.successRecords.length;
-        const failedCount = result.failedRecords.length;
+        const result = await this.createProductBatch(batch);
+        totalSuccessCount += result.successRecords.length;
+        totalFailedCount += result.failedRecords.length;
 
-        totalCreated += successCount;
-        totalFailed += failedCount;
+        // Update database status
+        await this.updateDatabaseStatus(result.successRecords, 'SUCCESS');
+        await this.updateDatabaseStatus(result.failedRecords, 'FAILED');
 
-        if (successCount > 0) {
-          await this.updateDatabaseStatus(result.successRecords, 'SYNCED');
-        }
-
-        if (failedCount > 0) {
-          await this.updateDatabaseStatus(result.failedRecords, 'FAILED');
-        }
-
-        this.logger.log(
-          `📊 Batch ${i + 1}/${batches.length}: ${successCount}/${batch.length} created`,
-        );
-
+        // Rate limiting
         if (i < batches.length - 1) {
           await new Promise((resolve) => setTimeout(resolve, 500));
         }
       } catch (error) {
-        this.logger.error(`Failed to process batch ${i + 1}: ${error.message}`);
+        this.logger.error(`Batch ${i + 1} failed: ${error.message}`);
         await this.updateDatabaseStatus(batch, 'FAILED');
+        totalFailedCount += batch.length;
       }
     }
 
     this.logger.log(
-      `🎯 Create complete: ${totalCreated} success, ${totalFailed} failed`,
+      `✅ New products created: ${totalSuccessCount} success, ${totalFailedCount} failed`,
     );
+  }
+
+  private async createProductBatch(products: any[]): Promise<BatchResult> {
+    const records = products.map((product) => ({
+      fields: this.mapProductToLarkBase(product),
+    }));
+
+    const token = await this.larkAuthService.getAccessToken('product');
+
+    const response = await firstValueFrom(
+      this.httpService.post(
+        `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/batch_create`,
+        { records },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 30000,
+        },
+      ),
+    );
+
+    const responseData: LarkBatchResponse = response.data;
+
+    if (responseData.code !== 0) {
+      throw new Error(`Batch create failed: ${responseData.msg}`);
+    }
+
+    return {
+      successRecords: products,
+      failedRecords: [],
+    };
   }
 
   // ============================================================================
@@ -394,138 +457,55 @@ export class LarkProductSyncService {
   private async processUpdateProducts(products: any[]): Promise<void> {
     if (products.length === 0) return;
 
-    this.logger.log(`📝 Updating ${products.length} existing products...`);
+    this.logger.log(
+      `🔄 Updating ${products.length} existing products in LarkBase`,
+    );
 
     let successCount = 0;
     let failedCount = 0;
-    const createFallbacks: any[] = [];
 
-    const UPDATE_CHUNK_SIZE = 5;
+    for (const product of products) {
+      try {
+        const success = await this.updateSingleProduct(product);
+        if (success) {
+          successCount++;
+          await this.updateDatabaseStatus([product], 'SUCCESS');
+        } else {
+          failedCount++;
+          await this.updateDatabaseStatus([product], 'FAILED');
+        }
 
-    for (let i = 0; i < products.length; i += UPDATE_CHUNK_SIZE) {
-      const chunk = products.slice(i, i + UPDATE_CHUNK_SIZE);
-
-      await Promise.all(
-        chunk.map(async (product) => {
-          try {
-            const updated = await this.updateSingleProduct(product);
-
-            if (updated) {
-              successCount++;
-              await this.updateDatabaseStatus([product], 'SYNCED');
-            } else {
-              createFallbacks.push(product);
-            }
-          } catch (error) {
-            this.logger.warn(
-              `Update failed for ${product.code}: ${error.message}`,
-            );
-            createFallbacks.push(product);
-          }
-        }),
-      );
-
-      if (i + UPDATE_CHUNK_SIZE < products.length) {
-        await new Promise((resolve) => setTimeout(resolve, 300));
+        // Rate limiting
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      } catch (error) {
+        this.logger.error(
+          `Failed to update product ${product.code}: ${error.message}`,
+        );
+        failedCount++;
+        await this.updateDatabaseStatus([product], 'FAILED');
       }
-    }
-
-    // Process fallbacks as new products
-    if (createFallbacks.length > 0) {
-      this.logger.log(
-        `🔄 Processing ${createFallbacks.length} update fallbacks as new products...`,
-      );
-      await this.processNewProducts(createFallbacks);
     }
 
     this.logger.log(
-      `📝 Update complete: ${successCount} updated, ${createFallbacks.length} fallback to create`,
+      `✅ Products updated: ${successCount} success, ${failedCount} failed`,
     );
-  }
-
-  private async batchCreateProducts(products: any[]): Promise<BatchResult> {
-    const records = products.map((product) => ({
-      fields: this.mapProductToLarkBase(product),
-    }));
-
-    let authRetries = 0;
-
-    while (authRetries < this.MAX_AUTH_RETRIES) {
-      try {
-        const token = await this.larkAuthService.getAccessToken('product');
-
-        const response = await firstValueFrom(
-          this.httpService.post(
-            `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/batch_create`,
-            { records },
-            {
-              headers: {
-                Authorization: `Bearer ${token}`,
-                'Content-Type': 'application/json',
-              },
-              timeout: 60000,
-            },
-          ),
-        );
-
-        const responseData: LarkBatchResponse = response.data;
-
-        if (responseData.code !== 0) {
-          if (this.AUTH_ERROR_CODES.includes(responseData.code)) {
-            authRetries++;
-            this.logger.warn(
-              `Auth error ${responseData.code}, retrying... (${authRetries}/${this.MAX_AUTH_RETRIES})`,
-            );
-            await this.larkAuthService.refreshProductToken('product');
-            continue;
-          }
-
-          throw new Error(`LarkBase API error: ${responseData.msg}`);
-        }
-
-        const successRecords = responseData.data?.records || [];
-        const failedRecords = products.slice(successRecords.length);
-
-        return {
-          successRecords: products.slice(0, successRecords.length),
-          failedRecords,
-        };
-      } catch (error) {
-        if (
-          error.response?.data?.code &&
-          this.AUTH_ERROR_CODES.includes(error.response.data.code)
-        ) {
-          authRetries++;
-          this.logger.warn(
-            `Auth error, retrying... (${authRetries}/${this.MAX_AUTH_RETRIES})`,
-          );
-          await this.larkAuthService.refreshToken('product');
-          continue;
-        }
-
-        throw error;
-      }
-    }
-
-    throw new Error('Max auth retries exceeded');
   }
 
   private async updateSingleProduct(product: any): Promise<boolean> {
     try {
-      const token = await this.larkAuthService.getAccessToken('product');
       const recordId = product._larkRecordId;
-
       if (!recordId) {
-        this.logger.warn(`No record ID for product ${product.code}`);
+        this.logger.warn(`No record ID found for product ${product.code}`);
         return false;
       }
+
+      const fields = this.mapProductToLarkBase(product);
+      const token = await this.larkAuthService.getAccessToken('product');
 
       const response = await firstValueFrom(
         this.httpService.put(
           `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/${recordId}`,
-          {
-            fields: this.mapProductToLarkBase(product),
-          },
+          { fields },
           {
             headers: {
               Authorization: `Bearer ${token}`,
@@ -553,11 +533,15 @@ export class LarkProductSyncService {
   }
 
   // ============================================================================
-  // MAPPING PRODUCT TO LARKBASE FIELDS
+  // MAPPING PRODUCT TO LARKBASE FIELDS - COMPLETE WITH REAL DATA
   // ============================================================================
 
   private mapProductToLarkBase(product: any): Record<string, any> {
     const fields: Record<string, any> = {};
+
+    // ============================================================================
+    // PRIMARY & CORE FIELDS
+    // ============================================================================
 
     // Primary field - Mã Hàng Hoá
     if (product.code) {
@@ -593,7 +577,7 @@ export class LarkProductSyncService {
       fields[LARK_PRODUCT_FIELDS.FULL_NAME] = product.fullName;
     }
 
-    // Type (category or other type information)
+    // Type (category)
     if (product.category?.name) {
       fields[LARK_PRODUCT_FIELDS.TYPE] = product.category.name;
     }
@@ -616,30 +600,30 @@ export class LarkProductSyncService {
         typeMapping[product.type] || PRODUCT_TYPE_OPTIONS.REGULAR;
     }
 
-    // Cost Prices from Inventories
+    // ============================================================================
+    // COST PRICES FROM INVENTORIES (Real Branch Mapping)
+    // ============================================================================
+
     if (product.inventories && product.inventories.length > 0) {
       for (const inventory of product.inventories) {
-        if (inventory.branch) {
-          // Map branch-specific costs
-          if (inventory.branch.kiotVietId === 1) {
-            // Cửa Hàng Diệp Trà
-            fields[LARK_PRODUCT_FIELDS.COST_PRICE_DIEP_TRA] = Number(
-              inventory.cost || 0,
-            );
-          } else if (
-            inventory.branch.kiotVietId === 2 ||
-            inventory.branch.kiotVietId === 3
-          ) {
-            // Warehouses
-            fields[LARK_PRODUCT_FIELDS.COST_PRICE_WAREHOUSE] = Number(
-              inventory.cost || 0,
+        if (inventory.branch?.kiotVietId && inventory.cost) {
+          const branchId = inventory.branch.kiotVietId;
+          const costField = BRANCH_COST_MAPPING[branchId];
+
+          if (costField) {
+            fields[costField] = Number(inventory.cost);
+            this.logger.debug(
+              `Mapped cost ${inventory.cost} for branch ${branchId} (${inventory.branch.name}) to ${costField}`,
             );
           }
         }
       }
     }
 
-    // Price Books mapping
+    // ============================================================================
+    // PRICE BOOKS MAPPING (Real PriceBook IDs)
+    // ============================================================================
+
     if (product.priceBookDetails && product.priceBookDetails.length > 0) {
       for (const priceDetail of product.priceBookDetails) {
         const priceBookId = priceDetail.priceBook?.kiotVietId;
@@ -647,10 +631,16 @@ export class LarkProductSyncService {
 
         if (fieldName && priceDetail.price) {
           fields[fieldName] = Number(priceDetail.price);
+          this.logger.debug(
+            `Mapped price ${priceDetail.price} for pricebook ${priceBookId} (${priceDetail.priceBook?.name}) to ${fieldName}`,
+          );
         }
       }
     }
 
+    this.logger.debug(
+      `Mapped product ${product.code} with ${Object.keys(fields).length} fields`,
+    );
     return fields;
   }
 

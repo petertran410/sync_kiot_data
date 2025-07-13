@@ -1025,7 +1025,7 @@ export class KiotVietProductService {
   }
 
   // ============================================================================
-  // SYNC TO LARKBASE
+  // SYNC TO LARKBASE - ENHANCED INTEGRATION
   // ============================================================================
 
   async syncProductsToLarkBase(products: any[]): Promise<void> {
@@ -1034,7 +1034,35 @@ export class KiotVietProductService {
         `🚀 Starting LarkBase sync for ${products.length} products...`,
       );
 
-      await this.larkProductSyncService.syncProductsToLarkBase(products);
+      // Fetch products with full relationships for LarkBase sync
+      const productsWithFullData = await this.prismaService.product.findMany({
+        where: {
+          id: { in: products.map((p) => p.id) },
+        },
+        include: {
+          tradeMark: true,
+          category: true,
+          inventories: {
+            include: {
+              branch: true,
+            },
+          },
+          priceBookDetails: {
+            include: {
+              priceBook: true,
+            },
+          },
+        },
+      });
+
+      this.logger.log(
+        `📊 Retrieved ${productsWithFullData.length} products with full data for LarkBase sync`,
+      );
+
+      // Call LarkBase sync service
+      await this.larkProductSyncService.syncProductsToLarkBase(
+        productsWithFullData,
+      );
 
       this.logger.log('✅ LarkBase product sync completed');
     } catch (error) {
