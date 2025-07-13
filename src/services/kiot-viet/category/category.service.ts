@@ -6,6 +6,16 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { KiotVietAuthService } from '../auth.service';
 import { firstValueFrom } from 'rxjs';
 
+interface KiotVietCategory {
+  categoryId: number;
+  parentId?: number;
+  categoryName: string;
+  retailerId?: number;
+  hasChild?: boolean;
+  modifiedDate?: string;
+  createdDate?: string;
+}
+
 @Injectable()
 export class KiotVietCategoryService {
   private readonly logger = new Logger(KiotVietCategoryService.name);
@@ -25,35 +35,217 @@ export class KiotVietCategoryService {
     this.baseUrl = baseUrl;
   }
 
-  async fetchCategories(params: {
-    lastModifiedFrom?: string;
-    currentItem?: number;
-    pageSize?: number;
-  }) {
+  // ============================================================================
+  // HISTORICAL SYNC - SIMPLE VERSION
+  // ============================================================================
+
+  async syncHistoricalCategories(): Promise<void> {
+    const syncName = 'category_historical';
+
     try {
-      const headers = await this.authService.getRequestHeaders();
-      const { data } = await firstValueFrom(
-        this.httpService.get(`${this.baseUrl}/categories`, {
-          headers,
-          params: {
-            ...params,
-            hierachicalData: false,
-            includeRemoveIds: true,
-            orderBy: 'modifiedDate',
-            orderDirection: 'DESC',
-          },
-        }),
-      );
-      return data;
+      await this.updateSyncControl(syncName, {
+        isRunning: true,
+        status: 'running',
+        startedAt: new Date(),
+        error: null,
+      });
+
+      this.logger.log('🚀 Starting historical category sync...');
+
+      // Fetch all categories with hierarchical data
+      const response = await this.fetchCategoriesWithRetry({
+        hierachicalData: false, // Get flat list for easier processing
+        orderBy: 'createdDate',
+        orderDirection: 'ASC',
+        pageSize: 100,
+      });
+
+      const categories = response.data || [];
+      this.logger.log(`📊 Found ${categories.length} categories to sync`);
+
+      if (categories.length > 0) {
+        const saved = await this.saveCategoriesToDatabase(categories);
+        this.logger.log(`✅ Saved ${saved.created + saved.updated} categories`);
+      }
+
+      await this.updateSyncControl(syncName, {
+        isRunning: false,
+        isEnabled: false, // Auto-disable after completion
+        status: 'completed',
+        completedAt: new Date(),
+        lastRunAt: new Date(),
+      });
+
+      this.logger.log('✅ Historical category sync completed');
     } catch (error) {
-      this.logger.error(`Failed to fetch categories: ${error.message}`);
+      this.logger.error(`❌ Historical category sync failed: ${error.message}`);
+
+      await this.updateSyncControl(syncName, {
+        isRunning: false,
+        status: 'failed',
+        error: error.message,
+      });
+
       throw error;
     }
   }
 
-  // FIXED: New method to sort categories by dependency (parents before children)
-  private sortCategoriesByDependency(categories: any[]): any[] {
-    const categoryMap = new Map<number, any>();
+  // ============================================================================
+  // API METHODS
+  // ============================================================================
+
+  async fetchCategoriesWithRetry(
+    params: {
+      hierachicalData?: boolean;
+      orderBy?: string;
+      orderDirection?: string;
+      pageSize?: number;
+      currentItem?: number;
+      lastModifiedFrom?: string;
+    },
+    maxRetries: number = 3,
+  ): Promise<any> {
+    let lastError: Error | undefined;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        return await this.fetchCategories(params);
+      } catch (error) {
+        lastError = error as Error;
+        this.logger.warn(
+          `⚠️ API attempt ${attempt}/${maxRetries} failed: ${error.message}`,
+        );
+
+        if (attempt < maxRetries) {
+          await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
+        }
+      }
+    }
+
+    throw lastError;
+  }
+
+  async fetchCategories(params: {
+    hierachicalData?: boolean;
+    orderBy?: string;
+    orderDirection?: string;
+    pageSize?: number;
+    currentItem?: number;
+    lastModifiedFrom?: string;
+  }): Promise<any> {
+    const headers = await this.authService.getRequestHeaders();
+
+    const queryParams = new URLSearchParams({
+      hierachicalData: (params.hierachicalData || false).toString(),
+      orderBy: params.orderBy || 'createdDate',
+      orderDirection: params.orderDirection || 'ASC',
+      pageSize: (params.pageSize || this.PAGE_SIZE).toString(),
+      currentItem: (params.currentItem || 0).toString(),
+    });
+
+    if (params.lastModifiedFrom) {
+      queryParams.append('lastModifiedFrom', params.lastModifiedFrom);
+    }
+
+    const response = await firstValueFrom(
+      this.httpService.get(`${this.baseUrl}/categories?${queryParams}`, {
+        headers,
+        timeout: 30000,
+      }),
+    );
+
+    return response.data;
+  }
+
+  // ============================================================================
+  // DATABASE SAVE
+  // ============================================================================
+
+  private async saveCategoriesToDatabase(
+    categories: KiotVietCategory[],
+  ): Promise<{ created: number; updated: number }> {
+    this.logger.log(`💾 Saving ${categories.length} categories to database...`);
+
+    // Sort categories by dependency (parents first)
+    const sortedCategories = this.sortCategoriesByDependency(categories);
+
+    let created = 0;
+    let updated = 0;
+
+    for (const categoryData of sortedCategories) {
+      try {
+        // Find parent category if exists
+        const parentCategory = categoryData.parentId
+          ? await this.prismaService.category.findFirst({
+              where: { kiotVietId: categoryData.parentId },
+              select: { id: true },
+            })
+          : null;
+
+        const result = await this.prismaService.category.upsert({
+          where: { kiotVietId: categoryData.categoryId },
+          update: {
+            name: categoryData.categoryName,
+            parentId: parentCategory?.id ?? null,
+            hasChildren: categoryData.hasChild ?? false,
+            retailerId: categoryData.retailerId ?? null,
+            modifiedDate: categoryData.modifiedDate
+              ? new Date(categoryData.modifiedDate)
+              : new Date(),
+            lastSyncedAt: new Date(),
+          },
+          create: {
+            kiotVietId: categoryData.categoryId,
+            name: categoryData.categoryName,
+            parentId: parentCategory?.id ?? null,
+            hasChildren: categoryData.hasChild ?? false,
+            retailerId: categoryData.retailerId ?? null,
+            createdDate: categoryData.createdDate
+              ? new Date(categoryData.createdDate)
+              : new Date(),
+            modifiedDate: categoryData.modifiedDate
+              ? new Date(categoryData.modifiedDate)
+              : new Date(),
+            lastSyncedAt: new Date(),
+          },
+        });
+
+        // Check if it was created or updated
+        const existingCount = await this.prismaService.category.count({
+          where: {
+            kiotVietId: categoryData.categoryId,
+            createdDate: {
+              lt: new Date(Date.now() - 1000), // Created more than 1 second ago
+            },
+          },
+        });
+
+        if (existingCount > 0) {
+          updated++;
+        } else {
+          created++;
+        }
+      } catch (error) {
+        this.logger.error(
+          `❌ Failed to save category ${categoryData.categoryName}: ${error.message}`,
+        );
+      }
+    }
+
+    this.logger.log(
+      `✅ Categories saved: ${created} created, ${updated} updated`,
+    );
+    return { created, updated };
+  }
+
+  // ============================================================================
+  // DEPENDENCY SORTING - PARENTS FIRST
+  // ============================================================================
+
+  private sortCategoriesByDependency(
+    categories: KiotVietCategory[],
+  ): KiotVietCategory[] {
+    const categoryMap = new Map<number, KiotVietCategory>();
     const parentChildMap = new Map<number, number[]>();
     const rootCategories: number[] = [];
 
@@ -71,31 +263,27 @@ export class KiotVietCategoryService {
       }
     }
 
-    const sortedCategories: any[] = [];
+    // Sort by dependency order
+    const sortedCategories: KiotVietCategory[] = [];
     const visited = new Set<number>();
 
-    // Recursive function to process categories in dependency order
     const processCategory = (categoryId: number) => {
-      if (visited.has(categoryId)) return;
-
       const category = categoryMap.get(categoryId);
-      if (!category) return;
+      if (!category || visited.has(categoryId)) return;
 
-      // If this category has a parent, process parent first
+      // If has parent, process parent first
       if (category.parentId && !visited.has(category.parentId)) {
         processCategory(category.parentId);
       }
 
       // Process current category
-      if (!visited.has(categoryId)) {
-        visited.add(categoryId);
-        sortedCategories.push(category);
+      visited.add(categoryId);
+      sortedCategories.push(category);
 
-        // Process children
-        const children = parentChildMap.get(categoryId) || [];
-        for (const childId of children) {
-          processCategory(childId);
-        }
+      // Process children
+      const children = parentChildMap.get(categoryId) || [];
+      for (const childId of children) {
+        processCategory(childId);
       }
     };
 
@@ -104,229 +292,55 @@ export class KiotVietCategoryService {
       processCategory(rootId);
     }
 
-    // Process any remaining categories (in case of orphaned records)
+    // Process any remaining categories
     for (const category of categories) {
       if (!visited.has(category.categoryId)) {
         processCategory(category.categoryId);
       }
     }
 
-    this.logger.log(
-      `Sorted ${categories.length} categories by dependency order`,
-    );
     return sortedCategories;
   }
 
-  // FIXED: Updated method to handle categories with proper dependency ordering
-  private async batchSaveCategories(categories: any[]) {
-    if (!categories || categories.length === 0)
-      return { created: 0, updated: 0 };
+  // ============================================================================
+  // SYNC CONTROL
+  // ============================================================================
 
-    // FIXED: Sort categories to ensure parents are processed before children
-    const sortedCategories = this.sortCategoriesByDependency(categories);
-
-    const kiotVietIds = sortedCategories.map((c) => c.categoryId);
-    const existingCategories = await this.prismaService.category.findMany({
-      where: { kiotVietId: { in: kiotVietIds } },
-      select: { kiotVietId: true, id: true },
+  async enableHistoricalSync(): Promise<void> {
+    await this.updateSyncControl('category_historical', {
+      isEnabled: true,
+      isRunning: false,
+      status: 'idle',
     });
 
-    const existingMap = new Map<number, number>(
-      existingCategories
-        .filter((c) => c.kiotVietId !== null)
-        .map((c) => [c.kiotVietId!, c.id]),
-    );
-
-    // Create a map to track newly created categories
-    const newlyCreatedMap = new Map<number, number>();
-
-    let createdCount = 0;
-    let updatedCount = 0;
-
-    // FIXED: Process categories in dependency order
-    for (const categoryData of sortedCategories) {
-      try {
-        const existingId = existingMap.get(categoryData.categoryId);
-
-        // Prepare parent reference
-        let parentReference: { connect: { id: number } } | null = null;
-        if (categoryData.parentId) {
-          // Check existing categories first
-          const existingParentId = existingMap.get(categoryData.parentId);
-          if (existingParentId) {
-            parentReference = { connect: { id: existingParentId } };
-          } else {
-            // Check newly created categories
-            const newlyCreatedParentId = newlyCreatedMap.get(
-              categoryData.parentId,
-            );
-            if (newlyCreatedParentId) {
-              parentReference = { connect: { id: newlyCreatedParentId } };
-            } else {
-              // Parent doesn't exist, log warning and create without parent
-              this.logger.warn(
-                `Parent category ${categoryData.parentId} not found for category ${categoryData.categoryName}. Creating without parent.`,
-              );
-              parentReference = null;
-            }
-          }
-        }
-
-        const commonData = {
-          name: categoryData.categoryName,
-          hasChildren: categoryData.hasChild || false,
-          retailerId: categoryData.retailerId,
-          modifiedDate: categoryData.modifiedDate
-            ? new Date(categoryData.modifiedDate)
-            : new Date(),
-          lastSyncedAt: new Date(),
-        };
-
-        if (existingId) {
-          const updateData: any = { ...commonData };
-          if (parentReference) {
-            updateData.parent = parentReference;
-          }
-
-          await this.prismaService.category.update({
-            where: { id: existingId },
-            data: updateData,
-          });
-          updatedCount++;
-        } else {
-          const createData: any = {
-            kiotVietId: categoryData.categoryId,
-            ...commonData,
-            createdDate: categoryData.createdDate
-              ? new Date(categoryData.createdDate)
-              : new Date(),
-          };
-
-          if (parentReference) {
-            createData.parent = parentReference;
-          }
-
-          const newCategory = await this.prismaService.category.create({
-            data: createData,
-          });
-
-          // Track newly created category
-          newlyCreatedMap.set(categoryData.categoryId, newCategory.id);
-          createdCount++;
-        }
-      } catch (error) {
-        this.logger.error(
-          `Failed to save category ${categoryData.categoryName}: ${error.message}`,
-        );
-        // Continue processing other categories instead of stopping
-        continue;
-      }
-    }
-
-    this.logger.log(
-      `Category batch processing completed: ${createdCount} created, ${updatedCount} updated`,
-    );
-
-    return { created: createdCount, updated: updatedCount };
+    this.logger.log('✅ Historical category sync enabled');
   }
 
-  private async handleRemovedCategories(removedIds: number[]) {
-    if (!removedIds || removedIds.length === 0) return 0;
-
-    try {
-      const result = await this.prismaService.category.updateMany({
-        where: { kiotVietId: { in: removedIds } },
-        data: { lastSyncedAt: new Date() },
-      });
-
-      this.logger.log(`Updated ${result.count} removed categories`);
-      return result.count;
-    } catch (error) {
-      this.logger.error(
-        `Failed to handle removed categories: ${error.message}`,
-      );
-      throw error;
-    }
-  }
-
-  async syncCategories(): Promise<void> {
+  private async updateSyncControl(name: string, data: any): Promise<void> {
     try {
       await this.prismaService.syncControl.upsert({
-        where: { name: 'category_sync' },
+        where: { name },
         create: {
-          name: 'category_sync',
+          name,
           entities: ['category'],
-          syncMode: 'recent',
-          isRunning: true,
-          status: 'in_progress',
-          startedAt: new Date(),
+          syncMode: 'historical',
+          isRunning: false,
+          isEnabled: true,
+          status: 'idle',
+          ...data,
         },
         update: {
-          isRunning: true,
-          status: 'in_progress',
-          startedAt: new Date(),
-          error: null,
+          ...data,
+          lastRunAt:
+            data.status === 'completed' || data.status === 'failed'
+              ? new Date()
+              : undefined,
         },
       });
-
-      let currentItem = 0;
-      let totalProcessed = 0;
-      let hasMoreData = true;
-      const allCategories: any[] = [];
-
-      // FIXED: First, collect all categories
-      while (hasMoreData) {
-        const response = await this.fetchCategories({
-          currentItem,
-          pageSize: this.PAGE_SIZE,
-        });
-
-        if (response.data && response.data.length > 0) {
-          allCategories.push(...response.data);
-        }
-
-        if (response.removedIds && response.removedIds.length > 0) {
-          await this.handleRemovedCategories(response.removedIds);
-        }
-
-        hasMoreData = response.data && response.data.length === this.PAGE_SIZE;
-        if (hasMoreData) currentItem += this.PAGE_SIZE;
-      }
-
-      // FIXED: Process all categories together to ensure proper dependency ordering
-      if (allCategories.length > 0) {
-        const { created, updated } =
-          await this.batchSaveCategories(allCategories);
-        totalProcessed = created + updated;
-
-        this.logger.log(
-          `Category sync completed: ${totalProcessed} categories processed (${created} created, ${updated} updated)`,
-        );
-      }
-
-      await this.prismaService.syncControl.update({
-        where: { name: 'category_sync' },
-        data: {
-          isRunning: false,
-          status: 'completed',
-          completedAt: new Date(),
-          progress: { totalProcessed },
-        },
-      });
-
-      this.logger.log(`Category sync completed: ${totalProcessed} processed`);
     } catch (error) {
-      await this.prismaService.syncControl.update({
-        where: { name: 'category_sync' },
-        data: {
-          isRunning: false,
-          status: 'failed',
-          completedAt: new Date(),
-          error: error.message,
-        },
-      });
-
-      this.logger.error(`Category sync failed: ${error.message}`);
+      this.logger.error(
+        `Failed to update sync control '${name}': ${error.message}`,
+      );
       throw error;
     }
   }

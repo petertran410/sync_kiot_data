@@ -10,12 +10,17 @@ import { LarkInvoiceSyncService } from '../lark/invoice/lark-invoice-sync.servic
 import { LarkOrderSyncService } from '../lark/order/lark-order-sync.service';
 import { KiotVietOrderService } from '../kiot-viet/order/order.service';
 import { KiotVietProductService } from '../kiot-viet/product/product.service';
+import { KiotVietCategoryService } from '../kiot-viet/category/category.service';
+import { KiotVietTradeMarkService } from '../kiot-viet/trademark/trademark.service';
+import { KiotVietBranchService } from '../kiot-viet/branch/branch.service';
+import { KiotVietPriceBookService } from '../kiot-viet/pricebook/pricebook.service';
 
 @Injectable()
 export class BusSchedulerService implements OnModuleInit {
   private readonly logger = new Logger(BusSchedulerService.name);
   private isMainSchedulerEnabled = true;
   private isWeeklySchedulerEnabled = true;
+  private isDependencySchedulerEnabled = true;
 
   constructor(
     private readonly prismaService: PrismaService,
@@ -27,13 +32,13 @@ export class BusSchedulerService implements OnModuleInit {
     private readonly larkInvoiceSyncService: LarkInvoiceSyncService,
     private readonly larkOrderSyncService: LarkOrderSyncService,
     private readonly productService: KiotVietProductService,
+    private readonly categoryService: KiotVietCategoryService,
+    private readonly tradeMarkService: KiotVietTradeMarkService,
+    private readonly branchService: KiotVietBranchService,
+    private readonly priceBookService: KiotVietPriceBookService,
   ) {}
 
   async onModuleInit() {
-    this.logger.log('🚀 BusScheduler initialized - Central sync management');
-    this.logger.log('📅 Main cycle: Every 8 minutes');
-    this.logger.log('📅 Weekly cycle: Sunday 6 AM (Vietnam time)');
-
     // Startup check after 5 seconds
     setTimeout(async () => {
       await this.runStartupCheck();
@@ -41,7 +46,7 @@ export class BusSchedulerService implements OnModuleInit {
   }
 
   // ============================================================================
-  // MAIN 8-MINUTE SCHEDULER - ENHANCED WITH TIMEOUT PROTECTION
+  // MAIN 7-MINUTE SCHEDULER - ENHANCED WITH TIMEOUT PROTECTION
   // ============================================================================
 
   @Cron('*/7 * * * *', {
@@ -66,7 +71,6 @@ export class BusSchedulerService implements OnModuleInit {
       }
       await this.updateCycleTracking('main_cycle', 'running');
 
-      // ✅ ENHANCED: Add timeout protection for entire cycle
       const CYCLE_TIMEOUT_MS = 25 * 60 * 1000;
 
       try {
@@ -80,7 +84,6 @@ export class BusSchedulerService implements OnModuleInit {
 
         await Promise.race([cyclePromise, timeoutPromise]);
 
-        // Success - mark as completed
         await this.updateCycleTracking('main_cycle', 'completed');
 
         const totalDuration = ((Date.now() - startTime) / 1000).toFixed(2);
@@ -105,6 +108,89 @@ export class BusSchedulerService implements OnModuleInit {
     } catch (error) {
       this.logger.error(`❌ Main sync cycle failed: ${error.message}`);
       await this.updateCycleTracking('main_cycle', 'failed', error.message);
+    }
+  }
+
+  @Cron('0 23 * * *', {
+    name: 'dependency_sync_cycle',
+    timeZone: 'Asia/Ho_Chi_Minh',
+  })
+  async handleDependencySyncCycle() {
+    if (!this.isDependencySchedulerEnabled) {
+      this.logger.debug('🔇 Dependency scheduler is disabled');
+      return;
+    }
+
+    try {
+      this.logger.log('🌙 23:00 Daily Dependency Sync triggered');
+
+      // Check if any sync is running
+      const runningSyncs = await this.checkRunningSyncs();
+      if (runningSyncs.length > 0) {
+        this.logger.log(
+          `⏸️ Dependency sync skipped - running: ${runningSyncs.map((s) => s.name).join(', ')}`,
+        );
+        this.logger.log('⏸️ Will retry tomorrow at 23:00');
+        return;
+      }
+
+      // Update cycle tracking
+      await this.updateCycleTracking('dependency_cycle', 'running');
+
+      // Run dependency sync in strict order: Category → TradeMark → Branch → PriceBook → Product
+      await this.runDependencySyncInOrder();
+
+      // Complete cycle
+      await this.updateCycleTracking('dependency_cycle', 'completed');
+
+      this.logger.log('✅ Dependency sync cycle completed successfully');
+    } catch (error) {
+      this.logger.error(`❌ Dependency sync cycle failed: ${error.message}`);
+      await this.updateCycleTracking(
+        'dependency_cycle',
+        'failed',
+        error.message,
+      );
+    }
+  }
+
+  // ============================================================================
+  // DEPENDENCY SYNC LOGIC - STRICT ORDER
+  // ============================================================================
+
+  private async runDependencySyncInOrder(): Promise<void> {
+    this.logger.log('📋 Starting dependency sync in strict order...');
+
+    try {
+      // Step 1: Category (Independent)
+      this.logger.log('🏷️ [1/5] Syncing Categories...');
+      await this.enableAndRunCategorySync();
+      await this.waitForSyncCompletion('category_historical', 300); // 5 min timeout
+
+      // Step 2: TradeMark (Independent)
+      this.logger.log('🏢 [2/5] Syncing TradeMarks...');
+      await this.enableAndRunTradeMarkSync();
+      await this.waitForSyncCompletion('trademark_historical', 300);
+
+      // Step 3: Branch (Independent)
+      this.logger.log('🏪 [3/5] Syncing Branches...');
+      await this.enableAndRunBranchSync();
+      await this.waitForSyncCompletion('branch_historical', 300);
+
+      // Step 4: PriceBook (Independent)
+      this.logger.log('💰 [4/5] Syncing PriceBooks...');
+      await this.enableAndRunPriceBookSync();
+      await this.waitForSyncCompletion('pricebook_historical', 300);
+
+      // Step 5: Product (Depends on all above)
+      this.logger.log('📦 [5/5] Syncing Products (with full dependencies)...');
+      await this.enableAndRunProductSync();
+      await this.waitForSyncCompletion('product_historical', 1800); // 30 min timeout for products
+
+      this.logger.log('✅ All dependency syncs completed successfully');
+    } catch (error) {
+      this.logger.error(`❌ Dependency sync failed at step: ${error.message}`);
+      throw error;
     }
   }
 
@@ -699,8 +785,100 @@ export class BusSchedulerService implements OnModuleInit {
   }
 
   // ============================================================================
-  // SCHEDULER CONTROLS
+  // DEPENDENCY SYNC METHODS
   // ============================================================================
+
+  private async enableAndRunCategorySync(): Promise<void> {
+    try {
+      await this.categoryService.enableHistoricalSync();
+      await this.categoryService.syncHistoricalCategories();
+    } catch (error) {
+      throw new Error(`Category sync failed: ${error.message}`);
+    }
+  }
+
+  private async enableAndRunTradeMarkSync(): Promise<void> {
+    try {
+      await this.tradeMarkService.enableHistoricalSync();
+      await this.tradeMarkService.syncHistoricalTradeMarks();
+    } catch (error) {
+      throw new Error(`TradeMark sync failed: ${error.message}`);
+    }
+  }
+
+  private async enableAndRunBranchSync(): Promise<void> {
+    try {
+      await this.branchService.enableHistoricalSync();
+      await this.branchService.syncHistoricalBranches();
+    } catch (error) {
+      throw new Error(`Branch sync failed: ${error.message}`);
+    }
+  }
+
+  private async enableAndRunPriceBookSync(): Promise<void> {
+    try {
+      await this.priceBookService.enableHistoricalSync();
+      await this.priceBookService.syncHistoricalPriceBooks();
+    } catch (error) {
+      throw new Error(`PriceBook sync failed: ${error.message}`);
+    }
+  }
+
+  private async enableAndRunProductSync(): Promise<void> {
+    try {
+      await this.productService.enableHistoricalSync();
+      await this.productService.syncHistoricalProducts();
+    } catch (error) {
+      throw new Error(`Product sync failed: ${error.message}`);
+    }
+  }
+
+  // ============================================================================
+  // SYNC COMPLETION WAITER
+  // ============================================================================
+
+  private async waitForSyncCompletion(
+    syncName: string,
+    timeoutSeconds: number,
+  ): Promise<void> {
+    const startTime = Date.now();
+    const timeoutMs = timeoutSeconds * 1000;
+
+    this.logger.log(
+      `⏳ Waiting for ${syncName} to complete (timeout: ${timeoutSeconds}s)...`,
+    );
+
+    while (Date.now() - startTime < timeoutMs) {
+      const syncControl = await this.prismaService.syncControl.findFirst({
+        where: { name: syncName },
+      });
+
+      if (!syncControl) {
+        throw new Error(`Sync control not found: ${syncName}`);
+      }
+
+      if (!syncControl.isRunning) {
+        if (syncControl.status === 'completed') {
+          this.logger.log(`✅ ${syncName} completed successfully`);
+          return;
+        } else if (syncControl.status === 'failed') {
+          throw new Error(
+            `${syncName} failed: ${syncControl.error || 'Unknown error'}`,
+          );
+        } else {
+          this.logger.log(
+            `⚠️ ${syncName} stopped with status: ${syncControl.status}`,
+          );
+          return;
+        }
+      }
+
+      // Wait 5 seconds before checking again
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+    }
+
+    throw new Error(`${syncName} timed out after ${timeoutSeconds} seconds`);
+  }
 
   enableMainScheduler() {
     this.isMainSchedulerEnabled = true;
@@ -720,6 +898,16 @@ export class BusSchedulerService implements OnModuleInit {
   disableWeeklyScheduler() {
     this.isWeeklySchedulerEnabled = false;
     this.logger.log('🔇 Weekly scheduler (Sunday 6 AM) disabled');
+  }
+
+  enableDependencyScheduler() {
+    this.isDependencySchedulerEnabled = true;
+    this.logger.log('✅ Dependency scheduler (Daily 23:00) enabled');
+  }
+
+  disableDependencyScheduler() {
+    this.isDependencySchedulerEnabled = false;
+    this.logger.log('🔇 Dependency scheduler (Daily 23:00) disabled');
   }
 
   // ============================================================================
@@ -812,6 +1000,12 @@ export class BusSchedulerService implements OnModuleInit {
           nextRun: 'Sunday 6 AM (Vietnam time)',
           entities: ['customergroup'],
         },
+        dependencyScheduler: {
+          enabled: this.isDependencySchedulerEnabled,
+          nextRun: 'Daily 23:00 (Vietnam time)',
+          entities: ['category', 'trademark', 'branch', 'pricebook', 'product'],
+          executionOrder: 'Category → TradeMark → Branch → PriceBook → Product',
+        },
       },
       runningTasks: runningSyncs.length,
       runningSyncs: runningSyncs.map((sync) => ({
@@ -852,44 +1046,51 @@ export class BusSchedulerService implements OnModuleInit {
     error?: string,
   ) {
     try {
+      let entities: string[];
+      switch (cycleName) {
+        case 'main_cycle':
+          entities = ['customer', 'invoice', 'order'];
+          break;
+        case 'weekly_cycle':
+          entities = ['customergroup'];
+          break;
+        case 'dependency_cycle':
+          entities = [
+            'category',
+            'trademark',
+            'branch',
+            'pricebook',
+            'product',
+          ];
+          break;
+        default:
+          entities = [];
+      }
+
       await this.prismaService.syncControl.upsert({
         where: { name: cycleName },
         create: {
           name: cycleName,
-          entities:
-            cycleName === 'main_cycle'
-              ? ['customer', 'invoice', 'order']
-              : ['customergroup'],
+          entities,
           syncMode: 'cycle',
           isRunning: status === 'running',
           isEnabled: true,
           status,
           error,
-          startedAt: status === 'running' ? new Date() : undefined,
-          completedAt: status !== 'running' ? new Date() : undefined,
-          lastRunAt: new Date(),
-          progress:
-            status === 'running'
-              ? { stage: 'started', timestamp: new Date().toISOString() }
-              : { stage: 'completed', timestamp: new Date().toISOString() },
+          startedAt: status === 'running' ? new Date() : null,
+          completedAt: status === 'completed' ? new Date() : null,
         },
         update: {
           isRunning: status === 'running',
           status,
           error,
           startedAt: status === 'running' ? new Date() : undefined,
-          completedAt: status !== 'running' ? new Date() : undefined,
-          lastRunAt: new Date(),
-          progress:
-            status === 'running'
-              ? { stage: 'started', timestamp: new Date().toISOString() }
-              : { stage: 'completed', timestamp: new Date().toISOString() },
+          completedAt: status === 'completed' ? new Date() : undefined,
+          lastRunAt: status === 'completed' ? new Date() : undefined,
         },
       });
     } catch (error) {
-      this.logger.error(
-        `❌ Failed to update cycle tracking for ${cycleName}: ${error.message}`,
-      );
+      this.logger.error(`Failed to update cycle tracking: ${error.message}`);
     }
   }
 }

@@ -12,11 +12,12 @@ import { KiotVietUserService } from './user/user.service';
 import { KiotVietSaleChannelService } from './sale-channel/sale-channel.service';
 import { KiotVietSurchargeService } from './surcharge/surcharge.service';
 import { KiotVietBankAccountService } from './bank-account/bank-account.service';
-import { KiotVietCategoryService } from './category/category.service';
-import { KiotVietProductService } from './product/product.service';
 import { LarkModule } from '../lark/lark.module';
 import { KiotVietInvoiceService } from './invoice/invoice.service';
 import { KiotVietOrderService } from './order/order.service';
+import { KiotVietCategoryService } from './category/category.service';
+import { KiotVietPriceBookService } from './pricebook/pricebook.service';
+import { KiotVietProductService } from './product/product.service';
 
 @Module({
   imports: [
@@ -34,6 +35,7 @@ import { KiotVietOrderService } from './order/order.service';
     KiotVietBranchService,
     KiotVietCustomerGroupService,
     KiotVietTradeMarkService,
+    KiotVietPriceBookService,
     KiotVietUserService,
     KiotVietSaleChannelService,
     KiotVietSurchargeService,
@@ -49,6 +51,7 @@ import { KiotVietOrderService } from './order/order.service';
     KiotVietBranchService,
     KiotVietCustomerGroupService,
     KiotVietTradeMarkService,
+    KiotVietPriceBookService,
     KiotVietUserService,
     KiotVietSaleChannelService,
     KiotVietSurchargeService,
