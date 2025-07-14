@@ -39,6 +39,11 @@ export class KiotVietTradeMarkService {
   async syncHistoricalTradeMarks(): Promise<void> {
     const syncName = 'trademark_historical';
 
+    let currentItem = 0;
+    let processedCount = 0;
+    let totalTradeMarks = 0;
+    let allTradeMarks: KiotVietTradeMark[] = [];
+
     try {
       await this.updateSyncControl(syncName, {
         isRunning: true,
@@ -47,19 +52,69 @@ export class KiotVietTradeMarkService {
         error: null,
       });
 
-      this.logger.log('🚀 Starting historical trademark sync...');
+      this.logger.log(
+        '🚀 Starting historical trademark sync with pagination...',
+      );
 
-      const response = await this.fetchTradeMarksWithRetry({
-        orderBy: 'tradeMarkName',
-        orderDirection: 'ASC',
-        pageSize: this.PAGE_SIZE,
-      });
+      // Pagination loop to get ALL trademarks
+      while (true) {
+        const currentPage = Math.floor(currentItem / this.PAGE_SIZE) + 1;
 
-      const tradeMarks = response.data || [];
-      this.logger.log(`📊 Found ${tradeMarks.length} trademarks to sync`);
+        this.logger.log(
+          `📄 Fetching page ${currentPage} (items ${currentItem} - ${currentItem + this.PAGE_SIZE - 1})...`,
+        );
 
-      if (tradeMarks.length > 0) {
-        const saved = await this.saveTradeMarksToDatabase(tradeMarks);
+        const response = await this.fetchTradeMarksWithRetry({
+          pageSize: this.PAGE_SIZE,
+          currentItem,
+          // Remove orderBy to avoid 500 error
+        });
+
+        const { data: tradeMarks, total } = response;
+
+        // Set total on first page
+        if (totalTradeMarks === 0 && total !== undefined) {
+          totalTradeMarks = total;
+          this.logger.log(`📊 Total trademarks detected: ${totalTradeMarks}`);
+        }
+
+        // Check if we have data
+        if (!tradeMarks || tradeMarks.length === 0) {
+          this.logger.log(
+            '✅ No more trademarks to fetch - pagination complete',
+          );
+          break;
+        }
+
+        // Add to all trademarks
+        allTradeMarks.push(...tradeMarks);
+        processedCount += tradeMarks.length;
+        currentItem += this.PAGE_SIZE;
+
+        this.logger.log(
+          `📈 Progress: ${processedCount}/${totalTradeMarks || 'unknown'} trademarks fetched`,
+        );
+
+        // Break if we've got all trademarks
+        if (totalTradeMarks > 0 && processedCount >= totalTradeMarks) {
+          this.logger.log('🎉 All trademarks fetched successfully!');
+          break;
+        }
+
+        // Break if this page was not full (last page)
+        if (tradeMarks.length < this.PAGE_SIZE) {
+          this.logger.log('✅ Last page reached (partial page)');
+          break;
+        }
+
+        // Rate limiting delay
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+
+      this.logger.log(`📊 Total fetched: ${allTradeMarks.length} trademarks`);
+
+      if (allTradeMarks.length > 0) {
+        const saved = await this.saveTradeMarksToDatabase(allTradeMarks);
         this.logger.log(`✅ Saved ${saved.created + saved.updated} trademarks`);
       }
 
@@ -69,6 +124,7 @@ export class KiotVietTradeMarkService {
         status: 'completed',
         completedAt: new Date(),
         lastRunAt: new Date(),
+        progress: { processedCount, expectedTotal: totalTradeMarks },
       });
 
       this.logger.log('✅ Historical trademark sync completed');
@@ -81,10 +137,45 @@ export class KiotVietTradeMarkService {
         isRunning: false,
         status: 'failed',
         error: error.message,
+        progress: { processedCount, expectedTotal: totalTradeMarks },
       });
 
       throw error;
     }
+  }
+
+  async fetchTradeMarks(params: {
+    orderBy?: string;
+    orderDirection?: string;
+    pageSize?: number;
+    currentItem?: number;
+    lastModifiedFrom?: string;
+  }): Promise<any> {
+    const headers = await this.authService.getRequestHeaders();
+
+    const queryParams = new URLSearchParams({
+      pageSize: (params.pageSize || this.PAGE_SIZE).toString(),
+      currentItem: (params.currentItem || 0).toString(),
+    });
+
+    // Only add orderBy if specified (avoid 500 error)
+    if (params.orderBy) {
+      queryParams.append('orderBy', params.orderBy);
+      queryParams.append('orderDirection', params.orderDirection || 'ASC');
+    }
+
+    if (params.lastModifiedFrom) {
+      queryParams.append('lastModifiedFrom', params.lastModifiedFrom);
+    }
+
+    const response = await firstValueFrom(
+      this.httpService.get(`${this.baseUrl}/trademark?${queryParams}`, {
+        headers,
+        timeout: 30000,
+      }),
+    );
+
+    return response.data;
   }
 
   // ============================================================================
@@ -119,36 +210,6 @@ export class KiotVietTradeMarkService {
     }
 
     throw lastError;
-  }
-
-  async fetchTradeMarks(params: {
-    orderBy?: string;
-    orderDirection?: string;
-    pageSize?: number;
-    currentItem?: number;
-    lastModifiedFrom?: string;
-  }): Promise<any> {
-    const headers = await this.authService.getRequestHeaders();
-
-    const queryParams = new URLSearchParams({
-      orderBy: params.orderBy || 'tradeMarkName',
-      orderDirection: params.orderDirection || 'ASC',
-      pageSize: (params.pageSize || this.PAGE_SIZE).toString(),
-      currentItem: (params.currentItem || 0).toString(),
-    });
-
-    if (params.lastModifiedFrom) {
-      queryParams.append('lastModifiedFrom', params.lastModifiedFrom);
-    }
-
-    const response = await firstValueFrom(
-      this.httpService.get(`${this.baseUrl}/trademark?${queryParams}`, {
-        headers,
-        timeout: 30000,
-      }),
-    );
-
-    return response.data;
   }
 
   // ============================================================================

@@ -49,6 +49,11 @@ export class KiotVietBranchService {
   async syncHistoricalBranches(): Promise<void> {
     const syncName = 'branch_historical';
 
+    let currentItem = 0;
+    let processedCount = 0;
+    let totalBranches = 0;
+    let allBranches: KiotVietBranch[] = [];
+
     try {
       await this.updateSyncControl(syncName, {
         isRunning: true,
@@ -57,19 +62,66 @@ export class KiotVietBranchService {
         error: null,
       });
 
-      this.logger.log('🚀 Starting historical branch sync...');
+      this.logger.log('🚀 Starting historical branch sync with pagination...');
 
-      const response = await this.fetchBranchesWithRetry({
-        orderBy: 'branchName',
-        orderDirection: 'ASC',
-        pageSize: this.PAGE_SIZE,
-      });
+      // Pagination loop to get ALL branches
+      while (true) {
+        const currentPage = Math.floor(currentItem / this.PAGE_SIZE) + 1;
 
-      const branches = response.data || [];
-      this.logger.log(`📊 Found ${branches.length} branches to sync`);
+        this.logger.log(
+          `📄 Fetching page ${currentPage} (items ${currentItem} - ${currentItem + this.PAGE_SIZE - 1})...`,
+        );
 
-      if (branches.length > 0) {
-        const saved = await this.saveBranchesToDatabase(branches);
+        const response = await this.fetchBranchesWithRetry({
+          pageSize: this.PAGE_SIZE,
+          currentItem,
+          includeRemoveIds: false,
+          // Remove orderBy to be safe
+        });
+
+        const { data: branches, total } = response;
+
+        // Set total on first page
+        if (totalBranches === 0 && total !== undefined) {
+          totalBranches = total;
+          this.logger.log(`📊 Total branches detected: ${totalBranches}`);
+        }
+
+        // Check if we have data
+        if (!branches || branches.length === 0) {
+          this.logger.log('✅ No more branches to fetch - pagination complete');
+          break;
+        }
+
+        // Add to all branches
+        allBranches.push(...branches);
+        processedCount += branches.length;
+        currentItem += this.PAGE_SIZE;
+
+        this.logger.log(
+          `📈 Progress: ${processedCount}/${totalBranches || 'unknown'} branches fetched`,
+        );
+
+        // Break if we've got all branches
+        if (totalBranches > 0 && processedCount >= totalBranches) {
+          this.logger.log('🎉 All branches fetched successfully!');
+          break;
+        }
+
+        // Break if this page was not full (last page)
+        if (branches.length < this.PAGE_SIZE) {
+          this.logger.log('✅ Last page reached (partial page)');
+          break;
+        }
+
+        // Rate limiting delay
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+
+      this.logger.log(`📊 Total fetched: ${allBranches.length} branches`);
+
+      if (allBranches.length > 0) {
+        const saved = await this.saveBranchesToDatabase(allBranches);
         this.logger.log(`✅ Saved ${saved.created + saved.updated} branches`);
       }
 
@@ -79,6 +131,7 @@ export class KiotVietBranchService {
         status: 'completed',
         completedAt: new Date(),
         lastRunAt: new Date(),
+        progress: { processedCount, expectedTotal: totalBranches },
       });
 
       this.logger.log('✅ Historical branch sync completed');
@@ -89,10 +142,47 @@ export class KiotVietBranchService {
         isRunning: false,
         status: 'failed',
         error: error.message,
+        progress: { processedCount, expectedTotal: totalBranches },
       });
 
       throw error;
     }
+  }
+
+  async fetchBranches(params: {
+    orderBy?: string;
+    orderDirection?: string;
+    pageSize?: number;
+    currentItem?: number;
+    lastModifiedFrom?: string;
+    includeRemoveIds?: boolean;
+  }): Promise<any> {
+    const headers = await this.authService.getRequestHeaders();
+
+    const queryParams = new URLSearchParams({
+      pageSize: (params.pageSize || this.PAGE_SIZE).toString(),
+      currentItem: (params.currentItem || 0).toString(),
+      includeRemoveIds: (params.includeRemoveIds || false).toString(),
+    });
+
+    // Only add orderBy if specified (be conservative)
+    if (params.orderBy) {
+      queryParams.append('orderBy', params.orderBy);
+      queryParams.append('orderDirection', params.orderDirection || 'ASC');
+    }
+
+    if (params.lastModifiedFrom) {
+      queryParams.append('lastModifiedFrom', params.lastModifiedFrom);
+    }
+
+    const response = await firstValueFrom(
+      this.httpService.get(`${this.baseUrl}/branches?${queryParams}`, {
+        headers,
+        timeout: 30000,
+      }),
+    );
+
+    return response.data;
   }
 
   // ============================================================================
@@ -128,38 +218,6 @@ export class KiotVietBranchService {
     }
 
     throw lastError;
-  }
-
-  async fetchBranches(params: {
-    orderBy?: string;
-    orderDirection?: string;
-    pageSize?: number;
-    currentItem?: number;
-    lastModifiedFrom?: string;
-    includeRemoveIds?: boolean;
-  }): Promise<any> {
-    const headers = await this.authService.getRequestHeaders();
-
-    const queryParams = new URLSearchParams({
-      orderBy: params.orderBy || 'branchName',
-      orderDirection: params.orderDirection || 'ASC',
-      pageSize: (params.pageSize || this.PAGE_SIZE).toString(),
-      currentItem: (params.currentItem || 0).toString(),
-      includeRemoveIds: (params.includeRemoveIds || false).toString(),
-    });
-
-    if (params.lastModifiedFrom) {
-      queryParams.append('lastModifiedFrom', params.lastModifiedFrom);
-    }
-
-    const response = await firstValueFrom(
-      this.httpService.get(`${this.baseUrl}/branches?${queryParams}`, {
-        headers,
-        timeout: 30000,
-      }),
-    );
-
-    return response.data;
   }
 
   // ============================================================================

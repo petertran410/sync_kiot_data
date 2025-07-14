@@ -4,7 +4,7 @@ import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { KiotVietAuthService } from '../auth.service';
-import { firstValueFrom } from 'rxjs';
+import { async, firstValueFrom } from 'rxjs';
 
 interface KiotVietPriceBook {
   id: number;
@@ -64,6 +64,15 @@ export class KiotVietPriceBookService {
   async syncHistoricalPriceBooks(): Promise<void> {
     const syncName = 'pricebook_historical';
 
+    let currentItem = 0;
+    let processedCount = 0;
+    let totalPriceBooks = 0;
+    let consecutiveEmptyPages = 0;
+    let consecutiveErrorPages = 0;
+    let lastValidTotal = 0;
+    let processedPricebookIds = new Set<number>();
+    // let allPriceBooks: KiotVietPriceBook[] = [];
+
     try {
       await this.updateSyncControl(syncName, {
         isRunning: true,
@@ -74,32 +83,210 @@ export class KiotVietPriceBookService {
 
       this.logger.log('🚀 Starting historical pricebook sync...');
 
-      const response = await this.fetchPriceBooksWithRetry({
-        includePriceBookBranch: true,
-        includePriceBookCustomerGroups: true,
-        includePriceBookUsers: true,
-        orderBy: 'name',
-        orderDirection: 'ASC',
-        pageSize: this.PAGE_SIZE,
-      });
+      const MAX_CONSECUTIVE_EMPTY_PAGES = 5;
+      const MAX_CONSECUTIVE_ERROR_PAGES = 3;
+      const RETRY_DELAY_MS = 2000;
+      const MAX_TOTAL_RETRIES = 10;
 
-      const priceBooks = response.data || [];
-      this.logger.log(`📊 Found ${priceBooks.length} pricebooks to sync`);
+      let totalRetries = 0;
 
-      if (priceBooks.length > 0) {
-        const saved = await this.savePriceBooksToDatabase(priceBooks);
-        this.logger.log(`✅ Saved ${saved.created + saved.updated} pricebooks`);
+      while (true) {
+        const currentPage = Math.floor(currentItem / this.PAGE_SIZE) + 1;
+
+        if (totalPriceBooks > 0) {
+          if (currentItem >= totalPriceBooks) {
+            this.logger.log(
+              `✅ Pagination complete. Processed: ${processedCount}/${totalPriceBooks} categories`,
+            );
+            break;
+          }
+
+          const progressPercentage = (currentItem / totalPriceBooks) * 100;
+          this.logger.log(
+            `📄 Fetching page ${currentPage} (${currentItem}/${totalPriceBooks} - ${progressPercentage.toFixed(1)}%)`,
+          );
+        } else {
+          this.logger.log(
+            `📄 Fetching page ${currentPage} (currentItem: ${currentItem})`,
+          );
+        }
+
+        this.logger.log(
+          `📄 Fetching page ${currentPage} (items ${currentItem} - ${currentItem + this.PAGE_SIZE - 1})...`,
+        );
+
+        try {
+          const pricebookListResponse = await this.fetchPriceBooksWithRetry({
+            includePriceBookBranch: true,
+            includePriceBookCustomerGroups: true,
+            includePriceBookUsers: true,
+            pageSize: this.PAGE_SIZE,
+            currentItem,
+          });
+
+          if (!pricebookListResponse) {
+            this.logger.warn('⚠️ Received null response from KiotViet API');
+            consecutiveEmptyPages++;
+
+            if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
+              this.logger.log(
+                `🔚 Reached end after ${consecutiveEmptyPages} empty pages`,
+              );
+              break;
+            }
+
+            await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+            continue;
+          }
+
+          consecutiveEmptyPages = 0;
+          consecutiveErrorPages = 0;
+
+          const { total, data: pricebooks } = pricebookListResponse;
+
+          if (total !== undefined && total !== null) {
+            if (totalPriceBooks === 0) {
+              totalPriceBooks = total;
+              this.logger.log(
+                `📊 Total pricebooks detected: ${totalPriceBooks}`,
+              );
+            } else if (total !== totalPriceBooks) {
+              this.logger.warn(
+                `⚠️ Total count changed: ${totalPriceBooks} -> ${total}. Using latest.`,
+              );
+              totalPriceBooks = total;
+            }
+            lastValidTotal = total;
+          }
+
+          if (!pricebooks || pricebooks.length === 0) {
+            this.logger.warn(
+              `⚠️ Empty page received at position ${currentItem}`,
+            );
+            consecutiveEmptyPages++;
+
+            if (totalPriceBooks > 0 && currentItem >= totalPriceBooks) {
+              this.logger.log('✅ Reached end of data (empty page past total)');
+              break;
+            }
+
+            // If too many consecutive empty pages, stop
+            if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
+              this.logger.log(
+                `🔚 Stopping after ${consecutiveEmptyPages} consecutive empty pages`,
+              );
+              break;
+            }
+
+            // Move to next page
+            currentItem += this.PAGE_SIZE;
+            continue;
+          }
+
+          const newPricebooks = pricebooks.filter((pricebook) => {
+            if (processedPricebookIds.has(pricebook.id)) {
+              this.logger.debug(
+                `⚠️ Duplicate pricebook ID detected: ${pricebook.id} (${pricebook.code})`,
+              );
+              return false;
+            }
+            processedPricebookIds.add(pricebook.id);
+            return true;
+          });
+
+          if (newPricebooks.length !== pricebooks.length) {
+            this.logger.warn(
+              `🔄 Filtered out ${pricebooks.length - newPricebooks.length} duplicate pricebooks on page ${currentPage}`,
+            );
+          }
+
+          if (newPricebooks.length === 0) {
+            this.logger.log(
+              `⏭️ Skipping page ${currentPage} - all pricebooks already processed`,
+            );
+            currentItem += this.PAGE_SIZE;
+            continue;
+          }
+
+          this.logger.log(
+            `🔄 Processing ${newPricebooks.length} pricebooks from page ${currentPage}...`,
+          );
+
+          const pricebooksWithDetails =
+            await this.enrichPriceBooksWithDetails(newPricebooks);
+          const savedPricebooks = await this.savePriceBooksToDatabase(
+            pricebooksWithDetails,
+          );
+
+          processedCount += savedPricebooks.length;
+          currentItem += this.PAGE_SIZE;
+
+          if (totalPriceBooks > 0) {
+            const completionPercentage =
+              (processedCount / totalPriceBooks) * 100;
+            this.logger.log(
+              `📈 Progress: ${processedCount}/${totalPriceBooks} (${completionPercentage.toFixed(1)}%)`,
+            );
+
+            if (processedCount >= totalPriceBooks) {
+              this.logger.log('🎉 All categories processed successfully!');
+              break;
+            }
+          }
+
+          if (totalPriceBooks > 0) {
+            if (
+              currentItem >= totalPriceBooks &&
+              processedCount >= totalPriceBooks * 0.95
+            ) {
+              this.logger.log(
+                '✅ Sync completed - reached expected data range',
+              );
+              break;
+            }
+          }
+
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        } catch (error) {
+          consecutiveErrorPages++;
+          totalRetries++;
+
+          this.logger.error(
+            `❌ API error on page ${currentPage}: ${error.message}`,
+          );
+
+          if (consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES) {
+            throw new Error(
+              `Multiple consecutive API failures: ${error.message}`,
+            );
+          }
+
+          if (totalRetries >= MAX_TOTAL_RETRIES) {
+            throw new Error(`Maximum total retries exceeded: ${error.message}`);
+          }
+
+          // Exponential backoff
+          const delay = RETRY_DELAY_MS * Math.pow(2, consecutiveErrorPages - 1);
+          this.logger.log(`⏳ Retrying after ${delay}ms delay...`);
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
       }
 
       await this.updateSyncControl(syncName, {
         isRunning: false,
-        isEnabled: false, // Auto-disable after completion
+        isEnabled: false,
         status: 'completed',
         completedAt: new Date(),
         lastRunAt: new Date(),
+        progress: { processedCount, expectedTotal: totalPriceBooks },
       });
 
-      this.logger.log('✅ Historical pricebook sync completed');
+      const completionRate =
+        totalPriceBooks > 0 ? (processedCount / totalPriceBooks) * 100 : 100;
+
+      this.logger.log(
+        `✅ Historical pricebook sync completed: ${processedCount}/${totalPriceBooks} (${completionRate.toFixed(1)}% completion rate)`,
+      );
     } catch (error) {
       this.logger.error(
         `❌ Historical pricebook sync failed: ${error.message}`,
@@ -109,10 +296,55 @@ export class KiotVietPriceBookService {
         isRunning: false,
         status: 'failed',
         error: error.message,
+        progress: { processedCount, expectedTotal: totalPriceBooks },
       });
 
       throw error;
     }
+  }
+
+  async fetchPriceBooks(params: {
+    includePriceBookBranch?: boolean;
+    includePriceBookCustomerGroups?: boolean;
+    includePriceBookUsers?: boolean;
+    orderBy?: string;
+    orderDirection?: string;
+    pageSize?: number;
+    currentItem?: number;
+    lastModifiedFrom?: string;
+  }): Promise<any> {
+    const headers = await this.authService.getRequestHeaders();
+
+    const queryParams = new URLSearchParams({
+      includePriceBookBranch: (
+        params.includePriceBookBranch || false
+      ).toString(),
+      includePriceBookCustomerGroups: (
+        params.includePriceBookCustomerGroups || false
+      ).toString(),
+      includePriceBookUsers: (params.includePriceBookUsers || false).toString(),
+      pageSize: (params.pageSize || this.PAGE_SIZE).toString(),
+      currentItem: (params.currentItem || 0).toString(),
+    });
+
+    // Only add orderBy if specified (be conservative)
+    if (params.orderBy) {
+      queryParams.append('orderBy', params.orderBy);
+      queryParams.append('orderDirection', params.orderDirection || 'ASC');
+    }
+
+    if (params.lastModifiedFrom) {
+      queryParams.append('lastModifiedFrom', params.lastModifiedFrom);
+    }
+
+    const response = await firstValueFrom(
+      this.httpService.get(`${this.baseUrl}/pricebooks?${queryParams}`, {
+        headers,
+        timeout: 30000,
+      }),
+    );
+
+    return response.data;
   }
 
   // ============================================================================
@@ -152,62 +384,18 @@ export class KiotVietPriceBookService {
     throw lastError;
   }
 
-  async fetchPriceBooks(params: {
-    includePriceBookBranch?: boolean;
-    includePriceBookCustomerGroups?: boolean;
-    includePriceBookUsers?: boolean;
-    orderBy?: string;
-    orderDirection?: string;
-    pageSize?: number;
-    currentItem?: number;
-    lastModifiedFrom?: string;
-  }): Promise<any> {
-    const headers = await this.authService.getRequestHeaders();
-
-    const queryParams = new URLSearchParams({
-      includePriceBookBranch: (
-        params.includePriceBookBranch || false
-      ).toString(),
-      includePriceBookCustomerGroups: (
-        params.includePriceBookCustomerGroups || false
-      ).toString(),
-      includePriceBookUsers: (params.includePriceBookUsers || false).toString(),
-      orderBy: params.orderBy || 'name',
-      orderDirection: params.orderDirection || 'ASC',
-      pageSize: (params.pageSize || this.PAGE_SIZE).toString(),
-      currentItem: (params.currentItem || 0).toString(),
-    });
-
-    if (params.lastModifiedFrom) {
-      queryParams.append('lastModifiedFrom', params.lastModifiedFrom);
-    }
-
-    const response = await firstValueFrom(
-      this.httpService.get(`${this.baseUrl}/pricebooks?${queryParams}`, {
-        headers,
-        timeout: 30000,
-      }),
-    );
-
-    return response.data;
-  }
-
   // ============================================================================
   // DATABASE SAVE
   // ============================================================================
 
-  private async savePriceBooksToDatabase(
-    priceBooks: KiotVietPriceBook[],
-  ): Promise<{ created: number; updated: number }> {
+  private async savePriceBooksToDatabase(priceBooks: any[]): Promise<any[]> {
     this.logger.log(`💾 Saving ${priceBooks.length} pricebooks to database...`);
 
-    let created = 0;
-    let updated = 0;
+    const savePricebooks: any[] = [];
 
     for (const priceBookData of priceBooks) {
       try {
-        // Save main pricebook
-        const result = await this.prismaService.priceBook.upsert({
+        const pricebook = await this.prismaService.priceBook.upsert({
           where: { kiotVietId: priceBookData.id },
           update: {
             name: priceBookData.name,
@@ -251,33 +439,17 @@ export class KiotVietPriceBookService {
           },
         });
 
-        // Check if it was created or updated
-        const existingCount = await this.prismaService.priceBook.count({
-          where: {
-            kiotVietId: priceBookData.id,
-            createdDate: {
-              lt: new Date(Date.now() - 1000), // Created more than 1 second ago
-            },
-          },
-        });
-
-        if (existingCount > 0) {
-          updated++;
-        } else {
-          created++;
-        }
-
         // Save related data
         await this.savePriceBookBranches(
-          result.id,
+          pricebook.id,
           priceBookData.priceBookBranches || [],
         );
         await this.savePriceBookCustomerGroups(
-          result.id,
+          pricebook.id,
           priceBookData.priceBookCustomerGroups || [],
         );
         await this.savePriceBookUsers(
-          result.id,
+          pricebook.id,
           priceBookData.priceBookUsers || [],
         );
       } catch (error) {
@@ -287,10 +459,40 @@ export class KiotVietPriceBookService {
       }
     }
 
+    return savePricebooks;
+  }
+
+  private async enrichPriceBooksWithDetails(
+    pricebooks: KiotVietPriceBook[],
+  ): Promise<KiotVietPriceBook[]> {
     this.logger.log(
-      `✅ PriceBooks saved: ${created} created, ${updated} updated`,
+      `🔍 Enriching ${pricebooks.length} pricebooks with details...`,
     );
-    return { created, updated };
+
+    const enrichedPricebooks: any[] = [];
+    for (const pricebook of pricebooks) {
+      try {
+        const headers = await this.authService.getRequestHeaders();
+        const response = await firstValueFrom(
+          this.httpService.get(`${this.baseUrl}/pricebooks/${pricebook.id}`, {
+            headers,
+          }),
+        );
+        if (response.data) {
+          enrichedPricebooks.push(response.data);
+        } else {
+          enrichedPricebooks.push(pricebook);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      } catch (error) {
+        this.logger.warn(
+          `⚠️ Failed to enrich pricebook ${pricebook.id}: ${error.message}`,
+        );
+        enrichedPricebooks.push(pricebook);
+      }
+    }
+
+    return enrichedPricebooks;
   }
 
   // ============================================================================
