@@ -158,13 +158,20 @@ export class KiotVietCategoryService {
           }
 
           const newCategories = categories.filter((category) => {
-            if (processedCategoryIds.has(category.id)) {
-              this.logger.debug(
-                `⚠️ Duplicate category ID detected: ${category.id} (${category.code})`,
+            if (!category.categoryId) {
+              this.logger.warn(
+                `⚠️ Skipping category with missing categoryId: ${JSON.stringify(category)}`,
               );
               return false;
             }
-            processedCategoryIds.add(category.id);
+
+            if (processedCategoryIds.has(category.categoryId)) {
+              this.logger.debug(
+                `⚠️ Duplicate category ID detected: ${category.categoryId} (${category.categoryName})`,
+              );
+              return false;
+            }
+            processedCategoryIds.add(category.categoryId);
             return true;
           });
 
@@ -418,6 +425,13 @@ export class KiotVietCategoryService {
 
     for (const categoryData of categories) {
       try {
+        if (!categoryData.categoryId || !categoryData.categoryName) {
+          this.logger.warn(
+            `⚠️ Skipping invalid category: categoryId=${categoryData.categoryId}, name=${categoryData.categoryName}`,
+          );
+          continue;
+        }
+
         const parentCategory = categoryData.parentId
           ? await this.prismaService.category.findFirst({
               where: { kiotVietId: categoryData.parentId },

@@ -395,6 +395,16 @@ export class KiotVietPriceBookService {
 
     for (const priceBookData of priceBooks) {
       try {
+        if (!priceBookData.id || !priceBookData.name) {
+          this.logger.warn(
+            `⚠️ Skipping invalid pricebook: id=${priceBookData.id}, name=${priceBookData.name}`,
+          );
+          this.logger.debug(
+            `Raw pricebook data: ${JSON.stringify(priceBookData)}`,
+          );
+          continue;
+        }
+
         const pricebook = await this.prismaService.priceBook.upsert({
           where: { kiotVietId: priceBookData.id },
           update: {

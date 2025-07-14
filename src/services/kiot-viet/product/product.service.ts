@@ -544,35 +544,29 @@ export class KiotVietProductService {
 
     for (const productData of products) {
       try {
-        // ============================================================================
-        // RESOLVE DEPENDENCIES - STRICT MODE (NO AUTO-CREATE)
-        // ============================================================================
-
-        // Find category (skip if not found)
         const category = productData.categoryId
           ? await this.prismaService.category.findFirst({
               where: { kiotVietId: productData.categoryId },
-              select: { id: true },
+              select: { id: true, name: true },
             })
           : null;
 
         if (productData.categoryId && !category) {
           this.logger.warn(
-            `⚠️ Category ${productData.categoryId} not found for product ${productData.code} - will save with null categoryId`,
+            `⚠️ [DEPENDENCY MISS] Category ${productData.categoryId} not found for product ${productData.code} - proceeding with null categoryId`,
           );
         }
 
-        // Find trademark (skip if not found)
         const tradeMark = productData.tradeMarkId
           ? await this.prismaService.tradeMark.findFirst({
               where: { kiotVietId: productData.tradeMarkId },
-              select: { id: true },
+              select: { id: true, name: true },
             })
           : null;
 
         if (productData.tradeMarkId && !tradeMark) {
           this.logger.warn(
-            `⚠️ TradeMark ${productData.tradeMarkId} not found for product ${productData.code} - will save with null tradeMarkId`,
+            `⚠️ [DEPENDENCY MISS] TradeMark ${productData.tradeMarkId} not found for product ${productData.code} - proceeding with null tradeMarkId`,
           );
         }
 
@@ -662,23 +656,14 @@ export class KiotVietProductService {
           },
         });
 
-        // ============================================================================
-        // SAVE PRODUCT ATTRIBUTES
-        // ============================================================================
         if (productData.attributes && productData.attributes.length > 0) {
           await this.saveProductAttributes(product.id, productData.attributes);
         }
 
-        // ============================================================================
-        // SAVE PRODUCT IMAGES
-        // ============================================================================
         if (productData.images && productData.images.length > 0) {
           await this.saveProductImages(product.id, productData.images);
         }
 
-        // ============================================================================
-        // SAVE PRODUCT INVENTORIES (TỒN KHO)
-        // ============================================================================
         if (productData.inventories && productData.inventories.length > 0) {
           await this.saveProductInventories(
             product.id,
@@ -686,16 +671,10 @@ export class KiotVietProductService {
           );
         }
 
-        // ============================================================================
-        // SAVE PRODUCT PRICEBOOKS (BẢNG GIÁ)
-        // ============================================================================
         if (productData.priceBooks && productData.priceBooks.length > 0) {
           await this.saveProductPriceBooks(product.id, productData.priceBooks);
         }
 
-        // ============================================================================
-        // SAVE PRODUCT SERIALS
-        // ============================================================================
         if (
           productData.productSerials &&
           productData.productSerials.length > 0
@@ -703,9 +682,6 @@ export class KiotVietProductService {
           await this.saveProductSerials(product.id, productData.productSerials);
         }
 
-        // ============================================================================
-        // SAVE PRODUCT BATCH EXPIRES
-        // ============================================================================
         if (
           productData.productBatchExpires &&
           productData.productBatchExpires.length > 0
@@ -716,16 +692,10 @@ export class KiotVietProductService {
           );
         }
 
-        // ============================================================================
-        // SAVE PRODUCT WARRANTIES
-        // ============================================================================
         if (productData.warranties && productData.warranties.length > 0) {
           await this.saveProductWarranties(product.id, productData.warranties);
         }
 
-        // ============================================================================
-        // SAVE PRODUCT FORMULAS (COMBO PRODUCTS)
-        // ============================================================================
         if (
           productData.productFormulas &&
           productData.productFormulas.length > 0
@@ -809,21 +779,30 @@ export class KiotVietProductService {
     productId: number,
     inventories: any[],
   ): Promise<void> {
+    if (!inventories || inventories.length === 0) {
+      this.logger.debug(`No inventories to save for product ${productId}`);
+      return;
+    }
+
     try {
       await this.prismaService.productInventory.deleteMany({
         where: { productId },
       });
 
+      let processedCount = 0;
+      let skippedCount = 0;
+
       for (const inventory of inventories) {
         const branch = await this.prismaService.branch.findFirst({
           where: { kiotVietId: inventory.branchId },
-          select: { id: true },
+          select: { id: true, name: true },
         });
 
         if (!branch) {
           this.logger.warn(
-            `⚠️ Branch ${inventory.branchId} not found - skipping inventory for product ${productId}`,
+            `⚠️ [DEPENDENCY MISS] Branch ${inventory.branchId} (${inventory.branchName || 'unknown'}) not found - skipping inventory for product ${productId}`,
           );
+          skippedCount++;
           continue;
         }
 
@@ -840,7 +819,12 @@ export class KiotVietProductService {
             lastSyncedAt: new Date(),
           },
         });
+        processedCount++;
       }
+
+      this.logger.log(
+        `✅ Product ${productId} inventories: ${processedCount} processed, ${skippedCount} skipped`,
+      );
     } catch (error) {
       this.logger.error(
         `❌ Failed to save inventories for product ${productId}: ${error.message}`,
@@ -852,21 +836,30 @@ export class KiotVietProductService {
     productId: number,
     priceBooks: any[],
   ): Promise<void> {
+    if (!priceBooks || priceBooks.length === 0) {
+      this.logger.debug(`No pricebooks to save for product ${productId}`);
+      return;
+    }
+
     try {
       await this.prismaService.priceBookDetail.deleteMany({
         where: { productId },
       });
 
+      let processedCount = 0;
+      let skippedCount = 0;
+
       for (const priceBook of priceBooks) {
         const existingPriceBook = await this.prismaService.priceBook.findFirst({
           where: { kiotVietId: priceBook.priceBookId },
-          select: { id: true },
+          select: { id: true, name: true },
         });
 
         if (!existingPriceBook) {
           this.logger.warn(
-            `⚠️ PriceBook ${priceBook.priceBookId} not found - skipping price for product ${productId}`,
+            `⚠️ [DEPENDENCY MISS] PriceBook ${priceBook.priceBookId} (${priceBook.priceBookName || 'unknown'}) not found - skipping price for product ${productId}`,
           );
+          skippedCount++;
           continue;
         }
 
@@ -877,7 +870,12 @@ export class KiotVietProductService {
             price: new Prisma.Decimal(priceBook.price || 0),
           },
         });
+        processedCount++;
       }
+
+      this.logger.log(
+        `✅ Product ${productId} pricebooks: ${processedCount} processed, ${skippedCount} skipped`,
+      );
     } catch (error) {
       this.logger.error(
         `❌ Failed to save price books for product ${productId}: ${error.message}`,
