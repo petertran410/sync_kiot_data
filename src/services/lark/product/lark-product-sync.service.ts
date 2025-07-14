@@ -3,7 +3,7 @@ import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { LarkAuthService } from '../auth/lark-auth.service';
-import { firstValueFrom } from 'rxjs';
+import { async, firstValueFrom } from 'rxjs';
 import { LarkSyncStatus } from '@prisma/client';
 
 const LARK_PRODUCT_FIELDS = {
@@ -16,7 +16,7 @@ const LARK_PRODUCT_FIELDS = {
   FULL_NAME: 'Tên Đầy Đủ', // fldhYfS0Sz
   TYPE: 'Loại', // fldpriGtiy (Category)
   ALLOWS_SALE: 'Cho Phép Bán', // fldXnGFbh6
-  PRODUCT_TYPE: 'Loại Hàng Hoá', // fldHLOYoKM
+  // PRODUCT_TYPE: 'Loại Hàng Hoá', // fldHLOYoKM
   WEIGHT: 'Cân Nặng',
   UNIT: 'Đơn Vị',
   PRODUCT_BUSINESS: 'Hàng Kinh Doanh',
@@ -657,13 +657,15 @@ export class LarkProductSyncService {
 
     // Created Date
     if (product.createdDate) {
-      fields[LARK_PRODUCT_FIELDS.CREATED_DATE] = new Date(product.createdDate);
+      fields[LARK_PRODUCT_FIELDS.CREATED_DATE] = new Date(
+        product.createdDate,
+      ).getTime();
     }
 
     if (product.modifiedDate) {
       fields[LARK_PRODUCT_FIELDS.MODIFIED_DATE] = new Date(
         product.modifiedDate,
-      );
+      ).getTime();
     }
 
     // CORRECTED: Trademark - using direct field from API response
@@ -682,13 +684,13 @@ export class LarkProductSyncService {
     }
 
     // CORRECTED: Category - using direct field from API response
-    if (product.categoryName) {
-      fields[LARK_PRODUCT_FIELDS.TYPE] = product.categoryName;
-    }
-    // Fallback for database records with nested structure
-    else if (product.category?.name) {
-      fields[LARK_PRODUCT_FIELDS.TYPE] = product.category.name;
-    }
+    // if (product.categoryName) {
+    //   fields[LARK_PRODUCT_FIELDS.TYPE] = product.categoryName;
+    // }
+    // // Fallback for database records with nested structure
+    // else if (product.category?.name) {
+    //   fields[LARK_PRODUCT_FIELDS.TYPE] = product.category.name;
+    // }
 
     // Allows Sale
     if (product.allowsSale !== null && product.allowsSale !== undefined) {
@@ -705,56 +707,50 @@ export class LarkProductSyncService {
 
     // Product Type
     if (product.type !== null && product.type !== undefined) {
-      switch (product.type) {
-        case 1:
-          fields[LARK_PRODUCT_FIELDS.PRODUCT_TYPE] =
-            PRODUCT_TYPE_OPTIONS.REGULAR;
-          break;
-        case 2:
-          fields[LARK_PRODUCT_FIELDS.PRODUCT_TYPE] =
-            PRODUCT_TYPE_OPTIONS.SERVICE;
-          break;
+      if (product.type === 2) {
+        fields[LARK_PRODUCT_FIELDS.TYPE] = PRODUCT_TYPE_OPTIONS.REGULAR;
+      }
+      if (product.type === 3) {
+        fields[LARK_PRODUCT_FIELDS.TYPE] = PRODUCT_TYPE_OPTIONS.SERVICE;
       }
     }
 
     // CORRECTED: Map Price Books - using actual API response structure
-    if (product.priceBooks) {
-      if (product.priceBookDetails && product.priceBookDetails.length > 0) {
-        for (const priceDetail of product.priceBookDetails) {
-          const priceBookId = priceDetail.priceBook?.id;
-          const larkField = PRICEBOOK_FIELD_MAPPING[priceBookId];
+    if (
+      product.priceBooks &&
+      Array.isArray(product.priceBooks) &&
+      product.priceBooks.length > 0
+    ) {
+      for (const priceBook of product.priceBooks) {
+        const priceBookId = priceBook.priceBookId; // ← ĐÚNG field name
+        const larkField = PRICEBOOK_FIELD_MAPPING[priceBookId];
 
-          if (larkField && priceDetail.price) {
-            fields[larkField] = Number(priceDetail.price);
-          }
+        if (larkField && priceBook.price) {
+          fields[larkField] = Number(priceBook.price);
         }
       }
     }
 
     // CORRECTED: Map Inventories (Cost Prices) - using branchId instead of branchName
-    if (
-      product.inventories &&
-      Array.isArray(product.inventories) &&
-      product.inventories.length > 0
-    ) {
-      for (const inventory of product.inventories) {
-        const branchId = inventory.branchId;
-        const larkField = BRANCH_COST_MAPPING[branchId];
+    for (const inventory of product.inventories) {
+      const branchId = inventory.branchId;
+      const larkField = BRANCH_COST_MAPPING[branchId];
 
-        if (larkField && inventory.cost && inventory.cost > 0) {
-          fields[larkField] = Number(inventory.cost);
-        }
+      if (larkField && inventory.cost && inventory.cost > 0) {
+        fields[larkField] = Number(inventory.cost); // ✅ ĐÚNG
       }
     }
-    // Fallback for database records with nested structure
-    else if (product.inventories && product.inventories.length > 0) {
-      for (const inventory of product.inventories) {
-        const branchId = inventory.branch?.id;
-        const larkField = BRANCH_COST_MAPPING[branchId];
 
-        if (larkField && inventory.cost && inventory.cost > 0) {
-          fields[larkField] = Number(inventory.cost);
-        }
+    for (const inventory of product.inventories) {
+      const branchId = inventory.branchId;
+      const inventoryField = BRANCH_COST_MAPPING[branchId];
+
+      if (
+        inventoryField &&
+        inventory.onHand !== null &&
+        inventory.onHand !== undefined
+      ) {
+        fields[inventoryField] = Number(inventory.onHand);
       }
     }
 
@@ -803,16 +799,6 @@ export class LarkProductSyncService {
     }
 
     return null;
-  }
-
-  private formatDateForLark(date: Date | string): number {
-    const dateObj = typeof date === 'string' ? new Date(date) : date;
-
-    if (isNaN(dateObj.getTime())) {
-      return Math.floor(new Date().getTime() / 1000);
-    }
-
-    return Math.floor(dateObj.getTime() / 1000);
   }
 
   private chunkArray<T>(array: T[], chunkSize: number): T[][] {

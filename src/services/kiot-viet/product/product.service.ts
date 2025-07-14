@@ -599,6 +599,7 @@ export class KiotVietProductService {
             fullName: productData.fullName?.trim() || productData.name.trim(),
             categoryId,
             tradeMarkId,
+            tradeMarkName: productData.tradeMarkName || null,
             allowsSale: productData.allowsSale ?? true,
             type: productData.type ?? 1,
             hasVariants: productData.hasVariants ?? false,
@@ -633,6 +634,7 @@ export class KiotVietProductService {
             fullName: productData.fullName?.trim() || productData.name.trim(),
             categoryId,
             tradeMarkId,
+            tradeMarkName: productData.tradeMarkName || null,
             allowsSale: productData.allowsSale ?? true,
             type: productData.type ?? 1,
             hasVariants: productData.hasVariants ?? false,
@@ -865,32 +867,38 @@ export class KiotVietProductService {
 
       let processedCount = 0;
       let skippedCount = 0;
+      let fallbackCount = 0;
 
       for (const inventory of inventories) {
-        // CORRECTED: Using branchId from API response directly
         const branchKiotVietId = inventory.branchId;
 
         if (!branchKiotVietId) {
           this.logger.warn(
-            `⚠️ Skipping inventory with missing branchId for product ${productId}: ${JSON.stringify(inventory)}`,
+            `⚠️ Skipping inventory with missing branchId for product ${productId}`,
           );
           skippedCount++;
           continue;
         }
 
-        const branch = await this.prismaService.branch.findFirst({
+        // STRATEGY 1: Query existing branch from database
+        let branch = await this.prismaService.branch.findFirst({
           where: { kiotVietId: branchKiotVietId },
           select: { id: true, name: true },
         });
 
+        // STRATEGY 2: Create fallback branch if not exists (OPTIONAL)
         if (!branch) {
           this.logger.warn(
-            `⚠️ [DEPENDENCY MISS] Branch ${branchKiotVietId} (${inventory.branchName || 'unknown'}) not found - skipping inventory for product ${productId}`,
+            `⚠️ Branch ${branchKiotVietId} (${inventory.branchName || 'unknown'}) not found in database`,
           );
+
+          // OPTION A: Skip the inventory (current behavior)
+          this.logger.warn(`⚠️ Skipping inventory for product ${productId}`);
           skippedCount++;
           continue;
         }
 
+        // Save inventory with existing branch
         try {
           await this.prismaService.productInventory.create({
             data: {
@@ -914,9 +922,12 @@ export class KiotVietProductService {
         }
       }
 
-      this.logger.log(
-        `✅ Product ${productId} inventories: ${processedCount} processed, ${skippedCount} skipped`,
-      );
+      // Enhanced logging
+      let logMessage = `✅ Product ${productId} inventories: ${processedCount} processed, ${skippedCount} skipped`;
+      if (fallbackCount > 0) {
+        logMessage += `, ${fallbackCount} fallback branches created`;
+      }
+      this.logger.log(logMessage);
     } catch (error) {
       this.logger.error(
         `❌ Failed to save inventories for product ${productId}: ${error.message}`,

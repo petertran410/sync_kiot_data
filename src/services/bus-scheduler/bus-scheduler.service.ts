@@ -12,7 +12,7 @@ import { KiotVietOrderService } from '../kiot-viet/order/order.service';
 import { KiotVietProductService } from '../kiot-viet/product/product.service';
 import { KiotVietCategoryService } from '../kiot-viet/category/category.service';
 import { KiotVietTradeMarkService } from '../kiot-viet/trademark/trademark.service';
-import { KiotVietBranchService } from '../kiot-viet/branch/branch.service';
+// import { KiotVietBranchService } from '../kiot-viet/branch/branch.service';
 import { KiotVietPriceBookService } from '../kiot-viet/pricebook/pricebook.service';
 import { LarkProductSyncService } from '../lark/product/lark-product-sync.service';
 
@@ -36,7 +36,7 @@ export class BusSchedulerService implements OnModuleInit {
     private readonly productService: KiotVietProductService,
     private readonly categoryService: KiotVietCategoryService,
     private readonly tradeMarkService: KiotVietTradeMarkService,
-    private readonly branchService: KiotVietBranchService,
+    // private readonly branchService: KiotVietBranchService,
     private readonly priceBookService: KiotVietPriceBookService,
   ) {}
 
@@ -165,29 +165,26 @@ export class BusSchedulerService implements OnModuleInit {
 
     try {
       // Step 1: Category (Independent)
-      this.logger.log('🏷️ [1/5] Syncing Categories...');
+      this.logger.log('🏷️ [1/4] Syncing Categories...');
       await this.enableAndRunCategorySync();
-      await this.waitForSyncCompletion('category_historical', 300); // 5 min timeout
+      await this.waitForSyncCompletion('category_historical', 300);
 
       // Step 2: TradeMark (Independent)
-      this.logger.log('🏢 [2/5] Syncing TradeMarks...');
+      this.logger.log('🏢 [2/4] Syncing TradeMarks...');
       await this.enableAndRunTradeMarkSync();
       await this.waitForSyncCompletion('trademark_historical', 300);
 
-      // Step 3: Branch (Independent)
-      this.logger.log('🏪 [3/5] Syncing Branches...');
-      await this.enableAndRunBranchSync();
-      await this.waitForSyncCompletion('branch_historical', 300);
-
-      // Step 4: PriceBook (Independent)
-      this.logger.log('💰 [4/5] Syncing PriceBooks...');
+      // Step 3: PriceBook (Independent) - REMOVED BRANCH DEPENDENCY
+      this.logger.log('💰 [3/4] Syncing PriceBooks...');
       await this.enableAndRunPriceBookSync();
       await this.waitForSyncCompletion('pricebook_historical', 300);
 
-      // Step 5: Product (Depends on all above)
-      this.logger.log('📦 [5/5] Syncing Products (with full dependencies)...');
+      // Step 4: Product (Depends on Category, TradeMark, PriceBook only)
+      this.logger.log(
+        '📦 [4/4] Syncing Products (using existing branch data)...',
+      );
       await this.enableAndRunProductSync();
-      await this.waitForSyncCompletion('product_historical', 1800); // 30 min timeout for products
+      await this.waitForSyncCompletion('product_historical', 1800);
 
       this.logger.log('✅ All dependency syncs completed successfully');
     } catch (error) {
@@ -805,15 +802,6 @@ export class BusSchedulerService implements OnModuleInit {
       await this.tradeMarkService.syncHistoricalTradeMarks();
     } catch (error) {
       throw new Error(`TradeMark sync failed: ${error.message}`);
-    }
-  }
-
-  private async enableAndRunBranchSync(): Promise<void> {
-    try {
-      await this.branchService.enableHistoricalSync();
-      await this.branchService.syncHistoricalBranches();
-    } catch (error) {
-      throw new Error(`Branch sync failed: ${error.message}`);
     }
   }
 

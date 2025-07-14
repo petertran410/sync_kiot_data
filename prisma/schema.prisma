@@ -39,8 +39,9 @@ model Product {
   categoryId             Int?
   category               Category?                @relation(fields: [categoryId], references: [id])
   tradeMarkId            Int?
+  tradeMarkName          String?
   tradeMark              TradeMark?               @relation(fields: [tradeMarkId], references: [id])
-  type                   Int?                     // 1: combo, 2: regular, 3: service
+  type                   Int?
   description            String?                  @db.Text
   allowsSale             Boolean                  @default(true)
   hasVariants            Boolean                  @default(false)
