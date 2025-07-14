@@ -111,7 +111,7 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
-  @Cron('0 23 * * *', {
+  @Cron('*/2 * * * *', {
     name: 'dependency_sync_cycle',
     timeZone: 'Asia/Ho_Chi_Minh',
   })
@@ -934,18 +934,18 @@ export class BusSchedulerService implements OnModuleInit {
       this.logger.log('📋 Running parallel startup sync checks...');
 
       const startupPromises = [
-        this.runCustomerSync().catch((error) => {
-          this.logger.warn(`Customer startup check failed: ${error.message}`);
-          return Promise.resolve();
-        }),
-        this.runInvoiceSync().catch((error) => {
-          this.logger.warn(`Invoice startup check failed: ${error.message}`);
-          return Promise.resolve();
-        }),
-        this.runOrderSync().catch((error) => {
-          this.logger.warn(`Order startup check failed: ${error.message}`);
-          return Promise.resolve();
-        }),
+        // this.runCustomerSync().catch((error) => {
+        //   this.logger.warn(`Customer startup check failed: ${error.message}`);
+        //   return Promise.resolve();
+        // }),
+        // this.runInvoiceSync().catch((error) => {
+        //   this.logger.warn(`Invoice startup check failed: ${error.message}`);
+        //   return Promise.resolve();
+        // }),
+        // this.runOrderSync().catch((error) => {
+        //   this.logger.warn(`Order startup check failed: ${error.message}`);
+        //   return Promise.resolve();
+        // }),
       ];
 
       await Promise.allSettled(startupPromises);
@@ -990,16 +990,16 @@ export class BusSchedulerService implements OnModuleInit {
 
     return {
       scheduler: {
-        mainScheduler: {
-          enabled: this.isMainSchedulerEnabled,
-          nextRun: '8 minutes interval',
-          entities: ['customer', 'invoice', 'order'],
-        },
-        weeklyScheduler: {
-          enabled: this.isWeeklySchedulerEnabled,
-          nextRun: 'Sunday 6 AM (Vietnam time)',
-          entities: ['customergroup'],
-        },
+        // mainScheduler: {
+        //   enabled: this.isMainSchedulerEnabled,
+        //   nextRun: '8 minutes interval',
+        //   entities: ['customer', 'invoice', 'order'],
+        // },
+        // weeklyScheduler: {
+        //   enabled: this.isWeeklySchedulerEnabled,
+        //   nextRun: 'Sunday 6 AM (Vietnam time)',
+        //   entities: ['customergroup'],
+        // },
         dependencyScheduler: {
           enabled: this.isDependencySchedulerEnabled,
           nextRun: 'Daily 23:00 (Vietnam time)',
@@ -1048,12 +1048,12 @@ export class BusSchedulerService implements OnModuleInit {
     try {
       let entities: string[];
       switch (cycleName) {
-        case 'main_cycle':
-          entities = ['customer', 'invoice', 'order'];
-          break;
-        case 'weekly_cycle':
-          entities = ['customergroup'];
-          break;
+        // case 'main_cycle':
+        //   entities = ['customer', 'invoice', 'order'];
+        //   break;
+        // case 'weekly_cycle':
+        //   entities = ['customergroup'];
+        //   break;
         case 'dependency_cycle':
           entities = [
             'category',

@@ -13,9 +13,6 @@ interface TenantAccessTokenResponse {
 
 @Injectable()
 export class LarkAuthService {
-  getAccessToken() {
-    throw new Error('Method not implemented.');
-  }
   private readonly logger = new Logger(LarkAuthService.name);
 
   // Separate tokens for different services
@@ -35,6 +32,27 @@ export class LarkAuthService {
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
   ) {}
+
+  // ============================================================================
+  // GENERIC ACCESS TOKEN METHOD
+  // ============================================================================
+
+  async getAccessToken(
+    service: 'customer' | 'invoice' | 'order' | 'product',
+  ): Promise<string> {
+    switch (service) {
+      case 'customer':
+        return await this.getCustomerAccessToken();
+      case 'invoice':
+        return await this.getInvoiceAccessToken();
+      case 'order':
+        return await this.getOrderAccessToken();
+      case 'product':
+        return await this.getProductAccessToken();
+      default:
+        throw new Error(`Unknown service: ${service}`);
+    }
+  }
 
   // ============================================================================
   // CUSTOMER TOKEN MANAGEMENT
@@ -101,23 +119,17 @@ export class LarkAuthService {
       }
 
       this.customerAccessToken = response.data.tenant_access_token;
-      // Token expires in seconds, convert to milliseconds
       this.customerTokenExpiry = new Date(
         Date.now() + response.data.expire * 1000,
       );
 
       this.logger.log('✅ LarkBase customer token refreshed successfully');
-      this.logger.debug(
-        `Token expires at: ${this.customerTokenExpiry.toISOString()}`,
-      );
-
       return this.customerAccessToken;
     } catch (error) {
       this.logger.error(
         `❌ Failed to refresh customer token: ${error.message}`,
       );
 
-      // Reset tokens on error
       this.customerAccessToken = null;
       this.customerTokenExpiry = null;
 
@@ -125,7 +137,6 @@ export class LarkAuthService {
     }
   }
 
-  // Force refresh (for error recovery)
   async forceRefreshCustomerToken(): Promise<void> {
     this.customerAccessToken = null;
     this.customerTokenExpiry = null;
@@ -145,7 +156,6 @@ export class LarkAuthService {
   }
 
   private async getInvoiceAccessToken(): Promise<string> {
-    // Check if token is still valid (with 5 minute buffer)
     if (
       this.invoiceAccessToken &&
       this.invoiceTokenExpiry &&
@@ -154,7 +164,6 @@ export class LarkAuthService {
       return this.invoiceAccessToken;
     }
 
-    // Get new token
     return await this.refreshInvoiceToken();
   }
 
@@ -202,15 +211,10 @@ export class LarkAuthService {
       );
 
       this.logger.log('✅ LarkBase invoice token refreshed successfully');
-      this.logger.debug(
-        `Token expires at: ${this.invoiceTokenExpiry.toISOString()}`,
-      );
-
       return this.invoiceAccessToken;
     } catch (error) {
       this.logger.error(`❌ Failed to refresh invoice token: ${error.message}`);
 
-      // Reset tokens on error
       this.invoiceAccessToken = null;
       this.invoiceTokenExpiry = null;
 
@@ -218,7 +222,6 @@ export class LarkAuthService {
     }
   }
 
-  // Force refresh (for error recovery)
   async forceRefreshInvoiceToken(): Promise<void> {
     this.invoiceAccessToken = null;
     this.invoiceTokenExpiry = null;
@@ -238,7 +241,6 @@ export class LarkAuthService {
   }
 
   private async getOrderAccessToken(): Promise<string> {
-    // Check if token is still valid (with 5 minute buffer)
     if (
       this.orderAccessToken &&
       this.orderTokenExpiry &&
@@ -247,7 +249,6 @@ export class LarkAuthService {
       return this.orderAccessToken;
     }
 
-    // Get new token
     return await this.refreshOrderToken();
   }
 
@@ -290,21 +291,15 @@ export class LarkAuthService {
       }
 
       this.orderAccessToken = response.data.tenant_access_token;
-      // Token expires in seconds, convert to milliseconds
       this.orderTokenExpiry = new Date(
         Date.now() + response.data.expire * 1000,
       );
 
       this.logger.log('✅ LarkBase order token refreshed successfully');
-      this.logger.debug(
-        `Token expires at: ${this.orderTokenExpiry.toISOString()}`,
-      );
-
       return this.orderAccessToken;
     } catch (error) {
       this.logger.error(`❌ Failed to refresh order token: ${error.message}`);
 
-      // Reset tokens on error
       this.orderAccessToken = null;
       this.orderTokenExpiry = null;
 
@@ -312,7 +307,6 @@ export class LarkAuthService {
     }
   }
 
-  // Force refresh (for error recovery)
   async forceRefreshOrderToken(): Promise<void> {
     this.orderAccessToken = null;
     this.orderTokenExpiry = null;

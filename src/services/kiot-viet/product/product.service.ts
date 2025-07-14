@@ -1025,7 +1025,7 @@ export class KiotVietProductService {
   }
 
   // ============================================================================
-  // SYNC TO LARKBASE - UPDATED WITH PROPER DATA INCLUDE
+  // SYNC TO LARKBASE
   // ============================================================================
 
   async syncProductsToLarkBase(products: any[]): Promise<void> {
@@ -1034,31 +1034,16 @@ export class KiotVietProductService {
         `🚀 Starting LarkBase sync for ${products.length} products...`,
       );
 
-      // Fetch products with all necessary relationships for LarkBase
-      const productsWithRelations = await this.prismaService.product.findMany({
-        where: {
-          id: { in: products.map((p) => p.id) },
-        },
-        include: {
-          tradeMark: true,
-          category: true,
-          inventories: {
-            include: {
-              branch: true,
-            },
-          },
-          priceBookDetails: {
-            include: {
-              priceBook: true,
-            },
-          },
-        },
-      });
-
-      await this.larkProductSyncService.syncProductsToLarkBase(
-        productsWithRelations,
+      const productsToSync = products.filter(
+        (p) => p.larkSyncStatus === 'PENDING' || p.larkSyncStatus === 'FAILED',
       );
 
+      if (productsToSync.length === 0) {
+        this.logger.log('📋 No products need LarkBase sync');
+        return;
+      }
+
+      await this.larkProductSyncService.syncProductsToLarkBase(productsToSync);
       this.logger.log('✅ LarkBase product sync completed');
     } catch (error) {
       this.logger.error(`❌ LarkBase product sync failed: ${error.message}`);
@@ -1082,103 +1067,6 @@ export class KiotVietProductService {
 
       throw error;
     }
-  }
-
-  // ============================================================================
-  // DEBUG/MONITORING METHODS - NEW
-  // ============================================================================
-
-  async getProductSyncStats(): Promise<any> {
-    return await this.larkProductSyncService.getProductSyncStats();
-  }
-
-  async analyzePriceBookMapping(): Promise<any> {
-    return await this.larkProductSyncService.analyzePriceBookMapping();
-  }
-
-  async testLarkBaseMappingForProduct(productCode: string): Promise<any> {
-    const product = await this.prismaService.product.findFirst({
-      where: { code: productCode },
-      include: {
-        tradeMark: true,
-        category: true,
-        inventories: {
-          include: {
-            branch: true,
-          },
-        },
-        priceBookDetails: {
-          include: {
-            priceBook: true,
-          },
-        },
-      },
-    });
-
-    if (!product) {
-      throw new Error(`Product with code ${productCode} not found`);
-    }
-
-    // This would show what fields will be mapped to LarkBase
-    return {
-      product: {
-        code: product.code,
-        name: product.name,
-        kiotVietId: Number(product.kiotVietId),
-      },
-      tradeMark: product.tradeMark?.name || null,
-      category: product.category?.name || null,
-      inventoriesCount: product.inventories.length,
-      priceBookDetailsCount: product.priceBookDetails.length,
-      mappedInventories: product.inventories.map((inv) => ({
-        branchId: inv.branch.kiotVietId,
-        branchName: inv.branch.name,
-        cost: Number(inv.cost || 0),
-        willMapTo: this.getBranchCostMapping(inv.branch.kiotVietId),
-      })),
-      mappedPriceBooks: product.priceBookDetails.map((pb) => ({
-        priceBookId: pb.priceBook.kiotVietId,
-        priceBookName: pb.priceBook.name,
-        price: Number(pb.price),
-        willMapTo: this.getPriceBookMapping(pb.priceBook.kiotVietId),
-      })),
-    };
-  }
-
-  private getBranchCostMapping(branchId: number): string | null {
-    const mapping: Record<number, string> = {
-      635934: 'Giá Vốn (Cửa Hàng Diệp Trà)',
-      635935: 'Giá Vốn (Kho Bán Hàng)',
-      154833: 'Giá Vốn (Kho Bán Hàng)',
-      402819: 'Giá Vốn (Kho Bán Hàng)',
-      631163: 'Giá Vốn (Kho Bán Hàng)',
-      631164: 'Giá Vốn (Kho Bán Hàng)',
-    };
-    return mapping[branchId] || null;
-  }
-
-  private getPriceBookMapping(priceBookId: number): string | null {
-    const mapping: Record<number, string> = {
-      486878: 'Bảng Giá Lẻ HCM',
-      486879: 'Bảng Giá Buôn HCM',
-      486881: 'Bảng Giá Chiến Lược',
-      486883: 'Bảng Giá Lasimi Sài Gòn',
-      486884: 'Bảng Giá Buôn HN',
-      486886: 'Bảng Giá Em Hoài Royaltea',
-      486887: 'Bảng Giá Đỗ Minh Tân',
-      486888: 'Bảng Giá Đỗ Minh Tân 8%',
-      486889: 'Bảng Giá Hoàng Quân Hà Nội',
-      486890: 'Bảng Giá Học Viện Cafe',
-      486920: 'Bảng Giá Chuỗi Laboong',
-      486967: 'Bảng Giá Cộng Tác Viên',
-      486968: 'Bảng Giá Sub -D',
-      487406: 'Bảng Giá Cheese Coffee',
-      487540: 'Bảng Giá Chuỗi ShanCha',
-      487577: 'Bảng Giá Shopee',
-      487682: 'Bảng Giá Kaffa',
-      487791: 'Bảng Giá Cing Hu Tang',
-    };
-    return mapping[priceBookId] || null;
   }
 
   // ============================================================================
