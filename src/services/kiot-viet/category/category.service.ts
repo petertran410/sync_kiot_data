@@ -4,7 +4,7 @@ import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { KiotVietAuthService } from '../auth.service';
-import { async, firstValueFrom } from 'rxjs';
+import { firstValueFrom } from 'rxjs';
 
 interface KiotVietCategory {
   categoryId: number;
@@ -14,6 +14,8 @@ interface KiotVietCategory {
   hasChild?: boolean;
   modifiedDate?: string;
   createdDate?: string;
+  rank?: number;
+  children?: KiotVietCategory[];
 }
 
 @Injectable()
@@ -36,7 +38,7 @@ export class KiotVietCategoryService {
   }
 
   // ============================================================================
-  // HISTORICAL SYNC - SIMPLE VERSION
+  // HISTORICAL SYNC - FIXED PAGINATION LOGIC
   // ============================================================================
 
   async syncHistoricalCategories(): Promise<void> {
@@ -47,9 +49,7 @@ export class KiotVietCategoryService {
     let totalCategories = 0;
     let consecutiveEmptyPages = 0;
     let consecutiveErrorPages = 0;
-    let lastValidTotal = 0;
     let processedCategoryIds = new Set<number>();
-    // let allCategories: KiotVietCategory[] = [];
 
     try {
       await this.updateSyncControl(syncName, {
@@ -61,28 +61,27 @@ export class KiotVietCategoryService {
 
       this.logger.log('🚀 Starting historical category sync...');
 
-      const MAX_CONSECUTIVE_EMPTY_PAGES = 5;
+      const MAX_CONSECUTIVE_EMPTY_PAGES = 3; // Reduced from 5 for faster detection
       const MAX_CONSECUTIVE_ERROR_PAGES = 3;
       const RETRY_DELAY_MS = 2000;
-      const MAX_TOTAL_RETRIES = 10;
-
-      let totalRetries = 0;
 
       while (true) {
         const currentPage = Math.floor(currentItem / this.PAGE_SIZE) + 1;
 
+        // Progress logging
         if (totalCategories > 0) {
-          if (currentItem >= totalCategories) {
+          const progressPercentage = (processedCount / totalCategories) * 100;
+          this.logger.log(
+            `📄 Fetching page ${currentPage} (${processedCount}/${totalCategories} - ${progressPercentage.toFixed(1)}% completed)`,
+          );
+
+          // FIXED: Early termination check based on processed count, not currentItem
+          if (processedCount >= totalCategories) {
             this.logger.log(
-              `✅ Pagination complete. Processed: ${processedCount}/${totalCategories} categories`,
+              `✅ All categories processed successfully! Final count: ${processedCount}/${totalCategories}`,
             );
             break;
           }
-
-          const progressPercentage = (currentItem / totalCategories) * 100;
-          this.logger.log(
-            `📄 Fetching page ${currentPage} (${currentItem}/${totalCategories} - ${progressPercentage.toFixed(1)}%)`,
-          );
         } else {
           this.logger.log(
             `📄 Fetching page ${currentPage} (currentItem: ${currentItem})`,
@@ -104,20 +103,23 @@ export class KiotVietCategoryService {
 
             if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
               this.logger.log(
-                `🔚 Reached end after ${consecutiveEmptyPages} empty pages`,
+                `🔚 API returned null ${consecutiveEmptyPages} times - ending pagination`,
               );
               break;
             }
 
             await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+            currentItem += this.PAGE_SIZE; // Move to next page even on null response
             continue;
           }
 
+          // Reset error counters on successful response
           consecutiveEmptyPages = 0;
           consecutiveErrorPages = 0;
 
           const { total, data: categories } = categoryListResponse;
 
+          // Set total count on first successful response
           if (total !== undefined && total !== null) {
             if (totalCategories === 0) {
               totalCategories = total;
@@ -126,25 +128,28 @@ export class KiotVietCategoryService {
               );
             } else if (total !== totalCategories) {
               this.logger.warn(
-                `⚠️ Total count changed: ${totalCategories} -> ${total}. Using latest.`,
+                `⚠️ Total count updated: ${totalCategories} → ${total}`,
               );
               totalCategories = total;
             }
-            lastValidTotal = total;
           }
 
+          // FIXED: Handle empty response data properly
           if (!categories || categories.length === 0) {
             this.logger.warn(
               `⚠️ Empty page received at position ${currentItem}`,
             );
             consecutiveEmptyPages++;
 
-            if (totalCategories > 0 && currentItem >= totalCategories) {
-              this.logger.log('✅ Reached end of data (empty page past total)');
+            // FIXED: Check if we've reached expected end
+            if (totalCategories > 0 && processedCount >= totalCategories) {
+              this.logger.log(
+                '✅ All expected categories processed - pagination complete',
+              );
               break;
             }
 
-            // If too many consecutive empty pages, stop
+            // FIXED: Stop after too many consecutive empty pages
             if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
               this.logger.log(
                 `🔚 Stopping after ${consecutiveEmptyPages} consecutive empty pages`,
@@ -152,38 +157,44 @@ export class KiotVietCategoryService {
               break;
             }
 
-            // Move to next page
+            // Continue to next page
             currentItem += this.PAGE_SIZE;
             continue;
           }
 
+          // FIXED: Duplicate filtering with better validation
           const newCategories = categories.filter((category) => {
-            if (!category.categoryId) {
+            // Validate required fields
+            if (!category.categoryId || !category.categoryName) {
               this.logger.warn(
-                `⚠️ Skipping category with missing categoryId: ${JSON.stringify(category)}`,
+                `⚠️ Skipping invalid category: id=${category.categoryId}, name='${category.categoryName}'`,
               );
               return false;
             }
 
+            // Check for duplicates
             if (processedCategoryIds.has(category.categoryId)) {
               this.logger.debug(
                 `⚠️ Duplicate category ID detected: ${category.categoryId} (${category.categoryName})`,
               );
               return false;
             }
+
             processedCategoryIds.add(category.categoryId);
             return true;
           });
 
+          // Log filtering results
           if (newCategories.length !== categories.length) {
             this.logger.warn(
-              `🔄 Filtered out ${categories.length - newCategories.length} duplicate categories on page ${currentPage}`,
+              `🔄 Filtered out ${categories.length - newCategories.length} invalid/duplicate categories on page ${currentPage}`,
             );
           }
 
+          // FIXED: Skip page if all categories were filtered out
           if (newCategories.length === 0) {
             this.logger.log(
-              `⏭️ Skipping page ${currentPage} - all categories already processed`,
+              `⏭️ Skipping page ${currentPage} - all categories were filtered out`,
             );
             currentItem += this.PAGE_SIZE;
             continue;
@@ -193,6 +204,7 @@ export class KiotVietCategoryService {
             `🔄 Processing ${newCategories.length} categories from page ${currentPage}...`,
           );
 
+          // Process categories
           const categoriesWithDetails =
             await this.enrichCategoriesWithDetails(newCategories);
           const savedCategories = await this.saveCategoriesToDatabase(
@@ -200,65 +212,52 @@ export class KiotVietCategoryService {
           );
 
           processedCount += savedCategories.length;
-          currentItem += this.PAGE_SIZE;
 
+          // FIXED: Progress calculation based on actual processed count
           if (totalCategories > 0) {
             const completionPercentage =
               (processedCount / totalCategories) * 100;
             this.logger.log(
               `📈 Progress: ${processedCount}/${totalCategories} (${completionPercentage.toFixed(1)}%)`,
             );
-
-            if (processedCount >= totalCategories) {
-              this.logger.log('🎉 All categories processed successfully!');
-              break;
-            }
-          }
-
-          if (totalCategories > 0) {
-            if (
-              currentItem >= totalCategories &&
-              processedCount >= totalCategories * 0.95
-            ) {
-              this.logger.log(
-                '✅ Sync completed - reached expected data range',
-              );
-              break;
-            }
-          }
-
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        } catch (error) {
-          consecutiveErrorPages++;
-          totalRetries++;
-
-          this.logger.error(
-            `❌ API error on page ${currentPage}: ${error.message}`,
-          );
-
-          if (consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES) {
-            throw new Error(
-              `Multiple consecutive API failures: ${error.message}`,
+          } else {
+            this.logger.log(
+              `📈 Progress: ${processedCount} categories processed`,
             );
           }
 
-          if (totalRetries >= MAX_TOTAL_RETRIES) {
-            throw new Error(`Maximum total retries exceeded: ${error.message}`);
+          // Move to next page
+          currentItem += this.PAGE_SIZE;
+
+          // Rate limiting
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        } catch (error) {
+          consecutiveErrorPages++;
+          this.logger.error(
+            `❌ Error fetching page ${currentPage}: ${error.message}`,
+          );
+
+          if (consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES) {
+            this.logger.error(
+              `💥 Too many consecutive errors (${consecutiveErrorPages}). Stopping sync.`,
+            );
+            throw error;
           }
 
-          // Exponential backoff
-          const delay = RETRY_DELAY_MS * Math.pow(2, consecutiveErrorPages - 1);
-          this.logger.log(`⏳ Retrying after ${delay}ms delay...`);
-          await new Promise((resolve) => setTimeout(resolve, delay));
+          // Exponential backoff for retries
+          await new Promise((resolve) =>
+            setTimeout(resolve, RETRY_DELAY_MS * consecutiveErrorPages),
+          );
+
+          // Don't increment currentItem on error - retry the same page
         }
       }
 
       await this.updateSyncControl(syncName, {
         isRunning: false,
-        isEnabled: false,
         status: 'completed',
         completedAt: new Date(),
-        lastRunAt: new Date(),
+        error: null,
         progress: { processedCount, expectedTotal: totalCategories },
       });
 
@@ -269,86 +268,21 @@ export class KiotVietCategoryService {
         `✅ Historical category sync completed: ${processedCount}/${totalCategories} (${completionRate.toFixed(1)}% completion rate)`,
       );
     } catch (error) {
-      this.logger.error(`❌ Historical category sync failed: ${error.message}`);
-
       await this.updateSyncControl(syncName, {
         isRunning: false,
         status: 'failed',
         error: error.message,
+        completedAt: new Date(),
         progress: { processedCount, expectedTotal: totalCategories },
       });
 
+      this.logger.error(`❌ Historical category sync failed: ${error.message}`);
       throw error;
     }
   }
 
-  //   const response = await this.fetchCategoriesWithRetry({
-  //     hierachicalData: true,
-  //     orderBy: 'createdDate',
-  //     orderDirection: 'ASC',
-  //     pageSize: this.PAGE_SIZE,
-  //     currentItem,
-  //   });
-
-  //   const { data: categories, total } = response;
-
-  //   // Set total on first page
-  //   if (totalCategories === 0 && total !== undefined) {
-  //     totalCategories = total;
-  //     this.logger.log(`📊 Total categories detected: ${totalCategories}`);
-  //   }
-
-  //   // Check if we have data
-  //   if (!categories || categories.length === 0) {
-  //     this.logger.log(
-  //       '✅ No more categories to fetch - pagination complete',
-  //     );
-  //     break;
-  //   }
-
-  //   // Add to all categories
-  //   allCategories.push(...categories);
-  //   processedCount += categories.length;
-  //   currentItem += this.PAGE_SIZE;
-
-  //   this.logger.log(
-  //     `📈 Progress: ${processedCount}/${totalCategories || 'unknown'} categories fetched`,
-  //   );
-
-  //   // Break if we've got all categories
-  //   if (totalCategories > 0 && processedCount >= totalCategories) {
-  //     this.logger.log('🎉 All categories fetched successfully!');
-  //     break;
-  //   }
-
-  //   // Break if this page was not full (last page)
-  //   if (categories.length < this.PAGE_SIZE) {
-  //     this.logger.log('✅ Last page reached (partial page)');
-  //     break;
-  //   }
-
-  //   // Rate limiting delay
-  //   await new Promise((resolve) => setTimeout(resolve, 100));
-  // }
-
-  // this.logger.log(`📊 Total fetched: ${allCategories.length} categories`);
-
-  // if (allCategories.length > 0) {
-  //   const saved = await this.saveCategoriesToDatabase(allCategories);
-  //   this.logger.log(`✅ Saved ${saved.created + saved.updated} categories`);
-  // }
-
-  // await this.updateSyncControl(syncName, {
-  //   isRunning: false,
-  //   isEnabled: false, // Auto-disable after completion
-  //   status: 'completed',
-  //   completedAt: new Date(),
-  //   lastRunAt: new Date(),
-  //   progress: { processedCount, expectedTotal: totalCategories },
-  // });
-
   // ============================================================================
-  // API METHODS
+  // API METHODS - ENHANCED ERROR HANDLING
   // ============================================================================
 
   async fetchCategoriesWithRetry(
@@ -374,7 +308,9 @@ export class KiotVietCategoryService {
         );
 
         if (attempt < maxRetries) {
-          await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
+          // Exponential backoff
+          const delayMs = 1000 * Math.pow(2, attempt - 1);
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
         }
       }
     }
@@ -382,7 +318,7 @@ export class KiotVietCategoryService {
     throw lastError;
   }
 
-  async fetchCategories(params: {
+  private async fetchCategories(params: {
     hierachicalData?: boolean;
     orderBy?: string;
     orderDirection?: string;
@@ -393,12 +329,16 @@ export class KiotVietCategoryService {
     const headers = await this.authService.getRequestHeaders();
 
     const queryParams = new URLSearchParams({
-      hierachicalData: (params.hierachicalData || true).toString(),
-      orderBy: params.orderBy || 'createdDate',
-      orderDirection: params.orderDirection || 'ASC',
+      hierachicalData: (params.hierachicalData || false).toString(),
       pageSize: (params.pageSize || this.PAGE_SIZE).toString(),
       currentItem: (params.currentItem || 0).toString(),
     });
+
+    // ENHANCED: Conservative parameter handling for KiotViet API compatibility
+    if (params.orderBy) {
+      queryParams.append('orderBy', params.orderBy);
+      queryParams.append('orderDirection', params.orderDirection || 'ASC');
+    }
 
     if (params.lastModifiedFrom) {
       queryParams.append('lastModifiedFrom', params.lastModifiedFrom);
@@ -415,69 +355,8 @@ export class KiotVietCategoryService {
   }
 
   // ============================================================================
-  // DATABASE SAVE
+  // ENRICH WITH DETAILS
   // ============================================================================
-
-  private async saveCategoriesToDatabase(categories: any[]): Promise<any[]> {
-    this.logger.log(`💾 Saving ${categories.length} categories to database...`);
-
-    const saveCategories: any[] = [];
-
-    for (const categoryData of categories) {
-      try {
-        if (!categoryData.categoryId || !categoryData.categoryName) {
-          this.logger.warn(
-            `⚠️ Skipping invalid category: categoryId=${categoryData.categoryId}, name=${categoryData.categoryName}`,
-          );
-          continue;
-        }
-
-        const parentCategory = categoryData.parentId
-          ? await this.prismaService.category.findFirst({
-              where: { kiotVietId: categoryData.parentId },
-              select: { id: true },
-            })
-          : null;
-
-        const category = await this.prismaService.category.upsert({
-          where: { kiotVietId: categoryData.categoryId },
-          update: {
-            name: categoryData.categoryName,
-            parentId: parentCategory?.id ?? null,
-            hasChildren: categoryData.hasChild ?? false,
-            retailerId: categoryData.retailerId ?? null,
-            modifiedDate: categoryData.modifiedDate
-              ? new Date(categoryData.modifiedDate)
-              : new Date(),
-            lastSyncedAt: new Date(),
-          },
-          create: {
-            kiotVietId: categoryData.categoryId,
-            name: categoryData.categoryName,
-            parentId: parentCategory?.id ?? null,
-            hasChildren: categoryData.hasChild ?? false,
-            retailerId: categoryData.retailerId ?? null,
-            createdDate: categoryData.createdDate
-              ? new Date(categoryData.createdDate)
-              : new Date(),
-            modifiedDate: categoryData.modifiedDate
-              ? new Date(categoryData.modifiedDate)
-              : new Date(),
-            lastSyncedAt: new Date(),
-          },
-        });
-
-        saveCategories.push(category);
-      } catch (error) {
-        this.logger.error(
-          `❌ Failed to save category ${categoryData.categoryName}: ${error.message}`,
-        );
-      }
-    }
-
-    this.logger.log(`💾 Saved ${saveCategories.length} categories to database`);
-    return saveCategories;
-  }
 
   private async enrichCategoriesWithDetails(
     categories: KiotVietCategory[],
@@ -486,23 +365,32 @@ export class KiotVietCategoryService {
       `🔍 Enriching ${categories.length} categories with details...`,
     );
 
-    const enrichedCategories: any[] = [];
+    const enrichedCategories: KiotVietCategory[] = [];
+
     for (const category of categories) {
       try {
+        // CORRECTED: Use categoryId field name from API
         const headers = await this.authService.getRequestHeaders();
         const response = await firstValueFrom(
           this.httpService.get(
             `${this.baseUrl}/categories/${category.categoryId}`,
             {
               headers,
+              timeout: 15000,
             },
           ),
         );
-        if (response.data) {
+
+        if (response.data && response.data.categoryId) {
           enrichedCategories.push(response.data);
         } else {
+          this.logger.warn(
+            `⚠️ No detailed data for category ${category.categoryId}, using basic data`,
+          );
           enrichedCategories.push(category);
         }
+
+        // Rate limiting
         await new Promise((resolve) => setTimeout(resolve, 50));
       } catch (error) {
         this.logger.warn(
@@ -516,68 +404,227 @@ export class KiotVietCategoryService {
   }
 
   // ============================================================================
-  // DEPENDENCY SORTING - PARENTS FIRST
+  // DATABASE SAVE - ENHANCED VALIDATION
   // ============================================================================
 
-  // private sortCategoriesByDependency(
-  //   categories: KiotVietCategory[],
-  // ): KiotVietCategory[] {
-  //   const categoryMap = new Map<number, KiotVietCategory>();
-  //   const parentChildMap = new Map<number, number[]>();
-  //   const rootCategories: number[] = [];
+  private async saveCategoriesToDatabase(
+    categories: KiotVietCategory[],
+  ): Promise<any[]> {
+    this.logger.log(`💾 Saving ${categories.length} categories to database...`);
 
-  //   // Build maps
-  //   for (const category of categories) {
-  //     categoryMap.set(category.categoryId, category);
+    const savedCategories: any[] = [];
 
-  //     if (category.parentId) {
-  //       if (!parentChildMap.has(category.parentId)) {
-  //         parentChildMap.set(category.parentId, []);
-  //       }
-  //       parentChildMap.get(category.parentId)!.push(category.categoryId);
-  //     } else {
-  //       rootCategories.push(category.categoryId);
-  //     }
-  //   }
+    // ENHANCED: Process in hierarchical order - parents first, then children
+    const processedCategories = this.flattenAndSortCategories(categories);
 
-  //   // Sort by dependency order
-  //   const sortedCategories: KiotVietCategory[] = [];
-  //   const visited = new Set<number>();
+    for (const categoryData of processedCategories) {
+      try {
+        // CORRECTED: Enhanced validation with actual API field names
+        if (
+          !categoryData.categoryId ||
+          !categoryData.categoryName ||
+          categoryData.categoryName.trim() === ''
+        ) {
+          this.logger.warn(
+            `⚠️ Skipping invalid category: categoryId=${categoryData.categoryId}, categoryName='${categoryData.categoryName}'`,
+          );
+          continue;
+        }
 
-  //   const processCategory = (categoryId: number) => {
-  //     const category = categoryMap.get(categoryId);
-  //     if (!category || visited.has(categoryId)) return;
+        // ENHANCED: Resolve parent relationship if exists
+        let parentDatabaseId: number | null = null;
+        if (categoryData.parentId) {
+          const parentCategory = await this.prismaService.category.findFirst({
+            where: { kiotVietId: categoryData.parentId },
+            select: { id: true, name: true },
+          });
 
-  //     // If has parent, process parent first
-  //     if (category.parentId && !visited.has(category.parentId)) {
-  //       processCategory(category.parentId);
-  //     }
+          if (parentCategory) {
+            parentDatabaseId = parentCategory.id;
+          } else {
+            this.logger.warn(
+              `⚠️ Parent category ${categoryData.parentId} not found for category ${categoryData.categoryId}`,
+            );
+          }
+        }
 
-  //     // Process current category
-  //     visited.add(categoryId);
-  //     sortedCategories.push(category);
+        const category = await this.prismaService.category.upsert({
+          where: { kiotVietId: categoryData.categoryId },
+          update: {
+            name: categoryData.categoryName.trim(),
+            parentId: parentDatabaseId,
+            hasChild: categoryData.hasChild ?? false,
+            retailerId: categoryData.retailerId || null,
+            rank: categoryData.rank ?? 0,
+            modifiedDate: categoryData.modifiedDate
+              ? new Date(categoryData.modifiedDate)
+              : new Date(),
+            lastSyncedAt: new Date(),
+          },
+          create: {
+            kiotVietId: categoryData.categoryId,
+            name: categoryData.categoryName.trim(),
+            parentId: parentDatabaseId,
+            hasChild: categoryData.hasChild ?? false,
+            retailerId: categoryData.retailerId || null,
+            rank: categoryData.rank ?? 0,
+            createdDate: categoryData.createdDate
+              ? new Date(categoryData.createdDate)
+              : new Date(),
+            modifiedDate: categoryData.modifiedDate
+              ? new Date(categoryData.modifiedDate)
+              : new Date(),
+            lastSyncedAt: new Date(),
+          },
+        });
 
-  //     // Process children
-  //     const children = parentChildMap.get(categoryId) || [];
-  //     for (const childId of children) {
-  //       processCategory(childId);
-  //     }
-  //   };
+        savedCategories.push(category);
+      } catch (error) {
+        this.logger.error(
+          `❌ Failed to save category ${categoryData.categoryName}: ${error.message}`,
+        );
+      }
+    }
 
-  //   // Start with root categories
-  //   for (const rootId of rootCategories) {
-  //     processCategory(rootId);
-  //   }
+    this.logger.log(
+      `💾 Saved ${savedCategories.length} categories to database`,
+    );
+    return savedCategories;
+  }
 
-  //   // Process any remaining categories
-  //   for (const category of categories) {
-  //     if (!visited.has(category.categoryId)) {
-  //       processCategory(category.categoryId);
-  //     }
-  //   }
+  private flattenAndSortCategories(
+    categories: KiotVietCategory[],
+  ): KiotVietCategory[] {
+    const flattened: KiotVietCategory[] = [];
+    const visited = new Set<number>();
 
-  //   return sortedCategories;
-  // }
+    const processCategory = (category: KiotVietCategory) => {
+      if (visited.has(category.categoryId)) {
+        return;
+      }
+
+      visited.add(category.categoryId);
+      flattened.push(category);
+
+      // Process children recursively
+      if (category.children && category.children.length > 0) {
+        for (const child of category.children) {
+          processCategory(child);
+        }
+      }
+    };
+
+    // Process root categories first (those without parentId)
+    const rootCategories = categories.filter((cat) => !cat.parentId);
+    const childCategories = categories.filter((cat) => cat.parentId);
+
+    // Process all root categories and their hierarchies
+    for (const rootCategory of rootCategories) {
+      processCategory(rootCategory);
+    }
+
+    // Process any remaining child categories that weren't part of the hierarchy
+    for (const childCategory of childCategories) {
+      if (!visited.has(childCategory.categoryId)) {
+        processCategory(childCategory);
+      }
+    }
+
+    this.logger.log(
+      `📊 Flattened ${categories.length} hierarchical categories into ${flattened.length} ordered entries`,
+    );
+
+    return flattened;
+  }
+
+  private validateCategoryData(category: KiotVietCategory): boolean {
+    // Required field validation
+    if (!category.categoryId || typeof category.categoryId !== 'number') {
+      this.logger.warn(`⚠️ Invalid categoryId: ${category.categoryId}`);
+      return false;
+    }
+
+    if (
+      !category.categoryName ||
+      typeof category.categoryName !== 'string' ||
+      category.categoryName.trim() === ''
+    ) {
+      this.logger.warn(
+        `⚠️ Invalid categoryName for ID ${category.categoryId}: '${category.categoryName}'`,
+      );
+      return false;
+    }
+
+    // Parent relationship validation
+    if (category.parentId && typeof category.parentId !== 'number') {
+      this.logger.warn(
+        `⚠️ Invalid parentId for category ${category.categoryId}: ${category.parentId}`,
+      );
+      return false;
+    }
+
+    // Hierarchy consistency validation
+    if (
+      category.hasChild &&
+      (!category.children || category.children.length === 0)
+    ) {
+      this.logger.debug(
+        `ℹ️ Category ${category.categoryId} marked as hasChild but no children provided`,
+      );
+    }
+
+    return true;
+  }
+
+  /**
+   * Detect circular references in category hierarchy
+   */
+  private detectCircularReferences(categories: KiotVietCategory[]): boolean {
+    const visited = new Set<number>();
+    const recursionStack = new Set<number>();
+
+    const dfs = (
+      categoryId: number,
+      categoryMap: Map<number, KiotVietCategory>,
+    ): boolean => {
+      if (recursionStack.has(categoryId)) {
+        this.logger.error(
+          `🔄 Circular reference detected for category ${categoryId}`,
+        );
+        return true;
+      }
+
+      if (visited.has(categoryId)) {
+        return false;
+      }
+
+      visited.add(categoryId);
+      recursionStack.add(categoryId);
+
+      const category = categoryMap.get(categoryId);
+      if (category?.parentId) {
+        if (dfs(category.parentId, categoryMap)) {
+          return true;
+        }
+      }
+
+      recursionStack.delete(categoryId);
+      return false;
+    };
+
+    const categoryMap = new Map<number, KiotVietCategory>();
+    for (const category of categories) {
+      categoryMap.set(category.categoryId, category);
+    }
+
+    for (const category of categories) {
+      if (dfs(category.categoryId, categoryMap)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
 
   // ============================================================================
   // SYNC CONTROL

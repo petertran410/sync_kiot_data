@@ -544,102 +544,108 @@ export class KiotVietProductService {
 
     for (const productData of products) {
       try {
-        const category = productData.categoryId
-          ? await this.prismaService.category.findFirst({
-              where: { kiotVietId: productData.categoryId },
-              select: { id: true, name: true },
-            })
-          : null;
-
-        if (productData.categoryId && !category) {
+        // ENHANCED: Validation với real API response structure
+        if (!productData.id || !productData.code || !productData.name) {
           this.logger.warn(
-            `⚠️ [DEPENDENCY MISS] Category ${productData.categoryId} not found for product ${productData.code} - proceeding with null categoryId`,
+            `⚠️ Skipping invalid product: id=${productData.id}, code='${productData.code}', name='${productData.name}'`,
           );
+          continue;
         }
 
-        const tradeMark = productData.tradeMarkId
-          ? await this.prismaService.tradeMark.findFirst({
-              where: { kiotVietId: productData.tradeMarkId },
-              select: { id: true, name: true },
-            })
-          : null;
-
-        if (productData.tradeMarkId && !tradeMark) {
-          this.logger.warn(
-            `⚠️ [DEPENDENCY MISS] TradeMark ${productData.tradeMarkId} not found for product ${productData.code} - proceeding with null tradeMarkId`,
-          );
+        // CORRECTED: Find or create Category using actual API field names
+        let categoryId: number | null = null;
+        if (productData.categoryId && productData.categoryName) {
+          const category = await this.prismaService.category.upsert({
+            where: { kiotVietId: productData.categoryId },
+            update: {
+              name: productData.categoryName.trim(),
+              lastSyncedAt: new Date(),
+            },
+            create: {
+              kiotVietId: productData.categoryId,
+              name: productData.categoryName.trim(),
+              lastSyncedAt: new Date(),
+            },
+            select: { id: true },
+          });
+          categoryId = category.id;
         }
 
-        // Find master product if exists
-        const masterProduct = productData.masterProductId
-          ? await this.prismaService.product.findFirst({
-              where: { kiotVietId: BigInt(productData.masterProductId) },
-              select: { kiotVietId: true },
-            })
-          : null;
+        // CORRECTED: Find or create TradeMark using actual API field names
+        let tradeMarkId: number | null = null;
+        if (productData.tradeMarkId && productData.tradeMarkName) {
+          const tradeMark = await this.prismaService.tradeMark.upsert({
+            where: { kiotVietId: productData.tradeMarkId },
+            update: {
+              name: productData.tradeMarkName.trim(),
+              lastSyncedAt: new Date(),
+            },
+            create: {
+              kiotVietId: productData.tradeMarkId,
+              name: productData.tradeMarkName.trim(),
+              lastSyncedAt: new Date(),
+            },
+            select: { id: true },
+          });
+          tradeMarkId = tradeMark.id;
+        }
 
-        // ============================================================================
-        // SAVE MAIN PRODUCT
-        // ============================================================================
-
+        // Main product creation/update
         const product = await this.prismaService.product.upsert({
           where: { kiotVietId: BigInt(productData.id) },
           update: {
-            code: productData.code,
-            barCode: productData.barCode || null,
-            name: productData.name,
-            fullName: productData.fullName,
-            categoryId: category?.id ?? null,
-            tradeMarkId: tradeMark?.id ?? null,
-            type: productData.type ?? null,
-            description: productData.description || null,
+            code: productData.code.trim(),
+            name: productData.name.trim(),
+            fullName: productData.fullName?.trim() || productData.name.trim(),
+            categoryId,
+            tradeMarkId,
             allowsSale: productData.allowsSale ?? true,
+            type: productData.type ?? 1,
             hasVariants: productData.hasVariants ?? false,
-            basePrice: new Prisma.Decimal(productData.basePrice || 0),
-            unit: productData.unit || null,
-            masterProductId: masterProduct?.kiotVietId ?? null,
-            masterUnitId: productData.masterUnitId
-              ? BigInt(productData.masterUnitId)
+            basePrice: productData.basePrice
+              ? new Prisma.Decimal(productData.basePrice)
               : null,
-            conversionValue: productData.conversionValue ?? null,
             weight: productData.weight ?? null,
+            unit: productData.unit?.trim() || null,
+            conversionValue: productData.conversionValue ?? 1,
+            description: productData.description?.trim() || null,
             isLotSerialControl: productData.isLotSerialControl ?? false,
             isBatchExpireControl: productData.isBatchExpireControl ?? false,
-            orderTemplate: productData.orderTemplate || null,
+            orderTemplate: productData.orderTemplate?.trim() || null,
             minQuantity: productData.minQuantity ?? null,
             maxQuantity: productData.maxQuantity ?? null,
             isRewardPoint: productData.isRewardPoint ?? true,
             isActive: productData.isActive ?? true,
             retailerId: productData.retailerId ?? null,
+            createdDate: productData.createdDate
+              ? new Date(productData.createdDate)
+              : new Date(),
             modifiedDate: productData.modifiedDate
               ? new Date(productData.modifiedDate)
               : new Date(),
             lastSyncedAt: new Date(),
-            larkSyncStatus: 'PENDING' as const,
+            larkSyncStatus: 'PENDING',
           },
           create: {
             kiotVietId: BigInt(productData.id),
-            code: productData.code,
-            barCode: productData.barCode || null,
-            name: productData.name,
-            fullName: productData.fullName,
-            categoryId: category?.id ?? null,
-            tradeMarkId: tradeMark?.id ?? null,
-            type: productData.type ?? null,
-            description: productData.description || null,
+            code: productData.code.trim(),
+            name: productData.name.trim(),
+            fullName: productData.fullName?.trim() || productData.name.trim(),
+            categoryId,
+            tradeMarkId,
             allowsSale: productData.allowsSale ?? true,
+            type: productData.type ?? 1,
             hasVariants: productData.hasVariants ?? false,
-            basePrice: new Prisma.Decimal(productData.basePrice || 0),
-            unit: productData.unit || null,
-            masterProductId: masterProduct?.kiotVietId ?? null,
-            masterUnitId: productData.masterUnitId
-              ? BigInt(productData.masterUnitId)
+            basePrice: productData.basePrice
+              ? new Prisma.Decimal(productData.basePrice)
               : null,
-            conversionValue: productData.conversionValue ?? null,
             weight: productData.weight ?? null,
+            unit: productData.unit?.trim() || null,
+            conversionValue: productData.conversionValue ?? 1,
+            description: productData.description?.trim() || null,
             isLotSerialControl: productData.isLotSerialControl ?? false,
             isBatchExpireControl: productData.isBatchExpireControl ?? false,
-            orderTemplate: productData.orderTemplate || null,
+            orderTemplate: productData.orderTemplate?.trim() || null,
             minQuantity: productData.minQuantity ?? null,
             maxQuantity: productData.maxQuantity ?? null,
             isRewardPoint: productData.isRewardPoint ?? true,
@@ -656,6 +662,7 @@ export class KiotVietProductService {
           },
         });
 
+        // CORRECTED: Save related data using actual API response structure
         if (productData.attributes && productData.attributes.length > 0) {
           await this.saveProductAttributes(product.id, productData.attributes);
         }
@@ -752,22 +759,85 @@ export class KiotVietProductService {
     productId: number,
     images: any[],
   ): Promise<void> {
+    if (!images || !Array.isArray(images) || images.length === 0) {
+      this.logger.debug(`No images to save for product ${productId}`);
+      return;
+    }
+
     try {
+      // Clear existing images
       await this.prismaService.productImage.deleteMany({
         where: { productId },
       });
 
+      let processedCount = 0;
+      let skippedCount = 0;
+
       for (let i = 0; i < images.length; i++) {
-        const image = images[i];
-        await this.prismaService.productImage.create({
-          data: {
-            productId,
-            imageUrl: image.image,
-            displayOrder: i,
-            lastSyncedAt: new Date(),
-          },
-        });
+        const imageItem = images[i];
+        let imageUrl: string | null = null;
+
+        // FIXED: Multi-format URL extraction with comprehensive validation
+        if (typeof imageItem === 'string' && imageItem.trim() !== '') {
+          // Format 1: Direct string array ["url1", "url2"]
+          imageUrl = imageItem.trim();
+        } else if (typeof imageItem === 'object' && imageItem !== null) {
+          // Format 2: Object with 'Image' key (documented format) {"Image": "url"}
+          if (
+            imageItem.Image &&
+            typeof imageItem.Image === 'string' &&
+            imageItem.Image.trim() !== ''
+          ) {
+            imageUrl = imageItem.Image.trim();
+          }
+          // Format 3: Object with lowercase 'image' key {"image": "url"}
+          else if (
+            imageItem.image &&
+            typeof imageItem.image === 'string' &&
+            imageItem.image.trim() !== ''
+          ) {
+            imageUrl = imageItem.image.trim();
+          }
+          // Format 4: Object with 'url' key {"url": "url"}
+          else if (
+            imageItem.url &&
+            typeof imageItem.url === 'string' &&
+            imageItem.url.trim() !== ''
+          ) {
+            imageUrl = imageItem.url.trim();
+          }
+        }
+
+        // Skip invalid URLs
+        if (!imageUrl) {
+          this.logger.warn(
+            `⚠️ Skipping invalid image item at index ${i} for product ${productId}: ${JSON.stringify(imageItem)}`,
+          );
+          skippedCount++;
+          continue;
+        }
+
+        try {
+          await this.prismaService.productImage.create({
+            data: {
+              productId,
+              imageUrl,
+              displayOrder: i,
+              lastSyncedAt: new Date(),
+            },
+          });
+          processedCount++;
+        } catch (createError) {
+          this.logger.error(
+            `❌ Failed to create image record for product ${productId}, URL: '${imageUrl}': ${createError.message}`,
+          );
+          skippedCount++;
+        }
       }
+
+      this.logger.log(
+        `✅ Product ${productId} images: ${processedCount} processed, ${skippedCount} skipped`,
+      );
     } catch (error) {
       this.logger.error(
         `❌ Failed to save images for product ${productId}: ${error.message}`,
@@ -779,7 +849,11 @@ export class KiotVietProductService {
     productId: number,
     inventories: any[],
   ): Promise<void> {
-    if (!inventories || inventories.length === 0) {
+    if (
+      !inventories ||
+      !Array.isArray(inventories) ||
+      inventories.length === 0
+    ) {
       this.logger.debug(`No inventories to save for product ${productId}`);
       return;
     }
@@ -793,33 +867,51 @@ export class KiotVietProductService {
       let skippedCount = 0;
 
       for (const inventory of inventories) {
-        const branch = await this.prismaService.branch.findFirst({
-          where: { kiotVietId: inventory.branchId },
-          select: { id: true, name: true },
-        });
+        // CORRECTED: Using branchId from API response directly
+        const branchKiotVietId = inventory.branchId;
 
-        if (!branch) {
+        if (!branchKiotVietId) {
           this.logger.warn(
-            `⚠️ [DEPENDENCY MISS] Branch ${inventory.branchId} (${inventory.branchName || 'unknown'}) not found - skipping inventory for product ${productId}`,
+            `⚠️ Skipping inventory with missing branchId for product ${productId}: ${JSON.stringify(inventory)}`,
           );
           skippedCount++;
           continue;
         }
 
-        await this.prismaService.productInventory.create({
-          data: {
-            productId,
-            branchId: branch.id,
-            onHand: inventory.onHand || 0,
-            reserved: inventory.reserved || 0,
-            onOrder: inventory.onOrder || 0,
-            cost: inventory.cost ? new Prisma.Decimal(inventory.cost) : null,
-            minQuantity: inventory.minQuantity || null,
-            maxQuantity: inventory.maxQuantity || null,
-            lastSyncedAt: new Date(),
-          },
+        const branch = await this.prismaService.branch.findFirst({
+          where: { kiotVietId: branchKiotVietId },
+          select: { id: true, name: true },
         });
-        processedCount++;
+
+        if (!branch) {
+          this.logger.warn(
+            `⚠️ [DEPENDENCY MISS] Branch ${branchKiotVietId} (${inventory.branchName || 'unknown'}) not found - skipping inventory for product ${productId}`,
+          );
+          skippedCount++;
+          continue;
+        }
+
+        try {
+          await this.prismaService.productInventory.create({
+            data: {
+              productId,
+              branchId: branch.id,
+              onHand: this.parseNumericValue(inventory.onHand, 0),
+              reserved: this.parseNumericValue(inventory.reserved, 0),
+              onOrder: this.parseNumericValue(inventory.onOrder, 0),
+              cost: inventory.cost ? new Prisma.Decimal(inventory.cost) : null,
+              minQuantity: this.parseNumericValue(inventory.minQuantity, null),
+              maxQuantity: this.parseNumericValue(inventory.maxQuantity, null),
+              lastSyncedAt: new Date(),
+            },
+          });
+          processedCount++;
+        } catch (createError) {
+          this.logger.error(
+            `❌ Failed to create inventory for product ${productId}, branch ${branch.id}: ${createError.message}`,
+          );
+          skippedCount++;
+        }
       }
 
       this.logger.log(
@@ -832,11 +924,35 @@ export class KiotVietProductService {
     }
   }
 
+  private parseNumericValue(
+    value: any,
+    defaultValue: number | null,
+  ): number | null {
+    if (value === null || value === undefined) {
+      return defaultValue;
+    }
+
+    if (typeof value === 'number' && !isNaN(value)) {
+      return value;
+    }
+
+    if (typeof value === 'string') {
+      const parsed = parseFloat(value);
+      return isNaN(parsed) ? defaultValue : parsed;
+    }
+
+    if (typeof value === 'boolean') {
+      return value ? 1 : 0;
+    }
+
+    return defaultValue;
+  }
+
   private async saveProductPriceBooks(
     productId: number,
     priceBooks: any[],
   ): Promise<void> {
-    if (!priceBooks || priceBooks.length === 0) {
+    if (!priceBooks || !Array.isArray(priceBooks) || priceBooks.length === 0) {
       this.logger.debug(`No pricebooks to save for product ${productId}`);
       return;
     }
@@ -850,14 +966,25 @@ export class KiotVietProductService {
       let skippedCount = 0;
 
       for (const priceBook of priceBooks) {
+        // CORRECTED: Using priceBookId from API response directly
+        const priceBookKiotVietId = priceBook.priceBookId;
+
+        if (!priceBookKiotVietId) {
+          this.logger.warn(
+            `⚠️ Skipping pricebook with missing priceBookId for product ${productId}: ${JSON.stringify(priceBook)}`,
+          );
+          skippedCount++;
+          continue;
+        }
+
         const existingPriceBook = await this.prismaService.priceBook.findFirst({
-          where: { kiotVietId: priceBook.priceBookId },
+          where: { kiotVietId: priceBookKiotVietId },
           select: { id: true, name: true },
         });
 
         if (!existingPriceBook) {
           this.logger.warn(
-            `⚠️ [DEPENDENCY MISS] PriceBook ${priceBook.priceBookId} (${priceBook.priceBookName || 'unknown'}) not found - skipping price for product ${productId}`,
+            `⚠️ [DEPENDENCY MISS] PriceBook ${priceBookKiotVietId} (${priceBook.priceBookName || 'unknown'}) not found - skipping price for product ${productId}`,
           );
           skippedCount++;
           continue;

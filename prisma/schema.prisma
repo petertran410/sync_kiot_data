@@ -14,7 +14,8 @@ model Category {
   parentId       Int?
   parent         Category? @relation("CategoryHierarchy", fields: [parentId], references: [id])
   children       Category[] @relation("CategoryHierarchy")
-  hasChildren    Boolean   @default(false)
+  hasChild       Boolean    @default(false)
+  rank           Int?
   retailerId     Int?
   createdDate    DateTime  @default(now())
   modifiedDate   DateTime  @updatedAt
@@ -43,7 +44,7 @@ model Product {
   description            String?                  @db.Text
   allowsSale             Boolean                  @default(true)
   hasVariants            Boolean                  @default(false)
-  basePrice              Decimal                  @db.Decimal(15, 2)
+  basePrice              Decimal?                  @db.Decimal(15, 2)
   unit                   String?
   masterProductId        BigInt?
   masterProduct          Product?                 @relation("ProductVariants", fields: [masterProductId], references: [kiotVietId])
@@ -125,9 +126,9 @@ model ProductInventory {
   product          Product  @relation(fields: [productId], references: [id])
   branchId         Int
   branch           Branch   @relation(fields: [branchId], references: [id])
-  onHand           Float    @default(0)
-  reserved         Float    @default(0)
-  onOrder          Float    @default(0)
+  onHand           Float?    @default(0)
+  reserved         Float?    @default(0)
+  onOrder          Float?    @default(0)
   cost             Decimal? @db.Decimal(15, 2)
   minQuantity      Float?
   maxQuantity      Float?

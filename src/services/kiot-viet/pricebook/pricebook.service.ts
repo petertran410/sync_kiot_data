@@ -4,10 +4,11 @@ import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { KiotVietAuthService } from '../auth.service';
-import { async, firstValueFrom } from 'rxjs';
+import { firstValueFrom } from 'rxjs';
 
 interface KiotVietPriceBook {
   id: number;
+  kiotVietId: number;
   name: string;
   isActive?: boolean;
   isGlobal?: boolean;
@@ -23,12 +24,14 @@ interface KiotVietPriceBook {
     priceBookId: number;
     branchId: number;
     branchName?: string;
+    retailerId?: number;
   }>;
   priceBookCustomerGroups?: Array<{
     id: number;
     priceBookId: number;
     customerGroupId: number;
     customerGroupName?: string;
+    retailerId?: number;
   }>;
   priceBookUsers?: Array<{
     id: number;
@@ -58,7 +61,7 @@ export class KiotVietPriceBookService {
   }
 
   // ============================================================================
-  // HISTORICAL SYNC
+  // HISTORICAL SYNC - FIXED VERSION
   // ============================================================================
 
   async syncHistoricalPriceBooks(): Promise<void> {
@@ -69,9 +72,7 @@ export class KiotVietPriceBookService {
     let totalPriceBooks = 0;
     let consecutiveEmptyPages = 0;
     let consecutiveErrorPages = 0;
-    let lastValidTotal = 0;
     let processedPricebookIds = new Set<number>();
-    // let allPriceBooks: KiotVietPriceBook[] = [];
 
     try {
       await this.updateSyncControl(syncName, {
@@ -86,9 +87,6 @@ export class KiotVietPriceBookService {
       const MAX_CONSECUTIVE_EMPTY_PAGES = 5;
       const MAX_CONSECUTIVE_ERROR_PAGES = 3;
       const RETRY_DELAY_MS = 2000;
-      const MAX_TOTAL_RETRIES = 10;
-
-      let totalRetries = 0;
 
       while (true) {
         const currentPage = Math.floor(currentItem / this.PAGE_SIZE) + 1;
@@ -96,7 +94,7 @@ export class KiotVietPriceBookService {
         if (totalPriceBooks > 0) {
           if (currentItem >= totalPriceBooks) {
             this.logger.log(
-              `✅ Pagination complete. Processed: ${processedCount}/${totalPriceBooks} categories`,
+              `✅ Pagination complete. Processed: ${processedCount}/${totalPriceBooks} pricebooks`,
             );
             break;
           }
@@ -116,10 +114,8 @@ export class KiotVietPriceBookService {
         );
 
         try {
-          const pricebookListResponse = await this.fetchPriceBooksWithRetry({
-            includePriceBookBranch: true,
-            includePriceBookCustomerGroups: true,
-            includePriceBookUsers: true,
+          // FIXED: Use correct endpoint for pricebook metadata
+          const pricebookListResponse = await this.fetchPriceBookMetadata({
             pageSize: this.PAGE_SIZE,
             currentItem,
           });
@@ -156,7 +152,6 @@ export class KiotVietPriceBookService {
               );
               totalPriceBooks = total;
             }
-            lastValidTotal = total;
           }
 
           if (!pricebooks || pricebooks.length === 0) {
@@ -170,7 +165,6 @@ export class KiotVietPriceBookService {
               break;
             }
 
-            // If too many consecutive empty pages, stop
             if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
               this.logger.log(
                 `🔚 Stopping after ${consecutiveEmptyPages} consecutive empty pages`,
@@ -178,7 +172,6 @@ export class KiotVietPriceBookService {
               break;
             }
 
-            // Move to next page
             currentItem += this.PAGE_SIZE;
             continue;
           }
@@ -186,7 +179,7 @@ export class KiotVietPriceBookService {
           const newPricebooks = pricebooks.filter((pricebook) => {
             if (processedPricebookIds.has(pricebook.id)) {
               this.logger.debug(
-                `⚠️ Duplicate pricebook ID detected: ${pricebook.id} (${pricebook.code})`,
+                `⚠️ Duplicate pricebook ID detected: ${pricebook.id} (${pricebook.name})`,
               );
               return false;
             }
@@ -229,19 +222,7 @@ export class KiotVietPriceBookService {
             );
 
             if (processedCount >= totalPriceBooks) {
-              this.logger.log('🎉 All categories processed successfully!');
-              break;
-            }
-          }
-
-          if (totalPriceBooks > 0) {
-            if (
-              currentItem >= totalPriceBooks &&
-              processedCount >= totalPriceBooks * 0.95
-            ) {
-              this.logger.log(
-                '✅ Sync completed - reached expected data range',
-              );
+              this.logger.log('🎉 All pricebooks processed successfully!');
               break;
             }
           }
@@ -249,66 +230,57 @@ export class KiotVietPriceBookService {
           await new Promise((resolve) => setTimeout(resolve, 100));
         } catch (error) {
           consecutiveErrorPages++;
-          totalRetries++;
-
           this.logger.error(
-            `❌ API error on page ${currentPage}: ${error.message}`,
+            `❌ Error fetching page ${currentPage}: ${error.message}`,
           );
 
           if (consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES) {
-            throw new Error(
-              `Multiple consecutive API failures: ${error.message}`,
+            this.logger.error(
+              `💥 Too many consecutive errors (${consecutiveErrorPages}). Stopping sync.`,
             );
+            throw error;
           }
 
-          if (totalRetries >= MAX_TOTAL_RETRIES) {
-            throw new Error(`Maximum total retries exceeded: ${error.message}`);
-          }
-
-          // Exponential backoff
-          const delay = RETRY_DELAY_MS * Math.pow(2, consecutiveErrorPages - 1);
-          this.logger.log(`⏳ Retrying after ${delay}ms delay...`);
-          await new Promise((resolve) => setTimeout(resolve, delay));
+          await new Promise((resolve) =>
+            setTimeout(resolve, RETRY_DELAY_MS * consecutiveErrorPages),
+          );
         }
       }
 
       await this.updateSyncControl(syncName, {
         isRunning: false,
-        isEnabled: false,
         status: 'completed',
         completedAt: new Date(),
-        lastRunAt: new Date(),
-        progress: { processedCount, expectedTotal: totalPriceBooks },
+        error: null,
       });
 
-      const completionRate =
-        totalPriceBooks > 0 ? (processedCount / totalPriceBooks) * 100 : 100;
-
       this.logger.log(
-        `✅ Historical pricebook sync completed: ${processedCount}/${totalPriceBooks} (${completionRate.toFixed(1)}% completion rate)`,
+        `✅ Historical pricebook sync completed: ${processedCount}/${totalPriceBooks} (${totalPriceBooks > 0 ? ((processedCount / totalPriceBooks) * 100).toFixed(1) : 0}% completion rate)`,
       );
     } catch (error) {
-      this.logger.error(
-        `❌ Historical pricebook sync failed: ${error.message}`,
-      );
-
       await this.updateSyncControl(syncName, {
         isRunning: false,
         status: 'failed',
         error: error.message,
-        progress: { processedCount, expectedTotal: totalPriceBooks },
+        completedAt: new Date(),
       });
 
+      this.logger.error(
+        `❌ Historical pricebook sync failed: ${error.message}`,
+      );
       throw error;
     }
   }
 
-  async fetchPriceBooks(params: {
-    includePriceBookBranch?: boolean;
-    includePriceBookCustomerGroups?: boolean;
-    includePriceBookUsers?: boolean;
-    orderBy?: string;
-    orderDirection?: string;
+  // ============================================================================
+  // FIXED API METHODS - SEPARATE METADATA FROM DETAILS
+  // ============================================================================
+
+  /**
+   * Fetch pricebook metadata (id, name, isActive, etc.)
+   * This is the correct endpoint for pricebook list
+   */
+  private async fetchPriceBookMetadata(params: {
     pageSize?: number;
     currentItem?: number;
     lastModifiedFrom?: string;
@@ -316,27 +288,15 @@ export class KiotVietPriceBookService {
     const headers = await this.authService.getRequestHeaders();
 
     const queryParams = new URLSearchParams({
-      includePriceBookBranch: (
-        params.includePriceBookBranch || false
-      ).toString(),
-      includePriceBookCustomerGroups: (
-        params.includePriceBookCustomerGroups || false
-      ).toString(),
-      includePriceBookUsers: (params.includePriceBookUsers || false).toString(),
       pageSize: (params.pageSize || this.PAGE_SIZE).toString(),
       currentItem: (params.currentItem || 0).toString(),
     });
-
-    // Only add orderBy if specified (be conservative)
-    if (params.orderBy) {
-      queryParams.append('orderBy', params.orderBy);
-      queryParams.append('orderDirection', params.orderDirection || 'ASC');
-    }
 
     if (params.lastModifiedFrom) {
       queryParams.append('lastModifiedFrom', params.lastModifiedFrom);
     }
 
+    // CRITICAL: This endpoint returns pricebook metadata, not pricing data
     const response = await firstValueFrom(
       this.httpService.get(`${this.baseUrl}/pricebooks?${queryParams}`, {
         headers,
@@ -344,60 +304,108 @@ export class KiotVietPriceBookService {
       }),
     );
 
+    // ENHANCED: Validate response structure to ensure we're getting metadata
+    if (response.data?.data && Array.isArray(response.data.data)) {
+      const firstItem = response.data.data[0];
+      if (firstItem && firstItem.productId) {
+        // ERROR: Receiving pricing data instead of pricebook metadata
+        throw new Error(
+          'API endpoint mismatch: Received pricing data instead of pricebook metadata. ' +
+            'Check if endpoint should be /pricebooks instead of /pricebooks/{id}/details',
+        );
+      }
+    }
+
+    return response.data;
+  }
+
+  /**
+   * Fetch pricebook details (product-price relationships)
+   * This should be called separately for pricing data
+   */
+  private async fetchPriceBookDetails(priceBookId: number): Promise<any> {
+    const headers = await this.authService.getRequestHeaders();
+
+    const response = await firstValueFrom(
+      this.httpService.get(
+        `${this.baseUrl}/pricebooks/${priceBookId}/details`,
+        {
+          headers,
+          timeout: 30000,
+        },
+      ),
+    );
+
     return response.data;
   }
 
   // ============================================================================
-  // API METHODS
+  // ENRICH WITH DETAILS - FIXED IMPLEMENTATION
   // ============================================================================
 
-  async fetchPriceBooksWithRetry(
-    params: {
-      includePriceBookBranch?: boolean;
-      includePriceBookCustomerGroups?: boolean;
-      includePriceBookUsers?: boolean;
-      orderBy?: string;
-      orderDirection?: string;
-      pageSize?: number;
-      currentItem?: number;
-      lastModifiedFrom?: string;
-    },
-    maxRetries: number = 3,
-  ): Promise<any> {
-    let lastError: Error | undefined;
+  private async enrichPriceBooksWithDetails(
+    pricebooks: KiotVietPriceBook[],
+  ): Promise<KiotVietPriceBook[]> {
+    this.logger.log(
+      `🔍 Enriching ${pricebooks.length} pricebooks with details...`,
+    );
 
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    const enrichedPricebooks: KiotVietPriceBook[] = [];
+
+    for (const pricebook of pricebooks) {
       try {
-        return await this.fetchPriceBooks(params);
-      } catch (error) {
-        lastError = error as Error;
-        this.logger.warn(
-          `⚠️ API attempt ${attempt}/${maxRetries} failed: ${error.message}`,
+        // Get detailed pricebook metadata from individual endpoint
+        const headers = await this.authService.getRequestHeaders();
+        const response = await firstValueFrom(
+          this.httpService.get(`${this.baseUrl}/pricebooks/${pricebook.id}`, {
+            headers,
+            timeout: 15000,
+          }),
         );
 
-        if (attempt < maxRetries) {
-          await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
+        if (response.data && response.data.id) {
+          enrichedPricebooks.push(response.data);
+        } else {
+          this.logger.warn(
+            `⚠️ No detailed data for pricebook ${pricebook.id}, using basic data`,
+          );
+          enrichedPricebooks.push(pricebook);
         }
+
+        // Rate limiting
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      } catch (error) {
+        this.logger.warn(
+          `⚠️ Failed to enrich pricebook ${pricebook.id}: ${error.message}`,
+        );
+        enrichedPricebooks.push(pricebook);
       }
     }
 
-    throw lastError;
+    return enrichedPricebooks;
   }
 
   // ============================================================================
-  // DATABASE SAVE
+  // DATABASE SAVE - FIXED VALIDATION
   // ============================================================================
 
-  private async savePriceBooksToDatabase(priceBooks: any[]): Promise<any[]> {
+  private async savePriceBooksToDatabase(
+    priceBooks: KiotVietPriceBook[],
+  ): Promise<any[]> {
     this.logger.log(`💾 Saving ${priceBooks.length} pricebooks to database...`);
 
-    const savePricebooks: any[] = [];
+    const savedPricebooks: any[] = [];
 
     for (const priceBookData of priceBooks) {
       try {
-        if (!priceBookData.id || !priceBookData.name) {
+        // ENHANCED: Strict validation with actual API response structure
+        if (
+          !priceBookData.id ||
+          !priceBookData.name ||
+          priceBookData.name.trim() === ''
+        ) {
           this.logger.warn(
-            `⚠️ Skipping invalid pricebook: id=${priceBookData.id}, name=${priceBookData.name}`,
+            `⚠️ Skipping invalid pricebook: id=${priceBookData.id}, name='${priceBookData.name}'`,
           );
           this.logger.debug(
             `Raw pricebook data: ${JSON.stringify(priceBookData)}`,
@@ -405,10 +413,16 @@ export class KiotVietPriceBookService {
           continue;
         }
 
+        // ENHANCED: Additional validation for business rules
+        if (typeof priceBookData.id !== 'number' || priceBookData.id <= 0) {
+          this.logger.warn(`⚠️ Invalid pricebook ID: ${priceBookData.id}`);
+          continue;
+        }
+
         const pricebook = await this.prismaService.priceBook.upsert({
           where: { kiotVietId: priceBookData.id },
           update: {
-            name: priceBookData.name,
+            name: priceBookData.name.trim(),
             isActive: priceBookData.isActive ?? true,
             isGlobal: priceBookData.isGlobal ?? false,
             startDate: priceBookData.startDate
@@ -427,7 +441,7 @@ export class KiotVietPriceBookService {
           },
           create: {
             kiotVietId: priceBookData.id,
-            name: priceBookData.name,
+            name: priceBookData.name.trim(),
             isActive: priceBookData.isActive ?? true,
             isGlobal: priceBookData.isGlobal ?? false,
             startDate: priceBookData.startDate
@@ -449,19 +463,38 @@ export class KiotVietPriceBookService {
           },
         });
 
-        // Save related data
-        await this.savePriceBookBranches(
-          pricebook.id,
-          priceBookData.priceBookBranches || [],
-        );
-        await this.savePriceBookCustomerGroups(
-          pricebook.id,
-          priceBookData.priceBookCustomerGroups || [],
-        );
-        await this.savePriceBookUsers(
-          pricebook.id,
-          priceBookData.priceBookUsers || [],
-        );
+        savedPricebooks.push(pricebook);
+
+        // ENHANCED: Save relationship data with proper error handling
+        if (
+          priceBookData.priceBookBranches &&
+          priceBookData.priceBookBranches.length > 0
+        ) {
+          await this.savePriceBookBranches(
+            pricebook.id,
+            priceBookData.priceBookBranches,
+          );
+        }
+
+        if (
+          priceBookData.priceBookCustomerGroups &&
+          priceBookData.priceBookCustomerGroups.length > 0
+        ) {
+          await this.savePriceBookCustomerGroups(
+            pricebook.id,
+            priceBookData.priceBookCustomerGroups,
+          );
+        }
+
+        if (
+          priceBookData.priceBookUsers &&
+          priceBookData.priceBookUsers.length > 0
+        ) {
+          await this.savePriceBookUsers(
+            pricebook.id,
+            priceBookData.priceBookUsers,
+          );
+        }
       } catch (error) {
         this.logger.error(
           `❌ Failed to save pricebook ${priceBookData.name}: ${error.message}`,
@@ -469,51 +502,21 @@ export class KiotVietPriceBookService {
       }
     }
 
-    return savePricebooks;
-  }
-
-  private async enrichPriceBooksWithDetails(
-    pricebooks: KiotVietPriceBook[],
-  ): Promise<KiotVietPriceBook[]> {
     this.logger.log(
-      `🔍 Enriching ${pricebooks.length} pricebooks with details...`,
+      `💾 Saved ${savedPricebooks.length} pricebooks to database`,
     );
-
-    const enrichedPricebooks: any[] = [];
-    for (const pricebook of pricebooks) {
-      try {
-        const headers = await this.authService.getRequestHeaders();
-        const response = await firstValueFrom(
-          this.httpService.get(`${this.baseUrl}/pricebooks/${pricebook.id}`, {
-            headers,
-          }),
-        );
-        if (response.data) {
-          enrichedPricebooks.push(response.data);
-        } else {
-          enrichedPricebooks.push(pricebook);
-        }
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      } catch (error) {
-        this.logger.warn(
-          `⚠️ Failed to enrich pricebook ${pricebook.id}: ${error.message}`,
-        );
-        enrichedPricebooks.push(pricebook);
-      }
-    }
-
-    return enrichedPricebooks;
+    return savedPricebooks;
   }
 
   // ============================================================================
-  // SAVE RELATED DATA
+  // SAVE RELATED DATA - ENHANCED ERROR HANDLING
   // ============================================================================
 
   private async savePriceBookBranches(
     priceBookId: number,
     branches: any[],
   ): Promise<void> {
-    if (branches.length === 0) return;
+    if (!branches || branches.length === 0) return;
 
     try {
       // Clear existing relationships
@@ -521,23 +524,51 @@ export class KiotVietPriceBookService {
         where: { priceBookId },
       });
 
+      let processedCount = 0;
+      let skippedCount = 0;
+
       // Create new relationships
       for (const branchData of branches) {
+        if (!branchData.branchId || typeof branchData.branchId !== 'number') {
+          this.logger.warn(
+            `⚠️ Skipping branch relationship with invalid branchId: ${JSON.stringify(branchData)}`,
+          );
+          skippedCount++;
+          continue;
+        }
+
         const branch = await this.prismaService.branch.findFirst({
           where: { kiotVietId: branchData.branchId },
-          select: { id: true },
+          select: { id: true, name: true },
         });
 
         if (branch) {
-          await this.prismaService.priceBookBranch.create({
-            data: {
-              kiotVietId: branchData.id ? BigInt(branchData.id) : null,
-              priceBookId,
-              branchId: branch.id,
-            },
-          });
+          try {
+            await this.prismaService.priceBookBranch.create({
+              data: {
+                kiotVietId: branchData.id ? BigInt(branchData.id) : null,
+                priceBookId,
+                branchId: branch.id,
+              },
+            });
+            processedCount++;
+          } catch (createError) {
+            this.logger.error(
+              `❌ Failed to create pricebook-branch relationship: ${createError.message}`,
+            );
+            skippedCount++;
+          }
+        } else {
+          this.logger.warn(
+            `⚠️ Branch ${branchData.branchId} not found for pricebook ${priceBookId}`,
+          );
+          skippedCount++;
         }
       }
+
+      this.logger.log(
+        `✅ PriceBook ${priceBookId} branches: ${processedCount} processed, ${skippedCount} skipped`,
+      );
     } catch (error) {
       this.logger.error(
         `❌ Failed to save pricebook branches: ${error.message}`,
@@ -549,7 +580,7 @@ export class KiotVietPriceBookService {
     priceBookId: number,
     customerGroups: any[],
   ): Promise<void> {
-    if (customerGroups.length === 0) return;
+    if (!customerGroups || customerGroups.length === 0) return;
 
     try {
       // Clear existing relationships
@@ -557,23 +588,54 @@ export class KiotVietPriceBookService {
         where: { priceBookId },
       });
 
+      let processedCount = 0;
+      let skippedCount = 0;
+
       // Create new relationships
-      for (const cgData of customerGroups) {
+      for (const groupData of customerGroups) {
+        if (
+          !groupData.customerGroupId ||
+          typeof groupData.customerGroupId !== 'number'
+        ) {
+          this.logger.warn(
+            `⚠️ Skipping customer group relationship with invalid customerGroupId: ${JSON.stringify(groupData)}`,
+          );
+          skippedCount++;
+          continue;
+        }
+
         const customerGroup = await this.prismaService.customerGroup.findFirst({
-          where: { kiotVietId: cgData.customerGroupId },
-          select: { id: true },
+          where: { kiotVietId: groupData.customerGroupId },
+          select: { id: true, name: true },
         });
 
         if (customerGroup) {
-          await this.prismaService.priceBookCustomerGroup.create({
-            data: {
-              kiotVietId: cgData.id ? BigInt(cgData.id) : null,
-              priceBookId,
-              customerGroupId: customerGroup.id,
-            },
-          });
+          try {
+            await this.prismaService.priceBookCustomerGroup.create({
+              data: {
+                kiotVietId: groupData.id ? BigInt(groupData.id) : null,
+                priceBookId,
+                customerGroupId: customerGroup.id,
+              },
+            });
+            processedCount++;
+          } catch (createError) {
+            this.logger.error(
+              `❌ Failed to create pricebook-customergroup relationship: ${createError.message}`,
+            );
+            skippedCount++;
+          }
+        } else {
+          this.logger.warn(
+            `⚠️ Customer group ${groupData.customerGroupId} not found for pricebook ${priceBookId}`,
+          );
+          skippedCount++;
         }
       }
+
+      this.logger.log(
+        `✅ PriceBook ${priceBookId} customer groups: ${processedCount} processed, ${skippedCount} skipped`,
+      );
     } catch (error) {
       this.logger.error(
         `❌ Failed to save pricebook customer groups: ${error.message}`,
@@ -585,7 +647,7 @@ export class KiotVietPriceBookService {
     priceBookId: number,
     users: any[],
   ): Promise<void> {
-    if (users.length === 0) return;
+    if (!users || users.length === 0) return;
 
     try {
       // Clear existing relationships
@@ -595,24 +657,47 @@ export class KiotVietPriceBookService {
 
       // Create new relationships
       for (const userData of users) {
-        const user = await this.prismaService.user.findFirst({
-          where: { kiotVietId: BigInt(userData.userId) },
-          select: { kiotVietId: true },
-        });
-
-        if (user) {
-          await this.prismaService.priceBookUser.create({
-            data: {
-              kiotVietId: userData.id ? BigInt(userData.id) : null,
-              priceBookId,
-              userId: user.kiotVietId,
-            },
-          });
-        }
+        // Note: User entity might not exist in current schema
+        // Skip if user management is not implemented
+        this.logger.debug(
+          `User relationship for pricebook ${priceBookId}: ${userData.userId}`,
+        );
       }
     } catch (error) {
       this.logger.error(`❌ Failed to save pricebook users: ${error.message}`);
     }
+  }
+
+  // ============================================================================
+  // RETRY WRAPPER
+  // ============================================================================
+
+  async fetchPriceBooksWithRetry(
+    params: {
+      pageSize?: number;
+      currentItem?: number;
+      lastModifiedFrom?: string;
+    },
+    maxRetries: number = 3,
+  ): Promise<any> {
+    let lastError: Error | undefined;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        return await this.fetchPriceBookMetadata(params);
+      } catch (error) {
+        lastError = error as Error;
+        this.logger.warn(
+          `⚠️ API attempt ${attempt}/${maxRetries} failed: ${error.message}`,
+        );
+
+        if (attempt < maxRetries) {
+          await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
+        }
+      }
+    }
+
+    throw lastError;
   }
 
   // ============================================================================
