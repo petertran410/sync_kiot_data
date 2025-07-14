@@ -7,45 +7,60 @@ import { async, firstValueFrom } from 'rxjs';
 import { LarkSyncStatus } from '@prisma/client';
 
 const LARK_PRODUCT_FIELDS = {
-  PRIMARY_CODE: 'Mã Hàng Hoá', // fldU0X6CW5 (Primary)
-  PRODUCT_ID: 'Id Hàng Hoá', // fld6I7AvWH
-  CREATED_DATE: 'Ngày Tạo', // fldhfxFsTa
+  PRIMARY_CODE: 'Mã Hàng Hoá',
+  PRODUCT_ID: 'Id Hàng Hoá',
+  CREATED_DATE: 'Ngày Tạo',
   MODIFIED_DATE: 'Ngày Cập Nhật',
-  TRADEMARK: 'Thương Hiệu', // fld8rFauSn
-  PRODUCT_NAME: 'Tên Hàng Hoá', // fldFANpN5f
-  FULL_NAME: 'Tên Đầy Đủ', // fldhYfS0Sz
-  TYPE: 'Loại', // fldpriGtiy (Category)
-  ALLOWS_SALE: 'Cho Phép Bán', // fldXnGFbh6
-  // PRODUCT_TYPE: 'Loại Hàng Hoá', // fldHLOYoKM
+  TRADEMARK: 'Thương Hiệu',
+  PRODUCT_NAME: 'Tên Hàng Hoá',
+  FULL_NAME: 'Tên Đầy Đủ',
+  TYPE: 'Loại',
+  ALLOWS_SALE: 'Cho Phép Bán',
   WEIGHT: 'Cân Nặng',
   UNIT: 'Đơn Vị',
   PRODUCT_BUSINESS: 'Hàng Kinh Doanh',
   BASE_PRICE: 'Bảng Giá Chung',
   DESCRIPTION: 'Mô Tả',
 
-  // Cost Price Fields (from Inventories)
-  COST_PRICE_DIEP_TRA: 'Giá Vốn (Cửa Hàng Diệp Trà)', // fldpijwGUd
-  COST_PRICE_WAREHOUSE: 'Giá Vốn (Kho Bán Hàng)', // fld2Gll93e
+  // ============================================================================
+  // COST PRICE FIELDS - SEPARATE FOR EACH BRANCH
+  // ============================================================================
+  COST_PRICE_CUA_HANG_DIEP_TRA: 'Giá Vốn (Cửa Hàng Diệp Trà)', // Branch ID: 1
+  COST_PRICE_KHO_HA_NOI: 'Giá Vốn (Kho Hà Nội)', // Branch ID: 2
+  COST_PRICE_KHO_SAI_GON: 'Giá Vốn (Kho Sài Gòn)', // Branch ID: 3
+  COST_PRICE_VAN_PHONG_HA_NOI: 'Giá Vốn (Văn Phòng Hà Nội)', // Branch ID: 4
+  COST_PRICE_KHO_BAN_HANG: 'Giá Vốn (Kho Bán Hàng)', // Branch ID: 5
 
-  // Real PriceBook Fields - MAPPED FROM USER'S ACTUAL DATA
-  PRICE_LE_HCM: 'Bảng Giá Lẻ HCM', // fldZwlDjcW - ID: 486878
-  PRICE_BUON_HCM: 'Bảng Giá Buôn HCM', // fld7yImXrJ - ID: 486879
-  PRICE_CHIEN_LUOC: 'Bảng Giá Chiến Lược', // fldFiZ0Ufn - ID: 486881
-  PRICE_LASIMI_SAI_GON: 'Bảng Giá Lasimi Sài Gòn', // ID: 486883
-  PRICE_BUON_HN: 'Bảng Giá Buôn HN', // fldtGkhkFZ - ID: 486884
-  PRICE_EM_HOAI_ROYALTEA: 'Bảng Giá Em Hoài Royaltea', // ID: 486886
-  PRICE_DO_MINH_TAN: 'Bảng Giá Đỗ Minh Tân', // ID: 486887
-  PRICE_DO_MINH_TAN_8: 'Bảng Giá Đỗ Minh Tân 8%', // ID: 486888
-  PRICE_HOANG_QUAN_HN: 'Bảng Giá Hoàng Quân Hà Nội', // fldmPPYQZI - ID: 486889
-  PRICE_HOC_VIEN_CAFE: 'Bảng Giá Học Viện Cafe', // fldALYEhYi - ID: 486890
-  PRICE_CHUOI_LABOONG: 'Bảng Giá Chuỗi Laboong', // fldTJBkzvq - ID: 486920
-  PRICE_CONG_TAC_VIEN: 'Bảng Giá Cộng Tác Viên', // ID: 486967
-  PRICE_SUB_D: 'Bảng Giá Sub -D', // ID: 486968
-  PRICE_CHEESE_COFFEE: 'Bảng Giá Cheese Coffee', // ID: 487406
-  PRICE_CHUOI_SHANCHA: 'Bảng Giá Chuỗi ShanCha', // fldw7uJour - ID: 487540
-  PRICE_SHOPEE: 'Bảng Giá Shopee', // ID: 487577
-  PRICE_KAFFA: 'Bảng Giá Kaffa', // ID: 487682
-  PRICE_CING_HU_TANG: 'Bảng Giá Cing Hu Tang', // ID: 487791
+  // ============================================================================
+  // INVENTORY QUANTITY FIELDS - SEPARATE FOR EACH BRANCH
+  // ============================================================================
+  TON_KHO_CUA_HANG_DIEP_TRA: 'Tồn Kho (Cửa Hàng Diệp Trà)', // Branch ID: 1
+  TON_KHO_KHO_HA_NOI: 'Tồn Kho (Kho Hà Nội)', // Branch ID: 2
+  TON_KHO_KHO_SAI_GON: 'Tồn Kho (Kho Sài Gòn)', // Branch ID: 3
+  TON_KHO_VAN_PHONG_HA_NOI: 'Tồn Kho (Văn Phòng Hà Nội)', // Branch ID: 4
+  TON_KHO_KHO_BAN_HANG: 'Tồn Kho (Kho Bán Hàng)', // Branch ID: 5
+
+  // ============================================================================
+  // PRICEBOOK FIELDS - EXISTING STRUCTURE
+  // ============================================================================
+  PRICE_HOC_VIEN_CAFE: 'Bảng Giá Học Viện Cafe',
+  PRICE_HOANG_QUAN_HN: 'Bảng Giá Hoàng Quân Hà Nội',
+  PRICE_LE_HCM: 'Bảng Giá Lẻ HCM',
+  PRICE_DO_MINH_TAN: 'Bảng Giá Đỗ Minh Tân',
+  PRICE_DO_MINH_TAN_8: 'Bảng Giá Đỗ Minh Tân 8%',
+  PRICE_SHOPEE: 'Bảng Giá Shopee',
+  PRICE_CHEESE_COFFEE: 'Bảng Giá Cheese Coffee',
+  PRICE_CING_HU_TANG: 'Bảng Giá Cing Hu Tang',
+  PRICE_CHIEN_LUOC: 'Bảng Giá Chiến Lược',
+  PRICE_BUON_HN: 'Bảng Giá Buôn HN',
+  PRICE_BUON_HCM: 'Bảng Giá Buôn HCM',
+  PRICE_CHUOI_LABOONG: 'Bảng Giá Chuỗi Laboong',
+  PRICE_CHUOI_SHANCHA: 'Bảng Giá Chuỗi ShanCha',
+  PRICE_CONG_TAC_VIEN: 'Bảng Giá Cộng Tác Viên',
+  PRICE_EM_HOAI_ROYALTEA: 'Bảng Giá Em Hoài RoyalTea',
+  PRICE_KAFFA: 'Bảng Giá Kaffa',
+  PRICE_LASIMI_SAI_GON: 'Bảng Giá Lasimi Sài Gòn',
+  PRICE_SUB_D: 'Bảng Giá SUB-D',
 } as const;
 
 // ============================================================================
@@ -90,16 +105,22 @@ const PRICEBOOK_FIELD_MAPPING: Record<number, string> = {
   22: LARK_PRODUCT_FIELDS.PRICE_CING_HU_TANG, // BẢNG GIÁ CING HU TANG
 } as const;
 
-// ============================================================================
-// BRANCH ID MAPPING FOR COST PRICES
-// ============================================================================
+// Cost Price Mapping - Database Internal IDs to LarkBase Fields
 const BRANCH_COST_MAPPING: Record<number, string> = {
-  1: LARK_PRODUCT_FIELDS.COST_PRICE_DIEP_TRA, // Cửa Hàng Diệp Trà
-  635935: LARK_PRODUCT_FIELDS.COST_PRICE_WAREHOUSE, // Kho bán hàng
-  2: LARK_PRODUCT_FIELDS.COST_PRICE_WAREHOUSE, // Kho Hà Nội
-  3: LARK_PRODUCT_FIELDS.COST_PRICE_WAREHOUSE, // Kho Sài Gòn
-  4: LARK_PRODUCT_FIELDS.COST_PRICE_WAREHOUSE, // Văn phòng Hà Nội
-  631164: LARK_PRODUCT_FIELDS.COST_PRICE_WAREHOUSE, // Kho Hà Nội
+  1: LARK_PRODUCT_FIELDS.COST_PRICE_CUA_HANG_DIEP_TRA, // Cửa Hàng Diệp Trà
+  2: LARK_PRODUCT_FIELDS.COST_PRICE_KHO_HA_NOI, // Kho Hà Nội
+  3: LARK_PRODUCT_FIELDS.COST_PRICE_KHO_SAI_GON, // Kho Sài Gòn
+  4: LARK_PRODUCT_FIELDS.COST_PRICE_VAN_PHONG_HA_NOI, // Văn phòng Hà Nội
+  5: LARK_PRODUCT_FIELDS.COST_PRICE_KHO_BAN_HANG, // Kho bán hàng
+} as const;
+
+// Inventory Quantity Mapping - Database Internal IDs to LarkBase Fields
+const BRANCH_INVENTORY_MAPPING: Record<number, string> = {
+  1: LARK_PRODUCT_FIELDS.TON_KHO_CUA_HANG_DIEP_TRA, // Cửa Hàng Diệp Trà
+  2: LARK_PRODUCT_FIELDS.TON_KHO_KHO_HA_NOI, // Kho Hà Nội
+  3: LARK_PRODUCT_FIELDS.TON_KHO_KHO_SAI_GON, // Kho Sài Gòn
+  4: LARK_PRODUCT_FIELDS.TON_KHO_VAN_PHONG_HA_NOI, // Văn phòng Hà Nội
+  5: LARK_PRODUCT_FIELDS.TON_KHO_KHO_BAN_HANG, // Kho bán hàng
 } as const;
 
 // ============================================================================
@@ -722,7 +743,7 @@ export class LarkProductSyncService {
       product.priceBooks.length > 0
     ) {
       for (const priceBook of product.priceBooks) {
-        const priceBookId = priceBook.priceBookId; // ← ĐÚNG field name
+        const priceBookId = priceBook.priceBookId;
         const larkField = PRICEBOOK_FIELD_MAPPING[priceBookId];
 
         if (larkField && priceBook.price) {
@@ -731,26 +752,29 @@ export class LarkProductSyncService {
       }
     }
 
-    // CORRECTED: Map Inventories (Cost Prices) - using branchId instead of branchName
-    for (const inventory of product.inventories) {
-      const branchId = inventory.branchId;
-      const larkField = BRANCH_COST_MAPPING[branchId];
+    if (
+      product.inventories &&
+      Array.isArray(product.inventories) &&
+      product.inventories.length > 0
+    ) {
+      for (const inventory of product.inventories) {
+        const branchId = inventory.branchId; // Internal database ID (1,2,3,4,5,6)
 
-      if (larkField && inventory.cost && inventory.cost > 0) {
-        fields[larkField] = Number(inventory.cost); // ✅ ĐÚNG
-      }
-    }
+        // Map Cost Prices - Giá Vốn
+        const costField = BRANCH_COST_MAPPING[branchId];
+        if (costField && inventory.cost) {
+          fields[costField] = Number(inventory.cost) || 0;
+        }
 
-    for (const inventory of product.inventories) {
-      const branchId = inventory.branchId;
-      const inventoryField = BRANCH_COST_MAPPING[branchId];
-
-      if (
-        inventoryField &&
-        inventory.onHand !== null &&
-        inventory.onHand !== undefined
-      ) {
-        fields[inventoryField] = Number(inventory.onHand);
+        // Map Inventory Quantities - Tồn Kho
+        const inventoryField = BRANCH_INVENTORY_MAPPING[branchId];
+        if (
+          inventoryField &&
+          inventory.onHand !== null &&
+          inventory.onHand !== undefined
+        ) {
+          fields[inventoryField] = Number(inventory.onHand) || 0;
+        }
       }
     }
 

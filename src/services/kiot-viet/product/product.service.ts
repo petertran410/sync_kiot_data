@@ -1179,7 +1179,43 @@ export class KiotVietProductService {
         return;
       }
 
-      await this.larkProductSyncService.syncProductsToLarkBase(productsToSync);
+      // ENHANCED: Query products with full relationships for LarkBase
+      const enrichedProducts = await Promise.all(
+        productsToSync.map(async (product) => {
+          // Query inventories from ProductInventory table
+          const inventories =
+            await this.prismaService.productInventory.findMany({
+              where: { productId: product.id },
+              select: {
+                branchId: true,
+                onHand: true,
+                reserved: true,
+                onOrder: true,
+                cost: true,
+              },
+            });
+
+          // Query price books from PriceBookDetail table
+          const priceBooks = await this.prismaService.priceBookDetail.findMany({
+            where: { productId: product.id },
+            select: {
+              priceBookId: true,
+              price: true,
+            },
+          });
+
+          // Return enriched product for LarkBase sync
+          return {
+            ...product,
+            inventories: inventories || [],
+            priceBooks: priceBooks || [],
+          };
+        }),
+      );
+
+      await this.larkProductSyncService.syncProductsToLarkBase(
+        enrichedProducts,
+      );
       this.logger.log('✅ LarkBase product sync completed');
     } catch (error) {
       this.logger.error(`❌ LarkBase product sync failed: ${error.message}`);
@@ -1189,10 +1225,14 @@ export class KiotVietProductService {
         const productIds = products
           .map((p) => p.id)
           .filter((id) => id !== undefined);
+
         if (productIds.length > 0) {
           await this.prismaService.product.updateMany({
             where: { id: { in: productIds } },
-            data: { larkSyncStatus: 'FAILED' },
+            data: {
+              larkSyncStatus: 'FAILED',
+              larkSyncedAt: new Date(),
+            },
           });
         }
       } catch (updateError) {
@@ -1201,7 +1241,7 @@ export class KiotVietProductService {
         );
       }
 
-      throw error;
+      throw new Error(`LarkBase sync failed: ${error.message}`);
     }
   }
 
