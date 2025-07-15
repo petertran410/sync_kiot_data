@@ -124,8 +124,6 @@ export class BusSchedulerService implements OnModuleInit {
     }
 
     try {
-      this.logger.log('🌙 23:00 Daily Dependency Sync triggered');
-
       // Check if any sync is running
       const runningSyncs = await this.checkRunningSyncs();
       if (runningSyncs.length > 0) {
@@ -298,6 +296,19 @@ export class BusSchedulerService implements OnModuleInit {
 
     if (ordersToSync.length > 0) {
       await this.larkOrderSyncService.syncOrdersToLarkBase(ordersToSync);
+    }
+  }
+
+  private async runProductLarkSync(): Promise<void> {
+    const productsToSync = await this.prismaService.product.findMany({
+      where: {
+        larkSyncStatus: { in: ['PENDING', 'FAILED'] },
+      },
+      take: 100,
+    });
+
+    if (productsToSync.length > 0) {
+      await this.larkProductSyncService.syncProductsToLarkBase(productsToSync);
     }
   }
 
@@ -924,18 +935,18 @@ export class BusSchedulerService implements OnModuleInit {
       this.logger.log('📋 Running parallel startup sync checks...');
 
       const startupPromises = [
-        // this.runCustomerSync().catch((error) => {
-        //   this.logger.warn(`Customer startup check failed: ${error.message}`);
-        //   return Promise.resolve();
-        // }),
-        // this.runInvoiceSync().catch((error) => {
-        //   this.logger.warn(`Invoice startup check failed: ${error.message}`);
-        //   return Promise.resolve();
-        // }),
-        // this.runOrderSync().catch((error) => {
-        //   this.logger.warn(`Order startup check failed: ${error.message}`);
-        //   return Promise.resolve();
-        // }),
+        this.runCustomerSync().catch((error) => {
+          this.logger.warn(`Customer startup check failed: ${error.message}`);
+          return Promise.resolve();
+        }),
+        this.runInvoiceSync().catch((error) => {
+          this.logger.warn(`Invoice startup check failed: ${error.message}`);
+          return Promise.resolve();
+        }),
+        this.runOrderSync().catch((error) => {
+          this.logger.warn(`Order startup check failed: ${error.message}`);
+          return Promise.resolve();
+        }),
       ];
 
       await Promise.allSettled(startupPromises);
@@ -980,11 +991,11 @@ export class BusSchedulerService implements OnModuleInit {
 
     return {
       scheduler: {
-        // mainScheduler: {
-        //   enabled: this.isMainSchedulerEnabled,
-        //   nextRun: '8 minutes interval',
-        //   entities: ['customer', 'invoice', 'order'],
-        // },
+        mainScheduler: {
+          enabled: this.isMainSchedulerEnabled,
+          nextRun: '8 minutes interval',
+          entities: ['customer', 'invoice', 'order'],
+        },
         // weeklyScheduler: {
         //   enabled: this.isWeeklySchedulerEnabled,
         //   nextRun: 'Sunday 6 AM (Vietnam time)',
@@ -993,8 +1004,8 @@ export class BusSchedulerService implements OnModuleInit {
         dependencyScheduler: {
           enabled: this.isDependencySchedulerEnabled,
           nextRun: 'Daily 23:00 (Vietnam time)',
-          entities: ['category', 'trademark', 'branch', 'pricebook', 'product'],
-          executionOrder: 'Category → TradeMark → Branch → PriceBook → Product',
+          entities: ['category', 'trademark', 'pricebook', 'product'],
+          executionOrder: 'Category → TradeMark → PriceBook → Product',
         },
       },
       runningTasks: runningSyncs.length,
@@ -1038,20 +1049,14 @@ export class BusSchedulerService implements OnModuleInit {
     try {
       let entities: string[];
       switch (cycleName) {
-        // case 'main_cycle':
-        //   entities = ['customer', 'invoice', 'order'];
-        //   break;
-        // case 'weekly_cycle':
-        //   entities = ['customergroup'];
-        //   break;
+        case 'main_cycle':
+          entities = ['customer', 'invoice', 'order'];
+          break;
+        case 'weekly_cycle':
+          entities = ['customergroup'];
+          break;
         case 'dependency_cycle':
-          entities = [
-            'category',
-            'trademark',
-            'branch',
-            'pricebook',
-            'product',
-          ];
+          entities = ['category', 'trademark', 'pricebook', 'product'];
           break;
         default:
           entities = [];
