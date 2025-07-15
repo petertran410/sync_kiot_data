@@ -10,11 +10,12 @@ import { LarkInvoiceSyncService } from '../lark/invoice/lark-invoice-sync.servic
 import { LarkOrderSyncService } from '../lark/order/lark-order-sync.service';
 import { KiotVietOrderService } from '../kiot-viet/order/order.service';
 import { KiotVietProductService } from '../kiot-viet/product/product.service';
-import { KiotVietCategoryService } from '../kiot-viet/category/category.service';
-import { KiotVietTradeMarkService } from '../kiot-viet/trademark/trademark.service';
-// import { KiotVietBranchService } from '../kiot-viet/branch/branch.service';
 import { KiotVietPriceBookService } from '../kiot-viet/pricebook/pricebook.service';
 import { LarkProductSyncService } from '../lark/product/lark-product-sync.service';
+
+// import { KiotVietCategoryService } from '../kiot-viet/category/category.service';
+// import { KiotVietTradeMarkService } from '../kiot-viet/trademark/trademark.service';
+// import { KiotVietBranchService } from '../kiot-viet/branch/branch.service';
 
 @Injectable()
 export class BusSchedulerService implements OnModuleInit {
@@ -34,25 +35,20 @@ export class BusSchedulerService implements OnModuleInit {
     private readonly larkOrderSyncService: LarkOrderSyncService,
     private readonly larkProductSyncService: LarkProductSyncService,
     private readonly productService: KiotVietProductService,
-    private readonly categoryService: KiotVietCategoryService,
-    private readonly tradeMarkService: KiotVietTradeMarkService,
+    // private readonly categoryService: KiotVietCategoryService,
+    // private readonly tradeMarkService: KiotVietTradeMarkService,
     // private readonly branchService: KiotVietBranchService,
     private readonly priceBookService: KiotVietPriceBookService,
   ) {}
 
   async onModuleInit() {
-    // Startup check after 5 seconds
     setTimeout(async () => {
       await this.runStartupCheck();
     }, 5000);
   }
 
-  // ============================================================================
-  // MAIN 7-MINUTE SCHEDULER - ENHANCED WITH TIMEOUT PROTECTION
-  // ============================================================================
-
   @Cron('*/7 * * * *', {
-    name: 'main_sync_cycle',
+    name: 'unified_sync_cycle',
     timeZone: 'Asia/Ho_Chi_Minh',
   })
   async handleMainSyncCycle() {
@@ -62,136 +58,102 @@ export class BusSchedulerService implements OnModuleInit {
     }
 
     try {
-      this.logger.log('🚀 Starting 7-minute parallel sync cycle...');
+      this.logger.log('🚀 Starting unified parallel sync cycle...');
       const startTime = Date.now();
+
       const runningSyncs = await this.checkRunningSyncs();
       if (runningSyncs.length > 0) {
         this.logger.log(
-          `⏸️ Parallel sync skipped - running: ${runningSyncs.map((s) => s.name).join(', ')}`,
+          `⏸️ Unified sync skipped - running: ${runningSyncs.map((s) => s.name).join(', ')}`,
         );
         return;
       }
-      await this.updateCycleTracking('main_cycle', 'running');
 
-      const CYCLE_TIMEOUT_MS = 25 * 60 * 1000;
+      await this.updateCycleTracking('unified_cycle', 'running');
+
+      const CYCLE_TIMEOUT_MS = 35 * 60 * 1000; // Increased to 35 minutes for Product sequence
 
       try {
-        const cyclePromise = this.executeParallelSyncs();
+        const cyclePromise = this.executeHybridParallelSyncs();
         const timeoutPromise = new Promise<never>((_, reject) =>
           setTimeout(
-            () => reject(new Error('Cycle timeout after 25 minutes')),
+            () => reject(new Error('Cycle timeout after 35 minutes')),
             CYCLE_TIMEOUT_MS,
           ),
         );
 
         await Promise.race([cyclePromise, timeoutPromise]);
 
-        await this.updateCycleTracking('main_cycle', 'completed');
+        await this.updateCycleTracking('unified_cycle', 'completed');
 
         const totalDuration = ((Date.now() - startTime) / 1000).toFixed(2);
-        this.logger.log(
-          `🎉 Parallel sync cycle completed in ${totalDuration}s`,
-        );
+        this.logger.log(`🎉 Unified sync cycle completed in ${totalDuration}s`);
       } catch (timeoutError) {
         if (
           timeoutError instanceof Error &&
           timeoutError.message.includes('timeout')
         ) {
-          this.logger.error(`⏰ Sync cycle timed out after 25 minutes`);
+          this.logger.error(`⏰ Sync cycle timed out after 35 minutes`);
           await this.updateCycleTracking(
-            'main_cycle',
+            'unified_cycle',
             'timeout',
-            'Cycle exceeded 25 minute timeout',
+            'Cycle exceeded 35 minute timeout',
           );
         } else {
           throw timeoutError;
         }
       }
     } catch (error) {
-      this.logger.error(`❌ Main sync cycle failed: ${error.message}`);
-      await this.updateCycleTracking('main_cycle', 'failed', error.message);
+      this.logger.error(`❌ Unified sync cycle failed: ${error.message}`);
+      await this.updateCycleTracking('unified_cycle', 'failed', error.message);
     }
   }
 
-  @Cron('*/2 * * * *', {
-    name: 'dependency_sync_cycle',
-    timeZone: 'Asia/Ho_Chi_Minh',
-  })
-  async handleDependencySyncCycle() {
-    if (!this.isDependencySchedulerEnabled) {
-      this.logger.debug('🔇 Dependency scheduler is disabled');
-      return;
-    }
-
+  private async runProductSequenceSync(): Promise<void> {
     try {
-      // Check if any sync is running
-      const runningSyncs = await this.checkRunningSyncs();
-      if (runningSyncs.length > 0) {
-        this.logger.log(
-          `⏸️ Dependency sync skipped - running: ${runningSyncs.map((s) => s.name).join(', ')}`,
-        );
-        this.logger.log('⏸️ Will retry tomorrow at 23:00');
-        return;
-      }
-
-      // Update cycle tracking
-      await this.updateCycleTracking('dependency_cycle', 'running');
-
-      // Run dependency sync in strict order: Category → TradeMark → Branch → PriceBook → Product
-      await this.runDependencySyncInOrder();
-
-      // Complete cycle
-      await this.updateCycleTracking('dependency_cycle', 'completed');
-
-      this.logger.log('✅ Dependency sync cycle completed successfully');
-    } catch (error) {
-      this.logger.error(`❌ Dependency sync cycle failed: ${error.message}`);
-      await this.updateCycleTracking(
-        'dependency_cycle',
-        'failed',
-        error.message,
+      this.logger.log(
+        '📦 [ProductSequence] Starting sequential dependency sync...',
       );
-    }
-  }
+      const startTime = Date.now();
 
-  // ============================================================================
-  // DEPENDENCY SYNC LOGIC - STRICT ORDER
-  // ============================================================================
+      // this.logger.log('🏷️ [1/4] Syncing Categories...');
+      // await this.enableAndRunCategorySync();
+      // await this.waitForSyncCompletion('category_historical', 300);
 
-  private async runDependencySyncInOrder(): Promise<void> {
-    this.logger.log('📋 Starting dependency sync in strict order...');
+      // this.logger.log('🏢 [2/4] Syncing TradeMarks...');
+      // await this.enableAndRunTradeMarkSync();
+      // await this.waitForSyncCompletion('trademark_historical', 300);
 
-    try {
-      // Step 1: Category (Independent)
-      this.logger.log('🏷️ [1/4] Syncing Categories...');
-      await this.enableAndRunCategorySync();
-      await this.waitForSyncCompletion('category_historical', 300);
-
-      // Step 2: TradeMark (Independent)
-      this.logger.log('🏢 [2/4] Syncing TradeMarks...');
-      await this.enableAndRunTradeMarkSync();
-      await this.waitForSyncCompletion('trademark_historical', 300);
-
-      // Step 3: PriceBook (Independent) - REMOVED BRANCH DEPENDENCY
-      this.logger.log('💰 [3/4] Syncing PriceBooks...');
+      this.logger.log('💰 [1/2] Syncing PriceBooks...');
       await this.enableAndRunPriceBookSync();
       await this.waitForSyncCompletion('pricebook_historical', 300);
 
-      // Step 4: Product (Depends on Category, TradeMark, PriceBook only)
-      this.logger.log(
-        '📦 [4/4] Syncing Products (using existing branch data)...',
-      );
+      this.logger.log('📦 [2/2] Syncing Products (with full dependencies)...');
       await this.enableAndRunProductSync();
       await this.waitForSyncCompletion('product_historical', 1800);
 
-      this.logger.log('✅ All dependency syncs completed successfully');
+      // Auto-trigger Product LarkBase sync
+      await this.autoTriggerProductLarkSync();
+
+      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+      this.logger.log(
+        `✅ [ProductSequence] Sequential sync completed in ${duration}s`,
+      );
+
+      return Promise.resolve();
     } catch (error) {
-      this.logger.error(`❌ Dependency sync failed at step: ${error.message}`);
-      throw error;
+      this.logger.error(
+        `❌ [ProductSequence] Sequential sync failed: ${error.message}`,
+      );
+      throw new Error(`ProductSequence sync failed: ${error.message}`);
     }
   }
 
-  private async executeParallelSyncs(): Promise<void> {
+  private async executeHybridParallelSyncs(): Promise<void> {
+    this.logger.log(
+      '🔀 Starting hybrid parallel execution: Customer ⫸ Invoice ⫸ Order ⫸ ProductSequence',
+    );
+
     const syncPromises = [
       this.runCustomerSync().catch((error) => {
         this.logger.error(
@@ -209,6 +171,16 @@ export class BusSchedulerService implements OnModuleInit {
         this.logger.error(`❌ [Order] Parallel sync failed: ${error.message}`);
         return { status: 'rejected', reason: error.message, sync: 'Order' };
       }),
+      this.runProductSequenceSync().catch((error) => {
+        this.logger.error(
+          `❌ [ProductSequence] Parallel sync failed: ${error.message}`,
+        );
+        return {
+          status: 'rejected',
+          reason: error.message,
+          sync: 'ProductSequence',
+        };
+      }),
     ];
 
     const results = await Promise.allSettled(syncPromises);
@@ -216,12 +188,12 @@ export class BusSchedulerService implements OnModuleInit {
   }
 
   private async executeStaggeredLarkSync(syncResults: any[]): Promise<void> {
-    this.logger.log('🚀 Starting staggered LarkBase sync...');
+    this.logger.log('🚀 Starting staggered LarkBase sync for all entities...');
 
     const successfulSyncs = syncResults
       .map((result, index) => ({
         result,
-        syncType: ['customer', 'invoice', 'order'][index],
+        syncType: ['customer', 'invoice', 'order', 'productsequence'][index],
       }))
       .filter(({ result }) => result.status === 'fulfilled' || !result.reason);
 
@@ -246,6 +218,9 @@ export class BusSchedulerService implements OnModuleInit {
           case 'order':
             await this.runOrderLarkSync();
             break;
+          case 'productsequence':
+            await this.runProductLarkSync();
+            break;
         }
         this.logger.log(`✅ ${syncType} LarkBase sync completed`);
       } catch (error) {
@@ -254,15 +229,13 @@ export class BusSchedulerService implements OnModuleInit {
         );
       }
 
-      delay += 30000;
+      delay += 30000; // 30-second stagger
     }
   }
 
   private async runCustomerLarkSync(): Promise<void> {
     const customersToSync = await this.prismaService.customer.findMany({
-      where: {
-        larkSyncStatus: { in: ['PENDING', 'FAILED'] },
-      },
+      where: { larkSyncStatus: { in: ['PENDING', 'FAILED'] } },
       take: 100,
     });
 
@@ -275,9 +248,7 @@ export class BusSchedulerService implements OnModuleInit {
 
   private async runInvoiceLarkSync(): Promise<void> {
     const invoicesToSync = await this.prismaService.invoice.findMany({
-      where: {
-        larkSyncStatus: { in: ['PENDING', 'FAILED'] },
-      },
+      where: { larkSyncStatus: { in: ['PENDING', 'FAILED'] } },
       take: 100,
     });
 
@@ -288,9 +259,7 @@ export class BusSchedulerService implements OnModuleInit {
 
   private async runOrderLarkSync(): Promise<void> {
     const ordersToSync = await this.prismaService.order.findMany({
-      where: {
-        larkSyncStatus: { in: ['PENDING', 'FAILED'] },
-      },
+      where: { larkSyncStatus: { in: ['PENDING', 'FAILED'] } },
       take: 100,
     });
 
@@ -301,9 +270,7 @@ export class BusSchedulerService implements OnModuleInit {
 
   private async runProductLarkSync(): Promise<void> {
     const productsToSync = await this.prismaService.product.findMany({
-      where: {
-        larkSyncStatus: { in: ['PENDING', 'FAILED'] },
-      },
+      where: { larkSyncStatus: { in: ['PENDING', 'FAILED'] } },
       take: 100,
     });
 
@@ -382,10 +349,8 @@ export class BusSchedulerService implements OnModuleInit {
 
   private async checkRunningSyncsWithNullSafety(): Promise<any[]> {
     const runningSyncs = await this.prismaService.syncControl.findMany({
-      where: {
-        isRunning: true,
-        startedAt: { not: null },
-      },
+      where: { isRunning: true },
+      select: { name: true, startedAt: true },
     });
 
     return runningSyncs.filter(
@@ -393,52 +358,44 @@ export class BusSchedulerService implements OnModuleInit {
     );
   }
 
-  // ============================================================================
-  // SUNDAY 6 AM SCHEDULER (Weekly entities)
-  // ============================================================================
+  // @Cron('0 6 * * 0', {
+  //   name: 'weekly_sync_cycle',
+  //   timeZone: 'Asia/Ho_Chi_Minh',
+  // })
+  // async handleWeeklySyncCycle() {
+  //   if (!this.isWeeklySchedulerEnabled) {
+  //     this.logger.debug('🔇 Weekly scheduler is disabled');
+  //     return;
+  //   }
 
-  @Cron('0 6 * * 0', {
-    name: 'weekly_sync_cycle',
-    timeZone: 'Asia/Ho_Chi_Minh',
-  })
-  async handleWeeklySyncCycle() {
-    if (!this.isWeeklySchedulerEnabled) {
-      this.logger.debug('🔇 Weekly scheduler is disabled');
-      return;
-    }
+  //   try {
+  //     this.logger.log('📅 Sunday 6 AM: Weekly sync cycle triggered');
 
-    try {
-      this.logger.log('📅 Sunday 6 AM: Weekly sync cycle triggered');
+  //     // Check if any sync is running
+  //     const runningSyncs = await this.checkRunningSyncs();
+  //     if (runningSyncs.length > 0) {
+  //       this.logger.log(
+  //         `⏸️ Weekly sync skipped - running: ${runningSyncs.map((s) => s.name).join(', ')}`,
+  //       );
+  //       this.logger.log('⏸️ Will retry next Sunday');
+  //       return;
+  //     }
 
-      // Check if any sync is running
-      const runningSyncs = await this.checkRunningSyncs();
-      if (runningSyncs.length > 0) {
-        this.logger.log(
-          `⏸️ Weekly sync skipped - running: ${runningSyncs.map((s) => s.name).join(', ')}`,
-        );
-        this.logger.log('⏸️ Will retry next Sunday');
-        return;
-      }
+  //     // Update cycle tracking
+  //     await this.updateCycleTracking('weekly_cycle', 'running');
 
-      // Update cycle tracking
-      await this.updateCycleTracking('weekly_cycle', 'running');
+  //     // Run CustomerGroup sync
+  //     await this.runCustomerGroupSync();
 
-      // Run CustomerGroup sync
-      await this.runCustomerGroupSync();
+  //     // Complete cycle
+  //     await this.updateCycleTracking('weekly_cycle', 'completed');
 
-      // Complete cycle
-      await this.updateCycleTracking('weekly_cycle', 'completed');
-
-      this.logger.log('✅ Weekly sync cycle completed successfully');
-    } catch (error) {
-      this.logger.error(`❌ Weekly sync cycle failed: ${error.message}`);
-      await this.updateCycleTracking('weekly_cycle', 'failed', error.message);
-    }
-  }
-
-  // ============================================================================
-  // ENTITY-SPECIFIC SYNC METHODS
-  // ============================================================================
+  //     this.logger.log('✅ Weekly sync cycle completed successfully');
+  //   } catch (error) {
+  //     this.logger.error(`❌ Weekly sync cycle failed: ${error.message}`);
+  //     await this.updateCycleTracking('weekly_cycle', 'failed', error.message);
+  //   }
+  // }
 
   private async runCustomerSync(): Promise<void> {
     try {
@@ -494,113 +451,31 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
-  private async runCustomerGroupSync(): Promise<void> {
-    try {
-      this.logger.log('👥 [CustomerGroup] Starting sync...');
+  // private async runCustomerGroupSync(): Promise<void> {
+  //   try {
+  //     this.logger.log('👥 [CustomerGroup] Starting sync...');
 
-      const startTime = Date.now();
-      await this.customerGroupService.syncCustomerGroups();
-      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+  //     const startTime = Date.now();
+  //     await this.customerGroupService.syncCustomerGroups();
+  //     const duration = ((Date.now() - startTime) / 1000).toFixed(2);
 
-      this.logger.log(`✅ [CustomerGroup] Sync completed in ${duration}s`);
-    } catch (error) {
-      this.logger.error(`❌ [CustomerGroup] Sync failed: ${error.message}`);
-      throw error;
-    }
-  }
-
-  // ============================================================================
-  // AUTO-TRIGGER LARK SYNC METHODS
-  // ============================================================================
+  //     this.logger.log(`✅ [CustomerGroup] Sync completed in ${duration}s`);
+  //   } catch (error) {
+  //     this.logger.error(`❌ [CustomerGroup] Sync failed: ${error.message}`);
+  //     throw error;
+  //   }
+  // }
 
   private async autoTriggerCustomerLarkSync(): Promise<void> {
     try {
-      const recentSync = await this.prismaService.syncControl.findFirst({
-        where: { name: 'customer_recent' },
+      const customersToSync = await this.prismaService.customer.findMany({
+        where: { larkSyncStatus: { in: ['PENDING', 'FAILED'] } },
+        take: 100,
       });
 
-      const larkSync = await this.prismaService.syncControl.findFirst({
-        where: { name: 'customer_lark_sync' },
-      });
-
-      if (
-        recentSync?.status === 'completed' &&
-        !recentSync.isRunning &&
-        (!larkSync?.isRunning || !larkSync)
-      ) {
-        await this.prismaService.syncControl.upsert({
-          where: { name: 'customer_lark_sync' },
-          create: {
-            name: 'customer_lark_sync',
-            entities: ['customer'],
-            syncMode: 'lark_sync',
-            isRunning: true,
-            isEnabled: true,
-            status: 'running',
-            startedAt: new Date(),
-          },
-          update: {
-            isRunning: true,
-            status: 'running',
-            startedAt: new Date(),
-            error: null,
-          },
-        });
-
-        const customersToSync = await this.prismaService.customer.findMany({
-          where: {
-            OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
-          },
-          take: 1000,
-        });
-
-        if (customersToSync.length > 0) {
-          try {
-            await this.larkCustomerSyncService.syncCustomersToLarkBase(
-              customersToSync,
-            );
-
-            await this.prismaService.syncControl.update({
-              where: { name: 'customer_lark_sync' },
-              data: {
-                isRunning: false,
-                status: 'completed',
-                completedAt: new Date(),
-                lastRunAt: new Date(),
-              },
-            });
-
-            this.logger.log(
-              `✅ Auto-triggered customer Lark sync: ${customersToSync.length} customers`,
-            );
-          } catch (larkError) {
-            await this.prismaService.syncControl.update({
-              where: { name: 'customer_lark_sync' },
-              data: {
-                isRunning: false,
-                status: 'failed',
-                error: larkError.message,
-              },
-            });
-            throw larkError;
-          }
-        } else {
-          await this.prismaService.syncControl.update({
-            where: { name: 'customer_lark_sync' },
-            data: {
-              isRunning: false,
-              status: 'completed',
-              completedAt: new Date(),
-              lastRunAt: new Date(),
-            },
-          });
-          this.logger.log(
-            '📋 No customers need Lark sync - marked as completed',
-          );
-        }
-      } else {
-        this.logger.debug(
-          `⏸️ Customer Lark sync conditions not met: recent=${recentSync?.status}(${recentSync?.isRunning}), lark=${larkSync?.status}(${larkSync?.isRunning})`,
+      if (customersToSync.length > 0) {
+        await this.larkCustomerSyncService.syncCustomersToLarkBase(
+          customersToSync,
         );
       }
     } catch (error) {
@@ -610,92 +485,14 @@ export class BusSchedulerService implements OnModuleInit {
 
   private async autoTriggerInvoiceLarkSync(): Promise<void> {
     try {
-      const recentSync = await this.prismaService.syncControl.findFirst({
-        where: { name: 'invoice_recent' },
+      const invoicesToSync = await this.prismaService.invoice.findMany({
+        where: { larkSyncStatus: { in: ['PENDING', 'FAILED'] } },
+        take: 1000,
       });
 
-      const larkSync = await this.prismaService.syncControl.findFirst({
-        where: { name: 'invoice_lark_sync' },
-      });
-
-      if (
-        recentSync?.status === 'completed' &&
-        !recentSync.isRunning &&
-        (!larkSync?.isRunning || !larkSync)
-      ) {
-        await this.prismaService.syncControl.upsert({
-          where: { name: 'invoice_lark_sync' },
-          create: {
-            name: 'invoice_lark_sync',
-            entities: ['invoice'],
-            syncMode: 'lark_sync',
-            isRunning: true,
-            isEnabled: true,
-            status: 'running',
-            startedAt: new Date(),
-          },
-          update: {
-            isRunning: true,
-            status: 'running',
-            startedAt: new Date(),
-            error: null,
-          },
-        });
-
-        const invoicesToSync = await this.prismaService.invoice.findMany({
-          where: {
-            OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
-          },
-          take: 1000,
-        });
-
-        if (invoicesToSync.length > 0) {
-          try {
-            await this.larkInvoiceSyncService.syncInvoicesToLarkBase(
-              invoicesToSync,
-            );
-
-            await this.prismaService.syncControl.update({
-              where: { name: 'invoice_lark_sync' },
-              data: {
-                isRunning: false,
-                status: 'completed',
-                completedAt: new Date(),
-                lastRunAt: new Date(),
-              },
-            });
-
-            this.logger.log(
-              `✅ Auto-triggered invoice Lark sync: ${invoicesToSync.length} invoices`,
-            );
-          } catch (larkError) {
-            await this.prismaService.syncControl.update({
-              where: { name: 'invoice_lark_sync' },
-              data: {
-                isRunning: false,
-                status: 'failed',
-                error: larkError.message,
-              },
-            });
-            throw larkError;
-          }
-        } else {
-          await this.prismaService.syncControl.update({
-            where: { name: 'invoice_lark_sync' },
-            data: {
-              isRunning: false,
-              status: 'completed',
-              completedAt: new Date(),
-              lastRunAt: new Date(),
-            },
-          });
-          this.logger.log(
-            '📋 No invoices need Lark sync - marked as completed',
-          );
-        }
-      } else {
-        this.logger.debug(
-          `⏸️ Invoice Lark sync conditions not met: recent=${recentSync?.status}(${recentSync?.isRunning}), lark=${larkSync?.status}(${larkSync?.isRunning})`,
+      if (invoicesToSync.length > 0) {
+        await this.larkInvoiceSyncService.syncInvoicesToLarkBase(
+          invoicesToSync,
         );
       }
     } catch (error) {
@@ -705,116 +502,53 @@ export class BusSchedulerService implements OnModuleInit {
 
   private async autoTriggerOrderLarkSync(): Promise<void> {
     try {
-      const recentSync = await this.prismaService.syncControl.findFirst({
-        where: { name: 'order_recent' },
+      const ordersToSync = await this.prismaService.order.findMany({
+        where: { larkSyncStatus: { in: ['PENDING', 'FAILED'] } },
+        take: 1000,
       });
 
-      const larkSync = await this.prismaService.syncControl.findFirst({
-        where: { name: 'order_lark_sync' },
-      });
-
-      if (
-        recentSync?.status === 'completed' &&
-        !recentSync.isRunning &&
-        (!larkSync?.isRunning || !larkSync)
-      ) {
-        await this.prismaService.syncControl.upsert({
-          where: { name: 'order_lark_sync' },
-          create: {
-            name: 'order_lark_sync',
-            entities: ['order'],
-            syncMode: 'lark_sync',
-            isRunning: true,
-            isEnabled: true,
-            status: 'running',
-            startedAt: new Date(),
-          },
-          update: {
-            isRunning: true,
-            status: 'running',
-            startedAt: new Date(),
-            error: null,
-          },
-        });
-
-        const ordersToSync = await this.prismaService.order.findMany({
-          where: {
-            OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
-          },
-          take: 1000,
-        });
-
-        if (ordersToSync.length > 0) {
-          try {
-            await this.larkOrderSyncService.syncOrdersToLarkBase(ordersToSync);
-
-            await this.prismaService.syncControl.update({
-              where: { name: 'order_lark_sync' },
-              data: {
-                isRunning: false,
-                status: 'completed',
-                completedAt: new Date(),
-                lastRunAt: new Date(),
-              },
-            });
-
-            this.logger.log(
-              `✅ Auto-triggered order Lark sync: ${ordersToSync.length} orders`,
-            );
-          } catch (larkError) {
-            await this.prismaService.syncControl.update({
-              where: { name: 'order_lark_sync' },
-              data: {
-                isRunning: false,
-                status: 'failed',
-                error: larkError.message,
-              },
-            });
-            throw larkError;
-          }
-        } else {
-          await this.prismaService.syncControl.update({
-            where: { name: 'order_lark_sync' },
-            data: {
-              isRunning: false,
-              status: 'completed',
-              completedAt: new Date(),
-              lastRunAt: new Date(),
-            },
-          });
-          this.logger.log('📋 No orders need Lark sync - marked as completed');
-        }
-      } else {
-        this.logger.debug(
-          `⏸️ Order Lark sync conditions not met: recent=${recentSync?.status}(${recentSync?.isRunning}), lark=${larkSync?.status}(${larkSync?.isRunning})`,
-        );
+      if (ordersToSync.length > 0) {
+        await this.larkOrderSyncService.syncOrdersToLarkBase(ordersToSync);
       }
     } catch (error) {
       this.logger.error(`❌ Auto order Lark sync failed: ${error.message}`);
     }
   }
 
-  // ============================================================================
-  // DEPENDENCY SYNC METHODS
-  // ============================================================================
-
-  private async enableAndRunCategorySync(): Promise<void> {
+  private async autoTriggerProductLarkSync(): Promise<void> {
     try {
-      await this.categoryService.enableHistoricalSync();
-      await this.categoryService.syncHistoricalCategories();
+      const productsToSync = await this.prismaService.product.findMany({
+        where: { larkSyncStatus: { in: ['PENDING', 'FAILED'] } },
+        take: 1000,
+      });
+
+      if (productsToSync.length > 0) {
+        await this.larkProductSyncService.syncProductsToLarkBase(
+          productsToSync,
+        );
+      }
     } catch (error) {
-      throw new Error(`Category sync failed: ${error.message}`);
+      this.logger.error(`❌ Auto product Lark sync failed: ${error.message}`);
     }
   }
 
-  private async enableAndRunTradeMarkSync(): Promise<void> {
-    try {
-      await this.tradeMarkService.enableHistoricalSync();
-      await this.tradeMarkService.syncHistoricalTradeMarks();
-    } catch (error) {
-      throw new Error(`TradeMark sync failed: ${error.message}`);
-    }
-  }
+  // private async enableAndRunCategorySync(): Promise<void> {
+  //   try {
+  //     await this.categoryService.enableHistoricalSync();
+  //     await this.categoryService.syncHistoricalCategories();
+  //   } catch (error) {
+  //     throw new Error(`Category sync failed: ${error.message}`);
+  //   }
+  // }
+
+  // private async enableAndRunTradeMarkSync(): Promise<void> {
+  //   try {
+  //     await this.tradeMarkService.enableHistoricalSync();
+  //     await this.tradeMarkService.syncHistoricalTradeMarks();
+  //   } catch (error) {
+  //     throw new Error(`TradeMark sync failed: ${error.message}`);
+  //   }
+  // }
 
   private async enableAndRunPriceBookSync(): Promise<void> {
     try {
@@ -834,61 +568,41 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
-  // ============================================================================
-  // SYNC COMPLETION WAITER
-  // ============================================================================
-
   private async waitForSyncCompletion(
     syncName: string,
     timeoutSeconds: number,
   ): Promise<void> {
-    const startTime = Date.now();
-    const timeoutMs = timeoutSeconds * 1000;
-
     this.logger.log(
       `⏳ Waiting for ${syncName} to complete (timeout: ${timeoutSeconds}s)...`,
     );
 
-    while (Date.now() - startTime < timeoutMs) {
+    const startTime = Date.now();
+    const timeout = timeoutSeconds * 1000;
+
+    while (Date.now() - startTime < timeout) {
       const syncControl = await this.prismaService.syncControl.findFirst({
         where: { name: syncName },
       });
 
-      if (!syncControl) {
-        throw new Error(`Sync control not found: ${syncName}`);
+      if (!syncControl?.isRunning) {
+        this.logger.log(`✅ ${syncName} completed successfully`);
+        return;
       }
 
-      if (!syncControl.isRunning) {
-        if (syncControl.status === 'completed') {
-          this.logger.log(`✅ ${syncName} completed successfully`);
-          return;
-        } else if (syncControl.status === 'failed') {
-          throw new Error(
-            `${syncName} failed: ${syncControl.error || 'Unknown error'}`,
-          );
-        } else {
-          this.logger.log(
-            `⚠️ ${syncName} stopped with status: ${syncControl.status}`,
-          );
-          return;
-        }
-      }
-
-      // Wait 5 seconds before checking again
-      await new Promise((resolve) => setTimeout(resolve, 5000));
+      await new Promise((resolve) => setTimeout(resolve, 2000));
     }
 
-    throw new Error(`${syncName} timed out after ${timeoutSeconds} seconds`);
+    throw new Error(`${syncName} timeout after ${timeoutSeconds} seconds`);
   }
 
   enableMainScheduler() {
     this.isMainSchedulerEnabled = true;
-    this.logger.log('✅ Main scheduler (7-minute cycle) enabled');
+    this.logger.log('✅ Unified scheduler (7-minute cycle) enabled');
   }
 
   disableMainScheduler() {
     this.isMainSchedulerEnabled = false;
-    this.logger.log('🔇 Main scheduler (7-minute cycle) disabled');
+    this.logger.log('🔇 Unified scheduler (7-minute cycle) disabled');
   }
 
   enableWeeklyScheduler() {
@@ -900,20 +614,6 @@ export class BusSchedulerService implements OnModuleInit {
     this.isWeeklySchedulerEnabled = false;
     this.logger.log('🔇 Weekly scheduler (Sunday 6 AM) disabled');
   }
-
-  enableDependencyScheduler() {
-    this.isDependencySchedulerEnabled = true;
-    this.logger.log('✅ Dependency scheduler (Daily 23:00) enabled');
-  }
-
-  disableDependencyScheduler() {
-    this.isDependencySchedulerEnabled = false;
-    this.logger.log('🔇 Dependency scheduler (Daily 23:00) disabled');
-  }
-
-  // ============================================================================
-  // STARTUP CHECKS & CLEANUP
-  // ============================================================================
 
   private async runStartupCheck() {
     try {
@@ -931,25 +631,6 @@ export class BusSchedulerService implements OnModuleInit {
       }
 
       await this.cleanupOldSyncPatterns();
-
-      this.logger.log('📋 Running parallel startup sync checks...');
-
-      const startupPromises = [
-        this.runCustomerSync().catch((error) => {
-          this.logger.warn(`Customer startup check failed: ${error.message}`);
-          return Promise.resolve();
-        }),
-        this.runInvoiceSync().catch((error) => {
-          this.logger.warn(`Invoice startup check failed: ${error.message}`);
-          return Promise.resolve();
-        }),
-        this.runOrderSync().catch((error) => {
-          this.logger.warn(`Order startup check failed: ${error.message}`);
-          return Promise.resolve();
-        }),
-      ];
-
-      await Promise.allSettled(startupPromises);
 
       this.logger.log('✅ Startup check completed successfully');
     } catch (error) {
@@ -969,6 +650,7 @@ export class BusSchedulerService implements OnModuleInit {
               'invoice_recent_lark',
               'order_historical_lark',
               'order_recent_lark',
+              'dependency_cycle', // Remove old dependency cycle
             ],
           },
         },
@@ -982,31 +664,23 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
-  // ============================================================================
-  // STATUS & MONITORING
-  // ============================================================================
-
   async getSchedulerStatus(): Promise<any> {
     const runningSyncs = await this.checkRunningSyncs();
 
     return {
       scheduler: {
-        mainScheduler: {
+        unifiedScheduler: {
           enabled: this.isMainSchedulerEnabled,
-          nextRun: '8 minutes interval',
-          entities: ['customer', 'invoice', 'order'],
+          nextRun: '7 minutes interval',
+          entities: ['customer', 'invoice', 'order', 'productsequence'],
+          architecture: 'Hybrid Parallel-Sequential',
+          productSequence: 'PriceBook → Product',
         },
         // weeklyScheduler: {
         //   enabled: this.isWeeklySchedulerEnabled,
         //   nextRun: 'Sunday 6 AM (Vietnam time)',
         //   entities: ['customergroup'],
         // },
-        dependencyScheduler: {
-          enabled: this.isDependencySchedulerEnabled,
-          nextRun: 'Daily 23:00 (Vietnam time)',
-          entities: ['category', 'trademark', 'pricebook', 'product'],
-          executionOrder: 'Category → TradeMark → PriceBook → Product',
-        },
       },
       runningTasks: runningSyncs.length,
       runningSyncs: runningSyncs.map((sync) => ({
@@ -1033,10 +707,6 @@ export class BusSchedulerService implements OnModuleInit {
     return result.count;
   }
 
-  // ============================================================================
-  // TRACKING & UTILITY METHODS - ENHANCED
-  // ============================================================================
-
   async checkRunningSyncs(): Promise<any[]> {
     return this.checkRunningSyncsWithNullSafety();
   }
@@ -1046,46 +716,28 @@ export class BusSchedulerService implements OnModuleInit {
     status: string,
     error?: string,
   ) {
-    try {
-      let entities: string[];
-      switch (cycleName) {
-        case 'main_cycle':
-          entities = ['customer', 'invoice', 'order'];
-          break;
-        case 'weekly_cycle':
-          entities = ['customergroup'];
-          break;
-        case 'dependency_cycle':
-          entities = ['category', 'trademark', 'pricebook', 'product'];
-          break;
-        default:
-          entities = [];
-      }
-
-      await this.prismaService.syncControl.upsert({
-        where: { name: cycleName },
-        create: {
-          name: cycleName,
-          entities,
-          syncMode: 'cycle',
-          isRunning: status === 'running',
-          isEnabled: true,
-          status,
-          error,
-          startedAt: status === 'running' ? new Date() : null,
-          completedAt: status === 'completed' ? new Date() : null,
-        },
-        update: {
-          isRunning: status === 'running',
-          status,
-          error,
-          startedAt: status === 'running' ? new Date() : undefined,
-          completedAt: status === 'completed' ? new Date() : undefined,
-          lastRunAt: status === 'completed' ? new Date() : undefined,
-        },
-      });
-    } catch (error) {
-      this.logger.error(`Failed to update cycle tracking: ${error.message}`);
-    }
+    await this.prismaService.syncControl.upsert({
+      where: { name: cycleName },
+      create: {
+        name: cycleName,
+        entities:
+          cycleName === 'unified_cycle'
+            ? ['customer', 'invoice', 'order', 'pricebook', 'product']
+            : [''],
+        syncMode: 'unified',
+        isRunning: status === 'running',
+        status,
+        startedAt: status === 'running' ? new Date() : undefined,
+        completedAt: status === 'completed' ? new Date() : undefined,
+        error: error || null,
+      },
+      update: {
+        isRunning: status === 'running',
+        status,
+        startedAt: status === 'running' ? new Date() : undefined,
+        completedAt: status === 'completed' ? new Date() : undefined,
+        error: error || null,
+      },
+    });
   }
 }
