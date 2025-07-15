@@ -51,67 +51,67 @@ export class BusSchedulerService implements OnModuleInit {
   // MAIN 7-MINUTE SCHEDULER - ENHANCED WITH TIMEOUT PROTECTION
   // ============================================================================
 
-  // @Cron('*/7 * * * *', {
-  //   name: 'main_sync_cycle',
-  //   timeZone: 'Asia/Ho_Chi_Minh',
-  // })
-  // async handleMainSyncCycle() {
-  //   if (!this.isMainSchedulerEnabled) {
-  //     this.logger.debug('🔇 Main scheduler is disabled');
-  //     return;
-  //   }
+  @Cron('*/7 * * * *', {
+    name: 'main_sync_cycle',
+    timeZone: 'Asia/Ho_Chi_Minh',
+  })
+  async handleMainSyncCycle() {
+    if (!this.isMainSchedulerEnabled) {
+      this.logger.debug('🔇 Main scheduler is disabled');
+      return;
+    }
 
-  //   try {
-  //     this.logger.log('🚀 Starting 7-minute parallel sync cycle...');
-  //     const startTime = Date.now();
-  //     const runningSyncs = await this.checkRunningSyncs();
-  //     if (runningSyncs.length > 0) {
-  //       this.logger.log(
-  //         `⏸️ Parallel sync skipped - running: ${runningSyncs.map((s) => s.name).join(', ')}`,
-  //       );
-  //       return;
-  //     }
-  //     await this.updateCycleTracking('main_cycle', 'running');
+    try {
+      this.logger.log('🚀 Starting 7-minute parallel sync cycle...');
+      const startTime = Date.now();
+      const runningSyncs = await this.checkRunningSyncs();
+      if (runningSyncs.length > 0) {
+        this.logger.log(
+          `⏸️ Parallel sync skipped - running: ${runningSyncs.map((s) => s.name).join(', ')}`,
+        );
+        return;
+      }
+      await this.updateCycleTracking('main_cycle', 'running');
 
-  //     const CYCLE_TIMEOUT_MS = 25 * 60 * 1000;
+      const CYCLE_TIMEOUT_MS = 25 * 60 * 1000;
 
-  //     try {
-  //       const cyclePromise = this.executeParallelSyncs();
-  //       const timeoutPromise = new Promise<never>((_, reject) =>
-  //         setTimeout(
-  //           () => reject(new Error('Cycle timeout after 25 minutes')),
-  //           CYCLE_TIMEOUT_MS,
-  //         ),
-  //       );
+      try {
+        const cyclePromise = this.executeParallelSyncs();
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error('Cycle timeout after 25 minutes')),
+            CYCLE_TIMEOUT_MS,
+          ),
+        );
 
-  //       await Promise.race([cyclePromise, timeoutPromise]);
+        await Promise.race([cyclePromise, timeoutPromise]);
 
-  //       await this.updateCycleTracking('main_cycle', 'completed');
+        await this.updateCycleTracking('main_cycle', 'completed');
 
-  //       const totalDuration = ((Date.now() - startTime) / 1000).toFixed(2);
-  //       this.logger.log(
-  //         `🎉 Parallel sync cycle completed in ${totalDuration}s`,
-  //       );
-  //     } catch (timeoutError) {
-  //       if (
-  //         timeoutError instanceof Error &&
-  //         timeoutError.message.includes('timeout')
-  //       ) {
-  //         this.logger.error(`⏰ Sync cycle timed out after 25 minutes`);
-  //         await this.updateCycleTracking(
-  //           'main_cycle',
-  //           'timeout',
-  //           'Cycle exceeded 25 minute timeout',
-  //         );
-  //       } else {
-  //         throw timeoutError;
-  //       }
-  //     }
-  //   } catch (error) {
-  //     this.logger.error(`❌ Main sync cycle failed: ${error.message}`);
-  //     await this.updateCycleTracking('main_cycle', 'failed', error.message);
-  //   }
-  // }
+        const totalDuration = ((Date.now() - startTime) / 1000).toFixed(2);
+        this.logger.log(
+          `🎉 Parallel sync cycle completed in ${totalDuration}s`,
+        );
+      } catch (timeoutError) {
+        if (
+          timeoutError instanceof Error &&
+          timeoutError.message.includes('timeout')
+        ) {
+          this.logger.error(`⏰ Sync cycle timed out after 25 minutes`);
+          await this.updateCycleTracking(
+            'main_cycle',
+            'timeout',
+            'Cycle exceeded 25 minute timeout',
+          );
+        } else {
+          throw timeoutError;
+        }
+      }
+    } catch (error) {
+      this.logger.error(`❌ Main sync cycle failed: ${error.message}`);
+      await this.updateCycleTracking('main_cycle', 'failed', error.message);
+    }
+  }
 
   @Cron('*/2 * * * *', {
     name: 'dependency_sync_cycle',
