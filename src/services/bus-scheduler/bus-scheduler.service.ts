@@ -71,7 +71,7 @@ export class BusSchedulerService implements OnModuleInit {
 
       await this.updateCycleTracking('unified_cycle', 'running');
 
-      const CYCLE_TIMEOUT_MS = 35 * 60 * 1000; // Increased to 35 minutes for Product sequence
+      const CYCLE_TIMEOUT_MS = 35 * 60 * 1000;
 
       try {
         const cyclePromise = this.executeHybridParallelSyncs();

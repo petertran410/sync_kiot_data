@@ -779,29 +779,22 @@ export class KiotVietProductService {
         const imageItem = images[i];
         let imageUrl: string | null = null;
 
-        // FIXED: Multi-format URL extraction with comprehensive validation
         if (typeof imageItem === 'string' && imageItem.trim() !== '') {
-          // Format 1: Direct string array ["url1", "url2"]
           imageUrl = imageItem.trim();
         } else if (typeof imageItem === 'object' && imageItem !== null) {
-          // Format 2: Object with 'Image' key (documented format) {"Image": "url"}
           if (
             imageItem.Image &&
             typeof imageItem.Image === 'string' &&
             imageItem.Image.trim() !== ''
           ) {
             imageUrl = imageItem.Image.trim();
-          }
-          // Format 3: Object with lowercase 'image' key {"image": "url"}
-          else if (
+          } else if (
             imageItem.image &&
             typeof imageItem.image === 'string' &&
             imageItem.image.trim() !== ''
           ) {
             imageUrl = imageItem.image.trim();
-          }
-          // Format 4: Object with 'url' key {"url": "url"}
-          else if (
+          } else if (
             imageItem.url &&
             typeof imageItem.url === 'string' &&
             imageItem.url.trim() !== ''
@@ -810,7 +803,6 @@ export class KiotVietProductService {
           }
         }
 
-        // Skip invalid URLs
         if (!imageUrl) {
           this.logger.warn(
             `⚠️ Skipping invalid image item at index ${i} for product ${productId}: ${JSON.stringify(imageItem)}`,
@@ -880,25 +872,21 @@ export class KiotVietProductService {
           continue;
         }
 
-        // STRATEGY 1: Query existing branch from database
         let branch = await this.prismaService.branch.findFirst({
           where: { kiotVietId: branchKiotVietId },
           select: { id: true, name: true },
         });
 
-        // STRATEGY 2: Create fallback branch if not exists (OPTIONAL)
         if (!branch) {
           this.logger.warn(
             `⚠️ Branch ${branchKiotVietId} (${inventory.branchName || 'unknown'}) not found in database`,
           );
 
-          // OPTION A: Skip the inventory (current behavior)
           this.logger.warn(`⚠️ Skipping inventory for product ${productId}`);
           skippedCount++;
           continue;
         }
 
-        // Save inventory with existing branch
         try {
           await this.prismaService.productInventory.create({
             data: {
@@ -977,7 +965,6 @@ export class KiotVietProductService {
       let skippedCount = 0;
 
       for (const priceBook of priceBooks) {
-        // CORRECTED: Using priceBookId from API response directly
         const priceBookKiotVietId = priceBook.priceBookId;
 
         if (!priceBookKiotVietId) {
@@ -1160,10 +1147,6 @@ export class KiotVietProductService {
     }
   }
 
-  // ============================================================================
-  // SYNC TO LARKBASE
-  // ============================================================================
-
   async syncProductsToLarkBase(products: any[]): Promise<void> {
     try {
       this.logger.log(
@@ -1179,10 +1162,8 @@ export class KiotVietProductService {
         return;
       }
 
-      // ENHANCED: Query products with full relationships for LarkBase
       const enrichedProducts = await Promise.all(
         productsToSync.map(async (product) => {
-          // Query inventories from ProductInventory table
           const inventories =
             await this.prismaService.productInventory.findMany({
               where: { productId: product.id },
@@ -1195,7 +1176,6 @@ export class KiotVietProductService {
               },
             });
 
-          // Query price books from PriceBookDetail table
           const priceBooks = await this.prismaService.priceBookDetail.findMany({
             where: { productId: product.id },
             select: {
@@ -1204,7 +1184,6 @@ export class KiotVietProductService {
             },
           });
 
-          // Return enriched product for LarkBase sync
           return {
             ...product,
             inventories: inventories || [],
@@ -1220,7 +1199,6 @@ export class KiotVietProductService {
     } catch (error) {
       this.logger.error(`❌ LarkBase product sync failed: ${error.message}`);
 
-      // Mark products as FAILED for retry
       try {
         const productIds = products
           .map((p) => p.id)
@@ -1244,10 +1222,6 @@ export class KiotVietProductService {
       throw new Error(`LarkBase sync failed: ${error.message}`);
     }
   }
-
-  // ============================================================================
-  // ENHANCED updateSyncControl method - COMPLETE PATTERN
-  // ============================================================================
 
   private async updateSyncControl(name: string, data: any): Promise<void> {
     try {

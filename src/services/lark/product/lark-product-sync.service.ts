@@ -161,7 +161,7 @@ export class LarkProductSyncService {
   private readonly logger = new Logger(LarkProductSyncService.name);
   private readonly baseToken: string;
   private readonly tableId: string;
-  private readonly batchSize: number = 15;
+  private readonly batchSize: number = 50;
 
   private readonly AUTH_ERROR_CODES = [99991663, 99991664, 99991665];
   private readonly MAX_AUTH_RETRIES = 3;
@@ -282,10 +282,6 @@ export class LarkProductSyncService {
       throw error;
     }
   }
-
-  // ============================================================================
-  // CACHE LOADING - EXACT COPY FROM INVOICE PATTERN
-  // ============================================================================
 
   private async loadExistingRecordsWithRetry(
     maxRetries: number = 3,
