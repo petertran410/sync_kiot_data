@@ -5,7 +5,7 @@ import { ConfigModule } from '@nestjs/config';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { KiotVietAuthService } from './auth.service';
 import { KiotVietCustomerService } from './customer/customer.service';
-import { KiotVietCustomerGroupService } from './customer-group/customer-group.service';
+// import { KiotVietCustomerGroupService } from './customer-group/customer-group.service';
 import { KiotVietUserService } from './user/user.service';
 import { KiotVietSaleChannelService } from './sale-channel/sale-channel.service';
 import { KiotVietSurchargeService } from './surcharge/surcharge.service';
@@ -33,7 +33,7 @@ import { KiotVietProductService } from './product/product.service';
     KiotVietAuthService,
     KiotVietCustomerService,
     // KiotVietBranchService,
-    KiotVietCustomerGroupService,
+    // KiotVietCustomerGroupService,
     // KiotVietTradeMarkService,
     KiotVietPriceBookService,
     KiotVietUserService,
@@ -49,7 +49,7 @@ import { KiotVietProductService } from './product/product.service';
     KiotVietAuthService,
     KiotVietCustomerService,
     // KiotVietBranchService,
-    KiotVietCustomerGroupService,
+    // KiotVietCustomerGroupService,
     // KiotVietTradeMarkService,
     KiotVietPriceBookService,
     KiotVietUserService,

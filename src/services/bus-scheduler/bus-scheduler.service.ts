@@ -3,7 +3,6 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../../prisma/prisma.service';
 import { KiotVietCustomerService } from '../kiot-viet/customer/customer.service';
-import { KiotVietCustomerGroupService } from '../kiot-viet/customer-group/customer-group.service';
 import { KiotVietInvoiceService } from '../kiot-viet/invoice/invoice.service';
 import { LarkCustomerSyncService } from '../lark/customer/lark-customer-sync.service';
 import { LarkInvoiceSyncService } from '../lark/invoice/lark-invoice-sync.service';
@@ -17,7 +16,6 @@ import { KiotVietPriceBookService } from '../kiot-viet/pricebook/pricebook.servi
 export class BusSchedulerService implements OnModuleInit {
   private readonly logger = new Logger(BusSchedulerService.name);
   private isMainSchedulerEnabled = true;
-  private isWeeklySchedulerEnabled = true;
   private isDailyProductSchedulerEnabled = true;
   private isDailyProductCompletedToday = false;
   private lastProductSyncDate: string | null = null;
@@ -25,7 +23,6 @@ export class BusSchedulerService implements OnModuleInit {
   constructor(
     private readonly prismaService: PrismaService,
     private readonly customerService: KiotVietCustomerService,
-    private readonly customerGroupService: KiotVietCustomerGroupService,
     private readonly invoiceService: KiotVietInvoiceService,
     private readonly orderService: KiotVietOrderService,
     private readonly larkCustomerSyncService: LarkCustomerSyncService,
@@ -37,11 +34,6 @@ export class BusSchedulerService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
-    this.logger.log('🚀 BusScheduler initialized - Central sync management');
-    this.logger.log('📅 Main cycle: Every 8 minutes');
-    this.logger.log('📅 Weekly cycle: Sunday 6 AM (Vietnam time)');
-
-    // Startup check after 5 seconds
     setTimeout(async () => {
       await this.runStartupCheck();
     }, 5000);
@@ -236,6 +228,18 @@ export class BusSchedulerService implements OnModuleInit {
 
     const results = await Promise.allSettled(syncPromises);
     await this.executeStaggeredLarkSync(results, false); // false = no product
+  }
+
+  @Cron('0 0 * * *', {
+    name: 'daily_reset',
+    timeZone: 'Asia/Ho_Chi_Minh',
+  })
+  async handleDailyReset() {
+    this.isDailyProductCompletedToday = false;
+    this.lastProductSyncDate = null;
+    this.logger.log(
+      '🔄 Daily reset completed - Product sync available for today',
+    );
   }
 
   private async executeStaggeredLarkSync(
@@ -485,49 +489,6 @@ export class BusSchedulerService implements OnModuleInit {
   }
 
   // ============================================================================
-  // SUNDAY 6 AM SCHEDULER (Weekly entities)
-  // ============================================================================
-
-  @Cron('0 6 * * 0', {
-    name: 'weekly_sync_cycle',
-    timeZone: 'Asia/Ho_Chi_Minh',
-  })
-  async handleWeeklySyncCycle() {
-    if (!this.isWeeklySchedulerEnabled) {
-      this.logger.debug('🔇 Weekly scheduler is disabled');
-      return;
-    }
-
-    try {
-      this.logger.log('📅 Sunday 6 AM: Weekly sync cycle triggered');
-
-      // Check if any sync is running
-      const runningSyncs = await this.checkRunningSyncs();
-      if (runningSyncs.length > 0) {
-        this.logger.log(
-          `⏸️ Weekly sync skipped - running: ${runningSyncs.map((s) => s.name).join(', ')}`,
-        );
-        this.logger.log('⏸️ Will retry next Sunday');
-        return;
-      }
-
-      // Update cycle tracking
-      await this.updateCycleTracking('weekly_cycle', 'running');
-
-      // Run CustomerGroup sync
-      await this.runCustomerGroupSync();
-
-      // Complete cycle
-      await this.updateCycleTracking('weekly_cycle', 'completed');
-
-      this.logger.log('✅ Weekly sync cycle completed successfully');
-    } catch (error) {
-      this.logger.error(`❌ Weekly sync cycle failed: ${error.message}`);
-      await this.updateCycleTracking('weekly_cycle', 'failed', error.message);
-    }
-  }
-
-  // ============================================================================
   // ENTITY-SPECIFIC SYNC METHODS
   // ============================================================================
 
@@ -592,7 +553,6 @@ export class BusSchedulerService implements OnModuleInit {
       );
       const startTime = Date.now();
 
-      // STEP 1: PriceBook sync TRƯỚC - MANDATORY
       this.logger.log(
         '💰 [1/2] Syncing PriceBooks (dependency for Product)...',
       );
@@ -605,14 +565,13 @@ export class BusSchedulerService implements OnModuleInit {
       }
 
       await this.enableAndRunPriceBookSync();
-      await this.waitForSyncCompletion('pricebook_historical', 600); // 10 minutes timeout
+      await this.waitForSyncCompletion('pricebook_historical', 300);
 
-      // STEP 2: Product sync SAU - depends on PriceBook
       this.logger.log(
         '📦 [2/2] Syncing Products (with PriceBook dependency satisfied)...',
       );
       await this.enableAndRunProductSync();
-      await this.waitForSyncCompletion('product_historical', 2700); // 45 minutes timeout
+      await this.waitForSyncCompletion('product_historical', 360);
 
       const duration = ((Date.now() - startTime) / 1000).toFixed(2);
       this.logger.log(
@@ -625,21 +584,6 @@ export class BusSchedulerService implements OnModuleInit {
         `❌ [ProductSequence] Sequential sync failed: ${error.message}`,
       );
       throw new Error(`ProductSequence sync failed: ${error.message}`);
-    }
-  }
-
-  private async runCustomerGroupSync(): Promise<void> {
-    try {
-      this.logger.log('👥 [CustomerGroup] Starting sync...');
-
-      const startTime = Date.now();
-      await this.customerGroupService.syncCustomerGroups();
-      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-
-      this.logger.log(`✅ [CustomerGroup] Sync completed in ${duration}s`);
-    } catch (error) {
-      this.logger.error(`❌ [CustomerGroup] Sync failed: ${error.message}`);
-      throw error;
     }
   }
 
@@ -1032,16 +976,6 @@ export class BusSchedulerService implements OnModuleInit {
   disableMainScheduler() {
     this.isMainSchedulerEnabled = false;
     this.logger.log('🔇 Main scheduler (7-minute cycle) disabled');
-  }
-
-  enableWeeklyScheduler() {
-    this.isWeeklySchedulerEnabled = true;
-    this.logger.log('✅ Weekly scheduler (Sunday 6 AM) enabled');
-  }
-
-  disableWeeklyScheduler() {
-    this.isWeeklySchedulerEnabled = false;
-    this.logger.log('🔇 Weekly scheduler (Sunday 6 AM) disabled');
   }
 
   enableDailyProductScheduler() {
