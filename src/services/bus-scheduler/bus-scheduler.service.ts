@@ -19,6 +19,8 @@ export class BusSchedulerService implements OnModuleInit {
   private isMainSchedulerEnabled = true;
   private isWeeklySchedulerEnabled = true;
   private isDailyProductSchedulerEnabled = true;
+  private isDailyProductCompletedToday = false;
+  private lastProductSyncDate: string | null = null;
 
   constructor(
     private readonly prismaService: PrismaService,
@@ -1172,6 +1174,27 @@ export class BusSchedulerService implements OnModuleInit {
     });
     this.logger.log(`🛑 Force stopped ${result.count} running sync(s)`);
     return result.count;
+  }
+
+  getDailyProductStatus(): {
+    enabled: boolean;
+    completedToday: boolean;
+    lastSyncDate: string | null;
+    nextAvailable: string;
+  } {
+    const today = new Date().toISOString().split('T')[0];
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    return {
+      enabled: this.isDailyProductSchedulerEnabled,
+      completedToday:
+        this.isDailyProductCompletedToday && this.lastProductSyncDate === today,
+      lastSyncDate: this.lastProductSyncDate,
+      nextAvailable: this.isDailyProductCompletedToday
+        ? `${tomorrow.toISOString().split('T')[0]} 23:00`
+        : 'Available now',
+    };
   }
 
   // ============================================================================
