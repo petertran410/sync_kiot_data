@@ -28,6 +28,9 @@ export class LarkAuthService {
   private productAccessToken: string | null = null;
   private productTokenExpiry: Date | null = null;
 
+  private supplierAccessToken: string | null = null;
+  private supplierTokenExpiry: Date | null = null;
+
   constructor(
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
@@ -38,7 +41,7 @@ export class LarkAuthService {
   // ============================================================================
 
   async getAccessToken(
-    service: 'customer' | 'invoice' | 'order' | 'product',
+    service: 'customer' | 'invoice' | 'order' | 'product' | 'supplier',
   ): Promise<string> {
     switch (service) {
       case 'customer':
@@ -49,6 +52,8 @@ export class LarkAuthService {
         return await this.getOrderAccessToken();
       case 'product':
         return await this.getProductAccessToken();
+      case 'supplier':
+        return await this.getSupplierAccessToken();
       default:
         throw new Error(`Unknown service: ${service}`);
     }
@@ -403,5 +408,96 @@ export class LarkAuthService {
     this.productAccessToken = null;
     this.productTokenExpiry = null;
     await this.refreshProductToken();
+  }
+
+  // ============================================================================
+  // SUPPLIER TOKEN MANAGEMENT
+  // ============================================================================
+
+  async getSupplierHeaders(): Promise<Record<string, string>> {
+    const token = await this.getSupplierAccessToken();
+    return {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    };
+  }
+
+  private async getSupplierAccessToken(): Promise<string> {
+    if (
+      this.supplierAccessToken &&
+      this.supplierTokenExpiry &&
+      this.supplierTokenExpiry > new Date(Date.now() + 5 * 60 * 1000)
+    ) {
+      return this.supplierAccessToken;
+    }
+
+    return await this.refreshSupplierToken();
+  }
+
+  private async refreshSupplierToken(): Promise<string> {
+    try {
+      this.logger.log('🔄 Refreshing LarkBase supplier access token...');
+
+      const appId = this.configService.get<string>('LARK_SUPPLIER_SYNC_APP_ID');
+      const appSecret = this.configService.get<string>(
+        'LARK_SUPPLIER_SYNC_APP_SECRET',
+      );
+
+      if (!appId || !appSecret) {
+        throw new Error('LarkBase supplier credentials not configured');
+      }
+
+      const url =
+        'https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal';
+
+      const response = await firstValueFrom(
+        this.httpService.post<TenantAccessTokenResponse>(
+          url,
+          {
+            app_id: appId,
+            app_secret: appSecret,
+          },
+          {
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            timeout: 10000,
+          },
+        ),
+      );
+
+      if (response.data.code !== 0) {
+        throw new Error(
+          `LarkBase auth failed: ${response.data.msg} (code: ${response.data.code})`,
+        );
+      }
+
+      this.supplierAccessToken = response.data.tenant_access_token;
+      this.supplierTokenExpiry = new Date(
+        Date.now() + response.data.expire * 1000,
+      );
+
+      this.logger.log('✅ LarkBase supplier token refreshed successfully');
+      this.logger.debug(
+        `Token expires at: ${this.supplierTokenExpiry.toISOString()}`,
+      );
+
+      return this.supplierAccessToken;
+    } catch (error) {
+      this.logger.error(
+        `❌ Failed to refresh supplier token: ${error.message}`,
+      );
+
+      this.supplierAccessToken = null;
+      this.supplierTokenExpiry = null;
+
+      throw new Error(`Token refresh failed: ${error.message}`);
+    }
+  }
+
+  async forceRefreshSupplierToken(): Promise<void> {
+    this.supplierAccessToken = null;
+    this.supplierTokenExpiry = null;
+    await this.refreshSupplierToken();
   }
 }

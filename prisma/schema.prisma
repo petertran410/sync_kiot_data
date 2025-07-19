@@ -241,8 +241,6 @@ model Customer {
   createdDate       DateTime?
   modifiedDate      DateTime?
   lastSyncedAt      DateTime           @default(now())
-  
-  // NEW: LarkBase sync tracking
   larkRecordId      String?
   larkSyncStatus    LarkSyncStatus     @default(PENDING)
   larkSyncedAt      DateTime?
@@ -902,48 +900,25 @@ model Supplier {
   organization      String?
   taxCode           String?
   comments          String?            @db.Text
-  isActive          Boolean            @default(true)
+  groups            String?
+  isActive          Boolean?           @default(true)
   debt              Decimal?           @db.Decimal(15, 2)
   totalInvoiced     Decimal?           @db.Decimal(15, 2)
   totalInvoicedWithoutReturn Decimal?  @db.Decimal(15, 2)
   retailerId        Int?
   branchId          Int?
-  createdDate       DateTime           @default(now())
-  modifiedDate      DateTime           @updatedAt
+  createdDate       DateTime?
+  modifiedDate      DateTime?          @updatedAt
   lastSyncedAt      DateTime           @default(now())
-  
-  supplierGroups    SupplierGroupRelation[]
+  larkRecordId      String?
+  larkSyncStatus    LarkSyncStatus     @default(PENDING)
+  larkSyncedAt      DateTime?
+  larkSyncRetries   Int                @default(0)
+
   purchaseOrders    PurchaseOrder[]
   
   @@index([kiotVietId])
   @@index([code])
-  @@index([contactNumber])
-}
-
-model SupplierGroup {
-  id                Int                   @id @default(autoincrement())
-  kiotVietId        Int                   @unique
-  name              String
-  retailerId        Int?
-  createdDate       DateTime              @default(now())
-  modifiedDate      DateTime              @updatedAt
-  lastSyncedAt      DateTime              @default(now())
-  
-  suppliers         SupplierGroupRelation[]
-  
-  @@index([kiotVietId])
-}
-
-model SupplierGroupRelation {
-  id                Int                @id @default(autoincrement())
-  supplierId        Int
-  supplier          Supplier           @relation(fields: [supplierId], references: [id])
-  groupId           Int
-  group             SupplierGroup      @relation(fields: [groupId], references: [id])
-  
-  @@unique([supplierId, groupId])
-  @@index([supplierId])
-  @@index([groupId])
 }
 
 model Location {
