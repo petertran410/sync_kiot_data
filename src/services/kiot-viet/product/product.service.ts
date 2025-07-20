@@ -164,7 +164,6 @@ export class KiotVietProductService {
         return;
       }
 
-      // Default: historical sync (no recent sync for products)
       this.logger.log('Running default historical product sync...');
       await this.syncHistoricalProducts();
     } catch (error) {

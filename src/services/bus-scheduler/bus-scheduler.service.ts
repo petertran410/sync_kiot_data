@@ -33,6 +33,8 @@ export class BusSchedulerService implements OnModuleInit {
     private readonly productService: KiotVietProductService,
     private readonly larkProductSyncService: LarkProductSyncService,
     private readonly priceBookService: KiotVietPriceBookService,
+    private readonly supplierService: KiotVietSupplierService,
+    private readonly larkSupplierSyncService: LarkSupplierSyncService,
   ) {}
 
   async onModuleInit() {
@@ -126,7 +128,9 @@ export class BusSchedulerService implements OnModuleInit {
     }
 
     try {
-      this.logger.log('🌙 23:00 Daily Product Sequence Sync triggered');
+      this.logger.log(
+        '🌙 23:00 Daily Product Sequence + Supplier Sync triggered',
+      );
       const startTime = Date.now();
 
       const runningSyncs = await this.checkRunningSyncs();
@@ -147,21 +151,60 @@ export class BusSchedulerService implements OnModuleInit {
       this.isDailyProductCompletedToday = false;
       await this.updateCycleTracking('daily_product_cycle', 'running');
 
-      const PRODUCT_SEQUENCE_TIMEOUT_MS = 60 * 60 * 1000;
+      const PRODUCT_SEQUENCE_TIMEOUT_MS = 60 * 60 * 1000; // 60 minutes
+      const SUPPLIER_SYNC_TIMEOUT_MS = 60 * 60 * 1000; // 60 minutes
 
       try {
-        const sequencePromise = this.runProductSequenceSync();
-        const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(
-            () =>
-              reject(new Error('Product sequence timeout after 60 minutes')),
-            PRODUCT_SEQUENCE_TIMEOUT_MS,
-          ),
+        // Execute Product sequence and Supplier in parallel
+        this.logger.log(
+          '🔀 23:00 Parallel execution: Sequential Product (PriceBook → Product) ⫸ Supplier',
         );
 
-        await Promise.race([sequencePromise, timeoutPromise]);
+        // Execute both syncs in parallel with independent error handling
+        const [productResult, supplierResult] = await Promise.allSettled([
+          Promise.race([
+            this.runProductSequenceSync(),
+            new Promise<never>((_, reject) =>
+              setTimeout(
+                () =>
+                  reject(
+                    new Error('Product sequence timeout after 60 minutes'),
+                  ),
+                PRODUCT_SEQUENCE_TIMEOUT_MS,
+              ),
+            ),
+          ]),
+          Promise.race([
+            this.runSupplierSync(),
+            new Promise<never>((_, reject) =>
+              setTimeout(
+                () =>
+                  reject(new Error('Supplier sync timeout after 60 minutes')),
+                SUPPLIER_SYNC_TIMEOUT_MS,
+              ),
+            ),
+          ]),
+        ]);
 
-        await this.autoTriggerProductLarkSync();
+        // Handle Product sequence result
+        if (productResult.status === 'fulfilled') {
+          this.logger.log('✅ Product sequence completed successfully');
+          await this.autoTriggerProductLarkSync();
+        } else {
+          this.logger.error(
+            `❌ Product sequence failed: ${productResult.reason}`,
+          );
+        }
+
+        // Handle Supplier result
+        if (supplierResult.status === 'fulfilled') {
+          this.logger.log('✅ Supplier sync completed successfully');
+          await this.autoTriggerSupplierLarkSync();
+        } else {
+          this.logger.error(
+            `❌ Supplier sync failed: ${supplierResult.reason}`,
+          );
+        }
 
         this.isDailyProductCompletedToday = true;
         this.lastProductSyncDate = today;
@@ -169,7 +212,9 @@ export class BusSchedulerService implements OnModuleInit {
         await this.updateCycleTracking('daily_product_cycle', 'completed');
 
         const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-        this.logger.log(`🎉 Daily product sequence completed in ${duration}s`);
+        this.logger.log(
+          `🎉 Daily product + supplier sequence completed in ${duration}s`,
+        );
         this.logger.log(`🔒 Product sequence locked until tomorrow 23:00`);
       } catch (timeoutError) {
         this.isDailyProductCompletedToday = false;
@@ -178,11 +223,11 @@ export class BusSchedulerService implements OnModuleInit {
           timeoutError instanceof Error &&
           timeoutError.message.includes('timeout')
         ) {
-          this.logger.error(`⏰ Product sequence timed out after 60 minutes`);
+          this.logger.error(`⏰ Daily sequence timed out after 60 minutes`);
           await this.updateCycleTracking(
             'daily_product_cycle',
             'timeout',
-            'Product sequence exceeded 60 minute timeout',
+            'Daily sequence exceeded 60 minute timeout',
           );
         } else {
           throw timeoutError;
@@ -190,7 +235,9 @@ export class BusSchedulerService implements OnModuleInit {
       }
     } catch (error) {
       this.isDailyProductCompletedToday = false;
-      this.logger.error(`❌ Daily product sequence failed: ${error.message}`);
+      this.logger.error(
+        `❌ Daily product + supplier sequence failed: ${error.message}`,
+      );
       await this.updateCycleTracking(
         'daily_product_cycle',
         'failed',
@@ -441,6 +488,23 @@ export class BusSchedulerService implements OnModuleInit {
     } catch (error) {
       this.logger.error(`❌ Product sync failed: ${error.message}`);
       throw new Error(`Product sync failed: ${error.message}`);
+    }
+  }
+
+  private async runSupplierSync(): Promise<void> {
+    try {
+      this.logger.log('🏪 [Supplier] Starting supplier sync...');
+      const startTime = Date.now();
+
+      await this.supplierService.checkAndRunAppropriateSync();
+
+      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+      this.logger.log(`✅ [Supplier] Supplier sync completed in ${duration}s`);
+
+      return Promise.resolve();
+    } catch (error) {
+      this.logger.error(`❌ [Supplier] Supplier sync failed: ${error.message}`);
+      throw new Error(`Supplier sync failed: ${error.message}`);
     }
   }
 
@@ -869,8 +933,8 @@ export class BusSchedulerService implements OnModuleInit {
 
   private async autoTriggerProductLarkSync(): Promise<void> {
     try {
-      const recentSync = await this.prismaService.syncControl.findFirst({
-        where: { name: 'product_recent' },
+      const historicalSync = await this.prismaService.syncControl.findFirst({
+        where: { name: 'product_historical' },
       });
 
       const larkSync = await this.prismaService.syncControl.findFirst({
@@ -878,8 +942,8 @@ export class BusSchedulerService implements OnModuleInit {
       });
 
       if (
-        recentSync?.status === 'completed' &&
-        !recentSync.isRunning &&
+        historicalSync?.status === 'completed' &&
+        !historicalSync.isRunning &&
         (!larkSync?.isRunning || !larkSync)
       ) {
         await this.prismaService.syncControl.upsert({
@@ -959,6 +1023,98 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
+  private async autoTriggerSupplierLarkSync(): Promise<void> {
+    try {
+      const historicalSync = await this.prismaService.syncControl.findFirst({
+        where: { name: 'supplier_historical' },
+      });
+
+      const larkSync = await this.prismaService.syncControl.findFirst({
+        where: { name: 'supplier_lark_sync' },
+      });
+
+      if (
+        historicalSync?.status === 'completed' &&
+        !historicalSync.isRunning &&
+        (!larkSync?.isRunning || !larkSync)
+      ) {
+        await this.prismaService.syncControl.upsert({
+          where: { name: 'supplier_lark_sync' },
+          create: {
+            name: 'supplier_lark_sync',
+            entities: ['supplier'],
+            syncMode: 'lark_sync',
+            isRunning: true,
+            isEnabled: true,
+            status: 'running',
+            startedAt: new Date(),
+          },
+          update: {
+            isRunning: true,
+            status: 'running',
+            startedAt: new Date(),
+            error: null,
+          },
+        });
+
+        const suppliersToSync = await this.prismaService.supplier.findMany({
+          where: {
+            OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+          },
+          take: 1000,
+        });
+
+        if (suppliersToSync.length > 0) {
+          try {
+            await this.larkSupplierSyncService.syncSuppliersToLarkBase(
+              suppliersToSync,
+            );
+
+            await this.prismaService.syncControl.update({
+              where: { name: 'supplier_lark_sync' },
+              data: {
+                isRunning: false,
+                status: 'completed',
+                completedAt: new Date(),
+              },
+            });
+
+            this.logger.log(
+              `✅ Auto-triggered supplier LarkBase sync: ${suppliersToSync.length} suppliers`,
+            );
+          } catch (syncError) {
+            await this.prismaService.syncControl.update({
+              where: { name: 'supplier_lark_sync' },
+              data: {
+                isRunning: false,
+                status: 'failed',
+                error: syncError.message,
+                completedAt: new Date(),
+              },
+            });
+
+            this.logger.error(
+              `❌ Auto supplier LarkBase sync failed: ${syncError.message}`,
+            );
+          }
+        }
+      } else {
+        await this.prismaService.syncControl.update({
+          where: { name: 'supplier_lark_sync' },
+          data: {
+            isRunning: false,
+            status: 'completed',
+            completedAt: new Date(),
+          },
+        });
+
+        this.logger.log('📋 No suppliers need LarkBase sync');
+      }
+    } catch (error) {
+      this.logger.error(`❌ Auto supplier Lark sync failed: ${error.message}`);
+    }
+  }
+
   // ============================================================================
   // SCHEDULER CONTROLS
   // ============================================================================
@@ -1019,6 +1175,14 @@ export class BusSchedulerService implements OnModuleInit {
           this.logger.warn(`Order startup check failed: ${error.message}`);
           return Promise.resolve();
         }),
+        this.runProductSequenceSync().catch((error) => {
+          this.logger.warn(`Product startup check failed: ${error.message}`);
+          return Promise.resolve();
+        }),
+        this.runSupplierSync().catch((error) => {
+          this.logger.warn(`Supplier startup check failed: ${error.message}`);
+          return Promise.resolve();
+        }),
       ];
 
       await Promise.allSettled(startupPromises);
@@ -1068,16 +1232,17 @@ export class BusSchedulerService implements OnModuleInit {
           enabled: this.isMainSchedulerEnabled,
           nextRun: '7 minutes interval',
           entities: ['customer', 'invoice', 'order'],
-          note: 'Product completely isolated from main cycle',
+          note: 'Product & Supplier completely isolated from main cycle',
         },
         dailyProductSequenceScheduler: {
           enabled: this.isDailyProductSchedulerEnabled,
           nextRun: 'Daily at 23:00 (Vietnam time)',
-          entities: ['pricebook', 'product'], // Sequential order
-          sequence: 'PriceBook → Product (dependency managed)',
+          entities: ['pricebook', 'product', 'supplier'],
+          sequence: 'Sequential: PriceBook → Product | Parallel: Supplier',
           isolation: 'Complete isolation from main cycle',
           status: productStatus,
-          timeout: '60 minutes',
+          timeout: '60 minutes (each: Product sequence & Supplier)',
+          execution: 'Product sequence (Sequential) + Supplier (Parallel)',
         },
       },
       runningTasks: runningSyncs.length,
@@ -1145,7 +1310,7 @@ export class BusSchedulerService implements OnModuleInit {
           case 'main_cycle':
             return ['customer', 'invoice', 'order'];
           case 'daily_product_cycle':
-            return ['product'];
+            return ['product', 'supplier'];
           default:
             return [];
         }
