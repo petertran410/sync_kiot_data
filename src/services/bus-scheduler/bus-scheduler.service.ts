@@ -17,10 +17,17 @@ import { LarkSupplierSyncService } from '../lark/supplier/lark-supplier-sync.ser
 @Injectable()
 export class BusSchedulerService implements OnModuleInit {
   private readonly logger = new Logger(BusSchedulerService.name);
+
+  // EXISTING FLAGS
   private isMainSchedulerEnabled = true;
   private isDailyProductSchedulerEnabled = true;
   private isDailyProductCompletedToday = false;
   private lastProductSyncDate: string | null = null;
+
+  // NEW FLAGS - Priority Management System
+  private isDailyCycleRunning = false;
+  private mainSchedulerSuspendedForDaily = false;
+  private dailyCycleStartTime: Date | null = null;
 
   constructor(
     private readonly prismaService: PrismaService,
@@ -48,6 +55,27 @@ export class BusSchedulerService implements OnModuleInit {
     timeZone: 'Asia/Ho_Chi_Minh',
   })
   async handleMainSyncCycle() {
+    // PRIORITY CHECK: Daily cycle suspend logic
+    if (this.isDailyCycleRunning) {
+      if (!this.mainSchedulerSuspendedForDaily) {
+        this.logger.log(
+          '🛑 SUSPENDING 7-minute cycle - Daily cycle has priority',
+        );
+        this.mainSchedulerSuspendedForDaily = true;
+      }
+      this.logger.debug(
+        '⏸️ 7-minute cycle suspended during daily cycle execution',
+      );
+      return;
+    }
+
+    // RESUME CHECK: Daily cycle completed
+    if (this.mainSchedulerSuspendedForDaily && !this.isDailyCycleRunning) {
+      this.logger.log('▶️ RESUMING 7-minute cycle - Daily cycle completed');
+      this.mainSchedulerSuspendedForDaily = false;
+    }
+
+    // STANDARD CHECKS
     if (!this.isMainSchedulerEnabled) {
       this.logger.debug('🔇 Main scheduler is disabled');
       return;
@@ -56,6 +84,7 @@ export class BusSchedulerService implements OnModuleInit {
     try {
       this.logger.log('🚀 Starting 7-minute parallel sync cycle...');
       const startTime = Date.now();
+
       const runningSyncs = await this.checkRunningSyncs();
       if (runningSyncs.length > 0) {
         this.logger.log(
@@ -63,6 +92,7 @@ export class BusSchedulerService implements OnModuleInit {
         );
         return;
       }
+
       await this.updateCycleTracking('main_cycle', 'running');
 
       const CYCLE_TIMEOUT_MS = 15 * 60 * 1000;
@@ -77,7 +107,6 @@ export class BusSchedulerService implements OnModuleInit {
         );
 
         await Promise.race([cyclePromise, timeoutPromise]);
-
         await this.updateCycleTracking('main_cycle', 'completed');
 
         const totalDuration = ((Date.now() - startTime) / 1000).toFixed(2);
@@ -105,7 +134,7 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
-  @Cron('0 23 * * *', {
+  @Cron('22 22 * * *', {
     name: 'daily_product_sync',
     timeZone: 'Asia/Ho_Chi_Minh',
   })
@@ -128,26 +157,21 @@ export class BusSchedulerService implements OnModuleInit {
     }
 
     try {
+      // PHASE 1: SUSPEND MAIN SCHEDULER
       this.logger.log(
         '🌙 23:00 Daily Product Sequence + Supplier Sync triggered',
       );
-      const startTime = Date.now();
-
-      const runningSyncs = await this.checkRunningSyncs();
-      const mainCycleRunning = runningSyncs.some(
-        (sync) => sync.name === 'main_cycle' || sync.name === 'main_sync_cycle',
+      this.logger.log(
+        '🛑 ACTIVATING daily cycle priority mode - Suspending 7-minute cycle',
       );
 
-      if (mainCycleRunning) {
-        this.logger.log(
-          '⏸️ Daily product sequence skipped - main cycle running',
-        );
-        this.logger.log(
-          '🔄 Product sequence will NOT run with main cycle (isolation)',
-        );
-        return;
-      }
+      this.isDailyCycleRunning = true;
+      this.dailyCycleStartTime = new Date();
 
+      // Wait for any ongoing main cycle to complete gracefully
+      await this.waitForMainCycleCompletion();
+
+      const startTime = Date.now();
       this.isDailyProductCompletedToday = false;
       await this.updateCycleTracking('daily_product_cycle', 'running');
 
@@ -155,12 +179,11 @@ export class BusSchedulerService implements OnModuleInit {
       const SUPPLIER_SYNC_TIMEOUT_MS = 60 * 60 * 1000; // 60 minutes
 
       try {
-        // Execute Product sequence and Supplier in parallel
+        // PHASE 2: EXECUTE DAILY SYNC
         this.logger.log(
           '🔀 23:00 Parallel execution: Sequential Product (PriceBook → Product) ⫸ Supplier',
         );
 
-        // Execute both syncs in parallel with independent error handling
         const [productResult, supplierResult] = await Promise.allSettled([
           Promise.race([
             this.runProductSequenceSync(),
@@ -186,7 +209,7 @@ export class BusSchedulerService implements OnModuleInit {
           ]),
         ]);
 
-        // Handle Product sequence result
+        // Handle results
         if (productResult.status === 'fulfilled') {
           this.logger.log('✅ Product sequence completed successfully');
           await this.autoTriggerProductLarkSync();
@@ -196,7 +219,6 @@ export class BusSchedulerService implements OnModuleInit {
           );
         }
 
-        // Handle Supplier result
         if (supplierResult.status === 'fulfilled') {
           this.logger.log('✅ Supplier sync completed successfully');
           await this.autoTriggerSupplierLarkSync();
@@ -208,7 +230,6 @@ export class BusSchedulerService implements OnModuleInit {
 
         this.isDailyProductCompletedToday = true;
         this.lastProductSyncDate = today;
-
         await this.updateCycleTracking('daily_product_cycle', 'completed');
 
         const duration = ((Date.now() - startTime) / 1000).toFixed(2);
@@ -218,7 +239,6 @@ export class BusSchedulerService implements OnModuleInit {
         this.logger.log(`🔒 Product sequence locked until tomorrow 23:00`);
       } catch (timeoutError) {
         this.isDailyProductCompletedToday = false;
-
         if (
           timeoutError instanceof Error &&
           timeoutError.message.includes('timeout')
@@ -243,7 +263,98 @@ export class BusSchedulerService implements OnModuleInit {
         'failed',
         error.message,
       );
+    } finally {
+      // PHASE 3: RESUME MAIN SCHEDULER
+      this.logger.log('▶️ RESUMING 7-minute cycle - Daily cycle completed');
+      this.isDailyCycleRunning = false;
+      this.dailyCycleStartTime = null;
+      this.mainSchedulerSuspendedForDaily = false;
     }
+  }
+
+  // NEW METHOD: Wait for main cycle graceful completion
+  private async waitForMainCycleCompletion(): Promise<void> {
+    const MAX_WAIT_MINUTES = 10;
+    const CHECK_INTERVAL_MS = 15000; // 15 seconds
+    let waitedMinutes = 0;
+
+    this.logger.log(
+      '⏳ Waiting for ongoing 7-minute cycle to complete gracefully...',
+    );
+
+    while (waitedMinutes < MAX_WAIT_MINUTES) {
+      const runningSyncs = await this.checkRunningSyncs();
+      const mainCycleRunning = runningSyncs.some(
+        (sync) =>
+          sync.name === 'main_cycle' ||
+          sync.name === 'main_sync_cycle' ||
+          ['customer_recent', 'invoice_recent', 'order_recent'].includes(
+            sync.name,
+          ),
+      );
+
+      if (!mainCycleRunning) {
+        this.logger.log(
+          '✅ 7-minute cycle completed gracefully - Proceeding with daily cycle',
+        );
+        return;
+      }
+
+      this.logger.debug(
+        `⏳ Waiting for 7-minute cycle completion... (${waitedMinutes.toFixed(1)}/${MAX_WAIT_MINUTES} min)`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, CHECK_INTERVAL_MS));
+      waitedMinutes += 0.25;
+    }
+
+    this.logger.warn(
+      `⚠️ 7-minute cycle still running after ${MAX_WAIT_MINUTES} minutes - Proceeding with daily cycle`,
+    );
+  }
+
+  // ENHANCED: Scheduler status with priority info
+  async getSchedulerStatus(): Promise<any> {
+    const runningSyncs = await this.checkRunningSyncs();
+    const productStatus = this.getDailyProductStatus();
+
+    return {
+      scheduler: {
+        mainScheduler: {
+          enabled: this.isMainSchedulerEnabled,
+          currentStatus: this.isDailyCycleRunning ? 'SUSPENDED' : 'ACTIVE',
+          suspendedForDaily: this.mainSchedulerSuspendedForDaily,
+          nextRun: this.isDailyCycleRunning
+            ? 'Suspended during daily cycle'
+            : '7 minutes interval',
+          entities: ['customer', 'invoice', 'order'],
+          note: 'Automatically suspended during daily cycle execution',
+        },
+        dailyProductSequenceScheduler: {
+          enabled: this.isDailyProductSchedulerEnabled,
+          currentStatus: this.isDailyCycleRunning ? 'RUNNING' : 'IDLE',
+          nextRun: 'Daily at 23:00 (Vietnam time)',
+          entities: ['pricebook', 'product', 'supplier'],
+          sequence: 'Sequential: PriceBook → Product | Parallel: Supplier',
+          isolation: 'Suspends 7-minute cycle during execution',
+          status: productStatus,
+          timeout: '60 minutes (each: Product sequence & Supplier)',
+          execution: 'Product sequence (Sequential) + Supplier (Parallel)',
+          dailyCycleStartTime: this.dailyCycleStartTime?.toISOString() || null,
+        },
+        priorityManagement: {
+          dailyCycleRunning: this.isDailyCycleRunning,
+          mainSchedulerSuspended: this.mainSchedulerSuspendedForDaily,
+          activeMode: this.isDailyCycleRunning
+            ? 'DAILY_PRIORITY'
+            : 'NORMAL_OPERATIONS',
+        },
+      },
+      runningTasks: runningSyncs.length,
+      runningSyncs: runningSyncs.map((sync) => ({
+        name: sync.name,
+        startedAt: sync.startedAt,
+      })),
+    };
   }
 
   private async executeParallelSyncs(): Promise<void> {
@@ -1211,41 +1322,6 @@ export class BusSchedulerService implements OnModuleInit {
     } catch (error) {
       this.logger.warn(`⚠️ Cleanup failed: ${error.message}`);
     }
-  }
-
-  // ============================================================================
-  // STATUS & MONITORING
-  // ============================================================================
-
-  async getSchedulerStatus(): Promise<any> {
-    const runningSyncs = await this.checkRunningSyncs();
-    const productStatus = this.getDailyProductStatus();
-
-    return {
-      scheduler: {
-        mainScheduler: {
-          enabled: this.isMainSchedulerEnabled,
-          nextRun: '7 minutes interval',
-          entities: ['customer', 'invoice', 'order'],
-          note: 'Product & Supplier completely isolated from main cycle',
-        },
-        dailyProductSequenceScheduler: {
-          enabled: this.isDailyProductSchedulerEnabled,
-          nextRun: 'Daily at 23:00 (Vietnam time)',
-          entities: ['pricebook', 'product', 'supplier'],
-          sequence: 'Sequential: PriceBook → Product | Parallel: Supplier',
-          isolation: 'Complete isolation from main cycle',
-          status: productStatus,
-          timeout: '60 minutes (each: Product sequence & Supplier)',
-          execution: 'Product sequence (Sequential) + Supplier (Parallel)',
-        },
-      },
-      runningTasks: runningSyncs.length,
-      runningSyncs: runningSyncs.map((sync) => ({
-        name: sync.name,
-        startedAt: sync.startedAt,
-      })),
-    };
   }
 
   async resetAllSyncs(): Promise<number> {
