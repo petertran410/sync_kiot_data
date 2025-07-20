@@ -134,7 +134,7 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
-  @Cron('22 22 * * *', {
+  @Cron('14 23 * * *', {
     name: 'daily_product_sync',
     timeZone: 'Asia/Ho_Chi_Minh',
   })
@@ -272,10 +272,9 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
-  // NEW METHOD: Wait for main cycle graceful completion
   private async waitForMainCycleCompletion(): Promise<void> {
-    const MAX_WAIT_MINUTES = 10;
-    const CHECK_INTERVAL_MS = 15000; // 15 seconds
+    const MAX_WAIT_MINUTES = 3; // GIẢM từ 10 → 3 phút
+    const CHECK_INTERVAL_MS = 10000; // GIẢM từ 15s → 10s
     let waitedMinutes = 0;
 
     this.logger.log(
@@ -283,39 +282,91 @@ export class BusSchedulerService implements OnModuleInit {
     );
 
     while (waitedMinutes < MAX_WAIT_MINUTES) {
-      const runningSyncs = await this.checkRunningSyncs();
-      const mainCycleRunning = runningSyncs.some(
+      const runningSyncs = await this.checkRunningSyncs(); // SỬ DỤNG FUNCTION GỐC
+
+      // ENHANCED: Distinguish core sync vs LarkBase sync - KHÔNG ĐỔI TÊN FUNCTION
+      const coreMainCycleSyncs = runningSyncs.filter(
         (sync) =>
-          sync.name === 'main_cycle' ||
-          sync.name === 'main_sync_cycle' ||
+          ['main_cycle', 'main_sync_cycle'].includes(sync.name) ||
           ['customer_recent', 'invoice_recent', 'order_recent'].includes(
             sync.name,
           ),
       );
 
-      if (!mainCycleRunning) {
-        this.logger.log(
-          '✅ 7-minute cycle completed gracefully - Proceeding with daily cycle',
-        );
+      const larkBaseSyncs = runningSyncs.filter((sync) =>
+        ['customer_lark_sync', 'invoice_lark_sync', 'order_lark_sync'].includes(
+          sync.name,
+        ),
+      );
+
+      // PRIORITY: Core syncs must complete, LarkBase syncs can be interrupted
+      if (coreMainCycleSyncs.length === 0) {
+        if (larkBaseSyncs.length > 0) {
+          this.logger.log(
+            `✅ Core 7-minute cycle completed - LarkBase syncs (${larkBaseSyncs.map((s) => s.name).join(', ')}) will continue in background`,
+          );
+        } else {
+          this.logger.log(
+            '✅ 7-minute cycle completed gracefully - Proceeding with daily cycle',
+          );
+        }
         return;
       }
 
       this.logger.debug(
-        `⏳ Waiting for 7-minute cycle completion... (${waitedMinutes.toFixed(1)}/${MAX_WAIT_MINUTES} min)`,
+        `⏳ Core syncs still running: ${coreMainCycleSyncs.map((s) => s.name).join(', ')} (${waitedMinutes.toFixed(1)}/${MAX_WAIT_MINUTES} min)`,
       );
+
+      if (larkBaseSyncs.length > 0) {
+        this.logger.debug(
+          `📊 LarkBase syncs running in background: ${larkBaseSyncs.map((s) => s.name).join(', ')}`,
+        );
+      }
+
       await new Promise((resolve) => setTimeout(resolve, CHECK_INTERVAL_MS));
-      waitedMinutes += 0.25;
+      waitedMinutes += CHECK_INTERVAL_MS / 60000;
     }
 
+    // TIMEOUT: Proceed anyway but log current state
+    const stillRunningSyncs = await this.checkRunningSyncs(); // SỬ DỤNG FUNCTION GỐC
     this.logger.warn(
-      `⚠️ 7-minute cycle still running after ${MAX_WAIT_MINUTES} minutes - Proceeding with daily cycle`,
+      `⚠️ Proceeding after ${MAX_WAIT_MINUTES} minutes - Still running: ${stillRunningSyncs.map((s) => s.name).join(', ')}`,
+    );
+    this.logger.log(
+      '🚀 Daily cycle proceeding - Background syncs will continue independently',
     );
   }
 
-  // ENHANCED: Scheduler status with priority info
+  // ENHANCED getSchedulerStatus - KHÔNG ĐỔI TÊN, CHỈ CẢI THIỆN NỘI DUNG
   async getSchedulerStatus(): Promise<any> {
-    const runningSyncs = await this.checkRunningSyncs();
+    const runningSyncs = await this.checkRunningSyncs(); // SỬ DỤNG FUNCTION GỐC
     const productStatus = this.getDailyProductStatus();
+
+    // Categorize running syncs for better visibility - SỬ DỤNG PROPER TYPING
+    const coreMainCycle: any[] = runningSyncs.filter((sync) =>
+      [
+        'main_cycle',
+        'main_sync_cycle',
+        'customer_recent',
+        'invoice_recent',
+        'order_recent',
+      ].includes(sync.name),
+    );
+
+    const larkBaseSyncs: any[] = runningSyncs.filter((sync) =>
+      ['customer_lark_sync', 'invoice_lark_sync', 'order_lark_sync'].includes(
+        sync.name,
+      ),
+    );
+
+    const dailyCycleSyncs: any[] = runningSyncs.filter((sync) =>
+      [
+        'product_historical',
+        'supplier_historical',
+        'pricebook_historical',
+        'daily_product_cycle',
+      ].includes(sync.name),
+    );
 
     return {
       scheduler: {
@@ -327,7 +378,7 @@ export class BusSchedulerService implements OnModuleInit {
             ? 'Suspended during daily cycle'
             : '7 minutes interval',
           entities: ['customer', 'invoice', 'order'],
-          note: 'Automatically suspended during daily cycle execution',
+          note: 'Automatically suspended during daily cycle execution. LarkBase syncs can run in background.',
         },
         dailyProductSequenceScheduler: {
           enabled: this.isDailyProductSchedulerEnabled,
@@ -335,7 +386,8 @@ export class BusSchedulerService implements OnModuleInit {
           nextRun: 'Daily at 23:00 (Vietnam time)',
           entities: ['pricebook', 'product', 'supplier'],
           sequence: 'Sequential: PriceBook → Product | Parallel: Supplier',
-          isolation: 'Suspends 7-minute cycle during execution',
+          isolation:
+            'Waits for core 7-minute cycle, allows LarkBase background operation',
           status: productStatus,
           timeout: '60 minutes (each: Product sequence & Supplier)',
           execution: 'Product sequence (Sequential) + Supplier (Parallel)',
@@ -347,13 +399,30 @@ export class BusSchedulerService implements OnModuleInit {
           activeMode: this.isDailyCycleRunning
             ? 'DAILY_PRIORITY'
             : 'NORMAL_OPERATIONS',
+          waitingForCoreCompletion:
+            this.isDailyCycleRunning && coreMainCycle.length > 0,
         },
       },
-      runningTasks: runningSyncs.length,
-      runningSyncs: runningSyncs.map((sync) => ({
-        name: sync.name,
-        startedAt: sync.startedAt,
-      })),
+      runningTasks: {
+        total: runningSyncs.length,
+        coreMainCycle: coreMainCycle.length,
+        larkBaseSyncs: larkBaseSyncs.length,
+        dailyCycleSyncs: dailyCycleSyncs.length,
+      },
+      runningSyncs: {
+        coreMainCycle: coreMainCycle.map((sync) => ({
+          name: sync.name,
+          startedAt: sync.startedAt,
+        })),
+        larkBaseSyncs: larkBaseSyncs.map((sync) => ({
+          name: sync.name,
+          startedAt: sync.startedAt,
+        })),
+        dailyCycleSyncs: dailyCycleSyncs.map((sync) => ({
+          name: sync.name,
+          startedAt: sync.startedAt,
+        })),
+      },
     };
   }
 
