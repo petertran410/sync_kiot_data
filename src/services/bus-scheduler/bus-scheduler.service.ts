@@ -1160,7 +1160,9 @@ export class BusSchedulerService implements OnModuleInit {
 
       await this.cleanupOldSyncPatterns();
 
-      this.logger.log('📋 Running parallel startup sync checks...');
+      this.logger.log(
+        '📋 Running parallel startup sync checks (7-minute entities only)...',
+      );
 
       const startupPromises = [
         this.runCustomerSync().catch((error) => {
@@ -1175,19 +1177,12 @@ export class BusSchedulerService implements OnModuleInit {
           this.logger.warn(`Order startup check failed: ${error.message}`);
           return Promise.resolve();
         }),
-        this.runProductSequenceSync().catch((error) => {
-          this.logger.warn(`Product startup check failed: ${error.message}`);
-          return Promise.resolve();
-        }),
-        this.runSupplierSync().catch((error) => {
-          this.logger.warn(`Supplier startup check failed: ${error.message}`);
-          return Promise.resolve();
-        }),
       ];
 
       await Promise.allSettled(startupPromises);
 
       this.logger.log('✅ Startup check completed successfully');
+      this.logger.log('📅 Product & Supplier sync will run daily at 23:00');
     } catch (error) {
       this.logger.error(`❌ Startup check failed: ${error.message}`);
     }
