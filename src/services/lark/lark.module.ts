@@ -8,6 +8,7 @@ import { LarkCustomerSyncService } from './customer/lark-customer-sync.service';
 import { LarkInvoiceSyncService } from './invoice/lark-invoice-sync.service';
 import { LarkOrderSyncService } from './order/lark-order-sync.service';
 import { LarkProductSyncService } from './product/lark-product-sync.service';
+import { LarkSupplierSyncService } from './supplier/lark-supplier-sync.service';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { LarkProductSyncService } from './product/lark-product-sync.service';
     LarkInvoiceSyncService,
     LarkOrderSyncService,
     LarkProductSyncService,
+    LarkSupplierSyncService,
   ],
   exports: [
     LarkAuthService,
@@ -31,6 +33,7 @@ import { LarkProductSyncService } from './product/lark-product-sync.service';
     LarkInvoiceSyncService,
     LarkOrderSyncService,
     LarkProductSyncService,
+    LarkSupplierSyncService,
   ],
 })
 export class LarkModule {}

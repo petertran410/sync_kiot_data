@@ -15,6 +15,7 @@ import { KiotVietInvoiceService } from './invoice/invoice.service';
 import { KiotVietOrderService } from './order/order.service';
 import { KiotVietPriceBookService } from './pricebook/pricebook.service';
 import { KiotVietProductService } from './product/product.service';
+import { KiotVietSupplierService } from './supplier/supplier.service';
 // import { KiotVietBranchService } from './branch/branch.service';
 // import { KiotVietTradeMarkService } from './trademark/trademark.service';
 // import { KiotVietCategoryService } from './category/category.service';
@@ -44,6 +45,7 @@ import { KiotVietProductService } from './product/product.service';
     KiotVietProductService,
     KiotVietInvoiceService,
     KiotVietOrderService,
+    KiotVietSupplierService,
   ],
   exports: [
     KiotVietAuthService,
@@ -60,6 +62,7 @@ import { KiotVietProductService } from './product/product.service';
     KiotVietProductService,
     KiotVietInvoiceService,
     KiotVietOrderService,
+    KiotVietSupplierService,
   ],
 })
 export class KiotVietModule {}

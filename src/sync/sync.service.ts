@@ -1,4 +1,3 @@
-// src/sync/sync.service.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { KiotVietCustomerService } from '../services/kiot-viet/customer/customer.service';
@@ -12,7 +11,6 @@ export class SyncService {
     private readonly customerService: KiotVietCustomerService,
   ) {}
 
-  // ⭐ KEEP: General sync status
   async getSyncStatus(name?: string) {
     if (name) {
       return this.prismaService.syncControl.findFirst({ where: { name } });
@@ -20,7 +18,6 @@ export class SyncService {
     return this.prismaService.syncControl.findMany();
   }
 
-  // ⭐ DELEGATE: Forward to customer service
   async enableHistoricalSync(): Promise<void> {
     await this.customerService.enableHistoricalSync();
   }
