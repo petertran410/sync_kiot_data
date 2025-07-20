@@ -161,7 +161,7 @@ export class LarkProductSyncService {
   private readonly logger = new Logger(LarkProductSyncService.name);
   private readonly baseToken: string;
   private readonly tableId: string;
-  private readonly batchSize: number = 50;
+  private readonly batchSize: number = 100;
 
   private readonly AUTH_ERROR_CODES = [99991663, 99991664, 99991665];
   private readonly MAX_AUTH_RETRIES = 3;
@@ -306,7 +306,6 @@ export class LarkProductSyncService {
   private async loadExistingRecords(): Promise<void> {
     const now = new Date();
 
-    // Check cache validity
     if (this.cacheLoaded && this.lastCacheLoadTime) {
       const cacheAge = now.getTime() - this.lastCacheLoadTime.getTime();
       const cacheAgeMinutes = cacheAge / (1000 * 60);
@@ -357,7 +356,6 @@ export class LarkProductSyncService {
           try {
             const fields = record.fields || {};
 
-            // Index by Product ID (same as Invoice pattern)
             const productIdValue = fields[LARK_PRODUCT_FIELDS.PRODUCT_ID];
             const productId = this.extractNumber(productIdValue);
 
@@ -655,7 +653,6 @@ export class LarkProductSyncService {
       fields[LARK_PRODUCT_FIELDS.PRIMARY_CODE] = product.code;
     }
 
-    // CORRECTED: Product ID using 'id' field directly from API
     if (product.id !== null && product.id !== undefined) {
       fields[LARK_PRODUCT_FIELDS.PRODUCT_ID] = this.safeBigIntToNumber(
         product.id,

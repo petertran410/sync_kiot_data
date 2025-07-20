@@ -11,6 +11,8 @@ import { KiotVietOrderService } from '../kiot-viet/order/order.service';
 import { KiotVietProductService } from '../kiot-viet/product/product.service';
 import { LarkProductSyncService } from '../lark/product/lark-product-sync.service';
 import { KiotVietPriceBookService } from '../kiot-viet/pricebook/pricebook.service';
+import { KiotVietSupplierService } from '../kiot-viet/supplier/supplier.service';
+import { LarkSupplierSyncService } from '../lark/supplier/lark-supplier-sync.service';
 
 @Injectable()
 export class BusSchedulerService implements OnModuleInit {
@@ -145,11 +147,10 @@ export class BusSchedulerService implements OnModuleInit {
       this.isDailyProductCompletedToday = false;
       await this.updateCycleTracking('daily_product_cycle', 'running');
 
-      const PRODUCT_SEQUENCE_TIMEOUT_MS = 60 * 60 * 1000; // 60 minutes
+      const PRODUCT_SEQUENCE_TIMEOUT_MS = 60 * 60 * 1000;
 
       try {
-        // THAY ĐỔI: Gọi sequence thay vì direct product sync
-        const sequencePromise = this.runProductSequenceSync(); // ← PriceBook → Product sequence
+        const sequencePromise = this.runProductSequenceSync();
         const timeoutPromise = new Promise<never>((_, reject) =>
           setTimeout(
             () =>
@@ -160,7 +161,6 @@ export class BusSchedulerService implements OnModuleInit {
 
         await Promise.race([sequencePromise, timeoutPromise]);
 
-        // Auto-trigger Product LarkBase sync
         await this.autoTriggerProductLarkSync();
 
         this.isDailyProductCompletedToday = true;
@@ -200,7 +200,6 @@ export class BusSchedulerService implements OnModuleInit {
   }
 
   private async executeParallelSyncs(): Promise<void> {
-    // REMOVE all Product logic from main cycle
     this.logger.log(
       '🔀 Main entities parallel execution: Customer ⫸ Invoice ⫸ Order (Product ISOLATED)',
     );
@@ -224,10 +223,8 @@ export class BusSchedulerService implements OnModuleInit {
       }),
     ];
 
-    // NO Product logic here - completely isolated to daily cron
-
     const results = await Promise.allSettled(syncPromises);
-    await this.executeStaggeredLarkSync(results, false); // false = no product
+    await this.executeStaggeredLarkSync(results, false);
   }
 
   @Cron('0 0 * * *', {
@@ -419,10 +416,8 @@ export class BusSchedulerService implements OnModuleInit {
     try {
       this.logger.log('💰 Enabling and running PriceBook sync...');
 
-      // Enable historical pricebook sync
       await this.priceBookService.enableHistoricalSync();
 
-      // Run the sync
       await this.priceBookService.syncHistoricalPriceBooks();
 
       this.logger.log('✅ PriceBook sync initiated successfully');

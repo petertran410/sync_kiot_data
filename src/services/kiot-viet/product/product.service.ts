@@ -229,7 +229,7 @@ export class KiotVietProductService {
 
         try {
           this.logger.log(
-            `📄 Fetching page ${currentPage} (items ${currentItem} - ${currentItem + this.PAGE_SIZE - 1})...`,
+            `📄 Fetching page ${currentPage} (items ${currentItem} - ${currentItem + this.PAGE_SIZE - 1})`,
           );
 
           const response = await this.fetchProductsListWithRetry({

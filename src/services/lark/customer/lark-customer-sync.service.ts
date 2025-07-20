@@ -6,7 +6,6 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { LarkAuthService } from '../auth/lark-auth.service';
 import { firstValueFrom } from 'rxjs';
 
-// ✅ EXACT field names from Khách Hàng.rtf
 const LARK_CUSTOMER_FIELDS = {
   PRIMARY_NAME: 'Tên Khách Hàng',
   CUSTOMER_CODE: 'Mã Khách Hàng',
@@ -279,7 +278,7 @@ export class LarkCustomerSyncService {
       let totalLoaded = 0;
       let cacheBuilt = 0;
       let stringConversions = 0;
-      const pageSize = 100; // Reduced for better stability
+      const pageSize = 100;
 
       do {
         const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records`;

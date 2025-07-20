@@ -702,7 +702,6 @@ export class KiotVietCustomerService {
         `🚀 Starting LarkBase sync for ${customers.length} customers...`,
       );
 
-      // Filter customers that need LarkBase sync
       const customersToSync = customers.filter(
         (c) => c.larkSyncStatus === 'PENDING' || c.larkSyncStatus === 'FAILED',
       );
