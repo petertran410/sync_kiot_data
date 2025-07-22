@@ -1,13 +1,9 @@
-// src/services/lark/order/lark-order-sync.service.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { LarkAuthService } from '../auth/lark-auth.service';
 import { firstValueFrom } from 'rxjs';
-import { error } from 'console';
-import { TimezoneUtils } from 'src/utils/timezone.utils';
-import { LarkSyncStatus } from '@prisma/client';
 
 // ✅ EXACT field names from Đơn Hàng.rtf
 const LARK_ORDER_FIELDS = {

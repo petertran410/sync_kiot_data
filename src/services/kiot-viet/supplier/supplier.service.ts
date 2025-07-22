@@ -99,7 +99,7 @@ export class KiotVietSupplierService {
         error: null,
       });
 
-      this.logger.log('🚀 Starting historical product sync...');
+      this.logger.log('🚀 Starting historical supplier sync...');
 
       const MAX_CONSECUTIVE_EMPTY_PAGES = 5;
       const MAX_CONSECUTIVE_ERROR_PAGES = 3;
@@ -114,7 +114,7 @@ export class KiotVietSupplierService {
         if (totalSuppliers > 0) {
           if (currentItem >= totalSuppliers) {
             this.logger.log(
-              `✅ Pagination complete. Processed ${processedCount}/${totalSuppliers} products`,
+              `✅ Pagination complete. Processed ${processedCount}/${totalSuppliers} supplier`,
             );
             break;
           }
@@ -386,13 +386,6 @@ export class KiotVietSupplierService {
 
     for (const supplierData of suppliers) {
       try {
-        if (!supplierData.id || !supplierData.code || !supplierData.name) {
-          this.logger.warn(
-            `⚠️ Skipping invalid product: id=${supplierData.id}, code='${supplierData.code}', name='${supplierData.name}'`,
-          );
-          continue;
-        }
-
         const supplier = await this.prismaService.supplier.upsert({
           where: { kiotVietId: BigInt(supplierData.id) },
           update: {
@@ -487,7 +480,7 @@ export class KiotVietSupplierService {
       );
 
       if (suppliersToSync.length === 0) {
-        this.logger.log('📋 No products need LarkBase sync');
+        this.logger.log('📋 No suppliers need LarkBase sync');
         return;
       }
 

@@ -80,6 +80,8 @@ model Product {
   // For combo products
   productAsCombo         ProductFormula[]         @relation("ComboProduct")
   productAsComponent     ProductFormula[]         @relation("ComponentProduct")
+  orderSupplierDetails  OrderSupplierDetail[]
+  
   
   // Relationships to other entities
   orderDetails           OrderDetail[]
@@ -165,14 +167,14 @@ model ProductBatchExpire {
   kiotVietId       BigInt?   @unique
   productId        Int
   product          Product   @relation(fields: [productId], references: [id])
-  batchName        String
-  fullNameVirgule  String
-  expireDate       DateTime?
+  batchName        String?
+  fullNameVirgule  String?
   onHand           Float     @default(0)
   branchId         Int
   branch           Branch    @relation(fields: [branchId], references: [id])
   createdDate      DateTime  @default(now())
   lastSyncedAt     DateTime  @default(now())
+  purchaseOrderDetailBatches  PurchaseOrderDetailBatch[]
 
   @@unique([productId, batchName, branchId])
   @@index([productId])
@@ -320,6 +322,7 @@ model Branch {
   returns           Return[]
   priceBooks        PriceBookBranch[]
   voucherCampaigns  VoucherCampaignBranch[]
+  orderSuppliers        OrderSupplier[]
 
   @@index([kiotVietId])
   Cashflow Cashflow[]
@@ -459,6 +462,125 @@ model OrderSurcharge {
   @@index([surchargeId])
 }
 
+model OrderSupplier {
+  id                    Int                           @id @default(autoincrement())
+  kiotVietId            BigInt                        @unique
+  code                  String                        @unique
+  orderDate             DateTime                      // Ngày đặt
+  branchId              Int?
+  branch                Branch?                        @relation(fields: [branchId], references: [id])
+  retailerId            Int?                          // Id cửa hàng
+  userId                BigInt?                       // Id người dùng
+  description           String?                       @db.Text // Ghi chú
+  status                Int?                           // Trạng thái (1:Active, 2:Completed, 3:Partial, 4:Cancelled)
+  statusValue           String?                       // Tên trạng thái
+  discountRatio         Float?                        // Giảm giá theo %
+  productQty            Float?                        // Số lượng sản phẩm
+  discount              Decimal?                      @db.Decimal(15, 2) // Giảm giá
+  total                 Decimal                       @db.Decimal(15, 2) // Tổng tiền
+  exReturnSuppliers     Decimal?                      @db.Decimal(15, 2) // Trả nhà cung cấp
+  exReturnThirdParty    Decimal?                      @db.Decimal(15, 2) // Trả bên thứ 3
+  totalAmt              Decimal?                      @db.Decimal(15, 2) // Tổng số tiền
+  totalQty              Float?                        // Tổng số lượng
+  totalQuantity         Float                         // Tổng số lượng (required)
+  totalProductType      Int?                          // Tổng loại sản phẩm
+  subTotal              Decimal                       @db.Decimal(15, 2) // Tổng phụ
+  paidAmount            Decimal?                      @db.Decimal(15, 2) // Số tiền đã trả
+  toComplete            Boolean                       @default(false)    // Hoàn thành
+  viewPrice             Boolean                       @default(false)    // Xem giá
+  supplierDebt          Decimal?                      @db.Decimal(15, 2) // Nợ nhà cung cấp
+  supplierOldDebt       Decimal?                      @db.Decimal(15, 2) // Nợ cũ nhà cung cấp
+  purchaseOrderCodes    String?                       // "PN001374,PN001375" - QUAN TRỌNG
+  createdBy             BigInt?                       // Id người tạo
+  createdDate           DateTime?                     // Ngày tạo từ KiotViet
+  modifiedDate          DateTime                      @updatedAt
+  lastSyncedAt          DateTime                      @default(now())
+  
+  // Lark sync fields (theo pattern hiện có)
+  larkRecordId          String?
+  larkSyncStatus        LarkSyncStatus                @default(PENDING)
+  larkSyncedAt          DateTime?
+  larkSyncRetries       Int                           @default(0)
+  
+  // Relationships
+  orderSupplierDetails  OrderSupplierDetail[]
+  orderSupplierExpenses OrderSupplierExpense[]
+  purchaseOrderLinks    OrderSupplierPurchaseOrder[]
+  
+  @@index([kiotVietId])
+  @@index([code])
+  @@index([branchId])
+  @@index([status])
+  @@index([orderDate])
+  @@index([userId])
+  @@index([retailerId])
+  @@index([lastSyncedAt])
+  @@index([larkSyncStatus])
+}
+
+model OrderSupplierDetail {
+  id                    Int                @id @default(autoincrement())
+  kiotVietId            BigInt            @unique
+  orderSupplierId       Int?
+  orderSupplier         OrderSupplier?      @relation(fields: [orderSupplierId], references: [id], onDelete: Cascade)
+  productId             Int
+  product               Product            @relation(fields: [productId], references: [id])
+  quantity              Float              // Số lượng hàng hóa
+  price                 Decimal            @db.Decimal(15, 2) // Giá
+  discount              Decimal?           @db.Decimal(15, 2) // Giảm giá
+  allocation            Decimal?           @db.Decimal(15, 2) // Phân bổ
+  description           String?            @db.Text // Ghi chú
+  orderByNumber         Int?               // Thứ tự
+  allocationSuppliers   Decimal?           @db.Decimal(15, 2) // Phân bổ nhà cung cấp
+  allocationThirdParty  Decimal?           @db.Decimal(15, 2) // Phân bổ bên thứ 3
+  orderQuantity         Float              @default(0) // Số lượng đặt
+  subTotal              Decimal            @db.Decimal(15, 2) // Tổng phụ
+  createdDate           DateTime           @default(now())
+  
+  @@index([orderSupplierId])
+  @@index([productId])
+  @@index([kiotVietId])
+}
+
+model OrderSupplierExpense {
+  id                    Int                @id @default(autoincrement())
+  kiotVietId            BigInt?            @unique
+  orderSupplierId       Int
+  orderSupplier         OrderSupplier      @relation(fields: [orderSupplierId], references: [id], onDelete: Cascade)
+  form                  Int?               // Hình thức
+  expensesOtherOrder    Int?               // Thứ tự chi phí khác
+  expensesOtherCode     String?            // Mã chi phí khác
+  expensesOtherName     String?            // Tên chi phí khác
+  expensesOtherId       Int?               // Id chi phí khác
+  price                 Decimal            @db.Decimal(15, 2) // Giá
+  isReturnAuto          Boolean?           @default(false) // Hoàn trả tự động
+  exValue               Decimal?           @db.Decimal(15, 2) // Giá trị gia hạn
+  createdDate           DateTime           @default(now())
+  
+  @@index([orderSupplierId])
+  @@index([kiotVietId])
+  @@index([expensesOtherId])
+}
+
+model OrderSupplierPurchaseOrder {
+  id                    Int                @id @default(autoincrement())
+  orderSupplierId       Int
+  orderSupplier         OrderSupplier      @relation(fields: [orderSupplierId], references: [id], onDelete: Cascade)
+  purchaseOrderId       Int
+  purchaseOrder         PurchaseOrder      @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  purchaseOrderCode     String             // PN001374, PN001375, etc.
+  linkOrder             Int?               // Thứ tự liên kết (1, 2, 3...)
+  isActive              Boolean            @default(true) // Trạng thái liên kết
+  createdDate           DateTime           @default(now())
+  lastSyncedAt          DateTime           @default(now())
+  
+  @@unique([orderSupplierId, purchaseOrderId])
+  @@index([orderSupplierId])
+  @@index([purchaseOrderId])
+  @@index([purchaseOrderCode])
+  @@index([isActive])
+}
+
 model Invoice {
   id                Int                @id @default(autoincrement())
   kiotVietId        BigInt             @unique
@@ -582,12 +704,15 @@ model Payment {
   kiotVietId        BigInt?            @unique
   code              String?
   amount            Decimal            @db.Decimal(15, 2)
-  method            String
+  method            String             // Cash, Card, Transfer
   status            Int?
+  statusValue       String?            // ✅ THÊM MỚI: Tên trạng thái
   transDate         DateTime
   accountId         Int?
   bankAccount       BankAccount?       @relation(fields: [accountId], references: [id])
   bankAccountInfo   String?
+  
+  // Relationships - đã có
   invoiceId         Int?
   invoice           Invoice?           @relation(fields: [invoiceId], references: [id])
   orderId           Int?
@@ -596,13 +721,16 @@ model Payment {
   return            Return?            @relation(fields: [returnId], references: [id])
   purchaseOrderId   Int?
   purchaseOrder     PurchaseOrder?     @relation(fields: [purchaseOrderId], references: [id])
+  
   description       String?
+  createdDate       DateTime           @default(now())        // ✅ THÊM MỚI
   
   @@index([invoiceId])
   @@index([orderId])
   @@index([returnId])
   @@index([purchaseOrderId])
   @@index([accountId])
+  @@index([transDate])                                        // ✅ THÊM MỚI
 }
 
 model Surcharge {
@@ -658,50 +786,115 @@ model SaleChannel {
 }
 
 model PurchaseOrder {
-  id                Int                   @id @default(autoincrement())
-  kiotVietId        BigInt                @unique
-  code              String                @unique
+  id                Int                         @id @default(autoincrement())
+  kiotVietId        BigInt                      @unique
+  code              String                      @unique
   branchId          Int
-  branch            Branch                @relation(fields: [branchId], references: [id])
+  branch            Branch                      @relation(fields: [branchId], references: [id])
+  branchName        String?                     // Tên chi nhánh
   purchaseDate      DateTime
   discountRatio     Float?
-  discount          Decimal?              @db.Decimal(15, 2)
-  total             Decimal               @db.Decimal(15, 2)
-  supplierId        Int?
-  supplier          Supplier?             @relation(fields: [supplierId], references: [id])
-  purchaseById      BigInt?
-  isDraft           Boolean               @default(false)
-  paidAmount        Decimal?              @db.Decimal(15, 2)
-  retailerId        Int?
-  createdDate       DateTime              @default(now())
-  modifiedDate      DateTime              @updatedAt
-  lastSyncedAt      DateTime              @default(now())
+  discount          Decimal?                    @db.Decimal(15, 2)
+  total             Decimal                     @db.Decimal(15, 2)
+  totalPayment      Decimal?                    @db.Decimal(15, 2)  // ✅ THÊM MỚI
+  status            Int?                        // ✅ THÊM MỚI: Trạng thái
+  description       String?                     @db.Text           // ✅ THÊM MỚI: Ghi chú
   
+  // Supplier information
+  supplierId        Int?
+  supplier          Supplier?                   @relation(fields: [supplierId], references: [id])
+  supplierName      String?                     // ✅ THÊM MỚI: Tên nhà cung cấp
+  supplierCode      String?                     // ✅ THÊM MỚI: Mã nhà cung cấp
+  partnerType       String?                     // ✅ THÊM MỚI: Người nộp/nhận
+  
+  // Purchase information  
+  purchaseById      BigInt?
+  purchaseName      String?                     // ✅ THÊM MỚI: Tên người nhập
+  isDraft           Boolean                     @default(false)
+  paidAmount        Decimal?                    @db.Decimal(15, 2)
+  
+  // System fields
+  retailerId        Int?
+  createdDate       DateTime                    @default(now())
+  modifiedDate      DateTime                    @updatedAt
+  lastSyncedAt      DateTime                    @default(now())
+  
+  // Lark sync fields (theo pattern hiện có)
+  larkRecordId      String?
+  larkSyncStatus    LarkSyncStatus              @default(PENDING)
+  larkSyncedAt      DateTime?
+  larkSyncRetries   Int                         @default(0)
+  
+  // Relationships
   details           PurchaseOrderDetail[]
   payments          Payment[]
+  surcharges        PurchaseOrderSurcharge[]    // ✅ THÊM MỚI: Chi phí phụ
+  orderSupplierLinks    OrderSupplierPurchaseOrder[]
   
   @@index([kiotVietId])
   @@index([code])
   @@index([branchId])
   @@index([supplierId])
+  @@index([status])
+  @@index([purchaseDate])
+  @@index([lastSyncedAt])
+  @@index([larkSyncStatus])
 }
 
 model PurchaseOrderDetail {
-  id                Int                @id @default(autoincrement())
-  kiotVietId        BigInt?            @unique
-  purchaseOrderId   Int
-  purchaseOrder     PurchaseOrder      @relation(fields: [purchaseOrderId], references: [id])
-  productId         Int
-  product           Product            @relation(fields: [productId], references: [id])
-  quantity          Float
-  price             Decimal            @db.Decimal(15, 2)
-  discount          Decimal?           @db.Decimal(15, 2)
-  discountRatio     Float?
-  description       String?
-  serialNumbers     String?
+  id                      Int                             @id @default(autoincrement())
+  kiotVietId              BigInt?                         @unique
+  purchaseOrderId         Int
+  purchaseOrder           PurchaseOrder                   @relation(fields: [purchaseOrderId], references: [id])
+  productId               Int
+  product                 Product                         @relation(fields: [productId], references: [id])
+  productCode             String?                         // ✅ THÊM MỚI: Mã hàng hóa
+  productName             String?                         // ✅ THÊM MỚI: Tên hàng hóa
+  quantity                Float
+  price                   Decimal                         @db.Decimal(15, 2)
+  discount                Decimal?                        @db.Decimal(15, 2)
+  discountRatio           Float?
+  description             String?
+  serialNumbers           String?                         // Danh sách IMEI
+  subTotal                Decimal?                        @db.Decimal(15, 2)  // ✅ THÊM MỚI
+  createdDate             DateTime                        @default(now())
+  
+  // ✅ THÊM MỚI: Relationship với ProductBatchExpire
+  batchExpires            PurchaseOrderDetailBatch[]
   
   @@index([purchaseOrderId])
   @@index([productId])
+}
+
+model PurchaseOrderDetailBatch {
+  id                      Int                             @id @default(autoincrement())
+  kiotVietId              BigInt?                         @unique
+  purchaseOrderDetailId   Int
+  purchaseOrderDetail     PurchaseOrderDetail             @relation(fields: [purchaseOrderDetailId], references: [id])
+  productBatchExpireId    Int
+  productBatchExpire      ProductBatchExpire              @relation(fields: [productBatchExpireId], references: [id])
+  quantity                Float                           // Số lượng lô này trong chi tiết nhập hàng
+  createdDate             DateTime                        @default(now())
+  
+  @@unique([purchaseOrderDetailId, productBatchExpireId])
+  @@index([purchaseOrderDetailId])
+  @@index([productBatchExpireId])
+}
+
+model PurchaseOrderSurcharge {
+  id                      Int                             @id @default(autoincrement())
+  kiotVietId              BigInt?                         @unique
+  purchaseOrderId         Int
+  purchaseOrder           PurchaseOrder                   @relation(fields: [purchaseOrderId], references: [id])
+  code                    String?                         // Mã chi phí
+  name                    String                          // Tên chi phí
+  value                   Decimal?                        @db.Decimal(15, 2)  // Số tiền thu
+  valueRatio              Decimal?                        @db.Decimal(5, 2)   // Phần trăm thu
+  isSupplierExpense       Boolean                         @default(false)     // Hoàn lại khi trả hàng nhập
+  type                    Int?                            // Hình thức
+  createdDate             DateTime                        @default(now())
+  
+  @@index([purchaseOrderId])
 }
 
 model Transfer {
@@ -1099,11 +1292,11 @@ model Cashflow {
   createdBy              BigInt?
   usedForFinancialReporting Int?
   cashFlowGroupId        Int?
-  method                 String    // Cash, Transfer, Card, etc.
-  partnerType            String    // A: all, C: customer, S: supplier, U: user, D: delivery, O: other
+  method                 String
+  partnerType            String
   partnerId              BigInt?
-  status                 Int       // 0: paid, 1: cancelled
-  statusValue            String?   // Status in text
+  status                 Int
+  statusValue            String?
   transDate              DateTime
   amount                 Decimal   @db.Decimal(15, 2)
   partnerName            String?
@@ -1111,7 +1304,7 @@ model Cashflow {
   accountId              Int?
   bankAccount            BankAccount? @relation(fields: [accountId], references: [id])
   description            String?
-  isReceipt              Boolean   // true: receipt, false: disbursement
+  isReceipt              Boolean
   retailerId             Int?
   createdDate            DateTime  @default(now())
   lastSyncedAt           DateTime  @default(now())
@@ -1126,17 +1319,17 @@ model Cashflow {
 
 model SyncControl {
   id                Int       @id @default(autoincrement())
-  name              String    @unique // e.g., "full_historical", "customer_recent", etc.
-  entities          String[]  // List of entity types included in this sync operation
+  name              String    @unique
+  entities          String[]
   isRunning         Boolean   @default(false)
   isEnabled         Boolean   @default(true)
   startedAt         DateTime?
   completedAt       DateTime?
-  progress          Json?     // Store progress info as JSON: {"customer": 50, "product": 100, ...}
-  completedEntities String[]  // List of entity types that have completed
-  currentEntity     String?   // Currently syncing entity (for sequential syncs)
-  syncMode          String    // "historical", "recent", "incremental" 
-  status            String    // "idle", "in_progress", "completed", "failed", "paused"
+  progress          Json?
+  completedEntities String[]
+  currentEntity     String?
+  syncMode          String
+  status            String
   error             String?   @db.Text
   lastRunAt         DateTime?
   createdAt         DateTime  @default(now())

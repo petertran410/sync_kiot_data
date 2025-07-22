@@ -1066,7 +1066,6 @@ export class KiotVietProductService {
               productId,
               batchName: batch.batchName,
               fullNameVirgule: batch.fullNameVirgule,
-              expireDate: batch.expireDate ? new Date(batch.expireDate) : null,
               onHand: batch.onHand || 0,
               branchId: branch.id,
               lastSyncedAt: new Date(),

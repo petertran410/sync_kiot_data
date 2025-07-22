@@ -1,4 +1,3 @@
-// src/services/lark/lark.module.ts
 import { Module } from '@nestjs/common';
 import { HttpModule } from '@nestjs/axios';
 import { ConfigModule } from '@nestjs/config';
@@ -9,6 +8,7 @@ import { LarkInvoiceSyncService } from './invoice/lark-invoice-sync.service';
 import { LarkOrderSyncService } from './order/lark-order-sync.service';
 import { LarkProductSyncService } from './product/lark-product-sync.service';
 import { LarkSupplierSyncService } from './supplier/lark-supplier-sync.service';
+import { LarkOrderSupplierSyncService } from './order-supplier/lark-order-supplier-sync.service';
 
 @Module({
   imports: [
@@ -26,6 +26,7 @@ import { LarkSupplierSyncService } from './supplier/lark-supplier-sync.service';
     LarkOrderSyncService,
     LarkProductSyncService,
     LarkSupplierSyncService,
+    LarkOrderSupplierSyncService,
   ],
   exports: [
     LarkAuthService,
@@ -34,6 +35,7 @@ import { LarkSupplierSyncService } from './supplier/lark-supplier-sync.service';
     LarkOrderSyncService,
     LarkProductSyncService,
     LarkSupplierSyncService,
+    LarkOrderSupplierSyncService,
   ],
 })
 export class LarkModule {}

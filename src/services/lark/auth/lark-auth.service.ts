@@ -31,6 +31,9 @@ export class LarkAuthService {
   private supplierAccessToken: string | null = null;
   private supplierTokenExpiry: Date | null = null;
 
+  private orderSupplierAccessToken: string | null = null;
+  private orderSupplierTokenExpiry: Date | null = null;
+
   constructor(
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
@@ -41,7 +44,13 @@ export class LarkAuthService {
   // ============================================================================
 
   async getAccessToken(
-    service: 'customer' | 'invoice' | 'order' | 'product' | 'supplier',
+    service:
+      | 'customer'
+      | 'invoice'
+      | 'order'
+      | 'product'
+      | 'supplier'
+      | 'orderSupplier',
   ): Promise<string> {
     switch (service) {
       case 'customer':
@@ -54,6 +63,8 @@ export class LarkAuthService {
         return await this.getProductAccessToken();
       case 'supplier':
         return await this.getSupplierAccessToken();
+      case 'orderSupplier':
+        return await this.getOrderSupplierAccessToken();
       default:
         throw new Error(`Unknown service: ${service}`);
     }
@@ -499,5 +510,94 @@ export class LarkAuthService {
     this.supplierAccessToken = null;
     this.supplierTokenExpiry = null;
     await this.refreshSupplierToken();
+  }
+
+  // ============================================================================
+  // ORDER_SUPPLIER TOKEN MANAGEMENT
+  // ============================================================================
+
+  async getOrderSupplierHeaders(): Promise<Record<string, string>> {
+    const token = await this.getOrderSupplierAccessToken();
+    return {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    };
+  }
+
+  private async getOrderSupplierAccessToken(): Promise<string> {
+    if (
+      this.orderSupplierAccessToken &&
+      this.orderSupplierTokenExpiry &&
+      this.orderSupplierTokenExpiry > new Date(Date.now() + 5 * 60 * 1000)
+    ) {
+      return this.orderSupplierAccessToken;
+    }
+
+    return await this.refreshOrderSupplierToken();
+  }
+
+  private async refreshOrderSupplierToken(): Promise<string> {
+    try {
+      this.logger.log('🔄 Refreshing LarkBase order_supplier access token...');
+
+      const appId = this.configService.get<string>(
+        'LARK_ORDER_SUPPLIER_SYNC_APP_ID',
+      );
+      const appSecret = this.configService.get<string>(
+        'LARK_ORDER_SUPPLIER_SYNC_APP_SECRET',
+      );
+
+      if (!appId || !appSecret) {
+        throw new Error('LarkBase order_supplier credentials not configured');
+      }
+
+      const url =
+        'https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal';
+
+      const response = await firstValueFrom(
+        this.httpService.post<TenantAccessTokenResponse>(
+          url,
+          {
+            app_id: appId,
+            app_secret: appSecret,
+          },
+          {
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            timeout: 10000,
+          },
+        ),
+      );
+
+      if (response.data.code !== 0) {
+        throw new Error(
+          `LarkBase auth failed: ${response.data.msg} (code: ${response.data.code})`,
+        );
+      }
+
+      this.orderSupplierAccessToken = response.data.tenant_access_token;
+      this.orderSupplierTokenExpiry = new Date(
+        Date.now() + response.data.expire * 1000,
+      );
+
+      this.logger.log('✅ LarkBase orderSupplier token refreshed successfully');
+      return this.orderSupplierAccessToken;
+    } catch (error) {
+      this.logger.error(
+        `❌ Failed to refresh orderSupplier token: ${error.message}`,
+      );
+
+      this.orderSupplierAccessToken = null;
+      this.orderSupplierTokenExpiry = null;
+
+      throw new Error(`Token refresh failed: ${error.message}`);
+    }
+  }
+
+  async forceRefreshOrderSupplierToken(): Promise<void> {
+    this.orderSupplierAccessToken = null;
+    this.orderSupplierTokenExpiry = null;
+    await this.refreshOrderSupplierToken();
   }
 }
