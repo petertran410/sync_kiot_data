@@ -1,4 +1,3 @@
-// src/services/bus-scheduler/bus-scheduler.service.ts
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -20,16 +19,18 @@ import { LarkOrderSupplierSyncService } from '../lark/order-supplier/lark-order-
 export class BusSchedulerService implements OnModuleInit {
   private readonly logger = new Logger(BusSchedulerService.name);
 
-  // EXISTING FLAGS
   private isMainSchedulerEnabled = true;
   private isDailyProductSchedulerEnabled = true;
   private isDailyProductCompletedToday = false;
   private lastProductSyncDate: string | null = null;
 
-  // NEW FLAGS - Priority Management System
   private isDailyCycleRunning = false;
   private mainSchedulerSuspendedForDaily = false;
   private dailyCycleStartTime: Date | null = null;
+
+  private isMainCycleGracefulShutdown = false;
+  private mainCycleAbortController: AbortController | null = null;
+  private dailyCyclePriorityLevel = 0;
 
   constructor(
     private readonly prismaService: PrismaService,
@@ -59,20 +60,33 @@ export class BusSchedulerService implements OnModuleInit {
     timeZone: 'Asia/Ho_Chi_Minh',
   })
   async handleMainSyncCycle() {
-    if (this.isDailyCycleRunning) {
+    // ✅ ENHANCED: Kiểm tra multiple priority levels
+    if (this.isDailyCycleRunning || this.dailyCyclePriorityLevel > 0) {
       if (!this.mainSchedulerSuspendedForDaily) {
         this.logger.log(
           '🛑 SUSPENDING 7-minute cycle - Daily cycle has priority',
         );
         this.mainSchedulerSuspendedForDaily = true;
+
+        // ✅ NEW: Force abort nếu đang chạy
+        if (this.mainCycleAbortController) {
+          this.mainCycleAbortController.abort();
+          this.logger.log('🚫 FORCE ABORTING ongoing 7-minute cycle');
+        }
       }
+
       this.logger.debug(
-        '⏸️ 7-minute cycle suspended during daily cycle execution',
+        `⏸️ 7-minute cycle suspended (dailyCyclePriorityLevel: ${this.dailyCyclePriorityLevel}, isDailyCycleRunning: ${this.isDailyCycleRunning})`,
       );
       return;
     }
 
-    if (this.mainSchedulerSuspendedForDaily && !this.isDailyCycleRunning) {
+    // ✅ NEW: Resume mechanism
+    if (
+      this.mainSchedulerSuspendedForDaily &&
+      !this.isDailyCycleRunning &&
+      this.dailyCyclePriorityLevel === 0
+    ) {
       this.logger.log('▶️ RESUMING 7-minute cycle - Daily cycle completed');
       this.mainSchedulerSuspendedForDaily = false;
     }
@@ -82,9 +96,19 @@ export class BusSchedulerService implements OnModuleInit {
       return;
     }
 
+    // ✅ NEW: Tạo AbortController cho cycle này
+    this.mainCycleAbortController = new AbortController();
+    const signal = this.mainCycleAbortController.signal;
+
     try {
       this.logger.log('🚀 Starting 7-minute parallel sync cycle...');
       const startTime = Date.now();
+
+      // ✅ NEW: Kiểm tra abort signal trước khi bắt đầu
+      if (signal.aborted) {
+        this.logger.log('🚫 7-minute cycle aborted before starting');
+        return;
+      }
 
       const runningSyncs = await this.checkRunningSyncs();
       if (runningSyncs.length > 0) {
@@ -99,10 +123,11 @@ export class BusSchedulerService implements OnModuleInit {
       const CYCLE_TIMEOUT_MS = 15 * 60 * 1000;
 
       try {
-        const cyclePromise = this.executeParallelSyncs();
+        // ✅ NEW: Enhanced cycle execution với abort signal
+        const cyclePromise = this.executeMainCycleWithAbortSignal(signal);
         const timeoutPromise = new Promise<never>((_, reject) =>
           setTimeout(
-            () => reject(new Error('Cycle timeout after 25 minutes')),
+            () => reject(new Error('Cycle timeout after 15 minutes')),
             CYCLE_TIMEOUT_MS,
           ),
         );
@@ -112,26 +137,107 @@ export class BusSchedulerService implements OnModuleInit {
 
         const totalDuration = ((Date.now() - startTime) / 1000).toFixed(2);
         this.logger.log(
-          `🎉 Parallel sync cycle completed in ${totalDuration}s`,
+          `🎉 7-minute sync cycle completed in ${totalDuration}s`,
         );
       } catch (timeoutError) {
-        if (
+        if (signal.aborted) {
+          this.logger.log(
+            '🚫 7-minute cycle was aborted by daily cycle priority',
+          );
+          await this.updateCycleTracking(
+            'main_cycle',
+            'aborted',
+            'Aborted by daily cycle priority',
+          );
+        } else if (
           timeoutError instanceof Error &&
           timeoutError.message.includes('timeout')
         ) {
-          this.logger.error(`⏰ Sync cycle timed out after 25 minutes`);
+          this.logger.error(`⏰ 7-minute cycle timed out after 15 minutes`);
           await this.updateCycleTracking(
             'main_cycle',
             'timeout',
-            'Cycle exceeded 25 minute timeout',
+            'Cycle exceeded 15 minute timeout',
           );
         } else {
           throw timeoutError;
         }
       }
     } catch (error) {
-      this.logger.error(`❌ Main sync cycle failed: ${error.message}`);
-      await this.updateCycleTracking('main_cycle', 'failed', error.message);
+      if (signal.aborted) {
+        this.logger.log('🚫 7-minute cycle aborted during execution');
+        await this.updateCycleTracking(
+          'main_cycle',
+          'aborted',
+          'Aborted by daily cycle priority',
+        );
+      } else {
+        this.logger.error(`❌ 7-minute sync cycle failed: ${error.message}`);
+        await this.updateCycleTracking('main_cycle', 'failed', error.message);
+      }
+    } finally {
+      this.mainCycleAbortController = null;
+    }
+  }
+
+  private async executeMainCycleWithAbortSignal(
+    signal: AbortSignal,
+  ): Promise<void> {
+    const syncPromises: Promise<void>[] = [];
+
+    // Customer sync
+    syncPromises.push(
+      this.executeAbortableSync('customer', signal, async () => {
+        await this.runCustomerSync();
+        await this.runCustomerLarkSync();
+      }),
+    );
+
+    // Invoice sync
+    syncPromises.push(
+      this.executeAbortableSync('invoice', signal, async () => {
+        await this.runInvoiceSync();
+        await this.runInvoiceLarkSync();
+      }),
+    );
+
+    // Order sync
+    syncPromises.push(
+      this.executeAbortableSync('order', signal, async () => {
+        await this.runOrderSync();
+        await this.runOrderLarkSync();
+      }),
+    );
+
+    await Promise.all(syncPromises);
+  }
+
+  // ✅ NEW: Helper để execute sync với abort signal
+  private async executeAbortableSync(
+    syncType: string,
+    signal: AbortSignal,
+    syncFunction: () => Promise<void>,
+  ): Promise<void> {
+    if (signal.aborted) {
+      this.logger.debug(`🚫 ${syncType} sync aborted before starting`);
+      return;
+    }
+
+    try {
+      await syncFunction();
+
+      // Kiểm tra abort sau khi hoàn thành
+      if (signal.aborted) {
+        this.logger.debug(
+          `🚫 ${syncType} sync completed but was marked for abort`,
+        );
+      }
+    } catch (error) {
+      if (signal.aborted) {
+        this.logger.debug(`🚫 ${syncType} sync aborted during execution`);
+      } else {
+        throw error;
+      }
     }
   }
 
@@ -161,79 +267,49 @@ export class BusSchedulerService implements OnModuleInit {
       this.logger.log(
         '🌙 23:00 Daily Product Sequence + OrderSupplier Sync triggered',
       );
-      this.logger.log(
-        '🛑 ACTIVATING daily cycle priority mode - Suspending 7-minute cycle',
-      );
 
+      this.dailyCyclePriorityLevel = 1;
+      this.logger.log('🔄 PREPARING daily cycle priority mode (Level 1)');
+
+      await this.forceStopMainCycleImmediately();
+
+      // ✅ STEP 3: Activate full daily cycle
+      this.dailyCyclePriorityLevel = 2; // active
       this.isDailyCycleRunning = true;
       this.dailyCycleStartTime = new Date();
 
-      await this.waitForMainCycleCompletion();
+      this.logger.log(
+        '🛑 ACTIVATING daily cycle priority mode (Level 2) - 7-minute cycle STOPPED',
+      );
+
+      // ✅ STEP 4: Reduced wait time - chỉ còn 30 giây thay vì 3 phút
+      await this.quickWaitForMainCycleCompletion();
 
       const startTime = Date.now();
       this.isDailyProductCompletedToday = false;
+
       await this.updateCycleTracking('daily_product_cycle', 'running');
 
-      const PRODUCT_SEQUENCE_TIMEOUT_MS = 60 * 60 * 1000;
-      const ORDER_SUPPLIER_SYNC_TIMEOUT_MS = 60 * 60 * 1000;
+      const DAILY_TIMEOUT_MS = 60 * 60 * 1000; // 60 phút
 
       try {
-        this.logger.log(
-          '🔀 23:00 Parallel execution: Sequential Product (PriceBook → Product) ⫸ OrderSupplier',
+        const dailyPromise = this.executeDailyProductAndOrderSupplierSequence();
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error('Daily sequence timeout after 60 minutes')),
+            DAILY_TIMEOUT_MS,
+          ),
         );
 
-        const [productResult, orderSupplierResult] = await Promise.allSettled([
-          Promise.race([
-            this.runProductSequenceSync(),
-            new Promise<never>((_, reject) =>
-              setTimeout(
-                () =>
-                  reject(
-                    new Error('Product sequence timeout after 60 minutes'),
-                  ),
-                PRODUCT_SEQUENCE_TIMEOUT_MS,
-              ),
-            ),
-          ]),
-          Promise.race([
-            this.runOrderSupplierSync(),
-            new Promise<never>((_, reject) =>
-              setTimeout(
-                () =>
-                  reject(
-                    new Error('OrderSupplier sync timeout after 60 minutes'),
-                  ),
-                ORDER_SUPPLIER_SYNC_TIMEOUT_MS,
-              ),
-            ),
-          ]),
-        ]);
-
-        if (productResult.status === 'fulfilled') {
-          this.logger.log('✅ Product sequence completed successfully');
-          await this.autoTriggerProductLarkSync();
-        } else {
-          this.logger.error(
-            `❌ Product sequence failed: ${productResult.reason}`,
-          );
-        }
-
-        if (orderSupplierResult.status === 'fulfilled') {
-          this.logger.log('✅ OrderSupplier sync completed successfully');
-          await this.autoTriggerOrderSupplierLarkSync();
-        } else {
-          this.logger.error(
-            `❌ OrderSupplier sync failed: ${orderSupplierResult.reason}`,
-          );
-        }
+        await Promise.race([dailyPromise, timeoutPromise]);
+        await this.updateCycleTracking('daily_product_cycle', 'completed');
 
         this.isDailyProductCompletedToday = true;
         this.lastProductSyncDate = today;
-        await this.updateCycleTracking('daily_product_cycle', 'completed');
 
-        const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+        const duration = ((Date.now() - startTime) / 1000 / 60).toFixed(2);
         this.logger.log(
-          `🎉 Daily product + orderSupplier sequence completed in ${duration}s`,
+          `🎉 Daily product + orderSupplier sequence completed in ${duration} minutes`,
         );
         this.logger.log(`🔒 Product sequence locked until tomorrow 23:00`);
       } catch (timeoutError) {
@@ -267,7 +343,66 @@ export class BusSchedulerService implements OnModuleInit {
       this.isDailyCycleRunning = false;
       this.dailyCycleStartTime = null;
       this.mainSchedulerSuspendedForDaily = false;
+      this.dailyCyclePriorityLevel = 0; // back to normal
+      this.isMainCycleGracefulShutdown = false;
     }
+  }
+
+  private async forceStopMainCycleImmediately(): Promise<void> {
+    this.logger.log('🚫 FORCE STOPPING any ongoing 7-minute cycle...');
+
+    // Abort current cycle if running
+    if (this.mainCycleAbortController) {
+      this.mainCycleAbortController.abort();
+      this.logger.log('⚡ Sent abort signal to ongoing 7-minute cycle');
+    }
+
+    // Set graceful shutdown flag
+    this.isMainCycleGracefulShutdown = true;
+
+    // Quick wait for abort to take effect
+    await new Promise((resolve) => setTimeout(resolve, 2000)); // 2 giây thay vì 3 phút
+
+    this.logger.log('✅ Main cycle force stop completed');
+  }
+
+  // ✅ NEW: Quick wait thay thế cho waitForMainCycleCompletion
+  private async quickWaitForMainCycleCompletion(): Promise<void> {
+    const MAX_WAIT_SECONDS = 30; // ✅ GIẢM từ 3 phút xuống 30 giây
+    const CHECK_INTERVAL_MS = 2000; // Kiểm tra mỗi 2 giây
+    let waitedSeconds = 0;
+
+    this.logger.log('⏳ Quick check for ongoing 7-minute cycle (max 30s)...');
+
+    while (waitedSeconds < MAX_WAIT_SECONDS) {
+      const runningSyncs = await this.checkRunningSyncs();
+      const coreMainCycleSyncs = runningSyncs.filter(
+        (sync) =>
+          ['main_cycle', 'main_sync_cycle'].includes(sync.name) ||
+          ['customer_recent', 'invoice_recent', 'order_recent'].includes(
+            sync.name,
+          ),
+      );
+
+      if (coreMainCycleSyncs.length === 0) {
+        this.logger.log(
+          '✅ No ongoing 7-minute cycle detected - Proceeding with daily cycle',
+        );
+        return;
+      }
+
+      this.logger.debug(
+        `⏳ Core syncs still running: ${coreMainCycleSyncs.map((s) => s.name).join(', ')} (${waitedSeconds}/${MAX_WAIT_SECONDS}s)`,
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, CHECK_INTERVAL_MS));
+      waitedSeconds += CHECK_INTERVAL_MS / 1000;
+    }
+
+    this.logger.warn(
+      `⚠️ Proceeding after ${MAX_WAIT_SECONDS} seconds - Some syncs may still be running`,
+    );
+    this.logger.log('🚀 Daily cycle proceeding with ABSOLUTE PRIORITY');
   }
 
   private async waitForMainCycleCompletion(): Promise<void> {
@@ -335,7 +470,7 @@ export class BusSchedulerService implements OnModuleInit {
     const runningSyncs = await this.checkRunningSyncs();
     const productStatus = this.getDailyProductStatus();
 
-    const coreMainCycle: any[] = runningSyncs.filter((sync) =>
+    const coreMainCycle = runningSyncs.filter((sync) =>
       [
         'main_cycle',
         'main_sync_cycle',
@@ -345,13 +480,13 @@ export class BusSchedulerService implements OnModuleInit {
       ].includes(sync.name),
     );
 
-    const larkBaseSyncs: any[] = runningSyncs.filter((sync) =>
+    const larkBaseSyncs = runningSyncs.filter((sync) =>
       ['customer_lark_sync', 'invoice_lark_sync', 'order_lark_sync'].includes(
         sync.name,
       ),
     );
 
-    const dailyCycleSyncs: any[] = runningSyncs.filter((sync) =>
+    const dailyCycleSyncs = runningSyncs.filter((sync) =>
       [
         'product_historical',
         'order_supplier_historical',
@@ -360,60 +495,76 @@ export class BusSchedulerService implements OnModuleInit {
       ].includes(sync.name),
     );
 
+    // ✅ NEW: Enhanced status với priority levels
+    const getPriorityStatus = () => {
+      if (this.isDailyCycleRunning && this.dailyCyclePriorityLevel === 2) {
+        return 'DAILY_CYCLE_ACTIVE';
+      } else if (this.dailyCyclePriorityLevel === 1) {
+        return 'DAILY_CYCLE_PREPARING';
+      } else if (this.mainSchedulerSuspendedForDaily) {
+        return 'SUSPENDED_FOR_DAILY';
+      } else {
+        return 'NORMAL_OPERATION';
+      }
+    };
+
     return {
       scheduler: {
         mainScheduler: {
           enabled: this.isMainSchedulerEnabled,
-          currentStatus: this.isDailyCycleRunning ? 'SUSPENDED' : 'ACTIVE',
+          currentStatus:
+            this.isDailyCycleRunning || this.dailyCyclePriorityLevel > 0
+              ? 'SUSPENDED'
+              : 'ACTIVE',
           suspendedForDaily: this.mainSchedulerSuspendedForDaily,
-          nextRun: this.isDailyCycleRunning
-            ? 'Suspended during daily cycle'
-            : '7 minutes interval',
+          priorityLevel: this.dailyCyclePriorityLevel,
+          abortControllerActive: this.mainCycleAbortController !== null,
+          nextRun:
+            this.isDailyCycleRunning || this.dailyCyclePriorityLevel > 0
+              ? `Suspended during daily cycle (Priority Level ${this.dailyCyclePriorityLevel})`
+              : '7 minutes interval',
           entities: ['customer', 'invoice', 'order'],
-          note: 'Automatically suspended during daily cycle execution. LarkBase syncs can run in background.',
+          note: 'Enhanced priority management with force abort capability',
         },
         dailyProductSequenceScheduler: {
           enabled: this.isDailyProductSchedulerEnabled,
           currentStatus: this.isDailyCycleRunning ? 'RUNNING' : 'IDLE',
+          priorityLevel: this.dailyCyclePriorityLevel,
           nextRun: 'Daily at 23:00 (Vietnam time)',
           entities: ['pricebook', 'product', 'order_supplier'],
           sequence: 'Sequential: PriceBook → Product | Parallel: OrderSupplier',
           isolation:
-            'Waits for core 7-minute cycle, allows LarkBase background operation',
+            'ABSOLUTE PRIORITY - Force stops 7-minute cycle immediately',
           status: productStatus,
-          timeout: '60 minutes (each: Product sequence & OrderSupplier)',
+          timeout: '60 minutes total (enhanced abort mechanism)',
           execution: 'Product sequence (Sequential) + OrderSupplier (Parallel)',
+          waitTime: 'Reduced from 3 minutes to 30 seconds maximum',
           dailyCycleStartTime: this.dailyCycleStartTime?.toISOString() || null,
         },
-        priorityManagement: {
-          dailyCycleRunning: this.isDailyCycleRunning,
-          mainSchedulerSuspended: this.mainSchedulerSuspendedForDaily,
-          activeMode: this.isDailyCycleRunning
-            ? 'DAILY_PRIORITY'
-            : 'NORMAL_OPERATIONS',
-          waitingForCoreCompletion:
-            this.isDailyCycleRunning && coreMainCycle.length > 0,
+        enhancedPriorityManagement: {
+          currentPriorityStatus: getPriorityStatus(),
+          dailyCyclePriorityLevel: this.dailyCyclePriorityLevel,
+          mainCycleAbortController:
+            this.mainCycleAbortController !== null ? 'ACTIVE' : 'INACTIVE',
+          isMainCycleGracefulShutdown: this.isMainCycleGracefulShutdown,
+          forceStopCapability: 'ENABLED',
+          waitTimeOptimization: 'ENABLED (30s max vs 3min before)',
         },
-      },
-      runningTasks: {
-        total: runningSyncs.length,
-        coreMainCycle: coreMainCycle.length,
-        larkBaseSyncs: larkBaseSyncs.length,
-        dailyCycleSyncs: dailyCycleSyncs.length,
-      },
-      runningSyncs: {
-        coreMainCycle: coreMainCycle.map((sync) => ({
-          name: sync.name,
-          startedAt: sync.startedAt,
-        })),
-        larkBaseSyncs: larkBaseSyncs.map((sync) => ({
-          name: sync.name,
-          startedAt: sync.startedAt,
-        })),
-        dailyCycleSyncs: dailyCycleSyncs.map((sync) => ({
-          name: sync.name,
-          startedAt: sync.startedAt,
-        })),
+        currentActivity: {
+          coreMainCycleSyncs: coreMainCycle.map((s) => ({
+            name: s.name,
+            status: s.status,
+          })),
+          larkBaseSyncs: larkBaseSyncs.map((s) => ({
+            name: s.name,
+            status: s.status,
+          })),
+          dailyCycleSyncs: dailyCycleSyncs.map((s) => ({
+            name: s.name,
+            status: s.status,
+          })),
+          totalRunningSyncs: runningSyncs.length,
+        },
       },
     };
   }
@@ -1554,14 +1705,22 @@ export class BusSchedulerService implements OnModuleInit {
           status,
           error,
           startedAt: status === 'running' ? new Date() : undefined,
-          completedAt: status === 'completed' ? new Date() : undefined,
+          completedAt: ['completed', 'aborted', 'timeout', 'failed'].includes(
+            status,
+          )
+            ? new Date()
+            : undefined,
         },
         update: {
           isRunning: status === 'running',
           status,
           error,
           startedAt: status === 'running' ? new Date() : undefined,
-          completedAt: status === 'completed' ? new Date() : undefined,
+          completedAt: ['completed', 'aborted', 'timeout', 'failed'].includes(
+            status,
+          )
+            ? new Date()
+            : undefined,
         },
       });
     } catch (trackingError) {
