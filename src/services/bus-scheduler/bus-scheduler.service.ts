@@ -241,7 +241,7 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
-  @Cron('0 23 * * *', {
+  @Cron('41 19 * * *', {
     name: 'daily_product_sync',
     timeZone: 'Asia/Ho_Chi_Minh',
   })
@@ -1770,7 +1770,7 @@ export class BusSchedulerService implements OnModuleInit {
       // ===============================================
       this.logger.log('🔄 PHASE 2: Parallel OrderSupplier Sync');
 
-      const orderSupplierPromise = this.runOrderSupplierSync().catch(
+      const orderSupplierPromise = this.enableAndRunOrderSupplierSync().catch(
         (error) => {
           this.logger.error(`❌ [OrderSupplier] Sync failed: ${error.message}`);
           return {
