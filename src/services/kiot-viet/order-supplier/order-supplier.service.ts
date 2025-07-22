@@ -440,6 +440,7 @@ export class KiotVietOrderSupplierService {
             createdDate: orderSupplierData.createdDate
               ? new Date(orderSupplierData.createdDate)
               : new Date(),
+            createdBy: user?.id ?? null,
             total: new Prisma.Decimal(orderSupplierData.total || 0),
             exReturnSuppliers: new Prisma.Decimal(
               orderSupplierData.exReturnSuppliers || 0,
@@ -448,7 +449,7 @@ export class KiotVietOrderSupplierService {
               orderSupplierData.exReturnThirdParty || 0,
             ),
             totalAmt: new Prisma.Decimal(orderSupplierData.totalAmt || 0),
-            totalQty: orderSupplierData.totalAmt || 0,
+            totalQty: orderSupplierData.totalQty || 0,
             totalQuantity: orderSupplierData.totalQuantity || 0,
             totalProductType: orderSupplierData.totalProductType || 0,
             subTotal: new Prisma.Decimal(orderSupplierData.subTotal || 0),
@@ -479,6 +480,7 @@ export class KiotVietOrderSupplierService {
             createdDate: orderSupplierData.createdDate
               ? new Date(orderSupplierData.createdDate)
               : new Date(),
+            createdBy: user?.id ?? null,
             total: new Prisma.Decimal(orderSupplierData.total || 0),
             exReturnSuppliers: new Prisma.Decimal(
               orderSupplierData.exReturnSuppliers || 0,
@@ -487,7 +489,7 @@ export class KiotVietOrderSupplierService {
               orderSupplierData.exReturnThirdParty || 0,
             ),
             totalAmt: new Prisma.Decimal(orderSupplierData.totalAmt || 0),
-            totalQty: orderSupplierData.totalAmt || 0,
+            totalQty: orderSupplierData.totalQty || 0,
             totalQuantity: orderSupplierData.totalQuantity || 0,
             totalProductType: orderSupplierData.totalProductType || 0,
             subTotal: new Prisma.Decimal(orderSupplierData.subTotal || 0),
