@@ -812,6 +812,21 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
+  private async enableAndRunOrderSupplierSync(): Promise<void> {
+    try {
+      this.logger.log('📦 Enabling and running OrderSupplier sync...');
+
+      await this.orderSupplierService.enableHistoricalSync();
+
+      await this.orderSupplierService.syncHistoricalOrderSuppliers();
+
+      this.logger.log('✅ OrderSupplier sync initiated successfully');
+    } catch (error) {
+      this.logger.error(`❌ OrderSupplier sync failed: ${error.message}`);
+      throw new Error(`OrderSupplier sync failed: ${error.message}`);
+    }
+  }
+
   private async runSupplierSync(): Promise<void> {
     try {
       this.logger.log('🏪 [Supplier] Starting supplier sync...');
@@ -1725,6 +1740,79 @@ export class BusSchedulerService implements OnModuleInit {
       });
     } catch (trackingError) {
       this.logger.warn(`⚠️ Cycle tracking failed: ${trackingError.message}`);
+    }
+  }
+
+  private async executeDailyProductAndOrderSupplierSequence(): Promise<void> {
+    this.logger.log(
+      '🌙 Starting Daily Product Sequence + OrderSupplier execution...',
+    );
+    this.logger.log(
+      '📋 Flow: Sequential (PriceBook → Product) + Parallel (OrderSupplier)',
+    );
+
+    try {
+      // ===============================================
+      // PHASE 1: Sequential Product Dependencies
+      // ===============================================
+      this.logger.log(
+        '🔄 PHASE 1: Sequential Product Sequence (PriceBook → Product)',
+      );
+
+      await this.runProductSequenceSync();
+
+      this.logger.log(
+        '✅ PHASE 1 Complete: Product sequence with dependencies finished',
+      );
+
+      // ===============================================
+      // PHASE 2: Parallel OrderSupplier Sync
+      // ===============================================
+      this.logger.log('🔄 PHASE 2: Parallel OrderSupplier Sync');
+
+      const orderSupplierPromise = this.runOrderSupplierSync().catch(
+        (error) => {
+          this.logger.error(`❌ [OrderSupplier] Sync failed: ${error.message}`);
+          return {
+            status: 'rejected',
+            reason: error.message,
+            sync: 'OrderSupplier',
+          };
+        },
+      );
+
+      // Wait for OrderSupplier sync completion
+      const orderSupplierResult = await orderSupplierPromise;
+
+      if (orderSupplierResult && orderSupplierResult.status === 'rejected') {
+        this.logger.warn(
+          `⚠️ OrderSupplier sync failed but continuing: ${orderSupplierResult.reason}`,
+        );
+      } else {
+        this.logger.log('✅ PHASE 2 Complete: OrderSupplier sync finished');
+      }
+
+      // ===============================================
+      // PHASE 3: Staggered LarkBase Sync (Optional)
+      // ===============================================
+      this.logger.log(
+        '🔄 PHASE 3: Auto-trigger LarkBase syncs for completed entities',
+      );
+
+      // Auto-trigger Product LarkBase sync if needed
+      await this.autoTriggerProductLarkSync();
+
+      // Auto-trigger OrderSupplier LarkBase sync if needed
+      await this.autoTriggerOrderSupplierLarkSync();
+
+      this.logger.log('✅ PHASE 3 Complete: LarkBase syncs triggered');
+
+      this.logger.log(
+        '🎉 Daily Product Sequence + OrderSupplier execution completed successfully',
+      );
+    } catch (error) {
+      this.logger.error(`❌ Daily sequence execution failed: ${error.message}`);
+      throw error;
     }
   }
 }
