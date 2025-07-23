@@ -120,7 +120,7 @@ export class LarkCustomerSyncService {
   // ============================================================================
 
   async syncCustomersToLarkBase(customers: any[]): Promise<void> {
-    const lockKey = `lark_sync_lock_${Date.now()}`;
+    const lockKey = `lark_customer_sync_lock_${Date.now()}`;
 
     try {
       await this.acquireSyncLock(lockKey);

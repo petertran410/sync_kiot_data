@@ -862,7 +862,7 @@ export class KiotVietInvoiceService {
                 method: payment.method,
                 status: payment.status,
                 transDate: new Date(payment.transDate),
-                accountId: bankAccount?.id ?? null, // ✅ FIXED: Use internal BankAccount.id
+                accountId: bankAccount?.id ?? null,
                 description: payment.description,
                 invoiceId: invoice.id,
               },
@@ -874,7 +874,7 @@ export class KiotVietInvoiceService {
                 method: payment.method,
                 status: payment.status,
                 transDate: new Date(payment.transDate),
-                accountId: bankAccount?.id ?? null, // ✅ FIXED: Use internal BankAccount.id
+                accountId: bankAccount?.id ?? null,
                 description: payment.description,
               },
             });

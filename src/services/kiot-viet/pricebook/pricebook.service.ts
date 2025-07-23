@@ -319,10 +319,6 @@ export class KiotVietPriceBookService {
     return response.data;
   }
 
-  /**
-   * Fetch pricebook details (product-price relationships)
-   * This should be called separately for pricing data
-   */
   private async fetchPriceBookDetails(priceBookId: number): Promise<any> {
     const headers = await this.authService.getRequestHeaders();
 
@@ -366,9 +362,6 @@ export class KiotVietPriceBookService {
         if (response.data && response.data.id) {
           enrichedPricebooks.push(response.data);
         } else {
-          this.logger.warn(
-            `⚠️ No detailed data for pricebook ${pricebook.id}, using basic data`,
-          );
           enrichedPricebooks.push(pricebook);
         }
 
@@ -404,18 +397,10 @@ export class KiotVietPriceBookService {
           !priceBookData.name ||
           priceBookData.name.trim() === ''
         ) {
-          this.logger.warn(
-            `⚠️ Skipping invalid pricebook: id=${priceBookData.id}, name='${priceBookData.name}'`,
-          );
-          this.logger.debug(
-            `Raw pricebook data: ${JSON.stringify(priceBookData)}`,
-          );
           continue;
         }
 
-        // ENHANCED: Additional validation for business rules
         if (typeof priceBookData.id !== 'number' || priceBookData.id <= 0) {
-          this.logger.warn(`⚠️ Invalid pricebook ID: ${priceBookData.id}`);
           continue;
         }
 
@@ -530,9 +515,6 @@ export class KiotVietPriceBookService {
       // Create new relationships
       for (const branchData of branches) {
         if (!branchData.branchId || typeof branchData.branchId !== 'number') {
-          this.logger.warn(
-            `⚠️ Skipping branch relationship with invalid branchId: ${JSON.stringify(branchData)}`,
-          );
           skippedCount++;
           continue;
         }
@@ -559,9 +541,6 @@ export class KiotVietPriceBookService {
             skippedCount++;
           }
         } else {
-          this.logger.warn(
-            `⚠️ Branch ${branchData.branchId} not found for pricebook ${priceBookId}`,
-          );
           skippedCount++;
         }
       }
@@ -597,9 +576,6 @@ export class KiotVietPriceBookService {
           !groupData.customerGroupId ||
           typeof groupData.customerGroupId !== 'number'
         ) {
-          this.logger.warn(
-            `⚠️ Skipping customer group relationship with invalid customerGroupId: ${JSON.stringify(groupData)}`,
-          );
           skippedCount++;
           continue;
         }
@@ -626,9 +602,6 @@ export class KiotVietPriceBookService {
             skippedCount++;
           }
         } else {
-          this.logger.warn(
-            `⚠️ Customer group ${groupData.customerGroupId} not found for pricebook ${priceBookId}`,
-          );
           skippedCount++;
         }
       }

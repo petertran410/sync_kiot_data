@@ -704,15 +704,14 @@ model Payment {
   kiotVietId        BigInt?            @unique
   code              String?
   amount            Decimal            @db.Decimal(15, 2)
-  method            String             // Cash, Card, Transfer
+  method            String
   status            Int?
-  statusValue       String?            // ✅ THÊM MỚI: Tên trạng thái
+  statusValue       String?
   transDate         DateTime
   accountId         Int?
   bankAccount       BankAccount?       @relation(fields: [accountId], references: [id])
   bankAccountInfo   String?
   
-  // Relationships - đã có
   invoiceId         Int?
   invoice           Invoice?           @relation(fields: [invoiceId], references: [id])
   orderId           Int?
@@ -723,14 +722,14 @@ model Payment {
   purchaseOrder     PurchaseOrder?     @relation(fields: [purchaseOrderId], references: [id])
   
   description       String?
-  createdDate       DateTime           @default(now())        // ✅ THÊM MỚI
+  createdDate       DateTime?
   
   @@index([invoiceId])
   @@index([orderId])
   @@index([returnId])
   @@index([purchaseOrderId])
   @@index([accountId])
-  @@index([transDate])                                        // ✅ THÊM MỚI
+  @@index([transDate])
 }
 
 model Surcharge {
@@ -788,47 +787,42 @@ model SaleChannel {
 model PurchaseOrder {
   id                Int                         @id @default(autoincrement())
   kiotVietId        BigInt                      @unique
+  retailerId        Int?
   code              String                      @unique
-  branchId          Int
-  branch            Branch                      @relation(fields: [branchId], references: [id])
-  branchName        String?                     // Tên chi nhánh
-  purchaseDate      DateTime
+  branchId          Int?
+  branch            Branch?                      @relation(fields: [branchId], references: [id])
+  branchName        String?
+  purchaseDate      DateTime?
   discountRatio     Float?
   discount          Decimal?                    @db.Decimal(15, 2)
   total             Decimal                     @db.Decimal(15, 2)
-  totalPayment      Decimal?                    @db.Decimal(15, 2)  // ✅ THÊM MỚI
-  status            Int?                        // ✅ THÊM MỚI: Trạng thái
-  description       String?                     @db.Text           // ✅ THÊM MỚI: Ghi chú
-  
-  // Supplier information
+  totalPayment      Decimal?                    @db.Decimal(15, 2)
+  status            Int?
+  description       String?                     @db.Text
+
   supplierId        Int?
   supplier          Supplier?                   @relation(fields: [supplierId], references: [id])
-  supplierName      String?                     // ✅ THÊM MỚI: Tên nhà cung cấp
-  supplierCode      String?                     // ✅ THÊM MỚI: Mã nhà cung cấp
-  partnerType       String?                     // ✅ THÊM MỚI: Người nộp/nhận
+  supplierName      String?
+  supplierCode      String?
+  partnerType       String?
   
-  // Purchase information  
   purchaseById      BigInt?
-  purchaseName      String?                     // ✅ THÊM MỚI: Tên người nhập
-  isDraft           Boolean                     @default(false)
+  purchaseName      String?
   paidAmount        Decimal?                    @db.Decimal(15, 2)
-  
-  // System fields
-  retailerId        Int?
-  createdDate       DateTime                    @default(now())
-  modifiedDate      DateTime                    @updatedAt
+  exReturnSuppliers Decimal?                    @db.Decimal(15,2)
+  exReturnThirdParty Decimal?                    @db.Decimal(15,2)
+  createdDate       DateTime?
+  modifiedDate      DateTime?                    @updatedAt
   lastSyncedAt      DateTime                    @default(now())
   
-  // Lark sync fields (theo pattern hiện có)
   larkRecordId      String?
   larkSyncStatus    LarkSyncStatus              @default(PENDING)
   larkSyncedAt      DateTime?
   larkSyncRetries   Int                         @default(0)
   
-  // Relationships
   details           PurchaseOrderDetail[]
   payments          Payment[]
-  surcharges        PurchaseOrderSurcharge[]    // ✅ THÊM MỚI: Chi phí phụ
+  surcharges        PurchaseOrderSurcharge[]
   orderSupplierLinks    OrderSupplierPurchaseOrder[]
   
   @@index([kiotVietId])
@@ -843,23 +837,17 @@ model PurchaseOrder {
 
 model PurchaseOrderDetail {
   id                      Int                             @id @default(autoincrement())
-  kiotVietId              BigInt?                         @unique
-  purchaseOrderId         Int
+  purchaseOrderId         Int                             @unique
   purchaseOrder           PurchaseOrder                   @relation(fields: [purchaseOrderId], references: [id])
   productId               Int
   product                 Product                         @relation(fields: [productId], references: [id])
-  productCode             String?                         // ✅ THÊM MỚI: Mã hàng hóa
-  productName             String?                         // ✅ THÊM MỚI: Tên hàng hóa
+  productCode             String?
+  productName             String?
   quantity                Float
   price                   Decimal                         @db.Decimal(15, 2)
   discount                Decimal?                        @db.Decimal(15, 2)
-  discountRatio           Float?
-  description             String?
-  serialNumbers           String?                         // Danh sách IMEI
-  subTotal                Decimal?                        @db.Decimal(15, 2)  // ✅ THÊM MỚI
-  createdDate             DateTime                        @default(now())
+  serialNumbers           String?
   
-  // ✅ THÊM MỚI: Relationship với ProductBatchExpire
   batchExpires            PurchaseOrderDetailBatch[]
   
   @@index([purchaseOrderId])
@@ -873,7 +861,7 @@ model PurchaseOrderDetailBatch {
   purchaseOrderDetail     PurchaseOrderDetail             @relation(fields: [purchaseOrderDetailId], references: [id])
   productBatchExpireId    Int
   productBatchExpire      ProductBatchExpire              @relation(fields: [productBatchExpireId], references: [id])
-  quantity                Float                           // Số lượng lô này trong chi tiết nhập hàng
+  quantity                Float
   createdDate             DateTime                        @default(now())
   
   @@unique([purchaseOrderDetailId, productBatchExpireId])
@@ -888,10 +876,10 @@ model PurchaseOrderSurcharge {
   purchaseOrder           PurchaseOrder                   @relation(fields: [purchaseOrderId], references: [id])
   code                    String?                         // Mã chi phí
   name                    String                          // Tên chi phí
-  value                   Decimal?                        @db.Decimal(15, 2)  // Số tiền thu
-  valueRatio              Decimal?                        @db.Decimal(5, 2)   // Phần trăm thu
-  isSupplierExpense       Boolean                         @default(false)     // Hoàn lại khi trả hàng nhập
-  type                    Int?                            // Hình thức
+  value                   Decimal?                        @db.Decimal(15, 2)
+  valueRatio              Decimal?                        @db.Decimal(5, 2)
+  isSupplierExpense       Boolean                         @default(false)
+  type                    Int?
   createdDate             DateTime                        @default(now())
   
   @@index([purchaseOrderId])

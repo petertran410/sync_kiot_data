@@ -726,13 +726,7 @@ export class LarkProductSyncService {
       fields[LARK_PRODUCT_FIELDS.PRIMARY_CODE] = product.code;
     }
 
-    if (product.id !== null && product.id !== undefined) {
-      fields[LARK_PRODUCT_FIELDS.PRODUCT_ID] = this.safeBigIntToNumber(
-        product.id,
-      );
-    }
-    // Fallback for database records that use kiotVietId
-    else if (product.kiotVietId !== null && product.kiotVietId !== undefined) {
+    if (product.kiotVietId !== null && product.kiotVietId !== undefined) {
       fields[LARK_PRODUCT_FIELDS.PRODUCT_ID] = this.safeBigIntToNumber(
         product.kiotVietId,
       );
