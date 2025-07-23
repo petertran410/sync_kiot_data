@@ -275,7 +275,7 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
-  @Cron('15 21 * * *', {
+  @Cron('30 21 * * *', {
     name: 'daily_product_sync',
     timeZone: 'Asia/Ho_Chi_Minh',
   })
