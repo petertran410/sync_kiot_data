@@ -13,7 +13,7 @@ const LARK_PURCHASE_ORDER_FIELDS = {
   BRANCH_NAME: 'Tên Chi Nhánh',
   PURCHASE_DATE: 'Ngày Mua Hàng',
   DISCOUNT: 'Discount',
-  DISCOUNT_RATIO: 'Mức Độ Giảm Giá',
+  DISCOUNT_RATIO: 'Mức Độ Discount',
   TOTAL: 'Giá Trị Nhập Hàng',
   TOTAL_PAYMENT: 'Tiền Đã Trả Hàng',
   CREATED_DATE: 'Ngày Tạo',
