@@ -15,14 +15,11 @@ import { LarkSupplierSyncService } from '../lark/supplier/lark-supplier-sync.ser
 import { KiotVietOrderSupplierService } from '../kiot-viet/order-supplier/order-supplier.service';
 import { LarkOrderSupplierSyncService } from '../lark/order-supplier/lark-order-supplier-sync.service';
 
-// ============================================================================
-// DAILY ENTITIES CONFIGURATION - Flexible for future expansion
-// ============================================================================
 interface DailyEntityConfig {
   name: string;
   syncFunction: () => Promise<void>;
   larkSyncFunction?: () => Promise<void>;
-  dependencies?: string[]; // For future use
+  dependencies?: string[];
   enabled: boolean;
 }
 
@@ -35,20 +32,18 @@ export class BusSchedulerService implements OnModuleInit {
   private isDailyProductCompletedToday = false;
   private lastProductSyncDate: string | null = null;
 
-  // ✅ Enhanced priority management
   private isDailyCycleRunning = false;
-  private dailyCyclePriorityLevel = 0; // 0: normal, 1: preparing, 2: active
+  private dailyCyclePriorityLevel = 0;
   private mainSchedulerSuspendedForDaily = false;
   private isMainCycleGracefulShutdown = false;
   private mainCycleAbortController: AbortController | null = null;
+  private startupAbortController: AbortController | null = null;
   private dailyCycleStartTime: Date | null = null;
 
-  // ✅ Daily entities configuration
   private readonly DAILY_ENTITIES_CONFIG: DailyEntityConfig[] = [
     {
       name: 'pricebook_product_sequence',
       syncFunction: async () => {
-        // PriceBook + Product sequential (existing dependency)
         await this.runProductSequenceSync();
       },
       larkSyncFunction: async () => {
@@ -103,6 +98,7 @@ export class BusSchedulerService implements OnModuleInit {
         );
         this.mainSchedulerSuspendedForDaily = true;
 
+        // ✅ NEW: Force abort nếu đang chạy
         if (this.mainCycleAbortController) {
           this.mainCycleAbortController.abort();
           this.logger.log('🚫 FORCE ABORTING ongoing 7-minute cycle');
@@ -115,6 +111,7 @@ export class BusSchedulerService implements OnModuleInit {
       return;
     }
 
+    // ✅ NEW: Resume mechanism
     if (
       this.mainSchedulerSuspendedForDaily &&
       !this.isDailyCycleRunning &&
@@ -129,13 +126,15 @@ export class BusSchedulerService implements OnModuleInit {
       return;
     }
 
+    // ✅ NEW: Tạo AbortController cho cycle này
     this.mainCycleAbortController = new AbortController();
     const signal = this.mainCycleAbortController.signal;
 
     try {
-      this.logger.log('🚀 Starting 7-minute parallel sync cycle');
+      this.logger.log('🚀 Starting 7-minute parallel sync cycle...');
       const startTime = Date.now();
 
+      // ✅ NEW: Kiểm tra abort signal trước khi bắt đầu
       if (signal.aborted) {
         this.logger.log('🚫 7-minute cycle aborted before starting');
         return;
@@ -154,6 +153,7 @@ export class BusSchedulerService implements OnModuleInit {
       const CYCLE_TIMEOUT_MS = 15 * 60 * 1000;
 
       try {
+        // ✅ NEW: Enhanced cycle execution với abort signal
         const cyclePromise = this.executeMainCycleWithAbortSignal(signal);
         const timeoutPromise = new Promise<never>((_, reject) =>
           setTimeout(
@@ -242,6 +242,7 @@ export class BusSchedulerService implements OnModuleInit {
     await Promise.all(syncPromises);
   }
 
+  // ✅ NEW: Helper để execute sync với abort signal
   private async executeAbortableSync(
     syncType: string,
     signal: AbortSignal,
@@ -255,6 +256,7 @@ export class BusSchedulerService implements OnModuleInit {
     try {
       await syncFunction();
 
+      // Kiểm tra abort sau khi hoàn thành
       if (signal.aborted) {
         this.logger.debug(
           `🚫 ${syncType} sync completed but was marked for abort`,
@@ -292,9 +294,10 @@ export class BusSchedulerService implements OnModuleInit {
     }
 
     try {
-      this.logger.log('Daily Sequential Sync triggered');
+      this.logger.log('🌙 23:00 Daily Sequential Sync triggered');
 
-      this.dailyCyclePriorityLevel = 2;
+      // ✅ STEP 1: Immediate priority activation (no delays)
+      this.dailyCyclePriorityLevel = 2; // direct to active
       this.isDailyCycleRunning = true;
       this.dailyCycleStartTime = new Date();
 
@@ -302,14 +305,16 @@ export class BusSchedulerService implements OnModuleInit {
         '🛑 ACTIVATING daily cycle priority mode - 7-minute cycle STOPPED IMMEDIATELY',
       );
 
+      // ✅ STEP 2: Force stop main cycle (no wait mechanisms)
       await this.forceStopMainCycleImmediately();
 
+      // ✅ STEP 3: Start daily cycle immediately
       const startTime = Date.now();
       this.isDailyProductCompletedToday = false;
 
       await this.updateCycleTracking('daily_product_cycle', 'running');
 
-      const DAILY_TIMEOUT_MS = 60 * 60 * 1000;
+      const DAILY_TIMEOUT_MS = 60 * 60 * 1000; // 60 minutes
 
       try {
         const dailyPromise = this.executeDailyProductAndOrderSupplierSequence();
@@ -362,24 +367,78 @@ export class BusSchedulerService implements OnModuleInit {
       this.isDailyCycleRunning = false;
       this.dailyCycleStartTime = null;
       this.mainSchedulerSuspendedForDaily = false;
-      this.dailyCyclePriorityLevel = 0;
+      this.dailyCyclePriorityLevel = 0; // back to normal
       this.isMainCycleGracefulShutdown = false;
+      // ✅ NEW: Clear startup controller reference
+      this.startupAbortController = null;
     }
   }
 
   private async forceStopMainCycleImmediately(): Promise<void> {
-    this.logger.log('🚫 FORCE STOPPING ongoing 7-minute cycle IMMEDIATELY...');
+    this.logger.log('🚫 FORCE STOPPING all ongoing cycles IMMEDIATELY...');
 
+    // Abort main cycle if running
     if (this.mainCycleAbortController) {
       this.mainCycleAbortController.abort();
       this.logger.log('⚡ Abort signal sent to ongoing 7-minute cycle');
     }
 
+    // ✅ NEW: Abort startup syncs if running
+    if (this.startupAbortController) {
+      this.startupAbortController.abort();
+      this.logger.log('⚡ Abort signal sent to ongoing startup syncs');
+    }
+
+    // Set graceful shutdown flag
     this.isMainCycleGracefulShutdown = true;
 
+    // ✅ NEW: Force update running sync controls to stop
+    await this.forceStopRunningSyncControls();
+
     this.logger.log(
-      '✅ Main cycle force stop completed - proceeding immediately',
+      '✅ All cycles force stop completed - proceeding immediately',
     );
+  }
+
+  private async runCustomerLarkSync(): Promise<void> {
+    const customersToSync = await this.prismaService.customer.findMany({
+      where: {
+        larkSyncStatus: { in: ['PENDING', 'FAILED'] },
+      },
+      take: 100,
+    });
+
+    if (customersToSync.length > 0) {
+      await this.larkCustomerSyncService.syncCustomersToLarkBase(
+        customersToSync,
+      );
+    }
+  }
+
+  private async runInvoiceLarkSync(): Promise<void> {
+    const invoicesToSync = await this.prismaService.invoice.findMany({
+      where: {
+        larkSyncStatus: { in: ['PENDING', 'FAILED'] },
+      },
+      take: 100,
+    });
+
+    if (invoicesToSync.length > 0) {
+      await this.larkInvoiceSyncService.syncInvoicesToLarkBase(invoicesToSync);
+    }
+  }
+
+  private async runOrderLarkSync(): Promise<void> {
+    const ordersToSync = await this.prismaService.order.findMany({
+      where: {
+        larkSyncStatus: { in: ['PENDING', 'FAILED'] },
+      },
+      take: 100,
+    });
+
+    if (ordersToSync.length > 0) {
+      await this.larkOrderSyncService.syncOrdersToLarkBase(ordersToSync);
+    }
   }
 
   private async executeEntitySequentially(
@@ -389,10 +448,12 @@ export class BusSchedulerService implements OnModuleInit {
     const startTime = Date.now();
 
     try {
+      // Step 1: Entity sync
       this.logger.log(`📥 [${entity.name}] Entity sync starting...`);
       await entity.syncFunction();
       this.logger.log(`✅ [${entity.name}] Entity sync completed`);
 
+      // Step 2: LarkBase sync (if available)
       if (entity.larkSyncFunction) {
         this.logger.log(`📤 [${entity.name}] LarkBase sync starting...`);
         await entity.larkSyncFunction();
@@ -413,6 +474,9 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
+  /**
+   * ✅ MODIFIED: Enhanced for true sequential execution
+   */
   private async executeDailyProductAndOrderSupplierSequence(): Promise<void> {
     this.logger.log(
       '🌙 Starting Daily Sequential Execution (Entity → LarkBase → Next Entity)...',
@@ -422,14 +486,28 @@ export class BusSchedulerService implements OnModuleInit {
       (entity) => entity.enabled,
     );
 
+    this.logger.log(
+      `📋 Sequential Flow: ${enabledEntities.map((e) => e.name).join(' → ')}`,
+    );
+
     try {
       for (let i = 0; i < enabledEntities.length; i++) {
         const entity = enabledEntities[i];
 
+        this.logger.log(
+          `🔄 [${i + 1}/${enabledEntities.length}] Processing ${entity.name}...`,
+        );
+
         await this.executeEntitySequentially(entity);
 
+        this.logger.log(
+          `✅ [${i + 1}/${enabledEntities.length}] ${entity.name} completed`,
+        );
+
+        // Optional: Small delay between entities (can be removed if not needed)
         if (i < enabledEntities.length - 1) {
-          await new Promise((resolve) => setTimeout(resolve, 1000));
+          this.logger.log(`⏳ Brief pause before next entity...`);
+          await new Promise((resolve) => setTimeout(resolve, 1000)); // 1 second
         }
       }
 
@@ -464,13 +542,14 @@ export class BusSchedulerService implements OnModuleInit {
 
     const dailyCycleSyncs = runningSyncs.filter((sync) =>
       [
-        'pricebook_historical',
         'product_historical',
         'order_supplier_historical',
+        'pricebook_historical',
         'daily_product_cycle',
       ].includes(sync.name),
     );
 
+    // ✅ NEW: Enhanced status với priority levels
     const getPriorityStatus = () => {
       if (this.isDailyCycleRunning && this.dailyCyclePriorityLevel === 2) {
         return 'DAILY_CYCLE_ACTIVE';
@@ -544,44 +623,144 @@ export class BusSchedulerService implements OnModuleInit {
     };
   }
 
-  private async runCustomerLarkSync(): Promise<void> {
-    const customersToSync = await this.prismaService.customer.findMany({
-      where: {
-        larkSyncStatus: { in: ['PENDING', 'FAILED'] },
-      },
-      take: 100,
-    });
+  private async executeParallelSyncs(): Promise<void> {
+    this.logger.log(
+      '🔀 Main entities parallel execution: Customer ⫸ Invoice ⫸ Order (Product ISOLATED)',
+    );
 
-    if (customersToSync.length > 0) {
-      await this.larkCustomerSyncService.syncCustomersToLarkBase(
-        customersToSync,
-      );
+    const syncPromises = [
+      this.runCustomerSync().catch((error) => {
+        this.logger.error(
+          `❌ [Customer] Parallel sync failed: ${error.message}`,
+        );
+        return { status: 'rejected', reason: error.message, sync: 'Customer' };
+      }),
+      this.runInvoiceSync().catch((error) => {
+        this.logger.error(
+          `❌ [Invoice] Parallel sync failed: ${error.message}`,
+        );
+        return { status: 'rejected', reason: error.message, sync: 'Invoice' };
+      }),
+      this.runOrderSync().catch((error) => {
+        this.logger.error(`❌ [Order] Parallel sync failed: ${error.message}`);
+        return { status: 'rejected', reason: error.message, sync: 'Order' };
+      }),
+    ];
+
+    const results = await Promise.allSettled(syncPromises);
+    await this.executeStaggeredLarkSync(results, false);
+  }
+
+  @Cron('0 0 * * *', {
+    name: 'daily_reset',
+    timeZone: 'Asia/Ho_Chi_Minh',
+  })
+  async handleDailyReset() {
+    this.isDailyProductCompletedToday = false;
+    this.lastProductSyncDate = null;
+    this.logger.log(
+      '🔄 Daily reset completed - Product sync available for today',
+    );
+  }
+
+  private async executeStaggeredLarkSync(
+    syncResults: any[],
+    includeProduct: boolean = false,
+  ): Promise<void> {
+    this.logger.log('🚀 Starting staggered LarkBase sync...');
+
+    const entityTypes = ['customer', 'invoice', 'order'];
+    if (includeProduct) {
+      entityTypes.push('product');
+    }
+
+    const successfulSyncs = syncResults
+      .map((result, index) => ({
+        result,
+        syncType: entityTypes[index],
+      }))
+      .filter(({ result }) => result.status === 'fulfilled' || !result.reason);
+
+    let delay = 0;
+
+    for (const { syncType } of successfulSyncs) {
+      if (delay > 0) {
+        this.logger.log(
+          `⏳ Waiting ${delay / 1000}s before ${syncType} LarkBase sync...`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+
+      switch (syncType) {
+        case 'customer':
+          await this.autoTriggerCustomerLarkSync();
+          break;
+        case 'invoice':
+          await this.autoTriggerInvoiceLarkSync();
+          break;
+        case 'order':
+          await this.autoTriggerOrderLarkSync();
+          break;
+        case 'product':
+          await this.autoTriggerProductLarkSync();
+          break;
+      }
+
+      delay = 15000;
     }
   }
 
-  private async runInvoiceLarkSync(): Promise<void> {
-    const invoicesToSync = await this.prismaService.invoice.findMany({
-      where: {
-        larkSyncStatus: { in: ['PENDING', 'FAILED'] },
-      },
-      take: 100,
-    });
+  private async runCustomerSync(): Promise<void> {
+    try {
+      this.logger.log('👥 [Customer] Starting parallel sync...');
+      const startTime = Date.now();
 
-    if (invoicesToSync.length > 0) {
-      await this.larkInvoiceSyncService.syncInvoicesToLarkBase(invoicesToSync);
+      await this.customerService.checkAndRunAppropriateSync();
+      await this.autoTriggerCustomerLarkSync();
+
+      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+      this.logger.log(`✅ [Customer] Parallel sync completed in ${duration}s`);
+
+      return Promise.resolve();
+    } catch (error) {
+      this.logger.error(`❌ [Customer] Parallel sync failed: ${error.message}`);
+      throw new Error(`Customer sync failed: ${error.message}`);
     }
   }
 
-  private async runOrderLarkSync(): Promise<void> {
-    const ordersToSync = await this.prismaService.order.findMany({
-      where: {
-        larkSyncStatus: { in: ['PENDING', 'FAILED'] },
-      },
-      take: 100,
-    });
+  private async runInvoiceSync(): Promise<void> {
+    try {
+      this.logger.log('🧾 [Invoice] Starting parallel sync...');
+      const startTime = Date.now();
 
-    if (ordersToSync.length > 0) {
-      await this.larkOrderSyncService.syncOrdersToLarkBase(ordersToSync);
+      await this.invoiceService.checkAndRunAppropriateSync();
+      await this.autoTriggerInvoiceLarkSync();
+
+      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+      this.logger.log(`✅ [Invoice] Parallel sync completed in ${duration}s`);
+
+      return Promise.resolve();
+    } catch (error) {
+      this.logger.error(`❌ [Invoice] Parallel sync failed: ${error.message}`);
+      throw new Error(`Invoice sync failed: ${error.message}`);
+    }
+  }
+
+  private async runOrderSync(): Promise<void> {
+    try {
+      this.logger.log('📋 [Order] Starting parallel sync...');
+      const startTime = Date.now();
+
+      await this.orderService.checkAndRunAppropriateSync();
+      await this.autoTriggerOrderLarkSync();
+
+      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+      this.logger.log(`✅ [Order] Parallel sync completed in ${duration}s`);
+
+      return Promise.resolve();
+    } catch (error) {
+      this.logger.error(`❌ [Order] Parallel sync failed: ${error.message}`);
+      throw new Error(`Order sync failed: ${error.message}`);
     }
   }
 
@@ -651,129 +830,6 @@ export class BusSchedulerService implements OnModuleInit {
 
     this.logger.log(`✅ Cleaned up ${cleanedCount} stuck syncs`);
     return cleanedCount;
-  }
-
-  private async executeParallelSyncs(): Promise<void> {
-    this.logger.log(
-      '🔀 Main entities parallel execution: Customer ⫸ Invoice ⫸ Order (Product ISOLATED)',
-    );
-
-    const syncPromises = [
-      this.runCustomerSync().catch((error) => {
-        this.logger.error(
-          `❌ [Customer] Parallel sync failed: ${error.message}`,
-        );
-        return { status: 'rejected', reason: error.message, sync: 'Customer' };
-      }),
-      this.runInvoiceSync().catch((error) => {
-        this.logger.error(
-          `❌ [Invoice] Parallel sync failed: ${error.message}`,
-        );
-        return { status: 'rejected', reason: error.message, sync: 'Invoice' };
-      }),
-      this.runOrderSync().catch((error) => {
-        this.logger.error(`❌ [Order] Parallel sync failed: ${error.message}`);
-        return { status: 'rejected', reason: error.message, sync: 'Order' };
-      }),
-    ];
-
-    const results = await Promise.allSettled(syncPromises);
-    await this.executeStaggeredLarkSync(results, false);
-  }
-
-  private async executeStaggeredLarkSync(
-    syncResults: any[],
-    includeProduct: boolean = false,
-  ): Promise<void> {
-    this.logger.log('🚀 Starting staggered LarkBase sync...');
-
-    const entityTypes = ['customer', 'invoice', 'order'];
-
-    const successfulSyncs = syncResults
-      .map((result, index) => ({
-        result,
-        syncType: entityTypes[index],
-      }))
-      .filter(({ result }) => result.status === 'fulfilled' || !result.reason);
-
-    let delay = 0;
-
-    for (const { syncType } of successfulSyncs) {
-      if (delay > 0) {
-        this.logger.log(
-          `⏳ Waiting ${delay / 1000}s before ${syncType} LarkBase sync...`,
-        );
-        await new Promise((resolve) => setTimeout(resolve, delay));
-      }
-
-      switch (syncType) {
-        case 'customer':
-          await this.autoTriggerCustomerLarkSync();
-          break;
-        case 'invoice':
-          await this.autoTriggerInvoiceLarkSync();
-          break;
-        case 'order':
-          await this.autoTriggerOrderLarkSync();
-          break;
-      }
-
-      delay = 15000;
-    }
-  }
-
-  private async runCustomerSync(): Promise<void> {
-    try {
-      this.logger.log('👥 [Customer] Starting parallel sync...');
-      const startTime = Date.now();
-
-      await this.customerService.checkAndRunAppropriateSync();
-      await this.autoTriggerCustomerLarkSync();
-
-      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-      this.logger.log(`✅ [Customer] Parallel sync completed in ${duration}s`);
-
-      return Promise.resolve();
-    } catch (error) {
-      this.logger.error(`❌ [Customer] Parallel sync failed: ${error.message}`);
-      throw new Error(`Customer sync failed: ${error.message}`);
-    }
-  }
-
-  private async runInvoiceSync(): Promise<void> {
-    try {
-      this.logger.log('🧾 [Invoice] Starting parallel sync...');
-      const startTime = Date.now();
-
-      await this.invoiceService.checkAndRunAppropriateSync();
-      await this.autoTriggerInvoiceLarkSync();
-
-      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-      this.logger.log(`✅ [Invoice] Parallel sync completed in ${duration}s`);
-
-      return Promise.resolve();
-    } catch (error) {
-      this.logger.error(`❌ [Invoice] Parallel sync failed: ${error.message}`);
-      throw new Error(`Invoice sync failed: ${error.message}`);
-    }
-  }
-
-  private async runOrderSync(): Promise<void> {
-    try {
-      this.logger.log('📋 [Order] Starting parallel sync...');
-      const startTime = Date.now();
-
-      await this.orderService.checkAndRunAppropriateSync();
-      await this.autoTriggerOrderLarkSync();
-
-      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-      this.logger.log(`✅ [Order] Parallel sync completed in ${duration}s`);
-
-      return Promise.resolve();
-    } catch (error) {
-      this.logger.error(`❌ [Order] Parallel sync failed: ${error.message}`);
-      throw new Error(`Order sync failed: ${error.message}`);
-    }
   }
 
   private async runProductSequenceSync(): Promise<void> {
@@ -1394,6 +1450,12 @@ export class BusSchedulerService implements OnModuleInit {
     try {
       this.logger.log('🔍 Running startup check...');
 
+      // ✅ NEW: Check if daily cycle is already active
+      if (this.isDailyCycleRunning || this.dailyCyclePriorityLevel > 0) {
+        this.logger.log('⏸️ Skipping startup syncs - Daily cycle has priority');
+        return;
+      }
+
       const stuckSyncs = await this.prismaService.syncControl.updateMany({
         where: { isRunning: true },
         data: { isRunning: false, status: 'interrupted' },
@@ -1411,10 +1473,20 @@ export class BusSchedulerService implements OnModuleInit {
         '📋 Running parallel startup sync checks (7-minute entities only)...',
       );
 
+      // ✅ NEW: Create AbortController for startup syncs
+      this.startupAbortController = new AbortController();
+      const signal = this.startupAbortController.signal;
+
       const startupPromises = [
-        this.customerService.checkAndRunAppropriateSync(),
-        this.invoiceService.checkAndRunAppropriateSync(),
-        this.orderService.checkAndRunAppropriateSync(),
+        this.executeAbortableStartupSync('customer', signal, () =>
+          this.customerService.checkAndRunAppropriateSync(),
+        ),
+        this.executeAbortableStartupSync('invoice', signal, () =>
+          this.invoiceService.checkAndRunAppropriateSync(),
+        ),
+        this.executeAbortableStartupSync('order', signal, () =>
+          this.orderService.checkAndRunAppropriateSync(),
+        ),
       ];
 
       await Promise.allSettled(startupPromises);
@@ -1422,6 +1494,8 @@ export class BusSchedulerService implements OnModuleInit {
       this.logger.log('✅ Startup check completed');
     } catch (error) {
       this.logger.error(`❌ Startup check failed: ${error.message}`);
+    } finally {
+      this.startupAbortController = null;
     }
   }
 
@@ -1667,6 +1741,90 @@ export class BusSchedulerService implements OnModuleInit {
       hasLarkSync: !!entity.larkSyncFunction,
       dependencies: entity.dependencies || [],
     }));
+  }
+
+  /**
+   * ✅ NEW: Execute startup sync with abort capability
+   */
+  private async executeAbortableStartupSync(
+    syncType: string,
+    signal: AbortSignal,
+    syncFunction: () => Promise<void>,
+  ): Promise<void> {
+    if (signal.aborted) {
+      this.logger.debug(`🚫 ${syncType} startup sync aborted before starting`);
+      return;
+    }
+
+    try {
+      await syncFunction();
+
+      // Check abort after completion
+      if (signal.aborted) {
+        this.logger.debug(
+          `🚫 ${syncType} startup sync completed but was marked for abort`,
+        );
+      }
+    } catch (error) {
+      if (signal.aborted) {
+        this.logger.debug(
+          `🚫 ${syncType} startup sync aborted during execution`,
+        );
+      } else {
+        this.logger.error(
+          `❌ ${syncType} startup sync failed: ${error.message}`,
+        );
+      }
+    }
+  }
+
+  /**
+   * ✅ NEW: Force stop running sync controls in database
+   */
+  private async forceStopRunningSyncControls(): Promise<void> {
+    try {
+      const runningSyncs = await this.prismaService.syncControl.findMany({
+        where: {
+          isRunning: true,
+          OR: [
+            { name: 'customer_recent' },
+            { name: 'invoice_recent' },
+            { name: 'order_recent' },
+            { name: 'main_cycle' },
+            { name: 'main_sync_cycle' },
+          ],
+        },
+      });
+
+      if (runningSyncs.length > 0) {
+        await this.prismaService.syncControl.updateMany({
+          where: {
+            isRunning: true,
+            OR: [
+              { name: 'customer_recent' },
+              { name: 'invoice_recent' },
+              { name: 'order_recent' },
+              { name: 'main_cycle' },
+              { name: 'main_sync_cycle' },
+            ],
+          },
+          data: {
+            isRunning: false,
+            status: 'aborted',
+            error: 'Aborted by daily cycle priority',
+            completedAt: new Date(),
+          },
+        });
+
+        this.logger.log(
+          `🛑 Force stopped ${runningSyncs.length} running sync controls`,
+        );
+      }
+    } catch (error) {
+      this.logger.warn(
+        `⚠️ Failed to force stop sync controls: ${error.message}`,
+      );
+    }
   }
 
   async resetAllSyncs(): Promise<number> {
