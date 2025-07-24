@@ -80,13 +80,13 @@ export class KiotVietCustomerService {
       // Then recent sync
       if (recentSync?.isEnabled && !recentSync.isRunning) {
         this.logger.log('Starting recent customer sync...');
-        await this.syncRecentCustomers(10);
+        await this.syncRecentCustomers(3);
         return;
       }
 
       // Default: recent sync
       this.logger.log('Running default recent customer sync...');
-      await this.syncRecentCustomers(10);
+      await this.syncRecentCustomers(3);
     } catch (error) {
       this.logger.error(`Sync check failed: ${error.message}`);
       throw error;
@@ -453,7 +453,7 @@ export class KiotVietCustomerService {
   // RECENT SYNC (Incremental updates)
   // ============================================================================
 
-  async syncRecentCustomers(days: number = 10): Promise<void> {
+  async syncRecentCustomers(days: number = 3): Promise<void> {
     const syncName = 'customer_recent';
 
     try {
