@@ -420,9 +420,6 @@ export class KiotVietProductService {
         return await this.fetchProductsList(params);
       } catch (error) {
         lastError = error as Error;
-        this.logger.warn(
-          `⚠️ API attempt ${attempt}/${maxRetries} failed: ${error.message}`,
-        );
 
         if (attempt < maxRetries) {
           const delay = 2000 * attempt;
@@ -545,13 +542,9 @@ export class KiotVietProductService {
       try {
         // ENHANCED: Validation với real API response structure
         if (!productData.id || !productData.code || !productData.name) {
-          this.logger.warn(
-            `⚠️ Skipping invalid product: id=${productData.id}, code='${productData.code}', name='${productData.name}'`,
-          );
           continue;
         }
 
-        // CORRECTED: Find or create Category using actual API field names
         let categoryId: number | null = null;
         if (productData.categoryId && productData.categoryName) {
           const category = await this.prismaService.category.upsert({
@@ -803,9 +796,6 @@ export class KiotVietProductService {
         }
 
         if (!imageUrl) {
-          this.logger.warn(
-            `⚠️ Skipping invalid image item at index ${i} for product ${productId}: ${JSON.stringify(imageItem)}`,
-          );
           skippedCount++;
           continue;
         }
@@ -864,9 +854,6 @@ export class KiotVietProductService {
         const branchKiotVietId = inventory.branchId;
 
         if (!branchKiotVietId) {
-          this.logger.warn(
-            `⚠️ Skipping inventory with missing branchId for product ${productId}`,
-          );
           skippedCount++;
           continue;
         }
@@ -877,11 +864,6 @@ export class KiotVietProductService {
         });
 
         if (!branch) {
-          this.logger.warn(
-            `⚠️ Branch ${branchKiotVietId} (${inventory.branchName || 'unknown'}) not found in database`,
-          );
-
-          this.logger.warn(`⚠️ Skipping inventory for product ${productId}`);
           skippedCount++;
           continue;
         }
@@ -967,9 +949,6 @@ export class KiotVietProductService {
         const priceBookKiotVietId = priceBook.priceBookId;
 
         if (!priceBookKiotVietId) {
-          this.logger.warn(
-            `⚠️ Skipping pricebook with missing priceBookId for product ${productId}: ${JSON.stringify(priceBook)}`,
-          );
           skippedCount++;
           continue;
         }
@@ -980,9 +959,6 @@ export class KiotVietProductService {
         });
 
         if (!existingPriceBook) {
-          this.logger.warn(
-            `⚠️ [DEPENDENCY MISS] PriceBook ${priceBookKiotVietId} (${priceBook.priceBookName || 'unknown'}) not found - skipping price for product ${productId}`,
-          );
           skippedCount++;
           continue;
         }

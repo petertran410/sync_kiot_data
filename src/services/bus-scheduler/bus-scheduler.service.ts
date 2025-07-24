@@ -275,7 +275,7 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
-  @Cron('40 23 * * *', {
+  @Cron('5 19 * * *', {
     name: 'daily_product_sync',
     timeZone: 'Asia/Ho_Chi_Minh',
   })
@@ -1303,7 +1303,7 @@ export class BusSchedulerService implements OnModuleInit {
             });
 
             this.logger.log(
-              `✅ Auto-triggered order_supplier LarkBase sync: ${orderSuppliersToSync.length} order_suppliers`,
+              `✅ Auto-triggered order_suppliers LarkBase sync: ${orderSuppliersToSync.length} order_suppliers`,
             );
           } catch (syncError) {
             await this.prismaService.syncControl.update({
@@ -1320,18 +1320,18 @@ export class BusSchedulerService implements OnModuleInit {
               `❌ Auto order_supplier LarkBase sync failed: ${syncError.message}`,
             );
           }
-        }
-      } else {
-        await this.prismaService.syncControl.update({
-          where: { name: 'order_supplier_lark_sync' },
-          data: {
-            isRunning: false,
-            status: 'completed',
-            completedAt: new Date(),
-          },
-        });
+        } else {
+          await this.prismaService.syncControl.update({
+            where: { name: 'order_supplier_lark_sync' },
+            data: {
+              isRunning: false,
+              status: 'completed',
+              completedAt: new Date(),
+            },
+          });
 
-        this.logger.log('📋 No order_suppliers need LarkBase sync');
+          this.logger.log('📋 No order_supplier need LarkBase sync');
+        }
       }
     } catch (error) {
       this.logger.error(
