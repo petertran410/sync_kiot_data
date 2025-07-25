@@ -711,13 +711,6 @@ export class KiotVietProductService {
           await this.saveProductImages(product.id, productData.images);
         }
 
-        // if (productData.inventories && productData.inventories.length > 0) {
-        //   await this.saveProductInventories(
-        //     product.id,
-        //     productData.inventories,
-        //   );
-        // }
-
         if (productData.priceBooks && productData.priceBooks.length > 0) {
           await this.saveProductPriceBooks(product.id, productData.priceBooks);
         }
@@ -872,106 +865,6 @@ export class KiotVietProductService {
         `❌ Failed to save images for product ${productId}: ${error.message}`,
       );
     }
-  }
-
-  private async saveProductInventories(
-    productId: number,
-    inventories: any[],
-  ): Promise<void> {
-    if (
-      !inventories ||
-      !Array.isArray(inventories) ||
-      inventories.length === 0
-    ) {
-      this.logger.debug(`No inventories to save for product ${productId}`);
-      return;
-    }
-
-    try {
-      await this.prismaService.productInventory.deleteMany({
-        where: { productId },
-      });
-
-      let processedCount = 0;
-      let skippedCount = 0;
-      let fallbackCount = 0;
-
-      for (const inventory of inventories) {
-        const branchKiotVietId = inventory.branchId;
-
-        if (!branchKiotVietId) {
-          skippedCount++;
-          continue;
-        }
-
-        let branch = await this.prismaService.branch.findFirst({
-          where: { kiotVietId: branchKiotVietId },
-          select: { id: true, name: true },
-        });
-
-        if (!branch) {
-          skippedCount++;
-          continue;
-        }
-
-        try {
-          await this.prismaService.productInventory.create({
-            data: {
-              productId,
-              branchId: branch.id,
-              onHand: this.parseNumericValue(inventory.onHand, 0),
-              reserved: this.parseNumericValue(inventory.reserved, 0),
-              onOrder: this.parseNumericValue(inventory.onOrder, 0),
-              cost: inventory.cost ? new Prisma.Decimal(inventory.cost) : null,
-              minQuantity: this.parseNumericValue(inventory.minQuantity, null),
-              maxQuantity: this.parseNumericValue(inventory.maxQuantity, null),
-              lastSyncedAt: new Date(),
-            },
-          });
-          processedCount++;
-        } catch (createError) {
-          this.logger.error(
-            `❌ Failed to create inventory for product ${productId}, branch ${branch.id}: ${createError.message}`,
-          );
-          skippedCount++;
-        }
-      }
-
-      // Enhanced logging
-      let logMessage = `✅ Product ${productId} inventories: ${processedCount} processed, ${skippedCount} skipped`;
-      if (fallbackCount > 0) {
-        logMessage += `, ${fallbackCount} fallback branches created`;
-      }
-      this.logger.log(logMessage);
-    } catch (error) {
-      this.logger.error(
-        `❌ Failed to save inventories for product ${productId}: ${error.message}`,
-      );
-    }
-  }
-
-  private parseNumericValue(
-    value: any,
-    defaultValue: number | null,
-  ): number | null {
-    if (value === null || value === undefined) {
-      return defaultValue;
-    }
-
-    if (typeof value === 'number' && !isNaN(value)) {
-      return value;
-    }
-
-    if (typeof value === 'string') {
-      const parsed = parseFloat(value);
-      return isNaN(parsed) ? defaultValue : parsed;
-    }
-
-    if (typeof value === 'boolean') {
-      return value ? 1 : 0;
-    }
-
-    return defaultValue;
   }
 
   private async saveProductPriceBooks(
