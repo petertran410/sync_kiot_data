@@ -61,7 +61,7 @@ interface KiotVietProduct {
     productId: number;
     productCode?: string;
     productName?: string;
-    branchId: number;
+    branchId?: number;
     branchName?: string;
     cost: number;
     onHand: number;
@@ -667,7 +667,10 @@ export class KiotVietProductService {
             if (productDetail) {
               await this.prismaService.productInventory.upsert({
                 where: {
-                  productId: product.id,
+                  productId_branchId: {
+                    productId: product.id,
+                    branchId: branch?.id || null,
+                  },
                 },
                 update: {
                   productCode: productDetail.code,
