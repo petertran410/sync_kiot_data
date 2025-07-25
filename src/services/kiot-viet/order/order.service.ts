@@ -689,7 +689,7 @@ export class KiotVietOrderService {
           for (const detail of orderData.orderDetails) {
             const product = await this.prismaService.product.findFirst({
               where: { kiotVietId: BigInt(detail.productId) },
-              select: { id: true },
+              select: { id: true, name: true, code: true },
             });
 
             if (product) {
@@ -711,6 +711,8 @@ export class KiotVietOrderService {
                 create: {
                   orderId: order.id,
                   productId: product.id,
+                  productName: product.name,
+                  productCode: product.code,
                   quantity: detail.quantity,
                   price: new Prisma.Decimal(detail.price),
                   discount: detail.discount

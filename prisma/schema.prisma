@@ -446,7 +446,6 @@ model OrderDelivery {
   length            Float?
   width             Float?
   height            Float?
-  partnerDeliveryId BigInt?
   
   @@index([orderId])
 }
