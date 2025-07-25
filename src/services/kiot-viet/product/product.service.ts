@@ -61,7 +61,7 @@ interface KiotVietProduct {
     productId: number;
     productCode?: string;
     productName?: string;
-    branchId?: number;
+    branchId: number;
     branchName?: string;
     cost: number;
     onHand: number;
@@ -655,7 +655,7 @@ export class KiotVietProductService {
 
         if (productData.inventories && productData.inventories.length > 0) {
           for (const detail of productData.inventories) {
-            const productDetail = await this.prismaService.product.findFirst({
+            const productInv = await this.prismaService.product.findFirst({
               where: { kiotVietId: BigInt(detail.productId) },
               select: { id: true, code: true, name: true },
             });
@@ -664,17 +664,14 @@ export class KiotVietProductService {
               select: { id: true, name: true },
             });
 
-            if (productDetail) {
+            if (productInv) {
               await this.prismaService.productInventory.upsert({
                 where: {
-                  productId_branchId: {
-                    productId: product.id,
-                    branchId: branch?.id || null,
-                  },
+                  productId: product?.id,
                 },
                 update: {
-                  productCode: productDetail.code,
-                  productName: productDetail.name,
+                  productCode: productInv.code,
+                  productName: productInv.name,
                   branchId: branch?.id,
                   branchName: branch?.name,
                   cost: detail.cost,
@@ -688,8 +685,8 @@ export class KiotVietProductService {
                 },
                 create: {
                   productId: product.id,
-                  productCode: productDetail.code,
-                  productName: productDetail.name,
+                  productCode: productInv.code,
+                  productName: productInv.name,
                   branchId: branch?.id,
                   branchName: branch?.name,
                   cost: detail.cost,
