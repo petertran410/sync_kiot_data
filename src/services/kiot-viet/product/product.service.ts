@@ -62,7 +62,7 @@ interface KiotVietProduct {
     productCode?: string;
     productName?: string;
     branchId: number;
-    branchName: string;
+    branchName?: string;
     cost: number;
     onHand: number;
     reserved: number;
@@ -540,7 +540,6 @@ export class KiotVietProductService {
 
     for (const productData of products) {
       try {
-        // ENHANCED: Validation với real API response structure
         if (!productData.id || !productData.code || !productData.name) {
           continue;
         }
@@ -563,7 +562,6 @@ export class KiotVietProductService {
           categoryId = category.id;
         }
 
-        // CORRECTED: Find or create TradeMark using actual API field names
         let tradeMarkId: number | null = null;
         if (productData.tradeMarkId && productData.tradeMarkName) {
           const tradeMark = await this.prismaService.tradeMark.upsert({
@@ -582,7 +580,6 @@ export class KiotVietProductService {
           tradeMarkId = tradeMark.id;
         }
 
-        // Main product creation/update
         const product = await this.prismaService.product.upsert({
           where: { kiotVietId: BigInt(productData.id) },
           update: {
@@ -656,7 +653,56 @@ export class KiotVietProductService {
           },
         });
 
-        // CORRECTED: Save related data using actual API response structure
+        if (productData.inventories && productData.inventories.length > 0) {
+          for (const detail of productData.inventories) {
+            const productDetail = await this.prismaService.product.findFirst({
+              where: { kiotVietId: BigInt(detail.productId) },
+              select: { id: true, code: true, name: true },
+            });
+            const branch = await this.prismaService.branch.findFirst({
+              where: { kiotVietId: detail.branchId },
+              select: { id: true, name: true },
+            });
+
+            if (productDetail) {
+              await this.prismaService.productInventory.upsert({
+                where: {
+                  productId: product.id,
+                },
+                update: {
+                  productCode: productDetail.code,
+                  productName: productDetail.name,
+                  branchId: branch?.id,
+                  branchName: branch?.name,
+                  cost: detail.cost,
+                  onHand: detail.onHand,
+                  reserved: detail.reserved,
+                  actualReserved: detail.actualReserved,
+                  minQuantity: detail.minQuantity,
+                  maxQuantity: detail.maxQuantity,
+                  isActive: detail.isActive,
+                  onOrder: detail.onOrder,
+                },
+                create: {
+                  productId: product.id,
+                  productCode: productDetail.code,
+                  productName: productDetail.name,
+                  branchId: branch?.id,
+                  branchName: branch?.name,
+                  cost: detail.cost,
+                  onHand: detail.onHand,
+                  reserved: detail.reserved,
+                  actualReserved: detail.actualReserved,
+                  minQuantity: detail.minQuantity,
+                  maxQuantity: detail.maxQuantity,
+                  isActive: detail.isActive,
+                  onOrder: detail.onOrder,
+                },
+              });
+            }
+          }
+        }
+
         if (productData.attributes && productData.attributes.length > 0) {
           await this.saveProductAttributes(product.id, productData.attributes);
         }
@@ -665,12 +711,12 @@ export class KiotVietProductService {
           await this.saveProductImages(product.id, productData.images);
         }
 
-        if (productData.inventories && productData.inventories.length > 0) {
-          await this.saveProductInventories(
-            product.id,
-            productData.inventories,
-          );
-        }
+        // if (productData.inventories && productData.inventories.length > 0) {
+        //   await this.saveProductInventories(
+        //     product.id,
+        //     productData.inventories,
+        //   );
+        // }
 
         if (productData.priceBooks && productData.priceBooks.length > 0) {
           await this.saveProductPriceBooks(product.id, productData.priceBooks);

@@ -126,15 +126,20 @@ model ProductImage {
 model ProductInventory {
   id               Int      @id @default(autoincrement())
   productId        Int
-  product          Product  @relation(fields: [productId], references: [id])
+  productCode      String?
+  productName      String?
+  product          Product?  @relation(fields: [productId], references: [id])
   branchId         Int
-  branch           Branch   @relation(fields: [branchId], references: [id])
+  branchName       String?
+  branch           Branch?   @relation(fields: [branchId], references: [id])
   onHand           Float?    @default(0)
   reserved         Float?    @default(0)
+  actualReserved   Float?    @default(0)
   onOrder          Float?    @default(0)
   cost             Decimal? @db.Decimal(15, 2)
   minQuantity      Float?
   maxQuantity      Float?
+  isActive         Boolean?
   modifiedDate     DateTime @updatedAt
   lastSyncedAt     DateTime @default(now())
 
