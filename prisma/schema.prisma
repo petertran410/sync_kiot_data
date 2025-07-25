@@ -645,8 +645,7 @@ model Invoice {
 
 model InvoiceDetail {
   id                Int                @id @default(autoincrement())
-  kiotVietId        BigInt?            @unique
-  invoiceId         Int
+  invoiceId         Int                @unique
   invoice           Invoice            @relation(fields: [invoiceId], references: [id])
   productId         Int
   product           Product            @relation(fields: [productId], references: [id])
@@ -657,7 +656,7 @@ model InvoiceDetail {
   note              String?
   serialNumbers     String?
   subTotal          Decimal            @db.Decimal(15, 2)
-  
+
   @@index([invoiceId])
   @@index([productId])
 }

@@ -749,7 +749,7 @@ export class KiotVietInvoiceService {
             if (product) {
               await this.prismaService.invoiceDetail.upsert({
                 where: {
-                  kiotVietId: detail.id ? BigInt(detail.id) : BigInt(0),
+                  invoiceId: invoice.id,
                 },
                 update: {
                   quantity: detail.quantity,
@@ -765,7 +765,6 @@ export class KiotVietInvoiceService {
                   ),
                 },
                 create: {
-                  kiotVietId: detail.id ? BigInt(detail.id) : null,
                   invoiceId: invoice.id,
                   productId: product.id,
                   quantity: detail.quantity,
