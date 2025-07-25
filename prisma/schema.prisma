@@ -143,7 +143,6 @@ model ProductInventory {
   modifiedDate     DateTime @updatedAt
   lastSyncedAt     DateTime @default(now())
 
-  @@unique([productId, branchId])
   @@index([productId])
   @@index([branchId])
 }

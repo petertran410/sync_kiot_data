@@ -57,7 +57,7 @@ interface KiotVietProduct {
     basePrice: number;
   }>;
 
-  inventories?: Array<{
+  inventories: Array<{
     productId: number;
     productCode?: string;
     productName?: string;
