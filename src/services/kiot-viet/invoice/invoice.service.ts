@@ -787,59 +787,62 @@ export class KiotVietInvoiceService {
         // ============================================================================
         // SAVE INVOICE DELIVERY
         // ============================================================================
-        if (invoiceData.invoiceDelivery) {
-          const delivery = invoiceData.invoiceDelivery;
-
-          await this.prismaService.invoiceDelivery.upsert({
-            where: { invoiceId: invoice.id },
-            update: {
-              deliveryCode: delivery.deliveryCode,
-              status: delivery.status,
-              type: delivery.type,
-              price: delivery.price ? new Prisma.Decimal(delivery.price) : null,
-              receiver: delivery.receiver,
-              contactNumber: delivery.contactNumber,
-              address: delivery.address,
-              locationId: delivery.locationId,
-              locationName: delivery.locationName,
-              wardName: delivery.wardName,
-              usingPriceCod: delivery.usingPriceCod || false,
-              priceCodPayment: delivery.priceCodPayment
-                ? new Prisma.Decimal(delivery.priceCodPayment)
-                : null,
-              weight: delivery.weight,
-              length: delivery.length,
-              width: delivery.width,
-              height: delivery.height,
-              partnerDeliveryId: delivery.partnerDeliveryId
-                ? BigInt(delivery.partnerDeliveryId)
-                : null,
-            },
-            create: {
-              invoiceId: invoice.id,
-              deliveryCode: delivery.deliveryCode,
-              status: delivery.status,
-              type: delivery.type,
-              price: delivery.price ? new Prisma.Decimal(delivery.price) : null,
-              receiver: delivery.receiver,
-              contactNumber: delivery.contactNumber,
-              address: delivery.address,
-              locationId: delivery.locationId,
-              locationName: delivery.locationName,
-              wardName: delivery.wardName,
-              usingPriceCod: delivery.usingPriceCod || false,
-              priceCodPayment: delivery.priceCodPayment
-                ? new Prisma.Decimal(delivery.priceCodPayment)
-                : null,
-              weight: delivery.weight,
-              length: delivery.length,
-              width: delivery.width,
-              height: delivery.height,
-              partnerDeliveryId: delivery.partnerDeliveryId
-                ? BigInt(delivery.partnerDeliveryId)
-                : null,
-            },
-          });
+        if (
+          invoiceData.invoiceDelivery &&
+          invoiceData.invoiceDelivery.length > 0
+        ) {
+          for (const detail of invoiceData.invoiceDelivery) {
+            await this.prismaService.invoiceDelivery.upsert({
+              where: { invoiceId: invoice.id },
+              update: {
+                deliveryCode: detail.deliveryCode,
+                status: detail.status,
+                type: detail.type,
+                price: detail.price ? new Prisma.Decimal(detail.price) : null,
+                receiver: detail.receiver,
+                contactNumber: detail.contactNumber,
+                address: detail.address,
+                locationId: detail.locationId,
+                locationName: detail.locationName,
+                wardName: detail.wardName,
+                usingPriceCod: detail.usingPriceCod || false,
+                priceCodPayment: detail.priceCodPayment
+                  ? new Prisma.Decimal(detail.priceCodPayment)
+                  : null,
+                weight: detail.weight,
+                length: detail.length,
+                width: detail.width,
+                height: detail.height,
+                partnerDeliveryId: detail.partnerDeliveryId
+                  ? BigInt(detail.partnerDeliveryId)
+                  : null,
+              },
+              create: {
+                invoiceId: invoice.id,
+                deliveryCode: detail.deliveryCode,
+                status: detail.status,
+                type: detail.type,
+                price: detail.price ? new Prisma.Decimal(detail.price) : null,
+                receiver: detail.receiver,
+                contactNumber: detail.contactNumber,
+                address: detail.address,
+                locationId: detail.locationId,
+                locationName: detail.locationName,
+                wardName: detail.wardName,
+                usingPriceCod: detail.usingPriceCod || false,
+                priceCodPayment: detail.priceCodPayment
+                  ? new Prisma.Decimal(detail.priceCodPayment)
+                  : null,
+                weight: detail.weight,
+                length: detail.length,
+                width: detail.width,
+                height: detail.height,
+                partnerDeliveryId: detail.partnerDeliveryId
+                  ? BigInt(detail.partnerDeliveryId)
+                  : null,
+              },
+            });
+          }
         }
 
         if (invoiceData.payments && invoiceData.payments.length > 0) {

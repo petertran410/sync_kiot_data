@@ -412,11 +412,12 @@ model Order {
 
 model OrderDetail {
   id                Int                @id @default(autoincrement())
-  kiotVietId        BigInt?            @unique
-  orderId           Int
+  orderId           Int                @unique
   order             Order              @relation(fields: [orderId], references: [id])
   productId         Int
   product           Product            @relation(fields: [productId], references: [id])
+  productName       String
+  productCode       String
   quantity          Float
   price             Decimal            @db.Decimal(15, 2)
   discount          Decimal?           @db.Decimal(15, 2)
@@ -430,7 +431,6 @@ model OrderDetail {
 
 model OrderDelivery {
   id                Int                @id @default(autoincrement())
-  kiotVietId        BigInt?            @unique
   orderId           Int                @unique
   order             Order              @relation(fields: [orderId], references: [id])
   deliveryCode      String?
@@ -663,7 +663,6 @@ model InvoiceDetail {
 
 model InvoiceDelivery {
   id                Int                @id @default(autoincrement())
-  kiotVietId        BigInt?            @unique
   invoiceId         Int                @unique
   invoice           Invoice            @relation(fields: [invoiceId], references: [id])
   deliveryCode      String?
@@ -1101,7 +1100,7 @@ model Supplier {
   larkSyncRetries   Int                @default(0)
 
   purchaseOrders    PurchaseOrder[]
-  
+
   @@index([kiotVietId])
   @@index([code])
 }

@@ -695,9 +695,10 @@ export class KiotVietOrderService {
             if (product) {
               await this.prismaService.orderDetail.upsert({
                 where: {
-                  kiotVietId: detail.id ? BigInt(detail.id) : BigInt(0),
+                  orderId: order.id,
                 },
                 update: {
+                  productId: product.id,
                   quantity: detail.quantity,
                   price: new Prisma.Decimal(detail.price),
                   discount: detail.discount
@@ -708,7 +709,6 @@ export class KiotVietOrderService {
                   isMaster: detail.isMaster ?? true,
                 },
                 create: {
-                  kiotVietId: detail.id ? BigInt(detail.id) : null,
                   orderId: order.id,
                   productId: product.id,
                   quantity: detail.quantity,
@@ -725,62 +725,51 @@ export class KiotVietOrderService {
           }
         }
 
-        // ============================================================================
-        // SAVE ORDER DELIVERY (OPTIONAL)
-        // ============================================================================
-        if (orderData.orderDelivery) {
-          await this.prismaService.orderDelivery.upsert({
-            where: { orderId: order.id },
-            update: {
-              deliveryCode: orderData.orderDelivery.deliveryCode,
-              type: orderData.orderDelivery.type,
-              price: orderData.orderDelivery.price
-                ? new Prisma.Decimal(orderData.orderDelivery.price)
-                : null,
-              receiver: orderData.orderDelivery.receiver,
-              contactNumber: orderData.orderDelivery.contactNumber,
-              address: orderData.orderDelivery.address,
-              locationId: orderData.orderDelivery.locationId,
-              locationName: orderData.orderDelivery.locationName,
-              wardName: orderData.orderDelivery.wardName,
-              weight: orderData.orderDelivery.weight,
-              length: orderData.orderDelivery.length,
-              width: orderData.orderDelivery.width,
-              height: orderData.orderDelivery.height,
-              partnerDeliveryId: orderData.orderDelivery.partnerDeliveryId
-                ? BigInt(orderData.orderDelivery.partnerDeliveryId)
-                : null,
-            },
-            create: {
-              orderId: order.id,
-              deliveryCode: orderData.orderDelivery.deliveryCode,
-              type: orderData.orderDelivery.type,
-              price: orderData.orderDelivery.price
-                ? new Prisma.Decimal(orderData.orderDelivery.price)
-                : null,
-              receiver: orderData.orderDelivery.receiver,
-              contactNumber: orderData.orderDelivery.contactNumber,
-              address: orderData.orderDelivery.address,
-              locationId: orderData.orderDelivery.locationId,
-              locationName: orderData.orderDelivery.locationName,
-              wardName: orderData.orderDelivery.wardName,
-              weight: orderData.orderDelivery.weight,
-              length: orderData.orderDelivery.length,
-              width: orderData.orderDelivery.width,
-              height: orderData.orderDelivery.height,
-              partnerDeliveryId: orderData.orderDelivery.partnerDeliveryId
-                ? BigInt(orderData.orderDelivery.partnerDeliveryId)
-                : null,
-            },
-          });
+        if (orderData.orderDelivery && orderData.orderDelivery.length > 0) {
+          for (const detail of orderData.orderDelivery) {
+            await this.prismaService.orderDelivery.upsert({
+              where: { orderId: order.id },
+              update: {
+                deliveryCode: detail.orderDelivery.deliveryCode,
+                type: detail.orderDelivery.type,
+                price: detail.orderDelivery.price
+                  ? new Prisma.Decimal(detail.orderDelivery.price)
+                  : null,
+                receiver: detail.orderDelivery.receiver,
+                contactNumber: detail.orderDelivery.contactNumber,
+                address: detail.orderDelivery.address,
+                locationId: detail.orderDelivery.locationId,
+                locationName: detail.orderDelivery.locationName,
+                wardName: detail.orderDelivery.wardName,
+                weight: detail.orderDelivery.weight,
+                length: detail.orderDelivery.length,
+                width: detail.orderDelivery.width,
+                height: detail.orderDelivery.height,
+              },
+              create: {
+                orderId: order.id,
+                deliveryCode: detail.orderDelivery.deliveryCode,
+                type: detail.orderDelivery.type,
+                price: detail.orderDelivery.price
+                  ? new Prisma.Decimal(detail.orderDelivery.price)
+                  : null,
+                receiver: detail.orderDelivery.receiver,
+                contactNumber: detail.orderDelivery.contactNumber,
+                address: detail.orderDelivery.address,
+                locationId: detail.orderDelivery.locationId,
+                locationName: detail.orderDelivery.locationName,
+                wardName: detail.orderDelivery.wardName,
+                weight: detail.orderDelivery.weight,
+                length: detail.orderDelivery.length,
+                width: detail.orderDelivery.width,
+                height: detail.orderDelivery.height,
+              },
+            });
+          }
         }
 
-        // ============================================================================
-        // SAVE PAYMENTS (OPTIONAL)
-        // ============================================================================
         if (orderData.payments && orderData.payments.length > 0) {
           for (const payment of orderData.payments) {
-            // Lookup BankAccount by kiotVietId
             const bankAccount = payment.accountId
               ? await this.prismaService.bankAccount.findFirst({
                   where: { kiotVietId: payment.accountId },
