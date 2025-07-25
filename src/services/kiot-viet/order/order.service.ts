@@ -727,47 +727,42 @@ export class KiotVietOrderService {
           }
         }
 
-        if (orderData.orderDelivery && orderData.orderDelivery.length > 0) {
-          for (const detail of orderData.orderDelivery) {
-            await this.prismaService.orderDelivery.upsert({
-              where: { orderId: order.id },
-              update: {
-                deliveryCode: detail.orderDelivery.deliveryCode,
-                type: detail.orderDelivery.type,
-                price: detail.orderDelivery.price
-                  ? new Prisma.Decimal(detail.orderDelivery.price)
-                  : null,
-                receiver: detail.orderDelivery.receiver,
-                contactNumber: detail.orderDelivery.contactNumber,
-                address: detail.orderDelivery.address,
-                locationId: detail.orderDelivery.locationId,
-                locationName: detail.orderDelivery.locationName,
-                wardName: detail.orderDelivery.wardName,
-                weight: detail.orderDelivery.weight,
-                length: detail.orderDelivery.length,
-                width: detail.orderDelivery.width,
-                height: detail.orderDelivery.height,
-              },
-              create: {
-                orderId: order.id,
-                deliveryCode: detail.orderDelivery.deliveryCode,
-                type: detail.orderDelivery.type,
-                price: detail.orderDelivery.price
-                  ? new Prisma.Decimal(detail.orderDelivery.price)
-                  : null,
-                receiver: detail.orderDelivery.receiver,
-                contactNumber: detail.orderDelivery.contactNumber,
-                address: detail.orderDelivery.address,
-                locationId: detail.orderDelivery.locationId,
-                locationName: detail.orderDelivery.locationName,
-                wardName: detail.orderDelivery.wardName,
-                weight: detail.orderDelivery.weight,
-                length: detail.orderDelivery.length,
-                width: detail.orderDelivery.width,
-                height: detail.orderDelivery.height,
-              },
-            });
-          }
+        if (orderData.orderDelivery) {
+          const detail = orderData.orderDelivery;
+          await this.prismaService.orderDelivery.upsert({
+            where: { orderId: order.id },
+            update: {
+              deliveryCode: detail.deliveryCode,
+              type: detail.type,
+              price: detail.price ? new Prisma.Decimal(detail.price) : null,
+              receiver: detail.receiver,
+              contactNumber: detail.contactNumber,
+              address: detail.address,
+              locationId: detail.locationId,
+              locationName: detail.locationName,
+              wardName: detail.wardName,
+              weight: detail.weight,
+              length: detail.length,
+              width: detail.width,
+              height: detail.height,
+            },
+            create: {
+              orderId: order.id,
+              deliveryCode: detail.deliveryCode,
+              type: detail.type,
+              price: detail.price ? new Prisma.Decimal(detail.price) : null,
+              receiver: detail.receiver,
+              contactNumber: detail.contactNumber,
+              address: detail.address,
+              locationId: detail.locationId,
+              locationName: detail.locationName,
+              wardName: detail.wardName,
+              weight: detail.weight,
+              length: detail.length,
+              width: detail.width,
+              height: detail.height,
+            },
+          });
         }
 
         if (orderData.payments && orderData.payments.length > 0) {
