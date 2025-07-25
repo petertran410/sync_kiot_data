@@ -662,8 +662,8 @@ model InvoiceDetail {
 
 model InvoiceDelivery {
   id                Int                @id @default(autoincrement())
-  invoiceId         Int                @unique
-  invoice           Invoice            @relation(fields: [invoiceId], references: [id])
+  invoiceId         Int?                @unique
+  invoice           Invoice?            @relation(fields: [invoiceId], references: [id])
   deliveryCode      String?
   status            Int
   type              Int?
@@ -680,7 +680,6 @@ model InvoiceDelivery {
   length            Float?
   width             Float?
   height            Float?
-  partnerDeliveryId BigInt?
   
   @@index([invoiceId])
 }

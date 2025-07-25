@@ -793,7 +793,7 @@ export class KiotVietInvoiceService {
         ) {
           for (const detail of invoiceData.invoiceDelivery) {
             await this.prismaService.invoiceDelivery.upsert({
-              where: { invoiceId: invoice.id },
+              where: { invoiceId: invoice?.id },
               update: {
                 deliveryCode: detail.deliveryCode,
                 status: detail.status,
@@ -813,9 +813,6 @@ export class KiotVietInvoiceService {
                 length: detail.length,
                 width: detail.width,
                 height: detail.height,
-                partnerDeliveryId: detail.partnerDeliveryId
-                  ? BigInt(detail.partnerDeliveryId)
-                  : null,
               },
               create: {
                 invoiceId: invoice.id,
@@ -837,9 +834,6 @@ export class KiotVietInvoiceService {
                 length: detail.length,
                 width: detail.width,
                 height: detail.height,
-                partnerDeliveryId: detail.partnerDeliveryId
-                  ? BigInt(detail.partnerDeliveryId)
-                  : null,
               },
             });
           }
