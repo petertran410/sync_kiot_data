@@ -275,104 +275,104 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
-  // @Cron('0 23 * * *', {
-  //   name: 'daily_product_sync',
-  //   timeZone: 'Asia/Ho_Chi_Minh',
-  // })
-  // async handleDailyProductSync() {
-  //   if (!this.isDailyProductSchedulerEnabled) {
-  //     this.logger.debug('🔇 Daily 23h sync scheduler is disabled');
-  //     return;
-  //   }
+  @Cron('15 14 * * *', {
+    name: 'daily_product_sync',
+    timeZone: 'Asia/Ho_Chi_Minh',
+  })
+  async handleDailyProductSync() {
+    if (!this.isDailyProductSchedulerEnabled) {
+      this.logger.debug('🔇 Daily 23h sync scheduler is disabled');
+      return;
+    }
 
-  //   const today = new Date().toISOString().split('T')[0];
+    const today = new Date().toISOString().split('T')[0];
 
-  //   if (
-  //     this.isDailyProductCompletedToday &&
-  //     this.lastProductSyncDate === today
-  //   ) {
-  //     this.logger.log(
-  //       '✅ Daily 23h sync sequence already completed today - skipping',
-  //     );
-  //     return;
-  //   }
+    if (
+      this.isDailyProductCompletedToday &&
+      this.lastProductSyncDate === today
+    ) {
+      this.logger.log(
+        '✅ Daily 23h sync sequence already completed today - skipping',
+      );
+      return;
+    }
 
-  //   try {
-  //     this.logger.log('🌙 23:00 Daily Sequential Sync triggered');
+    try {
+      this.logger.log('🌙 23:00 Daily Sequential Sync triggered');
 
-  //     this.dailyCyclePriorityLevel = 2;
-  //     this.isDailyCycleRunning = true;
-  //     this.dailyCycleStartTime = new Date();
+      this.dailyCyclePriorityLevel = 2;
+      this.isDailyCycleRunning = true;
+      this.dailyCycleStartTime = new Date();
 
-  //     this.logger.log(
-  //       '🛑 ACTIVATING daily cycle priority mode - 7-minute cycle STOPPED IMMEDIATELY',
-  //     );
+      this.logger.log(
+        '🛑 ACTIVATING daily cycle priority mode - 7-minute cycle STOPPED IMMEDIATELY',
+      );
 
-  //     await this.forceStopMainCycleImmediately();
+      await this.forceStopMainCycleImmediately();
 
-  //     const startTime = Date.now();
-  //     this.isDailyProductCompletedToday = false;
+      const startTime = Date.now();
+      this.isDailyProductCompletedToday = false;
 
-  //     await this.updateCycleTracking('daily_product_cycle', 'running');
+      await this.updateCycleTracking('daily_product_cycle', 'running');
 
-  //     const DAILY_TIMEOUT_MS = 2 * 60 * 60 * 1000;
+      const DAILY_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 
-  //     try {
-  //       const dailyPromise = this.executeDailySequence();
-  //       const timeoutPromise = new Promise<never>((_, reject) =>
-  //         setTimeout(
-  //           () => reject(new Error('Daily sequence timeout after 10 minutes')),
-  //           DAILY_TIMEOUT_MS,
-  //         ),
-  //       );
+      try {
+        const dailyPromise = this.executeDailySequence();
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error('Daily sequence timeout after 10 minutes')),
+            DAILY_TIMEOUT_MS,
+          ),
+        );
 
-  //       await Promise.race([dailyPromise, timeoutPromise]);
-  //       await this.updateCycleTracking('daily_product_cycle', 'completed');
+        await Promise.race([dailyPromise, timeoutPromise]);
+        await this.updateCycleTracking('daily_product_cycle', 'completed');
 
-  //       this.isDailyProductCompletedToday = true;
-  //       this.lastProductSyncDate = today;
+        this.isDailyProductCompletedToday = true;
+        this.lastProductSyncDate = today;
 
-  //       const duration = ((Date.now() - startTime) / 1000 / 60).toFixed(2);
-  //       this.logger.log(
-  //         `🎉 Daily sequential execution completed in ${duration} minutes`,
-  //       );
-  //       this.logger.log(`🔒 Daily sequence locked until tomorrow 23:00`);
-  //     } catch (timeoutError) {
-  //       this.isDailyProductCompletedToday = false;
-  //       if (
-  //         timeoutError instanceof Error &&
-  //         timeoutError.message.includes('timeout')
-  //       ) {
-  //         this.logger.error(`⏰ Daily sequence timed out after 60 minutes`);
-  //         await this.updateCycleTracking(
-  //           'daily_product_cycle',
-  //           'timeout',
-  //           'Daily sequence exceeded 60 minute timeout',
-  //         );
-  //       } else {
-  //         throw timeoutError;
-  //       }
-  //     }
-  //   } catch (error) {
-  //     this.isDailyProductCompletedToday = false;
-  //     this.logger.error(
-  //       `❌ Daily sequential execution failed: ${error.message}`,
-  //     );
-  //     await this.updateCycleTracking(
-  //       'daily_product_cycle',
-  //       'failed',
-  //       error.message,
-  //     );
-  //   } finally {
-  //     this.logger.log('▶️ RESUMING 7-minute cycle - Daily cycle completed');
-  //     this.isDailyCycleRunning = false;
-  //     this.dailyCycleStartTime = null;
-  //     this.mainSchedulerSuspendedForDaily = false;
-  //     this.dailyCyclePriorityLevel = 0; // back to normal
-  //     this.isMainCycleGracefulShutdown = false;
-  //     this.startupAbortController = null;
-  //   }
-  // }
+        const duration = ((Date.now() - startTime) / 1000 / 60).toFixed(2);
+        this.logger.log(
+          `🎉 Daily sequential execution completed in ${duration} minutes`,
+        );
+        this.logger.log(`🔒 Daily sequence locked until tomorrow 23:00`);
+      } catch (timeoutError) {
+        this.isDailyProductCompletedToday = false;
+        if (
+          timeoutError instanceof Error &&
+          timeoutError.message.includes('timeout')
+        ) {
+          this.logger.error(`⏰ Daily sequence timed out after 60 minutes`);
+          await this.updateCycleTracking(
+            'daily_product_cycle',
+            'timeout',
+            'Daily sequence exceeded 60 minute timeout',
+          );
+        } else {
+          throw timeoutError;
+        }
+      }
+    } catch (error) {
+      this.isDailyProductCompletedToday = false;
+      this.logger.error(
+        `❌ Daily sequential execution failed: ${error.message}`,
+      );
+      await this.updateCycleTracking(
+        'daily_product_cycle',
+        'failed',
+        error.message,
+      );
+    } finally {
+      this.logger.log('▶️ RESUMING 7-minute cycle - Daily cycle completed');
+      this.isDailyCycleRunning = false;
+      this.dailyCycleStartTime = null;
+      this.mainSchedulerSuspendedForDaily = false;
+      this.dailyCyclePriorityLevel = 0; // back to normal
+      this.isMainCycleGracefulShutdown = false;
+      this.startupAbortController = null;
+    }
+  }
 
   private async forceStopMainCycleImmediately(): Promise<void> {
     this.logger.log('🚫 FORCE STOPPING all ongoing cycles IMMEDIATELY...');

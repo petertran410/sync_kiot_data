@@ -26,6 +26,7 @@ const LARK_ORDER_SUPPLIER_FIELDS = {
   TOTAL_QUANTITY: 'Tổng Số Lượng',
   TOTAL_PRODUCT_TYPE: 'Tổng Số Lượng Mặt Hàng',
   PAID_AMOUNT: 'Tiền Đã Trả NCC',
+  PURCHASE_ORDER_CODE: 'Mã Nhập Hàng',
 };
 
 const BRANCH_NAME = {
@@ -1055,6 +1056,11 @@ export class LarkOrderSupplierSyncService {
       fields[LARK_ORDER_SUPPLIER_FIELDS.PAID_AMOUNT] = Number(
         order_supplier.paidAmount || 0,
       );
+    }
+
+    if (order_supplier.purchaseOrderCodes) {
+      fields[LARK_ORDER_SUPPLIER_FIELDS.PURCHASE_ORDER_CODE] =
+        order_supplier.purchaseOrderCodes;
     }
 
     return fields;
