@@ -146,13 +146,13 @@ export class KiotVietInvoiceService {
       // Then recent sync
       if (recentSync?.isEnabled && !recentSync.isRunning) {
         this.logger.log('Starting recent invoice sync...');
-        await this.syncRecentInvoices(10);
+        await this.syncRecentInvoices(7);
         return;
       }
 
       // Default: recent sync
       this.logger.log('Running default recent invoice sync...');
-      await this.syncRecentInvoices(10);
+      await this.syncRecentInvoices(7);
     } catch (error) {
       this.logger.error(`Sync check failed: ${error.message}`);
       throw error;
@@ -437,7 +437,7 @@ export class KiotVietInvoiceService {
   // RECENT SYNC
   // ============================================================================
 
-  async syncRecentInvoices(days: number = 10): Promise<void> {
+  async syncRecentInvoices(days: number = 7): Promise<void> {
     const syncName = 'invoice_recent';
 
     try {
@@ -573,7 +573,7 @@ export class KiotVietInvoiceService {
     const fromDateStr = fromDate.toISOString();
 
     const queryParams = new URLSearchParams({
-      lastModifiedFrom: fromDateStr,
+      createdDate: fromDateStr,
       currentItem: '0',
       pageSize: '100',
       orderBy: 'purchaseDate',
@@ -694,6 +694,9 @@ export class KiotVietInvoiceService {
             saleChannelId: saleChannel?.id ?? null,
             isApplyVoucher: invoiceData.isApplyVoucher || false,
             retailerId: invoiceData.retailerId || null,
+            createdDate: invoiceData.createdDate
+              ? new Date(invoiceData.createdDate)
+              : new Date(),
             modifiedDate: invoiceData.modifiedDate
               ? new Date(invoiceData.modifiedDate)
               : new Date(),
@@ -725,6 +728,9 @@ export class KiotVietInvoiceService {
             saleChannelId: saleChannel?.id ?? null,
             isApplyVoucher: invoiceData.isApplyVoucher || false,
             retailerId: invoiceData.retailerId || null,
+            createdDate: invoiceData.createdDate
+              ? new Date(invoiceData.createdDate)
+              : new Date(),
             modifiedDate: invoiceData.modifiedDate
               ? new Date(invoiceData.modifiedDate)
               : new Date(),

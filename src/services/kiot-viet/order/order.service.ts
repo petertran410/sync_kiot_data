@@ -130,13 +130,13 @@ export class KiotVietOrderService {
       // Then recent sync
       if (recentSync?.isEnabled && !recentSync.isRunning) {
         this.logger.log('Starting recent order sync...');
-        await this.syncRecentOrders(10);
+        await this.syncRecentOrders(7);
         return;
       }
 
       // Default: recent sync
       this.logger.log('Running default recent order sync...');
-      await this.syncRecentOrders(10);
+      await this.syncRecentOrders(7);
     } catch (error) {
       this.logger.error(`Sync check failed: ${error.message}`);
       throw error;
@@ -416,7 +416,7 @@ export class KiotVietOrderService {
   // RECENT SYNC - ENHANCED WITH RATE LIMITING
   // ============================================================================
 
-  async syncRecentOrders(days: number = 10): Promise<void> {
+  async syncRecentOrders(days: number = 7): Promise<void> {
     const syncName = 'order_recent';
 
     try {
@@ -547,7 +547,7 @@ export class KiotVietOrderService {
     const fromDateStr = fromDate.toISOString();
 
     const queryParams = new URLSearchParams({
-      lastModifiedFrom: fromDateStr,
+      createdDate: fromDateStr,
       currentItem: '0',
       pageSize: '100',
       orderBy: 'purchaseDate',
@@ -651,6 +651,9 @@ export class KiotVietOrderService {
             usingCod: orderData.usingCod || false,
             discount: orderData.discoun || null,
             discountRatio: orderData.discountRatio || null,
+            createdDate: orderData.createdDate
+              ? new Date(orderData.createdDate)
+              : new Date(),
             modifiedDate: orderData.modifiedDate
               ? new Date(orderData.modifiedDate)
               : new Date(),
@@ -676,6 +679,9 @@ export class KiotVietOrderService {
             usingCod: orderData.usingCod || false,
             discount: orderData.discoun || null,
             discountRatio: orderData.discountRatio || null,
+            createdDate: orderData.createdDate
+              ? new Date(orderData.createdDate)
+              : new Date(),
             modifiedDate: orderData.modifiedDate
               ? new Date(orderData.modifiedDate)
               : new Date(),
