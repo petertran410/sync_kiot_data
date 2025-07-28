@@ -452,7 +452,6 @@ export class KiotVietInvoiceService {
 
       const fromDate = new Date();
       fromDate.setDate(fromDate.getDate() - days);
-      console.log(fromDate);
 
       const recentInvoices = await this.fetchRecentInvoices(fromDate);
 
@@ -572,9 +571,13 @@ export class KiotVietInvoiceService {
   async fetchRecentInvoices(fromDate: Date): Promise<KiotVietInvoice[]> {
     const headers = await this.authService.getRequestHeaders();
     const fromDateStr = fromDate.toISOString();
+    const today = new Date();
+    const todayDateStr = today.toISOString();
 
     const queryParams = new URLSearchParams({
-      lastModifiedFrom: fromDateStr,
+      // purchaseDate: fromDateStr,
+      fromPurchaseDate: fromDateStr,
+      toPurchaseDate: todayDateStr,
       currentItem: '0',
       pageSize: '100',
       orderBy: 'purchaseDate',
@@ -747,18 +750,25 @@ export class KiotVietInvoiceService {
           invoiceData.invoiceDetails &&
           invoiceData.invoiceDetails.length > 0
         ) {
-          for (const detail of invoiceData.invoiceDetails) {
+          for (let i = 0; i < invoiceData.invoiceDetails.length; i++) {
+            const detail = invoiceData.invoiceDetails[i];
             const product = await this.prismaService.product.findFirst({
               where: { kiotVietId: BigInt(detail.productId) },
-              select: { id: true },
+              select: { id: true, name: true, code: true },
             });
 
             if (product) {
               await this.prismaService.invoiceDetail.upsert({
                 where: {
-                  invoiceId: invoice.id,
+                  invoiceId_lineNumber: {
+                    invoiceId: invoice.id,
+                    lineNumber: i + 1,
+                  },
                 },
                 update: {
+                  productId: product.id,
+                  productCode: product.code,
+                  productName: product.name,
                   quantity: detail.quantity,
                   price: new Prisma.Decimal(detail.price),
                   discount: detail.discount
@@ -767,6 +777,7 @@ export class KiotVietInvoiceService {
                   discountRatio: detail.discountRatio,
                   note: detail.note,
                   serialNumbers: detail.serialNumbers,
+                  lineNumber: i + 1,
                   subTotal: new Prisma.Decimal(
                     detail.price * detail.quantity - (detail.discount || 0),
                   ),
@@ -774,6 +785,8 @@ export class KiotVietInvoiceService {
                 create: {
                   invoiceId: invoice.id,
                   productId: product.id,
+                  productCode: product.code,
+                  productName: product.name,
                   quantity: detail.quantity,
                   price: new Prisma.Decimal(detail.price),
                   discount: detail.discount
@@ -782,6 +795,7 @@ export class KiotVietInvoiceService {
                   discountRatio: detail.discountRatio,
                   note: detail.note,
                   serialNumbers: detail.serialNumbers,
+                  lineNumber: i + 1,
                   subTotal: new Prisma.Decimal(
                     detail.price * detail.quantity - (detail.discount || 0),
                   ),

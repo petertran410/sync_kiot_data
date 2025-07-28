@@ -547,10 +547,10 @@ export class KiotVietOrderService {
     const fromDateStr = fromDate.toISOString();
 
     const queryParams = new URLSearchParams({
-      createdDate: fromDateStr,
+      lastModifiedFrom: fromDateStr,
       currentItem: '0',
       pageSize: '100',
-      orderBy: 'purchaseDate',
+      orderBy: 'createdDate',
       orderDirection: 'DESC',
       includeOrderDelivery: 'true',
       includePayment: 'true',
@@ -692,7 +692,8 @@ export class KiotVietOrderService {
         });
 
         if (orderData.orderDetails && orderData.orderDetails.length > 0) {
-          for (const detail of orderData.orderDetails) {
+          for (let i = 0; i < orderData.orderDetails.length; i++) {
+            const detail = orderData.orderDetails[i];
             const product = await this.prismaService.product.findFirst({
               where: { kiotVietId: BigInt(detail.productId) },
               select: { id: true, name: true, code: true },
@@ -701,11 +702,17 @@ export class KiotVietOrderService {
             if (product) {
               await this.prismaService.orderDetail.upsert({
                 where: {
-                  orderId: order.id,
+                  orderId_lineNumber: {
+                    orderId: order.id,
+                    lineNumber: i + 1,
+                  },
                 },
                 update: {
                   productId: product.id,
+                  productName: product.name,
+                  productCode: product.code,
                   quantity: detail.quantity,
+                  lineNumber: i + 1,
                   price: new Prisma.Decimal(detail.price),
                   discount: detail.discount
                     ? new Prisma.Decimal(detail.discount)
@@ -720,6 +727,7 @@ export class KiotVietOrderService {
                   productName: product.name,
                   productCode: product.code,
                   quantity: detail.quantity,
+                  lineNumber: i + 1,
                   price: new Prisma.Decimal(detail.price),
                   discount: detail.discount
                     ? new Prisma.Decimal(detail.discount)

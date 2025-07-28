@@ -412,21 +412,24 @@ model Order {
 
 model OrderDetail {
   id                Int                @id @default(autoincrement())
-  orderId           Int                @unique
+  orderId           Int
   order             Order              @relation(fields: [orderId], references: [id])
   productId         Int
   product           Product            @relation(fields: [productId], references: [id])
   productName       String
   productCode       String
   quantity          Float
+  lineNumber        Int?
   price             Decimal            @db.Decimal(15, 2)
   discount          Decimal?           @db.Decimal(15, 2)
   discountRatio     Float?
   note              String?
   isMaster          Boolean            @default(true)
   
+  @@unique([orderId, lineNumber])
   @@index([orderId])
   @@index([productId])
+  @@index([orderId, productId])
 }
 
 model OrderDelivery {
@@ -648,7 +651,10 @@ model InvoiceDetail {
   invoiceId         Int                
   invoice           Invoice            @relation(fields: [invoiceId], references: [id])
   productId         Int
+  productName       String?
+  productCode       String?
   product           Product            @relation(fields: [productId], references: [id])
+  lineNumber        Int?
   quantity          Float
   price             Decimal            @db.Decimal(15, 2)
   discount          Decimal?           @db.Decimal(15, 2)
@@ -657,9 +663,10 @@ model InvoiceDetail {
   serialNumbers     String?
   subTotal          Decimal            @db.Decimal(15, 2)
 
-  @@unique([invoiceId])
+  @@unique([invoiceId, lineNumber])
   @@index([invoiceId])
   @@index([productId])
+  @@index([invoiceId, productId])
 }
 
 model InvoiceDelivery {
