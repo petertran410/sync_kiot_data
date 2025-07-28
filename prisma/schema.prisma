@@ -470,43 +470,41 @@ model OrderSupplier {
   id                    Int                           @id @default(autoincrement())
   kiotVietId            BigInt                        @unique
   code                  String                        @unique
-  orderDate             DateTime                      // Ngày đặt
+  orderDate             DateTime
   branchId              Int?
   branch                Branch?                        @relation(fields: [branchId], references: [id])
-  retailerId            Int?                          // Id cửa hàng
-  userId                BigInt?                       // Id người dùng
-  description           String?                       @db.Text // Ghi chú
-  status                Int?                           // Trạng thái (1:Active, 2:Completed, 3:Partial, 4:Cancelled)
-  statusValue           String?                       // Tên trạng thái
-  discountRatio         Float?                        // Giảm giá theo %
-  productQty            Float?                        // Số lượng sản phẩm
-  discount              Decimal?                      @db.Decimal(15, 2) // Giảm giá
-  total                 Decimal                       @db.Decimal(15, 2) // Tổng tiền
-  exReturnSuppliers     Decimal?                      @db.Decimal(15, 2) // Trả nhà cung cấp
-  exReturnThirdParty    Decimal?                      @db.Decimal(15, 2) // Trả bên thứ 3
-  totalAmt              Decimal?                      @db.Decimal(15, 2) // Tổng số tiền
-  totalQty              Float?                        // Tổng số lượng
-  totalQuantity         Float                         // Tổng số lượng (required)
-  totalProductType      Int?                          // Tổng loại sản phẩm
-  subTotal              Decimal                       @db.Decimal(15, 2) // Tổng phụ
-  paidAmount            Decimal?                      @db.Decimal(15, 2) // Số tiền đã trả
-  toComplete            Boolean                       @default(false)    // Hoàn thành
-  viewPrice             Boolean                       @default(false)    // Xem giá
-  supplierDebt          Decimal?                      @db.Decimal(15, 2) // Nợ nhà cung cấp
-  supplierOldDebt       Decimal?                      @db.Decimal(15, 2) // Nợ cũ nhà cung cấp
-  purchaseOrderCodes    String?                       // "PN001374,PN001375" - QUAN TRỌNG
-  createdBy             BigInt?                       // Id người tạo
-  createdDate           DateTime?                     // Ngày tạo từ KiotViet
+  retailerId            Int? 
+  userId                BigInt?
+  description           String?                       @db.Text
+  status                Int?
+  statusValue           String?
+  discountRatio         Float?
+  productQty            Float?
+  discount              Decimal?                      @db.Decimal(15, 2)
+  total                 Decimal                       @db.Decimal(15, 2)
+  exReturnSuppliers     Decimal?                      @db.Decimal(15, 2)
+  exReturnThirdParty    Decimal?                      @db.Decimal(15, 2)
+  totalAmt              Decimal?                      @db.Decimal(15, 2)
+  totalQty              Float?
+  totalQuantity         Float
+  totalProductType      Int?
+  subTotal              Decimal                       @db.Decimal(15, 2)
+  paidAmount            Decimal?                      @db.Decimal(15, 2)
+  toComplete            Boolean                       @default(false)
+  viewPrice             Boolean                       @default(false)
+  supplierDebt          Decimal?                      @db.Decimal(15, 2)
+  supplierOldDebt       Decimal?                      @db.Decimal(15, 2)
+  purchaseOrderCodes    String?
+  createdBy             BigInt?
+  createdDate           DateTime?
   modifiedDate          DateTime                      @updatedAt
   lastSyncedAt          DateTime                      @default(now())
   
-  // Lark sync fields (theo pattern hiện có)
   larkRecordId          String?
   larkSyncStatus        LarkSyncStatus                @default(PENDING)
   larkSyncedAt          DateTime?
   larkSyncRetries       Int                           @default(0)
   
-  // Relationships
   orderSupplierDetails  OrderSupplierDetail[]
   orderSupplierExpenses OrderSupplierExpense[]
   purchaseOrderLinks    OrderSupplierPurchaseOrder[]
@@ -526,19 +524,22 @@ model OrderSupplierDetail {
   id                    Int                @id @default(autoincrement())
   kiotVietId            BigInt            @unique
   orderSupplierId       Int?
+  orderSupplierCode     String?
   orderSupplier         OrderSupplier?      @relation(fields: [orderSupplierId], references: [id], onDelete: Cascade)
-  productId             Int
-  product               Product            @relation(fields: [productId], references: [id])
-  quantity              Float              // Số lượng hàng hóa
-  price                 Decimal            @db.Decimal(15, 2) // Giá
-  discount              Decimal?           @db.Decimal(15, 2) // Giảm giá
-  allocation            Decimal?           @db.Decimal(15, 2) // Phân bổ
-  description           String?            @db.Text // Ghi chú
-  orderByNumber         Int?               // Thứ tự
-  allocationSuppliers   Decimal?           @db.Decimal(15, 2) // Phân bổ nhà cung cấp
-  allocationThirdParty  Decimal?           @db.Decimal(15, 2) // Phân bổ bên thứ 3
-  orderQuantity         Float              @default(0) // Số lượng đặt
-  subTotal              Decimal            @db.Decimal(15, 2) // Tổng phụ
+  productId             Int?
+  productName           String?
+  productCode           String?
+  product               Product?            @relation(fields: [productId], references: [id])
+  quantity              Float
+  price                 Decimal            @db.Decimal(15, 2)
+  discount              Decimal?           @db.Decimal(15, 2)
+  allocation            Decimal?           @db.Decimal(15, 2)
+  description           String?            @db.Text
+  orderByNumber         Int?
+  allocationSuppliers   Decimal?           @db.Decimal(15, 2)
+  allocationThirdParty  Decimal?           @db.Decimal(15, 2)
+  orderQuantity         Float              @default(0)
+  subTotal              Decimal            @db.Decimal(15, 2)
   createdDate           DateTime           @default(now())
   
   @@index([orderSupplierId])
@@ -551,14 +552,14 @@ model OrderSupplierExpense {
   kiotVietId            BigInt?            @unique
   orderSupplierId       Int
   orderSupplier         OrderSupplier      @relation(fields: [orderSupplierId], references: [id], onDelete: Cascade)
-  form                  Int?               // Hình thức
-  expensesOtherOrder    Int?               // Thứ tự chi phí khác
-  expensesOtherCode     String?            // Mã chi phí khác
-  expensesOtherName     String?            // Tên chi phí khác
-  expensesOtherId       Int?               // Id chi phí khác
-  price                 Decimal            @db.Decimal(15, 2) // Giá
-  isReturnAuto          Boolean?           @default(false) // Hoàn trả tự động
-  exValue               Decimal?           @db.Decimal(15, 2) // Giá trị gia hạn
+  form                  Int?
+  expensesOtherOrder    Int?
+  expensesOtherCode     String?
+  expensesOtherName     String?
+  expensesOtherId       Int?
+  price                 Decimal            @db.Decimal(15, 2)
+  isReturnAuto          Boolean?           @default(false)
+  exValue               Decimal?           @db.Decimal(15, 2)
   createdDate           DateTime           @default(now())
   
   @@index([orderSupplierId])
@@ -572,9 +573,9 @@ model OrderSupplierPurchaseOrder {
   orderSupplier         OrderSupplier      @relation(fields: [orderSupplierId], references: [id], onDelete: Cascade)
   purchaseOrderId       Int
   purchaseOrder         PurchaseOrder      @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
-  purchaseOrderCode     String             // PN001374, PN001375, etc.
-  linkOrder             Int?               // Thứ tự liên kết (1, 2, 3...)
-  isActive              Boolean            @default(true) // Trạng thái liên kết
+  purchaseOrderCode     String
+  linkOrder             Int?
+  isActive              Boolean            @default(true)
   createdDate           DateTime           @default(now())
   lastSyncedAt          DateTime           @default(now())
   
@@ -662,8 +663,8 @@ model InvoiceDetail {
 
 model InvoiceDelivery {
   id                Int                @id @default(autoincrement())
-  invoiceId         Int?                @unique
-  invoice           Invoice?            @relation(fields: [invoiceId], references: [id])
+  invoiceId         Int?               @unique
+  invoice           Invoice?           @relation(fields: [invoiceId], references: [id])
   deliveryCode      String?
   status            Int
   type              Int?
@@ -838,10 +839,11 @@ model PurchaseOrder {
 
 model PurchaseOrderDetail {
   id                      Int                             @id @default(autoincrement())
-  purchaseOrderId         Int                             @unique
-  purchaseOrder           PurchaseOrder                   @relation(fields: [purchaseOrderId], references: [id])
-  productId               Int
-  product                 Product                         @relation(fields: [productId], references: [id])
+  purchaseOrderId         Int?                             @unique
+  purchaseOrderCode       String?
+  purchaseOrder           PurchaseOrder?                   @relation(fields: [purchaseOrderId], references: [id])
+  productId               Int?
+  product                 Product?                         @relation(fields: [productId], references: [id])
   productCode             String?
   productName             String?
   quantity                Float
