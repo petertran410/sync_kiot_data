@@ -130,13 +130,13 @@ export class KiotVietOrderService {
       // Then recent sync
       if (recentSync?.isEnabled && !recentSync.isRunning) {
         this.logger.log('Starting recent order sync...');
-        await this.syncRecentOrders(3);
+        await this.syncRecentOrders(10);
         return;
       }
 
       // Default: recent sync
       this.logger.log('Running default recent order sync...');
-      await this.syncRecentOrders(3);
+      await this.syncRecentOrders(10);
     } catch (error) {
       this.logger.error(`Sync check failed: ${error.message}`);
       throw error;
@@ -416,7 +416,7 @@ export class KiotVietOrderService {
   // RECENT SYNC - ENHANCED WITH RATE LIMITING
   // ============================================================================
 
-  async syncRecentOrders(days: number = 3): Promise<void> {
+  async syncRecentOrders(days: number = 10): Promise<void> {
     const syncName = 'order_recent';
 
     try {
