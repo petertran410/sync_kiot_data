@@ -31,6 +31,7 @@ interface KiotVietPurchaseOrder {
   purchaseOrderDetails: Array<{
     purchaseOrderId: number;
     productId: number;
+    lineNumber: number;
     productCode: string;
     quantity: number;
     price: number;
@@ -510,7 +511,12 @@ export class KiotVietPurchaseOrderService {
           purchaseOrderData.purchaseOrderDetails &&
           purchaseOrderData.purchaseOrderDetails.length > 0
         ) {
-          for (const detail of purchaseOrderData.purchaseOrderDetails) {
+          for (
+            let i = 0;
+            i < purchaseOrderData.purchaseOrderDetails.length;
+            i++
+          ) {
+            const detail = purchaseOrderData.purchaseOrderDetails[i];
             const product = await this.prismaService.product.findFirst({
               where: { kiotVietId: BigInt(detail.productId) },
               select: { id: true, code: true, name: true },
@@ -519,11 +525,15 @@ export class KiotVietPurchaseOrderService {
             if (product) {
               await this.prismaService.purchaseOrderDetail.upsert({
                 where: {
-                  purchaseOrderId: purchase_order.id,
+                  purchaseOrderId_lineNumber: {
+                    purchaseOrderId: purchase_order.id,
+                    lineNumber: i + 1,
+                  },
                 },
                 update: {
                   productId: product.id,
                   productCode: product.code,
+                  lineNumber: i + 1,
                   productName: product.name,
                   quantity: detail.quantity,
                   price: detail.price,
@@ -531,6 +541,7 @@ export class KiotVietPurchaseOrderService {
                 },
                 create: {
                   purchaseOrderId: purchase_order.id,
+                  lineNumber: i + 1,
                   productId: product.id,
                   productCode: product.code,
                   productName: product.name,

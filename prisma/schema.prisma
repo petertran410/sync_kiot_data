@@ -645,7 +645,7 @@ model Invoice {
 
 model InvoiceDetail {
   id                Int                @id @default(autoincrement())
-  invoiceId         Int                @unique
+  invoiceId         Int                
   invoice           Invoice            @relation(fields: [invoiceId], references: [id])
   productId         Int
   product           Product            @relation(fields: [productId], references: [id])
@@ -657,6 +657,7 @@ model InvoiceDetail {
   serialNumbers     String?
   subTotal          Decimal            @db.Decimal(15, 2)
 
+  @@unique([invoiceId])
   @@index([invoiceId])
   @@index([productId])
 }
@@ -839,9 +840,10 @@ model PurchaseOrder {
 
 model PurchaseOrderDetail {
   id                      Int                             @id @default(autoincrement())
-  purchaseOrderId         Int?                             @unique
+  purchaseOrderId         Int?
   purchaseOrderCode       String?
   purchaseOrder           PurchaseOrder?                   @relation(fields: [purchaseOrderId], references: [id])
+  lineNumber              Int?
   productId               Int?
   product                 Product?                         @relation(fields: [productId], references: [id])
   productCode             String?
@@ -853,8 +855,10 @@ model PurchaseOrderDetail {
   
   batchExpires            PurchaseOrderDetailBatch[]
   
+  @@unique([purchaseOrderId, lineNumber])
   @@index([purchaseOrderId])
   @@index([productId])
+  @@index([purchaseOrderId, productId])
 }
 
 model PurchaseOrderDetailBatch {
