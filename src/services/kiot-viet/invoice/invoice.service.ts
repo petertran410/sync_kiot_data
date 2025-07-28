@@ -452,6 +452,7 @@ export class KiotVietInvoiceService {
 
       const fromDate = new Date();
       fromDate.setDate(fromDate.getDate() - days);
+      console.log(fromDate);
 
       const recentInvoices = await this.fetchRecentInvoices(fromDate);
 
@@ -511,7 +512,7 @@ export class KiotVietInvoiceService {
       includePayment?: boolean;
       includeTotal?: boolean;
     },
-    maxRetries: number = 5, // Keep existing retry count
+    maxRetries: number = 5,
   ): Promise<any> {
     let lastError: Error | undefined;
 
@@ -573,7 +574,7 @@ export class KiotVietInvoiceService {
     const fromDateStr = fromDate.toISOString();
 
     const queryParams = new URLSearchParams({
-      createdDate: fromDateStr,
+      lastModifiedFrom: fromDateStr,
       currentItem: '0',
       pageSize: '100',
       orderBy: 'purchaseDate',

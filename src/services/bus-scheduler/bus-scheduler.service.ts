@@ -298,7 +298,7 @@ export class BusSchedulerService implements OnModuleInit {
     }
 
     try {
-      this.logger.log('🌙 23:00 Daily Sequential Sync triggered');
+      this.logger.log('🌙 21:30 Daily Sequential Sync triggered');
 
       this.dailyCyclePriorityLevel = 2;
       this.isDailyCycleRunning = true;
@@ -566,7 +566,7 @@ export class BusSchedulerService implements OnModuleInit {
           nextRun:
             this.isDailyCycleRunning || this.dailyCyclePriorityLevel > 0
               ? `Suspended during daily cycle (Priority Level ${this.dailyCyclePriorityLevel})`
-              : '7 minutes interval',
+              : '4 minutes interval',
           entities: ['customer', 'invoice', 'order'],
           note: 'Enhanced priority management with force abort capability',
         },
