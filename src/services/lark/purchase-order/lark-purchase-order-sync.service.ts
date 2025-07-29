@@ -28,6 +28,8 @@ const LARK_PURCHASE_ORDER_DETAIL_FIELDS = {
   QUANTITY: 'Số Lượng',
   DISCOUNT: 'Giảm Giá',
   UNIT_PRICE: 'Đơn Giá',
+  LINE_NUMBER: 'lineNumber',
+  PURCHASE_ORDER_ID: 'Id Nhập Hàng',
 };
 
 interface LarkBatchResponse {
@@ -59,7 +61,8 @@ export class LarkPurchaseOrderSyncService {
   private readonly baseToken: string;
   private readonly tableId: string;
 
-  private readonly detailTableId: string;
+  private readonly baseTokenDetail: string;
+  private readonly tableIdDetail: string;
 
   private readonly batchSize = 100;
 
@@ -72,6 +75,7 @@ export class LarkPurchaseOrderSyncService {
   private cacheLoaded = false;
   private detailCacheLoaded = false;
   private lastCacheLoadTime: Date | null = null;
+  private lastDetailCacheLoadTime: Date | null = null;
   private readonly CACHE_VALIDITY_MINUTES = 30;
   private readonly MAX_AUTH_RETRIES = 3;
   private readonly AUTH_ERROR_CODES = [99991663, 99991664, 99991665];
@@ -89,15 +93,21 @@ export class LarkPurchaseOrderSyncService {
       'LARK_PURCHASE_ORDER_SYNC_TABLE_ID',
     );
 
-    const detailTableId = 'tbly5tFB3sGN7WZa';
+    const baseTokenDetail = this.configService.get<string>(
+      'LARK_PURCHASE_ORDER_DETAIL_SYNC_BASE_TOKEN',
+    );
+    const tableIdDetail = this.configService.get<string>(
+      'LARK_PURCHASE_ORDER_DETAIL_SYNC_TABLE_ID',
+    );
 
-    if (!baseToken || !tableId || !detailTableId) {
+    if (!baseToken || !tableId || !baseTokenDetail || !tableIdDetail) {
       throw new Error('LarkBase purchase_order configuration missing');
     }
 
     this.baseToken = baseToken;
     this.tableId = tableId;
-    this.detailTableId = detailTableId;
+    this.baseTokenDetail = baseTokenDetail;
+    this.tableIdDetail = tableIdDetail;
   }
 
   async syncPurchaseOrdersToLarkBase(purchase_orders: any[]): Promise<void> {
@@ -205,7 +215,7 @@ export class LarkPurchaseOrderSyncService {
     const lockKey = `lark_purchase_order_detail_sync_lock_${Date.now()}`;
 
     try {
-      await this.acquireSyncLock(lockKey);
+      await this.acquireDetailSyncLock(lockKey);
 
       this.logger.log('🔄 Starting PurchaseOrderDetail sync...');
 
@@ -225,7 +235,7 @@ export class LarkPurchaseOrderSyncService {
 
       if (allDetails.length === 0) {
         this.logger.log('📋 No purchase order details to sync');
-        await this.releaseSyncLock(lockKey);
+        await this.releaseDetailSyncLock(lockKey);
         return;
       }
 
@@ -239,7 +249,7 @@ export class LarkPurchaseOrderSyncService {
 
       if (detailsToSync.length === 0) {
         this.logger.log('📋 No purchase order details need LarkBase sync');
-        await this.releaseSyncLock(lockKey);
+        await this.releaseDetailSyncLock(lockKey);
         return;
       }
 
@@ -301,14 +311,14 @@ export class LarkPurchaseOrderSyncService {
         }
       }
 
-      await this.releaseSyncLock(lockKey);
+      await this.releaseDetailSyncLock(lockKey);
       this.logger.log('🎉 LarkBase PurchaseOrderDetail sync completed!');
     } catch (error) {
       this.logger.error(
         `❌ PurchaseOrderDetail sync failed: ${error.message}`,
         error.stack,
       );
-      await this.releaseSyncLock(lockKey);
+      await this.releaseDetailSyncLock(lockKey);
       throw error;
     }
   }
@@ -400,13 +410,6 @@ export class LarkPurchaseOrderSyncService {
     const diffMinutes =
       (now.getTime() - this.lastCacheLoadTime.getTime()) / (1000 * 60);
     return diffMinutes < this.CACHE_VALIDITY_MINUTES;
-  }
-
-  async refreshDetailCacheIfNeeded(): Promise<void> {
-    if (!this.isDetailCacheValid()) {
-      this.logger.log('🔄 Detail cache expired, refreshing...');
-      await this.loadExistingDetailRecordsWithRetry();
-    }
   }
 
   private async loadExistingRecords(): Promise<void> {
@@ -528,7 +531,6 @@ export class LarkPurchaseOrderSyncService {
         '📚 Loading existing PurchaseOrderDetail records from LarkBase...',
       );
 
-      // Clear existing caches
       this.existingDetailRecordsCache.clear();
       this.purchaseOrderDetailCache.clear();
 
@@ -544,7 +546,7 @@ export class LarkPurchaseOrderSyncService {
         while (retryAttempt < maxRetries && !pageSuccess) {
           try {
             const token = await this.larkAuthService.getPurchaseOrderHeaders();
-            const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.detailTableId}/records`;
+            const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseTokenDetail}/tables/${this.tableIdDetail}/records`;
 
             const params: any = {
               page_size: this.batchSize,
@@ -561,7 +563,7 @@ export class LarkPurchaseOrderSyncService {
                   'Content-Type': 'application/json',
                 },
                 params,
-                timeout: 30000, // 30 second timeout
+                timeout: 30000,
               }),
             );
 
@@ -575,24 +577,19 @@ export class LarkPurchaseOrderSyncService {
 
             const records = larkResponse.data?.records || [];
 
-            // Process each record and build cache
             for (const record of records) {
               const fields = record.fields;
 
-              // Extract the composite key from the LarkBase record
               const purchaseOrderCode =
                 fields[
                   LARK_PURCHASE_ORDER_DETAIL_FIELDS.PRIMARY_PURCHASE_ORDER_CODE
                 ];
-              const productCode =
-                fields[LARK_PURCHASE_ORDER_DETAIL_FIELDS.PRODUCT_CODE];
+              const lineNumber =
+                fields[LARK_PURCHASE_ORDER_DETAIL_FIELDS.LINE_NUMBER];
 
-              if (purchaseOrderCode && productCode) {
-                // Create composite key - we might not have lineNumber in LarkBase, so we'll use 0 as default
-                // You can enhance this logic if lineNumber is available in LarkBase
-                const compositeKey = `${purchaseOrderCode}-${productCode}-0`;
+              if (purchaseOrderCode && lineNumber) {
+                const compositeKey = `${purchaseOrderCode}-${lineNumber}`;
 
-                // Store in both caches for efficient lookup
                 this.existingDetailRecordsCache.set(
                   compositeKey,
                   record.record_id,
@@ -611,7 +608,7 @@ export class LarkPurchaseOrderSyncService {
             totalLoaded += records.length;
             pageToken = larkResponse.data?.page_token;
             pageSuccess = true;
-            consecutiveErrors = 0; // Reset error counter on success
+            consecutiveErrors = 0;
 
             this.logger.debug(
               `📄 Loaded page: ${records.length} records, total: ${totalLoaded}, hasNext: ${!!pageToken}`,
@@ -625,7 +622,6 @@ export class LarkPurchaseOrderSyncService {
             );
 
             if (retryAttempt < maxRetries) {
-              // Exponential backoff
               const delayMs = Math.min(
                 1000 * Math.pow(2, retryAttempt - 1),
                 5000,
@@ -633,36 +629,30 @@ export class LarkPurchaseOrderSyncService {
               this.logger.debug(`⏳ Retrying in ${delayMs}ms...`);
               await new Promise((resolve) => setTimeout(resolve, delayMs));
             } else {
-              // If we've exhausted retries for this page, we might want to continue with next page
-              // or bail out depending on error severity
               if (error?.response?.status === 404) {
                 this.logger.warn('📄 Page not found, assuming end of data');
-                pageToken = undefined; // End pagination
+                pageToken = undefined;
                 pageSuccess = true;
               } else if (consecutiveErrors >= 5) {
-                // Too many consecutive errors, bail out
                 this.logger.error(
                   '❌ Too many consecutive errors, stopping cache load',
                 );
                 throw error;
               } else {
                 this.logger.warn('⚠️ Page failed, continuing to next page');
-                pageToken = undefined; // Skip this page
+                pageToken = undefined;
                 pageSuccess = true;
               }
             }
           }
         }
 
-        // Safety break to avoid infinite loops
         if (totalLoaded > 50000) {
-          // Reasonable limit
           this.logger.warn('⚠️ Cache load limit reached, stopping');
           break;
         }
       } while (pageToken);
 
-      // Mark cache as loaded and set timestamp
       this.detailCacheLoaded = true;
       this.lastCacheLoadTime = new Date();
 
@@ -680,7 +670,6 @@ export class LarkPurchaseOrderSyncService {
         error.stack,
       );
 
-      // Clear partially loaded cache on error
       this.existingDetailRecordsCache.clear();
       this.purchaseOrderDetailCache.clear();
       this.detailCacheLoaded = false;
@@ -827,8 +816,7 @@ export class LarkPurchaseOrderSyncService {
     let totalCreated = 0;
     let totalFailed = 0;
 
-    // Process in smaller chunks for better reliability
-    const CREATE_CHUNK_SIZE = 100; // Smaller chunks for details
+    const CREATE_CHUNK_SIZE = 100;
 
     const batches: any[] = [];
     for (let i = 0; i < details.length; i += CREATE_CHUNK_SIZE) {
@@ -1075,7 +1063,7 @@ export class LarkPurchaseOrderSyncService {
     while (authRetries < this.MAX_AUTH_RETRIES) {
       try {
         const token = await this.larkAuthService.getPurchaseOrderHeaders();
-        const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.detailTableId}/records/batch_create`;
+        const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseTokenDetail}/tables/${this.tableIdDetail}/records/batch_create`;
 
         const response = await firstValueFrom(
           this.httpService.post(
@@ -1219,7 +1207,7 @@ export class LarkPurchaseOrderSyncService {
     while (authRetries < this.MAX_AUTH_RETRIES) {
       try {
         const token = await this.larkAuthService.getPurchaseOrderHeaders();
-        const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.detailTableId}/records/${detail.larkRecordId}`;
+        const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseTokenDetail}/tables/${this.tableIdDetail}/records/${detail.larkRecordId}`;
 
         const response = await firstValueFrom(
           this.httpService.put(
@@ -1324,7 +1312,7 @@ export class LarkPurchaseOrderSyncService {
   private async testLarkBaseDetailConnection(): Promise<void> {
     try {
       const token = await this.larkAuthService.getPurchaseOrderHeaders();
-      const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.detailTableId}/records`;
+      const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseTokenDetail}/tables/${this.tableIdDetail}/records`;
 
       await firstValueFrom(
         this.httpService.get(url, {
@@ -1416,6 +1404,75 @@ export class LarkPurchaseOrderSyncService {
     );
   }
 
+  private async acquireDetailSyncLock(lockKey: string): Promise<void> {
+    const syncName = 'purchase_order_detail_lark_sync';
+
+    const existingLock = await this.prismaService.syncControl.findFirst({
+      where: {
+        name: syncName,
+        isRunning: true,
+      },
+    });
+
+    if (existingLock && existingLock.startedAt) {
+      const lockAge = Date.now() - existingLock.startedAt.getTime();
+
+      if (lockAge < 10 * 60 * 1000) {
+        const isProcessActive = await this.isLockProcessActive(existingLock);
+
+        if (isProcessActive) {
+          throw new Error('Another sync is already running');
+        } else {
+          this.logger.warn(
+            `🔓 Clearing inactive lock (age: ${Math.round(lockAge / 1000)}s)`,
+          );
+          await this.forceDetailReleaseLock(syncName);
+        }
+      } else {
+        this.logger.warn(
+          `🔓 Clearing stale lock (age: ${Math.round(lockAge / 60000)}min)`,
+        );
+        await this.forceDetailReleaseLock(syncName);
+      }
+    }
+
+    await this.waitForLockAvailability(syncName);
+
+    await this.prismaService.syncControl.upsert({
+      where: { name: syncName },
+      create: {
+        name: syncName,
+        entities: ['purchase_order_detail'],
+        syncMode: 'lark_sync',
+        isEnabled: true,
+        isRunning: true,
+        status: 'running',
+        lastRunAt: new Date(),
+        startedAt: new Date(),
+        progress: {
+          lockKey,
+          processId: process.pid,
+          hostname: require('os').hostname(),
+        },
+      },
+      update: {
+        isRunning: true,
+        status: 'running',
+        lastRunAt: new Date(),
+        startedAt: new Date(),
+        progress: {
+          lockKey,
+          processId: process.pid,
+          hostname: require('os').hostname(),
+        },
+      },
+    });
+
+    this.logger.debug(
+      `🔒 Acquired sync lock: ${lockKey} (PID: ${process.pid})`,
+    );
+  }
+
   private async isLockProcessActive(lockRecord: any): Promise<boolean> {
     try {
       if (!lockRecord.progress?.processId) {
@@ -1476,6 +1533,19 @@ export class LarkPurchaseOrderSyncService {
     });
   }
 
+  private async forceDetailReleaseLock(syncName: string): Promise<void> {
+    await this.prismaService.syncControl.updateMany({
+      where: { name: syncName },
+      data: {
+        isRunning: false,
+        status: 'force_released',
+        error: 'Lock force released due to inactivity',
+        completedAt: new Date(),
+        progress: {},
+      },
+    });
+  }
+
   private async releaseSyncLock(lockKey: string): Promise<void> {
     const lockRecord = await this.prismaService.syncControl.findFirst({
       where: {
@@ -1505,7 +1575,49 @@ export class LarkPurchaseOrderSyncService {
     }
   }
 
+  private async releaseDetailSyncLock(lockKey: string): Promise<void> {
+    const lockRecord = await this.prismaService.syncControl.findFirst({
+      where: {
+        name: 'purchase_order_detail_lark_sync',
+        isRunning: true,
+      },
+    });
+
+    if (
+      lockRecord &&
+      lockRecord.progress &&
+      typeof lockRecord.progress === 'object' &&
+      'lockKey' in lockRecord.progress &&
+      lockRecord.progress.lockKey === lockKey
+    ) {
+      await this.prismaService.syncControl.update({
+        where: { id: lockRecord.id },
+        data: {
+          isRunning: false,
+          status: 'completed',
+          completedAt: new Date(),
+          progress: {},
+        },
+      });
+
+      this.logger.debug(`🔓 Released sync lock: ${lockKey}`);
+    }
+  }
+
   private async forceTokenRefresh(): Promise<void> {
+    try {
+      this.logger.debug('🔄 Forcing LarkBase token refresh...');
+      (this.larkAuthService as any).accessToken = null;
+      (this.larkAuthService as any).tokenExpiry = null;
+      await this.larkAuthService.getPurchaseOrderHeaders();
+      this.logger.debug('✅ LarkBase token refreshed successfully');
+    } catch (error) {
+      this.logger.error(`❌ Token refresh failed: ${error.message}`);
+      throw error;
+    }
+  }
+
+  private async forceDetailTokenRefresh(): Promise<void> {
     try {
       this.logger.debug('🔄 Forcing LarkBase token refresh...');
       (this.larkAuthService as any).accessToken = null;
@@ -1770,6 +1882,18 @@ export class LarkPurchaseOrderSyncService {
     if (detail.price !== null && detail.price !== undefined) {
       fields[LARK_PURCHASE_ORDER_DETAIL_FIELDS.UNIT_PRICE] = Number(
         detail.price || 0,
+      );
+    }
+
+    if (detail.lineNumber) {
+      fields[LARK_PURCHASE_ORDER_DETAIL_FIELDS.LINE_NUMBER] = Number(
+        detail.lineNumber,
+      );
+    }
+
+    if (detail.purchaseOrderId) {
+      fields[LARK_PURCHASE_ORDER_DETAIL_FIELDS.PURCHASE_ORDER_ID] = Number(
+        detail.purchaseOrderId,
       );
     }
 

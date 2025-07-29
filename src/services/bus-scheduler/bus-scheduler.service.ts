@@ -43,26 +43,26 @@ export class BusSchedulerService implements OnModuleInit {
   private dailyCycleStartTime: Date | null = null;
 
   private readonly DAILY_ENTITIES_CONFIG: DailyEntityConfig[] = [
-    {
-      name: 'pricebook_product_sequence',
-      syncFunction: async () => {
-        await this.runProductSequenceSync();
-      },
-      larkSyncFunction: async () => {
-        await this.autoTriggerProductLarkSync();
-      },
-      enabled: true,
-    },
-    {
-      name: 'order_supplier',
-      syncFunction: async () => {
-        await this.enableAndRunOrderSupplierSync();
-      },
-      larkSyncFunction: async () => {
-        await this.autoTriggerOrderSupplierLarkSync();
-      },
-      enabled: true,
-    },
+    // {
+    //   name: 'pricebook_product_sequence',
+    //   syncFunction: async () => {
+    //     await this.runProductSequenceSync();
+    //   },
+    //   larkSyncFunction: async () => {
+    //     await this.autoTriggerProductLarkSync();
+    //   },
+    //   enabled: true,
+    // },
+    // {
+    //   name: 'order_supplier',
+    //   syncFunction: async () => {
+    //     await this.enableAndRunOrderSupplierSync();
+    //   },
+    //   larkSyncFunction: async () => {
+    //     await this.autoTriggerOrderSupplierLarkSync();
+    //   },
+    //   enabled: true,
+    // },
     {
       name: 'purchase_order',
       syncFunction: async () => {
@@ -81,7 +81,7 @@ export class BusSchedulerService implements OnModuleInit {
       larkSyncFunction: async () => {
         await this.autoTriggerPurchaseOrderDetailLarkSync();
       },
-      dependencies: ['purchase_order'], // Depends on PurchaseOrder being synced first
+      dependencies: ['purchase_order'],
       enabled: true,
     },
   ];
@@ -286,7 +286,7 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
-  @Cron('0 0 23 * * *', {
+  @Cron('35 18 * * *', {
     name: 'daily_product_sync',
     timeZone: 'Asia/Ho_Chi_Minh',
   })
