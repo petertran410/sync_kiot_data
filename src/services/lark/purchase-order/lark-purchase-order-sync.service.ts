@@ -3,7 +3,8 @@ import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { LarkAuthService } from '../auth/lark-auth.service';
-import { firstValueFrom } from 'rxjs';
+import { async, firstValueFrom, max } from 'rxjs';
+import { url } from 'inspector';
 
 const LARK_PURCHASE_ORDER_FIELDS = {
   PURCHASE_ORDER_CODE: 'Mã Nhập Hàng',
@@ -74,8 +75,10 @@ export class LarkPurchaseOrderSyncService {
 
   private cacheLoaded = false;
   private detailCacheLoaded = false;
+
   private lastCacheLoadTime: Date | null = null;
   private lastDetailCacheLoadTime: Date | null = null;
+
   private readonly CACHE_VALIDITY_MINUTES = 30;
   private readonly MAX_AUTH_RETRIES = 3;
   private readonly AUTH_ERROR_CODES = [99991663, 99991664, 99991665];
@@ -144,17 +147,10 @@ export class LarkPurchaseOrderSyncService {
       await this.testLarkBaseConnection();
 
       const cacheLoaded = await this.loadExistingRecordsWithRetry();
-      const detailCacheLoaded = await this.loadExistingDetailRecordsWithRetry();
 
       if (!cacheLoaded) {
         this.logger.warn(
           '⚠️ PurchaseOrder cache loading failed - will use alternative duplicate detection',
-        );
-      }
-
-      if (!detailCacheLoaded) {
-        this.logger.warn(
-          '⚠️ PurchaseOrderDetail cache loading failed - will use alternative duplicate detection',
         );
       }
 
@@ -219,63 +215,38 @@ export class LarkPurchaseOrderSyncService {
 
       this.logger.log('🔄 Starting PurchaseOrderDetail sync...');
 
+      const purchaseOrdersDetailsToSync = purchase_orders.filter(
+        (p) => p.larkSyncStatus === 'PENDING' || p.larkSyncStatus === 'FAILED',
+      );
+
+      if (purchaseOrdersDetailsToSync.length === 0) {
+        this.logger.log('📋 No purchase_orders_details need LarkBase sync');
+        await this.releaseDetailSyncLock(lockKey);
+        return;
+      }
+
       const allDetails: any[] = [];
 
-      for (const purchaseOrder of purchase_orders) {
-        if (purchaseOrder.details && purchaseOrder.details.length > 0) {
-          for (const detail of purchaseOrder.details) {
-            allDetails.push({
-              ...detail,
-              purchaseOrderCode: purchaseOrder.code,
-              larkSyncStatus: detail.larkSyncStatus || 'PENDING',
-            });
-          }
-        }
-      }
-
-      if (allDetails.length === 0) {
-        this.logger.log('📋 No purchase order details to sync');
-        await this.releaseDetailSyncLock(lockKey);
-        return;
-      }
-
-      this.logger.log(
-        `📊 Found ${allDetails.length} purchase order details to process`,
-      );
-
-      const detailsToSync = allDetails.filter(
-        (d) => d.larkSyncStatus === 'PENDING' || d.larkSyncStatus === 'FAILED',
-      );
-
-      if (detailsToSync.length === 0) {
-        this.logger.log('📋 No purchase order details need LarkBase sync');
-        await this.releaseDetailSyncLock(lockKey);
-        return;
-      }
-
-      const pendingCount = detailsToSync.filter(
-        (d) => d.larkSyncStatus === 'PENDING',
+      const pendingDetailCount = purchase_orders.filter(
+        (p) => p.larkSyncStatus === 'PENDING',
       ).length;
-      const failedCount = detailsToSync.filter(
-        (d) => d.larkSyncStatus === 'FAILED',
+      const failedDetailCount = purchase_orders.filter(
+        (p) => p.larkSyncStatus === 'FAILED',
       ).length;
-
-      this.logger.log(
-        `📊 Including: ${pendingCount} PENDING + ${failedCount} FAILED purchase order details`,
-      );
 
       await this.testLarkBaseDetailConnection();
 
-      const detailCacheLoaded = await this.loadExistingDetailRecordsWithRetry();
+      const cacheDetailLoaded = await this.loadExistingDetailRecordsWithRetry();
 
-      if (!detailCacheLoaded) {
+      if (!cacheDetailLoaded) {
         this.logger.warn(
           '⚠️ PurchaseOrderDetail cache loading failed - will use alternative duplicate detection',
         );
       }
 
-      const { newDetails, updateDetails } =
-        this.categorizePurchaseOrderDetails(detailsToSync);
+      const { newDetails, updateDetails } = this.categorizePurchaseOrderDetails(
+        purchaseOrdersDetailsToSync,
+      );
 
       this.logger.log(
         `📋 PurchaseOrderDetail Categorization: ${newDetails.length} new, ${updateDetails.length} updates`,
@@ -364,26 +335,38 @@ export class LarkPurchaseOrderSyncService {
   }
 
   private async loadExistingDetailRecordsWithRetry(): Promise<boolean> {
-    for (let attempt = 1; attempt <= this.MAX_AUTH_RETRIES; attempt++) {
+    const maxRetries = 3;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        return await this.loadExistingDetailRecords();
-      } catch (error: any) {
-        if (
-          this.AUTH_ERROR_CODES.includes(error?.response?.data?.code) &&
-          attempt < this.MAX_AUTH_RETRIES
-        ) {
-          this.logger.warn(
-            `🔄 Auth error loading detail cache (attempt ${attempt}/${this.MAX_AUTH_RETRIES}). Refreshing token...`,
-          );
-          await this.larkAuthService.forceRefreshPurchaseOrderToken();
-          await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
-          continue;
+        this.logger.log(
+          `📥 Loading cache (attempt ${attempt}/${maxRetries})...`,
+        );
+
+        if (this.isDetailCacheValid()) {
+          this.logger.log('✅ Using existing valid cache');
+          return true;
         }
 
-        this.logger.error(
-          `❌ Failed to load existing detail records after ${attempt} attempts: ${error.message}`,
-          error.stack,
+        this.clearDetailCache();
+        await this.loadExistingDetailRecords();
+
+        if (this.existingDetailRecordsCache.size > 0) {
+          this.logger.log(
+            `✅ Cache loaded successfully: ${this.existingDetailRecordsCache.size} records`,
+          );
+          this.lastDetailCacheLoadTime = new Date();
+          return true;
+        }
+        this.logger.warn(`⚠️ Cache empty on attempt ${attempt}`);
+      } catch (error) {
+        this.logger.warn(
+          `❌ Cache loading attempt ${attempt} failed: ${error.message}`,
         );
+        if (attempt < maxRetries) {
+          const delay = attempt * 3000;
+          this.logger.log(`⏳ Waiting ${delay / 1000}s before retry...`);
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
         return false;
       }
     }
@@ -402,13 +385,13 @@ export class LarkPurchaseOrderSyncService {
   }
 
   private isDetailCacheValid(): boolean {
-    if (!this.detailCacheLoaded || !this.lastCacheLoadTime) {
+    if (!this.detailCacheLoaded || !this.lastDetailCacheLoadTime) {
       return false;
     }
 
     const now = new Date();
     const diffMinutes =
-      (now.getTime() - this.lastCacheLoadTime.getTime()) / (1000 * 60);
+      (now.getTime() - this.lastDetailCacheLoadTime.getTime()) / (1000 * 60);
     return diffMinutes < this.CACHE_VALIDITY_MINUTES;
   }
 
@@ -525,57 +508,38 @@ export class LarkPurchaseOrderSyncService {
     }
   }
 
-  private async loadExistingDetailRecords(): Promise<boolean> {
+  private async loadExistingDetailRecords(): Promise<void> {
     try {
-      this.logger.log(
-        '📚 Loading existing PurchaseOrderDetail records from LarkBase...',
-      );
-
-      this.existingDetailRecordsCache.clear();
-      this.purchaseOrderDetailCache.clear();
-
-      let pageToken: string | undefined;
+      const headers =
+        await this.larkAuthService.getPurchaseOrderDetailHeaders();
+      let page_token = '';
       let totalLoaded = 0;
-      const maxRetries = 3;
-      let consecutiveErrors = 0;
+      let cacheBuilt = 0;
+      let stringConversions = 0;
+      const pageSize = 50;
 
       do {
-        let retryAttempt = 0;
-        let pageSuccess = false;
+        const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseTokenDetail}/tables/${this.tableIdDetail}/records`;
 
-        while (retryAttempt < maxRetries && !pageSuccess) {
-          try {
-            const token = await this.larkAuthService.getPurchaseOrderHeaders();
-            const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseTokenDetail}/tables/${this.tableIdDetail}/records`;
+        const params = new URLSearchParams({
+          page_size: pageSize.toString(),
+          ...(page_token && { page_token }),
+        });
 
-            const params: any = {
-              page_size: this.batchSize,
-            };
+        const startTime = Date.now();
 
-            if (pageToken) {
-              params.page_token = pageToken;
-            }
+        try {
+          const response = await firstValueFrom(
+            this.httpService.get<LarkBatchResponse>(`${url}?${params}`, {
+              headers,
+              timeout: 60000,
+            }),
+          );
 
-            const response = await firstValueFrom(
-              this.httpService.get(url, {
-                headers: {
-                  Authorization: `Bearer ${token}`,
-                  'Content-Type': 'application/json',
-                },
-                params,
-                timeout: 30000,
-              }),
-            );
+          const loadTime = Date.now() - startTime;
 
-            const larkResponse: LarkBatchResponse = response.data;
-
-            if (larkResponse.code !== 0) {
-              throw new Error(
-                `LarkBase API error: ${larkResponse.msg} (Code: ${larkResponse.code})`,
-              );
-            }
-
-            const records = larkResponse.data?.records || [];
+          if (response.data.code === 0) {
+            const records = response.data.data?.items || [];
 
             for (const record of records) {
               const fields = record.fields;
@@ -606,74 +570,50 @@ export class LarkPurchaseOrderSyncService {
             }
 
             totalLoaded += records.length;
-            pageToken = larkResponse.data?.page_token;
-            pageSuccess = true;
-            consecutiveErrors = 0;
+            page_token = response.data.data?.page_token || '';
 
             this.logger.debug(
-              `📄 Loaded page: ${records.length} records, total: ${totalLoaded}, hasNext: ${!!pageToken}`,
-            );
-          } catch (error: any) {
-            retryAttempt++;
-            consecutiveErrors++;
-
-            this.logger.warn(
-              `⚠️ Page load attempt ${retryAttempt}/${maxRetries} failed: ${error.message}`,
+              `📄 Loaded page: ${records.length} records, total: ${totalLoaded}, hasNext: ${!!page_token}`,
             );
 
-            if (retryAttempt < maxRetries) {
-              const delayMs = Math.min(
-                1000 * Math.pow(2, retryAttempt - 1),
-                5000,
+            if (totalLoaded % 1000 === 0 || !page_token) {
+              this.logger.log(
+                `📊 Cache progress: ${cacheBuilt}/${totalLoaded} records processed (${stringConversions} string conversions)`,
               );
-              this.logger.debug(`⏳ Retrying in ${delayMs}ms...`);
-              await new Promise((resolve) => setTimeout(resolve, delayMs));
-            } else {
-              if (error?.response?.status === 404) {
-                this.logger.warn('📄 Page not found, assuming end of data');
-                pageToken = undefined;
-                pageSuccess = true;
-              } else if (consecutiveErrors >= 5) {
-                this.logger.error(
-                  '❌ Too many consecutive errors, stopping cache load',
-                );
-                throw error;
-              } else {
-                this.logger.warn('⚠️ Page failed, continuing to next page');
-                pageToken = undefined;
-                pageSuccess = true;
-              }
             }
+          } else {
+            throw new Error(
+              `LarkBase API error: ${response.data.msg} (code: ${response.data.code})`,
+            );
           }
+        } catch (error) {
+          if (error.code === 'ECONNABORTED') {
+            throw new Error(
+              'Request timeout - LarkBase took too long to respond',
+            );
+          }
+          if (error.response?.status === 400) {
+            throw new Error(
+              'Bad request - check table permissions and field names',
+            );
+          }
+          throw error;
         }
-
-        if (totalLoaded > 50000) {
-          this.logger.warn('⚠️ Cache load limit reached, stopping');
-          break;
-        }
-      } while (pageToken);
+      } while (page_token);
 
       this.detailCacheLoaded = true;
-      this.lastCacheLoadTime = new Date();
+
+      const successRate =
+        totalLoaded > 0 ? Math.round((cacheBuilt / totalLoaded) * 100) : 0;
 
       this.logger.log(
-        `✅ Loaded ${totalLoaded} existing PurchaseOrderDetail records into cache`,
+        `✅ Cache loaded: ${this.existingRecordsCache.size} by ID, ${this.purchaseOrderCodeCache.size} by code (${successRate}% success)`,
       );
-      this.logger.log(
-        `📊 Cache summary: ${this.existingDetailRecordsCache.size} composite keys, ${this.purchaseOrderDetailCache.size} record IDs`,
-      );
-
-      return true;
     } catch (error) {
       this.logger.error(
         `❌ Failed to load existing detail records: ${error.message}`,
         error.stack,
       );
-
-      this.existingDetailRecordsCache.clear();
-      this.purchaseOrderDetailCache.clear();
-      this.detailCacheLoaded = false;
-
       throw error;
     }
   }
@@ -1197,16 +1137,12 @@ export class LarkPurchaseOrderSyncService {
   }
 
   private async updateSinglePurchaseOrderDetail(detail: any): Promise<boolean> {
-    if (!detail.larkRecordId) {
-      this.logger.warn(`No LarkBase record ID for detail ${detail.id}`);
-      return false;
-    }
-
     let authRetries = 0;
 
     while (authRetries < this.MAX_AUTH_RETRIES) {
       try {
-        const token = await this.larkAuthService.getPurchaseOrderHeaders();
+        const headers =
+          await this.larkAuthService.getPurchaseOrderDetailHeaders();
         const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseTokenDetail}/tables/${this.tableIdDetail}/records/${detail.larkRecordId}`;
 
         const response = await firstValueFrom(
@@ -1215,38 +1151,32 @@ export class LarkPurchaseOrderSyncService {
             {
               fields: this.mapPurchaseOrderDetailToLarkBase(detail),
             },
-            {
-              headers: {
-                Authorization: `Bearer ${token}`,
-                'Content-Type': 'application/json',
-              },
-            },
+            { headers, timeout: 15000 },
           ),
         );
 
-        const larkResponse: LarkBatchResponse = response.data;
-
-        if (larkResponse.code === 0) {
-          return true;
-        } else {
-          this.logger.error(
-            `❌ Failed to update detail: ${larkResponse.msg} (Code: ${larkResponse.code})`,
+        if (response.data.code === 0) {
+          this.logger.debug(
+            `✅ Updated record ${detail.larkRecordId} for purchase_order_detail ${detail.code}`,
           );
-          return false;
+          return true;
         }
-      } catch (error: any) {
-        if (this.AUTH_ERROR_CODES.includes(error?.response?.data?.code)) {
+
+        if (this.AUTH_ERROR_CODES.includes(response.data.code)) {
           authRetries++;
-          if (authRetries < this.MAX_AUTH_RETRIES) {
-            this.logger.warn(
-              `🔄 Auth error in update (attempt ${authRetries}/${this.MAX_AUTH_RETRIES}). Refreshing token...`,
-            );
-            await this.larkAuthService.forceRefreshPurchaseOrderToken();
-            await new Promise((resolve) =>
-              setTimeout(resolve, 1000 * authRetries),
-            );
-            continue;
-          }
+          await this.forceDetailTokenRefresh();
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          continue;
+        }
+
+        this.logger.warn(`Update failed: ${response.data.msg}`);
+        return false;
+      } catch (error) {
+        if (error.response?.status === 401 || error.response?.status === 403) {
+          authRetries++;
+          await this.forceTokenRefresh();
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          continue;
         }
 
         if (error?.response?.status === 404) {
@@ -1310,28 +1240,50 @@ export class LarkPurchaseOrderSyncService {
   }
 
   private async testLarkBaseDetailConnection(): Promise<void> {
-    try {
-      const token = await this.larkAuthService.getPurchaseOrderHeaders();
-      const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseTokenDetail}/tables/${this.tableIdDetail}/records`;
+    const maxRetries = 10;
 
-      await firstValueFrom(
-        this.httpService.get(url, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          params: { page_size: 1 },
-        }),
-      );
+    for (let retryCount = 0; retryCount <= maxRetries; retryCount++) {
+      try {
+        this.logger.log(
+          `🔍 Testing LarkBase connection (attempt ${retryCount + 1}/${maxRetries + 1})...`,
+        );
+        const headers =
+          await this.larkAuthService.getPurchaseOrderDetailHeaders();
+        const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseTokenDetail}/tables/${this.tableIdDetail}/records`;
+        const params = new URLSearchParams({ page_size: '1' });
 
-      this.logger.log(
-        '✅ LarkBase PurchaseOrderDetail connection test successful',
-      );
-    } catch (error) {
-      this.logger.error(
-        `❌ LarkBase PurchaseOrderDetail connection test failed: ${error.message}`,
-      );
-      throw error;
+        const response = await firstValueFrom(
+          this.httpService.get(`${url}?${params}`, {
+            headers,
+            timeout: 30000,
+          }),
+        );
+
+        if (response.data.code === 0) {
+          const totalRecords = response.data.data?.total || 0;
+          this.logger.log(`✅ LarkBase connection successful`);
+          this.logger.log(
+            `📊 LarkBase table has ${totalRecords} existing records`,
+          );
+          return;
+        }
+
+        throw new Error(`Connection test failed: ${response.data.msg}`);
+      } catch (error) {
+        if (retryCount < maxRetries) {
+          const delay = (retryCount + 1) * 2000;
+          this.logger.warn(
+            `⚠️ Connection attempt ${retryCount + 1} failed: ${error.message}`,
+          );
+          this.logger.log(`🔄 Retrying in ${delay / 1000}s...`);
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        } else {
+          this.logger.error(
+            '❌ LarkBase connection test failed after all retries',
+          );
+          throw new Error(`Cannot connect to LarkBase: ${error.message}`);
+        }
+      }
     }
   }
 

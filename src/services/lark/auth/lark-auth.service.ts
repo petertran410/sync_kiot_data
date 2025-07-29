@@ -37,6 +37,9 @@ export class LarkAuthService {
   private purchaseOrderAccessToken: string | null = null;
   private purchaseOrderTokenExpiry: Date | null = null;
 
+  private purchaseOrderDetailAccessToken: string | null = null;
+  private purchaseOrderDetailTokenExpiry: Date | null = null;
+
   constructor(
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
@@ -696,5 +699,100 @@ export class LarkAuthService {
     this.purchaseOrderAccessToken = null;
     this.purchaseOrderTokenExpiry = null;
     await this.forceRefreshPurchaseOrderToken();
+  }
+
+  // ============================================================================
+  // PURCHASE_ORDER_DETAIL TOKEN MANAGEMENT
+  // ============================================================================
+
+  async getPurchaseOrderDetailHeaders(): Promise<Record<string, string>> {
+    const token = await this.getPurchaseOrderDetailAccessToken();
+    return {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    };
+  }
+
+  private async getPurchaseOrderDetailAccessToken(): Promise<string> {
+    if (
+      this.purchaseOrderDetailAccessToken &&
+      this.purchaseOrderDetailTokenExpiry &&
+      this.purchaseOrderDetailTokenExpiry > new Date(Date.now() + 5 * 60 * 1000)
+    ) {
+      return this.purchaseOrderDetailAccessToken;
+    }
+
+    return await this.refreshPurchaseOrderDetailToken();
+  }
+
+  private async refreshPurchaseOrderDetailToken(): Promise<string> {
+    try {
+      this.logger.log(
+        '🔄 Refreshing LarkBase purchase_order_detail access token...',
+      );
+
+      const appId = this.configService.get<string>(
+        'LARK_PURCHASE_ORDER_DETAIL_SYNC_APP_ID',
+      );
+      const appSecret = this.configService.get<string>(
+        'LARK_PURCHASE_ORDER_DETAIL_SYNC_APP_SECRET',
+      );
+
+      if (!appId || !appSecret) {
+        throw new Error(
+          'LarkBase purchase_order_detail credentials not configured',
+        );
+      }
+
+      const url =
+        'https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal';
+
+      const response = await firstValueFrom(
+        this.httpService.post<TenantAccessTokenResponse>(
+          url,
+          {
+            app_id: appId,
+            app_secret: appSecret,
+          },
+          {
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            timeout: 10000,
+          },
+        ),
+      );
+
+      if (response.data.code !== 0) {
+        throw new Error(
+          `LarkBase auth failed: ${response.data.msg} (code: ${response.data.code})`,
+        );
+      }
+
+      this.purchaseOrderDetailAccessToken = response.data.tenant_access_token;
+      this.purchaseOrderDetailTokenExpiry = new Date(
+        Date.now() + response.data.expire * 1000,
+      );
+
+      this.logger.log(
+        '✅ LarkBase purchase_order_detail token refreshed successfully',
+      );
+      return this.purchaseOrderDetailAccessToken;
+    } catch (error) {
+      this.logger.error(
+        `❌ Failed to refresh purchase_order_detail token: ${error.message}`,
+      );
+
+      this.purchaseOrderDetailAccessToken = null;
+      this.purchaseOrderDetailTokenExpiry = null;
+
+      throw new Error(`Token refresh failed: ${error.message}`);
+    }
+  }
+
+  async forceRefreshPurchaseOrderDetailToken(): Promise<void> {
+    this.purchaseOrderDetailAccessToken = null;
+    this.purchaseOrderDetailTokenExpiry = null;
+    await this.forceRefreshPurchaseOrderDetailToken();
   }
 }
