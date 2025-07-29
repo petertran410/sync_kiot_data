@@ -778,9 +778,7 @@ export class KiotVietInvoiceService {
                   note: detail.note,
                   serialNumbers: detail.serialNumbers,
                   lineNumber: i + 1,
-                  subTotal: new Prisma.Decimal(
-                    detail.price * detail.quantity - (detail.discount || 0),
-                  ),
+                  subTotal: new Prisma.Decimal(detail.subTotal),
                 },
                 create: {
                   invoiceId: invoice.id,
@@ -796,9 +794,7 @@ export class KiotVietInvoiceService {
                   note: detail.note,
                   serialNumbers: detail.serialNumbers,
                   lineNumber: i + 1,
-                  subTotal: new Prisma.Decimal(
-                    detail.price * detail.quantity - (detail.discount || 0),
-                  ),
+                  subTotal: new Prisma.Decimal(detail.subTotal),
                 },
               });
             }

@@ -73,6 +73,17 @@ export class BusSchedulerService implements OnModuleInit {
       },
       enabled: true,
     },
+    {
+      name: 'purchase_order_detail',
+      syncFunction: async () => {
+        await this.enableAndRunPurchaseOrderDetailSync();
+      },
+      larkSyncFunction: async () => {
+        await this.autoTriggerPurchaseOrderDetailLarkSync();
+      },
+      dependencies: ['purchase_order'], // Depends on PurchaseOrder being synced first
+      enabled: true,
+    },
   ];
 
   constructor(
@@ -275,13 +286,13 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
-  @Cron('0 23 * * *', {
+  @Cron('0 0 23 * * *', {
     name: 'daily_product_sync',
     timeZone: 'Asia/Ho_Chi_Minh',
   })
   async handleDailyProductSync() {
     if (!this.isDailyProductSchedulerEnabled) {
-      this.logger.debug('🔇 Daily 23h sync scheduler is disabled');
+      this.logger.debug('⏸️ Daily sync cycle disabled');
       return;
     }
 
@@ -364,11 +375,11 @@ export class BusSchedulerService implements OnModuleInit {
         error.message,
       );
     } finally {
-      this.logger.log('▶️ RESUMING 7-minute cycle - Daily cycle completed');
+      this.logger.log('▶️ RESUMING 4-minute cycle - Daily cycle completed');
       this.isDailyCycleRunning = false;
       this.dailyCycleStartTime = null;
       this.mainSchedulerSuspendedForDaily = false;
-      this.dailyCyclePriorityLevel = 0; // back to normal
+      this.dailyCyclePriorityLevel = 0;
       this.isMainCycleGracefulShutdown = false;
       this.startupAbortController = null;
     }
@@ -1435,6 +1446,126 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
+  private async autoTriggerPurchaseOrderDetailLarkSync(): Promise<void> {
+    try {
+      // Check if historical sync is completed
+      const historicalSync = await this.prismaService.syncControl.findFirst({
+        where: { name: 'purchase_order_detail_historical' },
+      });
+
+      // Check if lark sync is already running
+      const larkSync = await this.prismaService.syncControl.findFirst({
+        where: { name: 'purchase_order_detail_lark_sync' },
+      });
+
+      if (
+        historicalSync?.status === 'completed' &&
+        !historicalSync.isRunning &&
+        (!larkSync?.isRunning || !larkSync)
+      ) {
+        await this.prismaService.syncControl.upsert({
+          where: { name: 'purchase_order_detail_lark_sync' },
+          create: {
+            name: 'purchase_order_detail_lark_sync',
+            entities: ['purchase_order_detail'],
+            syncMode: 'lark_sync',
+            isRunning: true,
+            isEnabled: true,
+            status: 'running',
+            startedAt: new Date(),
+          },
+          update: {
+            isRunning: true,
+            status: 'running',
+            startedAt: new Date(),
+            error: null,
+          },
+        });
+
+        // Get PurchaseOrders with details that need LarkBase sync
+        const purchaseOrdersWithPendingDetails =
+          await this.prismaService.purchaseOrder.findMany({
+            where: {
+              details: {
+                some: {
+                  OR: [
+                    { larkSyncStatus: 'PENDING' },
+                    { larkSyncStatus: 'FAILED' },
+                  ],
+                },
+              },
+            },
+            include: {
+              details: {
+                where: {
+                  OR: [
+                    { larkSyncStatus: 'PENDING' },
+                    { larkSyncStatus: 'FAILED' },
+                  ],
+                },
+              },
+            },
+            take: 500, // Limit for performance
+            orderBy: { createdDate: 'asc' },
+          });
+
+        if (purchaseOrdersWithPendingDetails.length > 0) {
+          const totalDetails = purchaseOrdersWithPendingDetails.flatMap(
+            (po) => po.details,
+          ).length;
+
+          try {
+            await this.larkPurchaseOrderSyncService.syncPurchaseOrderDetailsToLarkBase(
+              purchaseOrdersWithPendingDetails,
+            );
+
+            await this.prismaService.syncControl.update({
+              where: { name: 'purchase_order_detail_lark_sync' },
+              data: {
+                isRunning: false,
+                status: 'completed',
+                completedAt: new Date(),
+              },
+            });
+
+            this.logger.log(
+              `✅ Auto-triggered purchase_order_detail LarkBase sync: ${totalDetails} details from ${purchaseOrdersWithPendingDetails.length} purchase orders`,
+            );
+          } catch (syncError) {
+            await this.prismaService.syncControl.update({
+              where: { name: 'purchase_order_detail_lark_sync' },
+              data: {
+                isRunning: false,
+                status: 'failed',
+                error: syncError.message,
+                completedAt: new Date(),
+              },
+            });
+
+            this.logger.error(
+              `❌ Auto purchase_order_detail LarkBase sync failed: ${syncError.message}`,
+            );
+          }
+        } else {
+          await this.prismaService.syncControl.update({
+            where: { name: 'purchase_order_detail_lark_sync' },
+            data: {
+              isRunning: false,
+              status: 'completed',
+              completedAt: new Date(),
+            },
+          });
+
+          this.logger.log('📋 No purchase_order_detail need LarkBase sync');
+        }
+      }
+    } catch (error) {
+      this.logger.error(
+        `❌ Auto purchase_order_detail Lark sync failed: ${error.message}`,
+      );
+    }
+  }
+
   enableMainScheduler() {
     this.isMainSchedulerEnabled = true;
     this.logger.log('✅ Main scheduler (7-minute cycle) enabled');
@@ -1622,6 +1753,148 @@ export class BusSchedulerService implements OnModuleInit {
     } catch (error) {
       this.logger.error(`❌ PurchaseOrder sync failed: ${error.message}`);
       throw new Error(`PurchaseOrder sync failed: ${error.message}`);
+    }
+  }
+
+  private async enableAndRunPurchaseOrderDetailSync(): Promise<void> {
+    try {
+      this.logger.log('📦 Enabling and running Purchase Order Detail sync...');
+
+      const purchaseOrderSync = await this.prismaService.syncControl.findFirst({
+        where: { name: 'purchase_order_historical' },
+      });
+
+      if (!purchaseOrderSync || purchaseOrderSync.status !== 'completed') {
+        this.logger.warn(
+          '⚠️ PurchaseOrder sync not completed, skipping PurchaseOrderDetail sync',
+        );
+        return;
+      }
+
+      await this.prismaService.syncControl.upsert({
+        where: { name: 'purchase_order_detail_historical' },
+        create: {
+          name: 'purchase_order_detail_historical',
+          entities: ['purchase_order_detail'],
+          syncMode: 'historical',
+          isEnabled: true,
+          isRunning: false,
+          status: 'idle',
+        },
+        update: {
+          isEnabled: true,
+          isRunning: false,
+          status: 'idle',
+          error: null,
+        },
+      });
+      await this.syncPurchaseOrderDetailsFromDatabase();
+
+      this.logger.log('✅ PurchaseOrderDetail sync initiated successfully');
+    } catch (error) {
+      this.logger.error(`❌ PurchaseOrderDetail sync failed: ${error.message}`);
+      throw new Error(`PurchaseOrderDetail sync failed: ${error.message}`);
+    }
+  }
+
+  private async syncPurchaseOrderDetailsFromDatabase(): Promise<void> {
+    try {
+      await this.prismaService.syncControl.update({
+        where: { name: 'purchase_order_detail_historical' },
+        data: {
+          isRunning: true,
+          status: 'running',
+          startedAt: new Date(),
+        },
+      });
+
+      this.logger.log('📊 Starting PurchaseOrderDetail sync from database...');
+
+      const purchaseOrdersWithDetails =
+        await this.prismaService.purchaseOrder.findMany({
+          where: {
+            details: {
+              some: {
+                OR: [
+                  { larkSyncStatus: { equals: null } },
+                  { larkSyncStatus: 'PENDING' },
+                  { larkSyncStatus: 'FAILED' },
+                ],
+              },
+            },
+          },
+          include: {
+            details: {
+              where: {
+                OR: [
+                  { larkSyncStatus: { equals: null } },
+                  { larkSyncStatus: 'PENDING' },
+                  { larkSyncStatus: 'FAILED' },
+                ],
+              },
+            },
+          },
+          orderBy: { createdDate: 'asc' },
+        });
+
+      if (purchaseOrdersWithDetails.length === 0) {
+        this.logger.log('📋 No PurchaseOrderDetails need sync');
+
+        await this.prismaService.syncControl.update({
+          where: { name: 'purchase_order_detail_historical' },
+          data: {
+            isRunning: false,
+            status: 'completed',
+            completedAt: new Date(),
+          },
+        });
+        return;
+      }
+
+      const allDetailIds = purchaseOrdersWithDetails
+        .flatMap((po) => po.details)
+        .map((detail) => detail.id);
+
+      await this.prismaService.purchaseOrderDetail.updateMany({
+        where: {
+          id: { in: allDetailIds },
+          larkSyncStatus: { in: [null, 'FAILED'] },
+        },
+        data: { larkSyncStatus: 'PENDING' },
+      });
+
+      this.logger.log(
+        `📊 Found ${purchaseOrdersWithDetails.length} PurchaseOrders with ${allDetailIds.length} details to sync`,
+      );
+
+      // Sync the details to LarkBase
+      await this.larkPurchaseOrderSyncService.syncPurchaseOrderDetailsToLarkBase(
+        purchaseOrdersWithDetails,
+      );
+
+      await this.prismaService.syncControl.update({
+        where: { name: 'purchase_order_detail_historical' },
+        data: {
+          isRunning: false,
+          status: 'completed',
+          completedAt: new Date(),
+        },
+      });
+
+      this.logger.log('✅ PurchaseOrderDetail historical sync completed');
+    } catch (error) {
+      await this.prismaService.syncControl.update({
+        where: { name: 'purchase_order_detail_historical' },
+        data: {
+          isRunning: false,
+          status: 'failed',
+          error: error.message,
+          completedAt: new Date(),
+        },
+      });
+
+      this.logger.error(`❌ PurchaseOrderDetail sync failed: ${error.message}`);
+      throw error;
     }
   }
 

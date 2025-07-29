@@ -859,6 +859,13 @@ model PurchaseOrderDetail {
   price                   Decimal                         @db.Decimal(15, 2)
   discount                Decimal?                        @db.Decimal(15, 2)
   serialNumbers           String?
+
+  uniqueKey              String?                          @unique
+
+  larkRecordId            String?
+  larkSyncStatus          LarkSyncStatus?                  @default(PENDING)
+  larkSyncedAt            DateTime?
+  larkSyncRetries         Int                             @default(0)
   
   batchExpires            PurchaseOrderDetailBatch[]
   
@@ -866,6 +873,8 @@ model PurchaseOrderDetail {
   @@index([purchaseOrderId])
   @@index([productId])
   @@index([purchaseOrderId, productId])
+  @@index([larkSyncStatus])
+  @@index([larkRecordId])
 }
 
 model PurchaseOrderDetailBatch {

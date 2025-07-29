@@ -35,6 +35,7 @@ interface KiotVietPurchaseOrder {
     productCode: string;
     quantity: number;
     price: number;
+    uniqueKey?: string;
     disount: number;
   }>;
   payments: Array<{
@@ -522,6 +523,11 @@ export class KiotVietPurchaseOrderService {
               select: { id: true, code: true, name: true },
             });
 
+            const lineNumberKey =
+              await this.prismaService.purchaseOrderDetail.findMany({
+                select: { lineNumber: true },
+              });
+
             if (product) {
               await this.prismaService.purchaseOrderDetail.upsert({
                 where: {
@@ -546,6 +552,7 @@ export class KiotVietPurchaseOrderService {
                   productCode: product.code,
                   productName: product.name,
                   quantity: detail.quantity,
+                  uniqueKey: purchase_order.id + '.' + lineNumberKey,
                   price: detail.price,
                   discount: detail.disount,
                 },
