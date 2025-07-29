@@ -1816,7 +1816,6 @@ export class BusSchedulerService implements OnModuleInit {
             details: {
               some: {
                 OR: [
-                  { larkSyncStatus: { equals: null } },
                   { larkSyncStatus: 'PENDING' },
                   { larkSyncStatus: 'FAILED' },
                 ],
@@ -1827,7 +1826,6 @@ export class BusSchedulerService implements OnModuleInit {
             details: {
               where: {
                 OR: [
-                  { larkSyncStatus: { equals: null } },
                   { larkSyncStatus: 'PENDING' },
                   { larkSyncStatus: 'FAILED' },
                 ],
@@ -1858,7 +1856,7 @@ export class BusSchedulerService implements OnModuleInit {
       await this.prismaService.purchaseOrderDetail.updateMany({
         where: {
           id: { in: allDetailIds },
-          larkSyncStatus: { in: [null, 'FAILED'] },
+          OR: [{ larkSyncStatus: 'FAILED' }],
         },
         data: { larkSyncStatus: 'PENDING' },
       });

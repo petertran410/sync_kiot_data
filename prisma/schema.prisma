@@ -863,7 +863,7 @@ model PurchaseOrderDetail {
   uniqueKey              String?                          @unique
 
   larkRecordId            String?
-  larkSyncStatus          LarkSyncStatus?                  @default(PENDING)
+  larkSyncStatus          LarkSyncStatus                  @default(PENDING)
   larkSyncedAt            DateTime?
   larkSyncRetries         Int                             @default(0)
   
