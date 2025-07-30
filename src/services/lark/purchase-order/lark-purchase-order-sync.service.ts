@@ -56,6 +56,11 @@ interface BatchResult {
   failedRecords: any[];
 }
 
+interface BatchDetailResult {
+  successDetailsRecords: any[];
+  failedDetailsRecords: any[];
+}
+
 @Injectable()
 export class LarkPurchaseOrderSyncService {
   private readonly logger = new Logger(LarkPurchaseOrderSyncService.name);
@@ -555,13 +560,38 @@ export class LarkPurchaseOrderSyncService {
               // const fields = record.fields;
               const uniqueKeyRaw =
                 record.fields[LARK_PURCHASE_ORDER_DETAIL_FIELDS.UNIQUE_KEY];
+
+              let uniqueKey = '';
+
+              if (uniqueKeyRaw !== null && uniqueKeyRaw !== undefined) {
+                if (typeof uniqueKeyRaw === 'string') {
+                  const trimmed = uniqueKeyRaw.trim();
+                  if (trimmed !== '') {
+                    uniqueKey = trimmed;
+                    stringConversions++;
+                  }
+                } else if (typeof uniqueKeyRaw === 'number') {
+                  uniqueKey = String(uniqueKeyRaw).trim();
+                  if (uniqueKey !== '') {
+                    stringConversions++;
+                  }
+                }
+              }
+
+              if (uniqueKey && record.record_id) {
+                this.existingDetailRecordsCache.set(
+                  uniqueKey,
+                  record.record_id,
+                );
+                cacheBuilt++;
+              }
             }
 
             totalLoaded += records.length;
             page_token = response.data.data?.page_token || '';
 
             this.logger.debug(
-              `📄 Loaded page: ${records.length} records, total: ${totalLoaded}, hasNext: ${!!page_token}`,
+              `📄 Loaded: ${records.length} records in ${loadTime}ms (total: ${totalLoaded}, cached: ${cacheBuilt}`,
             );
 
             if (totalLoaded % 1000 === 0 || !page_token) {
@@ -645,46 +675,28 @@ export class LarkPurchaseOrderSyncService {
     const updatePurchaseOrdersDetails: any[] = [];
 
     for (const detail of details) {
-      const compositeKey = this.generateDetailCompositeKey(detail);
+      const uniqueKey = detail.uniqueKey;
 
-      if (this.existingDetailRecordsCache.has(compositeKey)) {
-        const existingRecordId =
-          this.existingDetailRecordsCache.get(compositeKey);
-        detail.larkRecordId = existingRecordId;
-        updatePurchaseOrdersDetails.push(detail);
+      let existingDetailRecordId =
+        this.existingDetailRecordsCache.get(uniqueKey);
+
+      if (!existingDetailRecordId && detail.purchaseOrderCode) {
+        existingDetailRecordId = this.purchaseOrderDetailCache.get(
+          String(detail.purchaseOrderCode).trim(),
+        );
+      }
+
+      if (existingDetailRecordId) {
+        updatePurchaseOrdersDetails.push({
+          ...detail,
+          larkRecordId: existingDetailRecordId,
+        });
       } else {
         newPurchaseOrdersDetails.push(detail);
       }
     }
 
     return { newPurchaseOrdersDetails, updatePurchaseOrdersDetails };
-  }
-
-  private generateDetailCompositeKey(detail: any): string {
-    const purchaseOrderCode =
-      detail.purchaseOrderCode || detail.purchaseOrder?.code || '';
-    const lineNumber = detail.lineNumber || 0;
-
-    const sanitizedPOCode = String(purchaseOrderCode).trim();
-    const sanitizedLineNumber = Number(lineNumber) || 0;
-
-    const compositeKey = `${sanitizedPOCode}-${sanitizedLineNumber}`;
-
-    this.logger.debug(
-      `Generated composite key: ${compositeKey} for detail ID: ${detail.id}`,
-    );
-
-    return compositeKey;
-  }
-
-  hasExistingDetailRecord(detail: any): boolean {
-    const compositeKey = this.generateDetailCompositeKey(detail);
-    return this.existingDetailRecordsCache.has(compositeKey);
-  }
-
-  getExistingDetailRecordId(detail: any): string | undefined {
-    const compositeKey = this.generateDetailCompositeKey(detail);
-    return this.existingDetailRecordsCache.get(compositeKey);
   }
 
   private async processNewPurchaseOrders(
@@ -738,49 +750,45 @@ export class LarkPurchaseOrderSyncService {
     if (details.length === 0) return;
 
     this.logger.log(
-      `📝 Creating ${details.length} new purchase order details...`,
+      `📝 Creating ${details.length} new purchase order details details...`,
     );
 
-    let totalCreated = 0;
-    let totalFailed = 0;
-
-    const CREATE_CHUNK_SIZE = 100;
-
-    const batches: any[] = [];
-    for (let i = 0; i < details.length; i += CREATE_CHUNK_SIZE) {
-      batches.push(details.slice(i, i + CREATE_CHUNK_SIZE));
-    }
+    const batches = this.chunkArray(details, this.batchSize);
+    let totalDetailsCreated = 0;
+    let totalDetailsFailed = 0;
 
     for (let i = 0; i < batches.length; i++) {
       const batch = batches[i];
+      this.logger.log(
+        `Creating batch ${i + 1}/${batches.length} (${batch.length} purchase_orders_details)...`,
+      );
 
-      try {
-        const result = await this.batchCreatePurchaseOrderDetails(batch);
+      const { successDetailsRecords, failedDetailsRecords } =
+        await this.batchCreatePurchaseOrderDetails(batch);
 
-        await this.updateDetailDatabaseStatus(result.successRecords, 'SYNCED');
-        await this.updateDetailDatabaseStatus(result.failedRecords, 'FAILED');
+      totalDetailsCreated += successDetailsRecords.length;
+      totalDetailsFailed += failedDetailsRecords.length;
 
-        totalCreated += result.successRecords.length;
-        totalFailed += result.failedRecords.length;
-
-        this.logger.log(
-          `📊 Batch ${i + 1}/${batches.length}: ${result.successRecords.length}/${batch.length} created`,
-        );
-      } catch (error) {
-        this.logger.error(`❌ Batch ${i + 1} failed: ${error.message}`);
-        await this.updateDetailDatabaseStatus(batch, 'FAILED');
-        totalFailed += batch.length;
+      if (successDetailsRecords.length > 0) {
+        await this.updateDetailDatabaseStatus(successDetailsRecords, 'SYNCED');
       }
 
-      // Rate limiting delay
+      if (failedDetailsRecords.length > 0) {
+        await this.updateDetailDatabaseStatus(failedDetailsRecords, 'FAILED');
+      }
+
+      this.logger.log(
+        `📊 Batch ${i + 1}/${batches.length}: ${successDetailsRecords.length}/${batch.length} created`,
+      );
+
       if (i < batches.length - 1) {
         await new Promise((resolve) => setTimeout(resolve, 500));
       }
-    }
 
-    this.logger.log(
-      `🎯 Create complete: ${totalCreated} success, ${totalFailed} failed`,
-    );
+      this.logger.log(
+        `🎯 Create complete: ${totalDetailsCreated} success, ${totalDetailsFailed} failed`,
+      );
+    }
   }
 
   private async processUpdatePurchaseOrders(
@@ -796,7 +804,7 @@ export class LarkPurchaseOrderSyncService {
     let failedCount = 0;
     const createFallbacks: any[] = [];
 
-    const UPDATE_CHUNK_SIZE = 5;
+    const UPDATE_CHUNK_SIZE = 50;
 
     for (let i = 0; i < purchase_orders.length; i += UPDATE_CHUNK_SIZE) {
       const chunk = purchase_orders.slice(i, i + UPDATE_CHUNK_SIZE);
@@ -848,11 +856,11 @@ export class LarkPurchaseOrderSyncService {
       `📝 Updating ${details.length} existing purchase order details...`,
     );
 
-    let successCount = 0;
-    let failedCount = 0;
+    let successDetailCount = 0;
+    let failedDetailCount = 0;
     const createFallbacks: any[] = [];
 
-    const UPDATE_CHUNK_SIZE = 100; // Even smaller chunks for updates
+    const UPDATE_CHUNK_SIZE = 50;
 
     for (let i = 0; i < details.length; i += UPDATE_CHUNK_SIZE) {
       const chunk = details.slice(i, i + UPDATE_CHUNK_SIZE);
@@ -860,19 +868,24 @@ export class LarkPurchaseOrderSyncService {
       await Promise.all(
         chunk.map(async (detail) => {
           try {
-            const updated = await this.updateSinglePurchaseOrderDetail(detail);
+            const updated = await this.updateSinglePurchaseOrderDetail(
+              detail.purchaseOrderDetails,
+            );
 
             if (updated) {
-              successCount++;
-              await this.updateDetailDatabaseStatus([detail], 'SYNCED');
+              successDetailCount++;
+              await this.updateDetailDatabaseStatus(
+                [detail.purchaseOrderDetails],
+                'SYNCED',
+              );
             } else {
-              createFallbacks.push(detail);
+              createFallbacks.push(detail.purchaseOrderDetails);
             }
           } catch (error) {
             this.logger.warn(
-              `Update failed for detail ${detail.productCode} in PO ${detail.purchaseOrderCode}: ${error.message}`,
+              `Update failed for detail ${detail.purchaseOrderDetails.uniqueKey}: ${error.message}`,
             );
-            createFallbacks.push(detail);
+            createFallbacks.push(detail.purchaseOrderDetails);
           }
         }),
       );
@@ -882,7 +895,6 @@ export class LarkPurchaseOrderSyncService {
       }
     }
 
-    // Process fallbacks as new records
     if (createFallbacks.length > 0) {
       this.logger.log(
         `🔄 Processing ${createFallbacks.length} update fallbacks as new detail records...`,
@@ -891,7 +903,7 @@ export class LarkPurchaseOrderSyncService {
     }
 
     this.logger.log(
-      `📝 Update complete: ${successCount} updated, ${createFallbacks.length} fallback to create`,
+      `📝 Update complete: ${successDetailCount} success, ${failedDetailCount} failed`,
     );
   }
 
@@ -981,93 +993,85 @@ export class LarkPurchaseOrderSyncService {
 
   private async batchCreatePurchaseOrderDetails(
     details: any[],
-  ): Promise<BatchResult> {
+  ): Promise<BatchDetailResult> {
     const records = details.map((detail) => ({
-      fields: this.mapPurchaseOrderDetailToLarkBase(detail),
+      fields: this.mapPurchaseOrderDetailToLarkBase(
+        detail.purchaseOrderDetails,
+      ),
     }));
 
     let authRetries = 0;
 
     while (authRetries < this.MAX_AUTH_RETRIES) {
       try {
-        const token = await this.larkAuthService.getPurchaseOrderHeaders();
+        const headers =
+          await this.larkAuthService.getPurchaseOrderDetailHeaders();
         const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseTokenDetail}/tables/${this.tableIdDetail}/records/batch_create`;
 
         const response = await firstValueFrom(
-          this.httpService.post(
+          this.httpService.post<LarkBatchResponse>(
             url,
             { records },
-            {
-              headers: {
-                Authorization: `Bearer ${token}`,
-                'Content-Type': 'application/json',
-              },
-            },
+            { headers, timeout: 30000 },
           ),
         );
 
-        const larkResponse: LarkBatchResponse = response.data;
+        if (response.data.code === 0) {
+          const createdDetailsRecords = response.data.data?.records || [];
+          const successDetailCount = createdDetailsRecords.length;
+          const successDetailsRecords = details.slice(0, successDetailCount);
+          const failedDetailsRecords = details.slice(successDetailCount);
 
-        if (larkResponse.code === 0 && larkResponse.data?.records) {
-          const successRecords = larkResponse.data.records.map(
-            (record, index) => ({
-              ...details[index],
-              larkRecordId: record.record_id,
-            }),
-          );
+          for (
+            let i = 0;
+            i <
+            Math.min(
+              successDetailsRecords.length,
+              createdDetailsRecords.length,
+            );
+            i++
+          ) {
+            const purchase_order_detail = successDetailsRecords[i];
+            const createdDetailRecord = createdDetailsRecords[i];
 
-          // Update cache with new records
-          for (let i = 0; i < larkResponse.data.records.length; i++) {
-            const record = larkResponse.data.records[i];
-            const detail = details[i];
-            const compositeKey = this.generateDetailCompositeKey(detail);
-            this.existingDetailRecordsCache.set(compositeKey, record.record_id);
-            this.purchaseOrderDetailCache.set(record.record_id, compositeKey);
+            const uniqueKey =
+              purchase_order_detail.purchaseOrderDetails.uniqueKey;
+            if (uniqueKey) {
+              this.existingDetailRecordsCache.set(
+                uniqueKey,
+                createdDetailRecord.record_id,
+              );
+            }
           }
 
-          return {
-            successRecords,
-            failedRecords: [],
-          };
-        } else {
-          this.logger.error(
-            `❌ LarkBase batch create failed: ${larkResponse.msg} (Code: ${larkResponse.code})`,
-          );
-          return {
-            successRecords: [],
-            failedRecords: details,
-          };
+          return { successDetailsRecords, failedDetailsRecords };
         }
-      } catch (error: any) {
-        if (this.AUTH_ERROR_CODES.includes(error?.response?.data?.code)) {
+
+        if (this.AUTH_ERROR_CODES.includes(response.data.code)) {
           authRetries++;
-          if (authRetries < this.MAX_AUTH_RETRIES) {
-            this.logger.warn(
-              `🔄 Auth error in batch create (attempt ${authRetries}/${this.MAX_AUTH_RETRIES}). Refreshing token...`,
-            );
-            await this.larkAuthService.forceRefreshPurchaseOrderToken();
-            await new Promise((resolve) =>
-              setTimeout(resolve, 1000 * authRetries),
-            );
-            continue;
-          }
+          await this.forceDetailTokenRefresh();
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          continue;
         }
 
-        this.logger.error(
-          `❌ Batch create failed: ${error.message}`,
-          error.stack,
+        this.logger.warn(
+          `⚠️ Batch create failed: ${response.data.msg} (Code: ${response.data.code})`,
         );
-        return {
-          successRecords: [],
-          failedRecords: details,
-        };
+
+        return { successDetailsRecords: [], failedDetailsRecords: details };
+      } catch (error: any) {
+        if (error.response?.status === 401 || error.response?.status === 403) {
+          authRetries++;
+          await this.forceDetailTokenRefresh();
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          continue;
+        }
+
+        this.logger.error(`❌ Batch create error: ${error.message}`);
+        return { successDetailsRecords: [], failedDetailsRecords: details };
       }
     }
-
-    return {
-      successRecords: [],
-      failedRecords: details,
-    };
+    return { successDetailsRecords: [], failedDetailsRecords: details };
   }
 
   private async updateSinglePurchaseOrder(
@@ -1562,7 +1566,7 @@ export class LarkPurchaseOrderSyncService {
       this.logger.debug('🔄 Forcing LarkBase token refresh...');
       (this.larkAuthService as any).accessToken = null;
       (this.larkAuthService as any).tokenExpiry = null;
-      await this.larkAuthService.getPurchaseOrderHeaders();
+      await this.larkAuthService.getPurchaseOrderDetailHeaders();
       this.logger.debug('✅ LarkBase token refreshed successfully');
     } catch (error) {
       this.logger.error(`❌ Token refresh failed: ${error.message}`);
@@ -1609,7 +1613,6 @@ export class LarkPurchaseOrderSyncService {
         updateData.larkSyncedAt = new Date();
         updateData.larkSyncRetries = 0;
 
-        // Set larkRecordId for successful syncs
         for (const detail of details) {
           if (detail.id && detail.larkRecordId) {
             await this.prismaService.purchaseOrderDetail.update({
@@ -1659,22 +1662,6 @@ export class LarkPurchaseOrderSyncService {
     this.detailCacheLoaded = false;
     this.lastCacheLoadTime = null;
     this.logger.log('🗑️ Detail cache cleared');
-  }
-
-  getDetailCacheStats(): {
-    isLoaded: boolean;
-    lastLoadTime: Date | null;
-    isValid: boolean;
-    compositeKeysCount: number;
-    recordIdsCount: number;
-  } {
-    return {
-      isLoaded: this.detailCacheLoaded,
-      lastLoadTime: this.lastCacheLoadTime,
-      isValid: this.isDetailCacheValid(),
-      compositeKeysCount: this.existingDetailRecordsCache.size,
-      recordIdsCount: this.purchaseOrderDetailCache.size,
-    };
   }
 
   private chunkArray<T>(array: T[], size: number): T[][] {
@@ -1792,77 +1779,60 @@ export class LarkPurchaseOrderSyncService {
   private mapPurchaseOrderDetailToLarkBase(detail: any): Record<string, any> {
     const fields: Record<string, any> = {};
 
-    if (detail.purchaseOrderCode) {
+    if (detail.purchaseOrderDetails.purchaseOrderCode) {
       fields[LARK_PURCHASE_ORDER_DETAIL_FIELDS.PRIMARY_PURCHASE_ORDER_CODE] =
-        detail.purchaseOrderCode;
+        detail.purchaseOrderDetails.purchaseOrderCode;
     }
 
-    if (detail.productCode) {
+    if (detail.purchaseOrderDetails.productCode) {
       fields[LARK_PURCHASE_ORDER_DETAIL_FIELDS.PRODUCT_CODE] =
-        detail.productCode;
+        detail.purchaseOrderDetails.productCode;
     }
 
-    if (detail.productName) {
+    if (detail.purchaseOrderDetails.productName) {
       fields[LARK_PURCHASE_ORDER_DETAIL_FIELDS.PRODUCT_NAME] =
-        detail.productName;
+        detail.purchaseOrderDetails.productName;
     }
 
-    if (detail.quantity !== null && detail.quantity !== undefined) {
+    if (
+      detail.purchaseOrderDetails.quantity !== null &&
+      detail.purchaseOrderDetails.quantity !== undefined
+    ) {
       fields[LARK_PURCHASE_ORDER_DETAIL_FIELDS.QUANTITY] = Number(
-        detail.quantity || 0,
+        detail.purchaseOrderDetails.quantity || 0,
       );
     }
 
-    if (detail.discount !== null && detail.discount !== undefined) {
+    if (
+      detail.purchaseOrderDetails.discount !== null &&
+      detail.purchaseOrderDetails.discount !== undefined
+    ) {
       fields[LARK_PURCHASE_ORDER_DETAIL_FIELDS.DISCOUNT] = Number(
-        detail.discount || 0,
+        detail.purchaseOrderDetails.discount || 0,
       );
     }
 
-    if (detail.price !== null && detail.price !== undefined) {
+    if (
+      detail.purchaseOrderDetails.price !== null &&
+      detail.purchaseOrderDetails.price !== undefined
+    ) {
       fields[LARK_PURCHASE_ORDER_DETAIL_FIELDS.UNIT_PRICE] = Number(
-        detail.price || 0,
+        detail.purchaseOrderDetails.price || 0,
       );
     }
 
-    if (detail.lineNumber) {
+    if (detail.purchaseOrderDetails.lineNumber) {
       fields[LARK_PURCHASE_ORDER_DETAIL_FIELDS.LINE_NUMBER] = Number(
-        detail.lineNumber,
+        detail.purchaseOrderDetails.lineNumber,
       );
     }
 
-    if (detail.purchaseOrderId) {
+    if (detail.purchaseOrderDetails.purchaseOrderId) {
       fields[LARK_PURCHASE_ORDER_DETAIL_FIELDS.PURCHASE_ORDER_ID] = Number(
-        detail.purchaseOrderId,
+        detail.purchaseOrderDetails.purchaseOrderId,
       );
     }
 
     return fields;
-  }
-
-  async getSyncProgress(): Promise<any> {
-    const total = await this.prismaService.purchaseOrder.count();
-    const synced = await this.prismaService.purchaseOrder.count({
-      where: { larkSyncStatus: 'SYNCED' },
-    });
-    const pending = await this.prismaService.purchaseOrder.count({
-      where: { larkSyncStatus: 'PENDING' },
-    });
-    const failed = await this.prismaService.purchaseOrder.count({
-      where: { larkSyncStatus: 'FAILED' },
-    });
-
-    const progress = total > 0 ? Math.round((synced / total) * 100) : 0;
-    const canRetryFailed = failed > 0;
-
-    return {
-      total,
-      synced,
-      pending,
-      failed,
-      progress,
-      canRetryFailed,
-      summary: `${synced}/${total} synced (${progress}%)`,
-    };
   }
 }
