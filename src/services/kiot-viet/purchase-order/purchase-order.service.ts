@@ -235,6 +235,8 @@ export class KiotVietPurchaseOrderService {
           );
           await this.syncPurchaseOrdersToLarkBase(savedPurchaseOrders);
 
+          await this.syncPurchaseOrderDetailsToLarkBase(savedPurchaseOrders);
+
           processedCount += savedPurchaseOrders.length;
           currentItem += this.PAGE_SIZE;
 
@@ -523,11 +525,6 @@ export class KiotVietPurchaseOrderService {
               select: { id: true, code: true, name: true },
             });
 
-            const lineNumberKey =
-              await this.prismaService.purchaseOrderDetail.findMany({
-                select: { lineNumber: true },
-              });
-
             if (product) {
               await this.prismaService.purchaseOrderDetail.upsert({
                 where: {
@@ -537,6 +534,7 @@ export class KiotVietPurchaseOrderService {
                   },
                 },
                 update: {
+                  purchaseOrderCode: purchase_order.code,
                   productId: product.id,
                   productCode: product.code,
                   lineNumber: i + 1,
@@ -547,6 +545,7 @@ export class KiotVietPurchaseOrderService {
                 },
                 create: {
                   purchaseOrderId: purchase_order.id,
+                  purchaseOrderCode: purchase_order.code,
                   lineNumber: i + 1,
                   productId: product.id,
                   productCode: product.code,
@@ -651,6 +650,57 @@ export class KiotVietPurchaseOrderService {
       } catch (updateError) {
         this.logger.error(
           `Failed to update purchase_order status: ${updateError.message}`,
+        );
+      }
+
+      throw new Error(`LarkBase sync failed: ${error.message}`);
+    }
+  }
+
+  async syncPurchaseOrderDetailsToLarkBase(
+    purchase_orders_details: any[],
+  ): Promise<void> {
+    try {
+      this.logger.log(
+        `🚀 Starting LarkBase sync for ${purchase_orders_details.length} purchase_orders_details...`,
+      );
+
+      const purchaseOrderDetailsToSync = purchase_orders_details.filter(
+        (s) => s.larkSyncStatus === 'PENDING' || s.larkSyncStatus === 'FAILED',
+      );
+
+      if (purchaseOrderDetailsToSync.length === 0) {
+        this.logger.log('📋 No purchase_orders_details need LarkBase sync');
+        return;
+      }
+
+      await this.larkPurchaseOrderSyncService.syncPurchaseOrderDetailsToLarkBase(
+        purchaseOrderDetailsToSync,
+      );
+
+      this.logger.log(`✅ LarkBase sync completed successfully`);
+    } catch (error) {
+      this.logger.error(
+        `❌ LarkBase purchase_order_details sync failed: ${error.message}`,
+      );
+
+      try {
+        const purchaseOrderDetailsIds = purchase_orders_details
+          .map((p) => p.id)
+          .filter((id) => id !== undefined);
+
+        if (purchaseOrderDetailsIds.length > 0) {
+          await this.prismaService.purchaseOrderDetail.updateMany({
+            where: { id: { in: purchaseOrderDetailsIds } },
+            data: {
+              larkSyncedAt: new Date(),
+              larkSyncStatus: 'FAILED',
+            },
+          });
+        }
+      } catch (updateError) {
+        this.logger.error(
+          `Failed to update purchase_order_details status: ${updateError.message}`,
         );
       }
 

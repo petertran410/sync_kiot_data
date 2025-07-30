@@ -31,6 +31,7 @@ interface KiotVietOrder {
   modifiedDate?: string;
   createdDate?: string;
   saleChannelId?: number;
+  saleChannelName?: string;
   orderDetails: {
     productId: number;
     productCode?: string;
@@ -130,13 +131,13 @@ export class KiotVietOrderService {
       // Then recent sync
       if (recentSync?.isEnabled && !recentSync.isRunning) {
         this.logger.log('Starting recent order sync...');
-        await this.syncRecentOrders(7);
+        await this.syncRecentOrders(10);
         return;
       }
 
       // Default: recent sync
       this.logger.log('Running default recent order sync...');
-      await this.syncRecentOrders(7);
+      await this.syncRecentOrders(10);
     } catch (error) {
       this.logger.error(`Sync check failed: ${error.message}`);
       throw error;
@@ -416,7 +417,7 @@ export class KiotVietOrderService {
   // RECENT SYNC - ENHANCED WITH RATE LIMITING
   // ============================================================================
 
-  async syncRecentOrders(days: number = 7): Promise<void> {
+  async syncRecentOrders(days: number = 10): Promise<void> {
     const syncName = 'order_recent';
 
     try {
@@ -611,7 +612,6 @@ export class KiotVietOrderService {
             })
           : null;
 
-        // Branch lookup - SAFE
         const branch = await this.prismaService.branch.findFirst({
           where: { kiotVietId: orderData.branchId },
           select: { id: true, name: true },
@@ -624,11 +624,10 @@ export class KiotVietOrderService {
             })
           : null;
 
-        // SaleChannel lookup - SAFE
-        const saleChannel = orderData.saleChannelId
+        const saleChannel = orderData.SaleChannelId
           ? await this.prismaService.saleChannel.findFirst({
-              where: { kiotVietId: orderData.saleChannelId },
-              select: { id: true },
+              where: { kiotVietId: orderData.SaleChannelId },
+              select: { id: true, name: true },
             })
           : null;
 
@@ -643,6 +642,7 @@ export class KiotVietOrderService {
             customerCode: orderData.customerCode || null,
             customerName: orderData.customerName || null,
             saleChannelId: saleChannel?.id ?? null,
+            saleChannelName: saleChannel?.name,
             status: orderData.status,
             statusValue: orderData.statusValue || null,
             total: new Prisma.Decimal(orderData.total || 0),
@@ -671,6 +671,7 @@ export class KiotVietOrderService {
             customerCode: orderData.customerCode || null,
             customerName: orderData.customerName || null,
             saleChannelId: saleChannel?.id ?? null,
+            saleChannelName: saleChannel?.name,
             status: orderData.status,
             statusValue: orderData.statusValue || null,
             total: new Prisma.Decimal(orderData.total || 0),

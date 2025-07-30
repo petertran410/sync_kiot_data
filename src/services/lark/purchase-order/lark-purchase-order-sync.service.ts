@@ -206,16 +206,18 @@ export class LarkPurchaseOrderSyncService {
   }
 
   async syncPurchaseOrderDetailsToLarkBase(
-    purchase_orders: any[],
+    purchase_orders_detail: any[],
   ): Promise<void> {
     const lockKey = `lark_purchase_order_detail_sync_lock_${Date.now()}`;
 
     try {
       await this.acquireDetailSyncLock(lockKey);
 
-      this.logger.log('🔄 Starting PurchaseOrderDetail sync...');
+      this.logger.log(
+        `🚀 Starting LarkBase sync for ${purchase_orders_detail.length} purchase_orders_detail`,
+      );
 
-      const purchaseOrdersDetailsToSync = purchase_orders.filter(
+      const purchaseOrdersDetailsToSync = purchase_orders_detail.filter(
         (p) => p.larkSyncStatus === 'PENDING' || p.larkSyncStatus === 'FAILED',
       );
 
@@ -225,14 +227,16 @@ export class LarkPurchaseOrderSyncService {
         return;
       }
 
-      const allDetails: any[] = [];
-
-      const pendingDetailCount = purchase_orders.filter(
+      const pendingDetailCount = purchase_orders_detail.filter(
         (p) => p.larkSyncStatus === 'PENDING',
       ).length;
-      const failedDetailCount = purchase_orders.filter(
+      const failedDetailCount = purchase_orders_detail.filter(
         (p) => p.larkSyncStatus === 'FAILED',
       ).length;
+
+      this.logger.log(
+        `📊 Including: ${pendingDetailCount} PENDING + ${failedDetailCount} FAILED purchase_orders_details`,
+      );
 
       await this.testLarkBaseDetailConnection();
 
@@ -244,41 +248,46 @@ export class LarkPurchaseOrderSyncService {
         );
       }
 
-      const { newDetails, updateDetails } = this.categorizePurchaseOrderDetails(
-        purchaseOrdersDetailsToSync,
-      );
+      const { newPurchaseOrdersDetails, updatePurchaseOrdersDetails } =
+        this.categorizePurchaseOrderDetails(purchaseOrdersDetailsToSync);
 
       this.logger.log(
-        `📋 PurchaseOrderDetail Categorization: ${newDetails.length} new, ${updateDetails.length} updates`,
+        `📋 PurchaseOrderDetail Categorization: ${newPurchaseOrdersDetails.length} new, ${updatePurchaseOrdersDetails.length} updates`,
       );
 
       const BATCH_SIZE_FOR_SYNC = 50;
 
-      if (newDetails.length > 0) {
-        for (let i = 0; i < newDetails.length; i += BATCH_SIZE_FOR_SYNC) {
-          const batch = newDetails.slice(i, i + BATCH_SIZE_FOR_SYNC);
-          this.logger.log(
-            `Processing new purchase order details batch ${Math.floor(i / BATCH_SIZE_FOR_SYNC) + 1}/${Math.ceil(newDetails.length / BATCH_SIZE_FOR_SYNC)}`,
+      if (newPurchaseOrdersDetails.length > 0) {
+        for (
+          let i = 0;
+          i < newPurchaseOrdersDetails.length;
+          i += BATCH_SIZE_FOR_SYNC
+        ) {
+          const batch = newPurchaseOrdersDetails.slice(
+            i,
+            i + BATCH_SIZE_FOR_SYNC,
           );
-          await this.processNewPurchaseOrderDetails(batch);
-
-          if (i + BATCH_SIZE_FOR_SYNC < newDetails.length) {
-            await new Promise((resolve) => setTimeout(resolve, 500));
-          }
+          this.logger.log(
+            `Processing new purchase_orders_details batch ${Math.floor(i / BATCH_SIZE_FOR_SYNC) + 1}/${Math.ceil(newPurchaseOrdersDetails.length / BATCH_SIZE_FOR_SYNC)}`,
+          );
+          await this.processNewPurchaseOrders(batch);
         }
       }
 
-      if (updateDetails.length > 0) {
-        for (let i = 0; i < updateDetails.length; i += BATCH_SIZE_FOR_SYNC) {
-          const batch = updateDetails.slice(i, i + BATCH_SIZE_FOR_SYNC);
+      if (updatePurchaseOrdersDetails.length > 0) {
+        for (
+          let i = 0;
+          i < updatePurchaseOrdersDetails.length;
+          i += BATCH_SIZE_FOR_SYNC
+        ) {
+          const batch = updatePurchaseOrdersDetails.slice(
+            i,
+            i + BATCH_SIZE_FOR_SYNC,
+          );
           this.logger.log(
-            `Processing update purchase order details batch ${Math.floor(i / BATCH_SIZE_FOR_SYNC) + 1}/${Math.ceil(updateDetails.length / BATCH_SIZE_FOR_SYNC)}`,
+            `Processing update purchase_orders_details batch ${Math.floor(i / BATCH_SIZE_FOR_SYNC) + 1}/${Math.ceil(updatePurchaseOrdersDetails.length / BATCH_SIZE_FOR_SYNC)}`,
           );
           await this.processUpdatePurchaseOrderDetails(batch);
-
-          if (i + BATCH_SIZE_FOR_SYNC < updateDetails.length) {
-            await new Promise((resolve) => setTimeout(resolve, 500));
-          }
         }
       }
 
@@ -542,14 +551,15 @@ export class LarkPurchaseOrderSyncService {
             const records = response.data.data?.items || [];
 
             for (const record of records) {
-              const fields = record.fields;
+              // const fields = record.fields;
+              const purchaseOrderId_lineNumber_Raw = record.fields;
 
               const purchaseOrderCode =
-                fields[
+                record.fields[
                   LARK_PURCHASE_ORDER_DETAIL_FIELDS.PRIMARY_PURCHASE_ORDER_CODE
                 ];
               const lineNumber =
-                fields[LARK_PURCHASE_ORDER_DETAIL_FIELDS.LINE_NUMBER];
+                record.fields[LARK_PURCHASE_ORDER_DETAIL_FIELDS.LINE_NUMBER];
 
               if (purchaseOrderCode && lineNumber) {
                 const compositeKey = `${purchaseOrderCode}-${lineNumber}`;
@@ -650,11 +660,11 @@ export class LarkPurchaseOrderSyncService {
   }
 
   private categorizePurchaseOrderDetails(details: any[]): {
-    newDetails: any[];
-    updateDetails: any[];
+    newPurchaseOrdersDetails: any[];
+    updatePurchaseOrdersDetails: any[];
   } {
-    const newDetails: any[] = [];
-    const updateDetails: any[] = [];
+    const newPurchaseOrdersDetails: any[] = [];
+    const updatePurchaseOrdersDetails: any[] = [];
 
     for (const detail of details) {
       const compositeKey = this.generateDetailCompositeKey(detail);
@@ -663,13 +673,13 @@ export class LarkPurchaseOrderSyncService {
         const existingRecordId =
           this.existingDetailRecordsCache.get(compositeKey);
         detail.larkRecordId = existingRecordId;
-        updateDetails.push(detail);
+        updatePurchaseOrdersDetails.push(detail);
       } else {
-        newDetails.push(detail);
+        newPurchaseOrdersDetails.push(detail);
       }
     }
 
-    return { newDetails, updateDetails };
+    return { newPurchaseOrdersDetails, updatePurchaseOrdersDetails };
   }
 
   private generateDetailCompositeKey(detail: any): string {

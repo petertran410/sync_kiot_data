@@ -382,6 +382,7 @@ model Order {
   description       String?            @db.Text
   usingCod          Boolean            @default(false)
   saleChannelId     Int?
+  saleChannelName   String?
   saleChannel       SaleChannel?       @relation(fields: [saleChannelId], references: [id])
   expectedDelivery  DateTime?
   retailerId        Int?

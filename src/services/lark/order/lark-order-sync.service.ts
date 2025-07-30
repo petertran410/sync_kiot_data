@@ -22,6 +22,7 @@ const LARK_ORDER_FIELDS = {
   ORDER_DATE: 'Ngày Đặt Hàng',
   CREATED_DATE: 'Thời Gian Tạo',
   MODIFIED_DATE: 'Thời Gian Cập Nhật',
+  SALE_CHANNEL: 'Kênh Bán',
 } as const;
 
 const BRANCH_OPTIONS = {
@@ -806,6 +807,10 @@ export class LarkOrderSyncService {
 
     if (order.customerCode) {
       fields[LARK_ORDER_FIELDS.CUSTOMER_CODE] = order.customerCode;
+    }
+
+    if (order.saleChannelName) {
+      fields[LARK_ORDER_FIELDS.SALE_CHANNEL] = order.saleChannelName || '';
     }
 
     if (order.customerName) {
