@@ -212,7 +212,7 @@ export class LarkPurchaseOrderSyncService {
   }
 
   async syncPurchaseOrderDetailsToLarkBase(
-    purchase_orders_detail: any[],
+    purchase_orders: any[], // Input là array của PurchaseOrder objects (KHÔNG có details)
   ): Promise<void> {
     const lockKey = `lark_purchase_order_detail_sync_lock_${Date.now()}`;
 
@@ -220,23 +220,74 @@ export class LarkPurchaseOrderSyncService {
       await this.acquireDetailSyncLock(lockKey);
 
       this.logger.log(
-        `🚀 Starting LarkBase sync for ${purchase_orders_detail.length} purchase_orders_detail`,
+        `🚀 Starting LarkBase sync for ${purchase_orders.length} purchase_orders`,
       );
 
-      const purchaseOrdersDetailsToSync = purchase_orders_detail.filter(
-        (p) => p.larkSyncStatus === 'PENDING' || p.larkSyncStatus === 'FAILED',
-      );
+      // CRITICAL: Query lại để lấy details relation vì input KHÔNG có details
+      const purchaseOrderIds = purchase_orders
+        .map((po) => po.id)
+        .filter((id) => id);
 
-      if (purchaseOrdersDetailsToSync.length === 0) {
-        this.logger.log('📋 No purchase_orders_details need LarkBase sync');
+      if (purchaseOrderIds.length === 0) {
+        this.logger.log('📋 No valid purchase order IDs found');
         await this.releaseDetailSyncLock(lockKey);
         return;
       }
 
-      const pendingDetailCount = purchase_orders_detail.filter(
+      const purchaseOrdersWithDetails =
+        await this.prismaService.purchaseOrder.findMany({
+          where: {
+            id: { in: purchaseOrderIds },
+            details: {
+              some: {
+                OR: [
+                  { larkSyncStatus: 'PENDING' },
+                  { larkSyncStatus: 'FAILED' },
+                ],
+              },
+            },
+          },
+          include: {
+            details: {
+              where: {
+                OR: [
+                  { larkSyncStatus: 'PENDING' },
+                  { larkSyncStatus: 'FAILED' },
+                ],
+              },
+            },
+          },
+        });
+
+      // Extract all details từ PurchaseOrder objects với details relation
+      const allDetails: any[] = [];
+
+      for (const purchaseOrder of purchaseOrdersWithDetails) {
+        if (purchaseOrder.details && Array.isArray(purchaseOrder.details)) {
+          for (const detail of purchaseOrder.details) {
+            // detail ở đây là PurchaseOrderDetail object trực tiếp
+            allDetails.push({
+              ...detail,
+              purchaseOrderCode: purchaseOrder.code, // Add reference to parent
+            });
+          }
+        }
+      }
+
+      this.logger.log(
+        `📋 Extracted ${allDetails.length} purchase order details from ${purchaseOrdersWithDetails.length} purchase orders`,
+      );
+
+      if (allDetails.length === 0) {
+        this.logger.log('📋 No purchase order details found to sync');
+        await this.releaseDetailSyncLock(lockKey);
+        return;
+      }
+
+      const pendingDetailCount = allDetails.filter(
         (p) => p.larkSyncStatus === 'PENDING',
       ).length;
-      const failedDetailCount = purchase_orders_detail.filter(
+      const failedDetailCount = allDetails.filter(
         (p) => p.larkSyncStatus === 'FAILED',
       ).length;
 
@@ -255,7 +306,7 @@ export class LarkPurchaseOrderSyncService {
       }
 
       const { newPurchaseOrdersDetails, updatePurchaseOrdersDetails } =
-        this.categorizePurchaseOrderDetails(purchaseOrdersDetailsToSync);
+        this.categorizePurchaseOrderDetails(allDetails);
 
       this.logger.log(
         `📋 PurchaseOrderDetail Categorization: ${newPurchaseOrdersDetails.length} new, ${updatePurchaseOrdersDetails.length} updates`,
@@ -276,7 +327,7 @@ export class LarkPurchaseOrderSyncService {
           this.logger.log(
             `Processing new purchase_orders_details batch ${Math.floor(i / BATCH_SIZE_FOR_SYNC) + 1}/${Math.ceil(newPurchaseOrdersDetails.length / BATCH_SIZE_FOR_SYNC)}`,
           );
-          await this.processNewPurchaseOrders(batch);
+          await this.processNewPurchaseOrderDetails(batch);
         }
       }
 
@@ -675,21 +726,14 @@ export class LarkPurchaseOrderSyncService {
     const updatePurchaseOrdersDetails: any[] = [];
 
     for (const detail of details) {
+      // Dùng uniqueKey trực tiếp từ database record
       const uniqueKey = detail.uniqueKey;
 
-      let existingDetailRecordId =
-        this.existingDetailRecordsCache.get(uniqueKey);
-
-      if (!existingDetailRecordId && detail.purchaseOrderCode) {
-        existingDetailRecordId = this.purchaseOrderDetailCache.get(
-          String(detail.purchaseOrderCode).trim(),
-        );
-      }
-
-      if (existingDetailRecordId) {
+      if (uniqueKey && this.existingDetailRecordsCache.has(uniqueKey)) {
+        const existingRecordId = this.existingDetailRecordsCache.get(uniqueKey);
         updatePurchaseOrdersDetails.push({
           ...detail,
-          larkRecordId: existingDetailRecordId,
+          larkRecordId: existingRecordId,
         });
       } else {
         newPurchaseOrdersDetails.push(detail);
@@ -995,9 +1039,7 @@ export class LarkPurchaseOrderSyncService {
     details: any[],
   ): Promise<BatchDetailResult> {
     const records = details.map((detail) => ({
-      fields: this.mapPurchaseOrderDetailToLarkBase(
-        detail.purchaseOrderDetails,
-      ),
+      fields: this.mapPurchaseOrderDetailToLarkBase(detail), // Pass detail directly
     }));
 
     let authRetries = 0;
@@ -1022,6 +1064,7 @@ export class LarkPurchaseOrderSyncService {
           const successDetailsRecords = details.slice(0, successDetailCount);
           const failedDetailsRecords = details.slice(successDetailCount);
 
+          // Update cache with created records using uniqueKey
           for (
             let i = 0;
             i <
@@ -1034,11 +1077,10 @@ export class LarkPurchaseOrderSyncService {
             const purchase_order_detail = successDetailsRecords[i];
             const createdDetailRecord = createdDetailsRecords[i];
 
-            const uniqueKey =
-              purchase_order_detail.purchaseOrderDetails.uniqueKey;
-            if (uniqueKey) {
+            // Use uniqueKey directly from database record
+            if (purchase_order_detail.uniqueKey) {
               this.existingDetailRecordsCache.set(
-                uniqueKey,
+                purchase_order_detail.uniqueKey,
                 createdDetailRecord.record_id,
               );
             }
@@ -1059,8 +1101,8 @@ export class LarkPurchaseOrderSyncService {
         );
 
         return { successDetailsRecords: [], failedDetailsRecords: details };
-      } catch (error: any) {
-        if (error.response?.status === 401 || error.response?.status === 403) {
+      } catch (error) {
+        if (error.response?.status === 403) {
           authRetries++;
           await this.forceDetailTokenRefresh();
           await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -1071,6 +1113,7 @@ export class LarkPurchaseOrderSyncService {
         return { successDetailsRecords: [], failedDetailsRecords: details };
       }
     }
+
     return { successDetailsRecords: [], failedDetailsRecords: details };
   }
 
@@ -1600,50 +1643,26 @@ export class LarkPurchaseOrderSyncService {
   ): Promise<void> {
     const detailIds = details
       .map((detail) => detail.id)
-      .filter((id) => id !== undefined && id !== null);
+      .filter((id) => id !== undefined);
 
     if (detailIds.length === 0) return;
 
     try {
-      const updateData: any = {
-        larkSyncStatus: status,
-      };
-
-      if (status === 'SYNCED') {
-        updateData.larkSyncedAt = new Date();
-        updateData.larkSyncRetries = 0;
-
-        for (const detail of details) {
-          if (detail.id && detail.larkRecordId) {
-            await this.prismaService.purchaseOrderDetail.update({
-              where: { id: detail.id },
-              data: {
-                ...updateData,
-                larkRecordId: detail.larkRecordId,
-              },
-            });
-          }
-        }
-      } else if (status === 'FAILED') {
-        for (const detail of details) {
-          if (detail.id) {
-            await this.prismaService.purchaseOrderDetail.update({
-              where: { id: detail.id },
-              data: {
-                larkSyncStatus: 'FAILED',
-                larkSyncRetries: (detail.larkSyncRetries || 0) + 1,
-              },
-            });
-          }
-        }
-      }
+      await this.prismaService.purchaseOrderDetail.updateMany({
+        where: { id: { in: detailIds } },
+        data: {
+          larkSyncStatus: status,
+          larkSyncedAt: new Date(),
+          larkSyncRetries: status === 'FAILED' ? { increment: 1 } : 0,
+        },
+      });
 
       this.logger.debug(
-        `Updated ${detailIds.length} detail records to ${status}`,
+        `✅ Updated ${detailIds.length} purchase order details to ${status}`,
       );
     } catch (error) {
       this.logger.error(
-        `Failed to update detail database status: ${error.message}`,
+        `❌ Failed to update detail database status: ${error.message}`,
       );
     }
   }
@@ -1778,6 +1797,10 @@ export class LarkPurchaseOrderSyncService {
 
   private mapPurchaseOrderDetailToLarkBase(detail: any): Record<string, any> {
     const fields: Record<string, any> = {};
+
+    if (detail.uniqueKey) {
+      fields[LARK_PURCHASE_ORDER_DETAIL_FIELDS.UNIQUE_KEY] = detail.uniqueKey;
+    }
 
     if (detail.purchaseOrderDetails.purchaseOrderCode) {
       fields[LARK_PURCHASE_ORDER_DETAIL_FIELDS.PRIMARY_PURCHASE_ORDER_CODE] =
