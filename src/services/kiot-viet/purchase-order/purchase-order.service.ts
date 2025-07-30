@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
-import { firstValueFrom } from 'rxjs';
+import { async, firstValueFrom } from 'rxjs';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { KiotVietAuthService } from '../auth.service';
 import { Prisma } from '@prisma/client';
@@ -525,6 +525,8 @@ export class KiotVietPurchaseOrderService {
               select: { id: true, code: true, name: true },
             });
 
+            const acsNumber: number = i + 1;
+
             if (product) {
               await this.prismaService.purchaseOrderDetail.upsert({
                 where: {
@@ -540,6 +542,7 @@ export class KiotVietPurchaseOrderService {
                   lineNumber: i + 1,
                   productName: product.name,
                   quantity: detail.quantity,
+                  uniqueKey: purchase_order.id + '.' + acsNumber,
                   price: detail.price,
                   discount: detail.disount,
                 },
@@ -551,6 +554,7 @@ export class KiotVietPurchaseOrderService {
                   productCode: product.code,
                   productName: product.name,
                   quantity: detail.quantity,
+                  uniqueKey: purchase_order.id + '.' + acsNumber,
                   price: detail.price,
                   discount: detail.disount,
                 },

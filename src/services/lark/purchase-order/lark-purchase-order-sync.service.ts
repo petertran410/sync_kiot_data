@@ -31,6 +31,7 @@ const LARK_PURCHASE_ORDER_DETAIL_FIELDS = {
   UNIT_PRICE: 'Đơn Giá',
   LINE_NUMBER: 'lineNumber',
   PURCHASE_ORDER_ID: 'Id Nhập Hàng',
+  UNIQUE_KEY: 'uniqueKey',
 };
 
 interface LarkBatchResponse {
@@ -552,31 +553,8 @@ export class LarkPurchaseOrderSyncService {
 
             for (const record of records) {
               // const fields = record.fields;
-              const purchaseOrderId_lineNumber_Raw = record.fields;
-
-              const purchaseOrderCode =
-                record.fields[
-                  LARK_PURCHASE_ORDER_DETAIL_FIELDS.PRIMARY_PURCHASE_ORDER_CODE
-                ];
-              const lineNumber =
-                record.fields[LARK_PURCHASE_ORDER_DETAIL_FIELDS.LINE_NUMBER];
-
-              if (purchaseOrderCode && lineNumber) {
-                const compositeKey = `${purchaseOrderCode}-${lineNumber}`;
-
-                this.existingDetailRecordsCache.set(
-                  compositeKey,
-                  record.record_id,
-                );
-                this.purchaseOrderDetailCache.set(
-                  record.record_id,
-                  compositeKey,
-                );
-
-                this.logger.debug(
-                  `Cached detail: ${compositeKey} -> ${record.record_id}`,
-                );
-              }
+              const uniqueKeyRaw =
+                record.fields[LARK_PURCHASE_ORDER_DETAIL_FIELDS.UNIQUE_KEY];
             }
 
             totalLoaded += records.length;
