@@ -860,8 +860,6 @@ model PurchaseOrderDetail {
   discount                Decimal?                        @db.Decimal(15, 2)
   serialNumbers           String?
 
-  uniqueKey              String?                          @unique
-
   larkRecordId            String?
   larkSyncStatus          LarkSyncStatus                  @default(PENDING)
   larkSyncedAt            DateTime?

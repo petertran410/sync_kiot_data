@@ -552,7 +552,6 @@ export class KiotVietPurchaseOrderService {
                   productCode: product.code,
                   productName: product.name,
                   quantity: detail.quantity,
-                  uniqueKey: purchase_order.id + '.' + lineNumberKey,
                   price: detail.price,
                   discount: detail.disount,
                 },
