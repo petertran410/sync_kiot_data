@@ -1802,57 +1802,48 @@ export class LarkPurchaseOrderSyncService {
       fields[LARK_PURCHASE_ORDER_DETAIL_FIELDS.UNIQUE_KEY] = detail.uniqueKey;
     }
 
-    if (detail.purchaseOrderDetails.purchaseOrderCode) {
+    if (detail.purchaseOrderCode) {
       fields[LARK_PURCHASE_ORDER_DETAIL_FIELDS.PRIMARY_PURCHASE_ORDER_CODE] =
-        detail.purchaseOrderDetails.purchaseOrderCode;
+        detail.purchaseOrderCode;
     }
 
-    if (detail.purchaseOrderDetails.productCode) {
+    if (detail.productCode) {
       fields[LARK_PURCHASE_ORDER_DETAIL_FIELDS.PRODUCT_CODE] =
-        detail.purchaseOrderDetails.productCode;
+        detail.productCode;
     }
 
-    if (detail.purchaseOrderDetails.productName) {
+    if (detail.productName) {
       fields[LARK_PURCHASE_ORDER_DETAIL_FIELDS.PRODUCT_NAME] =
-        detail.purchaseOrderDetails.productName;
+        detail.productName;
     }
 
-    if (
-      detail.purchaseOrderDetails.quantity !== null &&
-      detail.purchaseOrderDetails.quantity !== undefined
-    ) {
+    if (detail.quantity !== null && detail.quantity !== undefined) {
       fields[LARK_PURCHASE_ORDER_DETAIL_FIELDS.QUANTITY] = Number(
-        detail.purchaseOrderDetails.quantity || 0,
+        detail.quantity || 0,
       );
     }
 
-    if (
-      detail.purchaseOrderDetails.discount !== null &&
-      detail.purchaseOrderDetails.discount !== undefined
-    ) {
+    if (detail.discount !== null && detail.discount !== undefined) {
       fields[LARK_PURCHASE_ORDER_DETAIL_FIELDS.DISCOUNT] = Number(
-        detail.purchaseOrderDetails.discount || 0,
+        detail.discount || 0,
       );
     }
 
-    if (
-      detail.purchaseOrderDetails.price !== null &&
-      detail.purchaseOrderDetails.price !== undefined
-    ) {
+    if (detail.price !== null && detail.price !== undefined) {
       fields[LARK_PURCHASE_ORDER_DETAIL_FIELDS.UNIT_PRICE] = Number(
-        detail.purchaseOrderDetails.price || 0,
+        detail.price || 0,
       );
     }
 
-    if (detail.purchaseOrderDetails.lineNumber) {
+    if (detail.lineNumber) {
       fields[LARK_PURCHASE_ORDER_DETAIL_FIELDS.LINE_NUMBER] = Number(
-        detail.purchaseOrderDetails.lineNumber,
+        detail.lineNumber,
       );
     }
 
-    if (detail.purchaseOrderDetails.purchaseOrderId) {
+    if (detail.purchaseOrderId) {
       fields[LARK_PURCHASE_ORDER_DETAIL_FIELDS.PURCHASE_ORDER_ID] = Number(
-        detail.purchaseOrderDetails.purchaseOrderId,
+        detail.purchaseOrderId,
       );
     }
 
