@@ -43,16 +43,16 @@ export class BusSchedulerService implements OnModuleInit {
   private dailyCycleStartTime: Date | null = null;
 
   private readonly DAILY_ENTITIES_CONFIG: DailyEntityConfig[] = [
-    {
-      name: 'pricebook_product_sequence',
-      syncFunction: async () => {
-        await this.runProductSequenceSync();
-      },
-      larkSyncFunction: async () => {
-        await this.autoTriggerProductLarkSync();
-      },
-      enabled: true,
-    },
+    // {
+    //   name: 'pricebook_product_sequence',
+    //   syncFunction: async () => {
+    //     await this.runProductSequenceSync();
+    //   },
+    //   larkSyncFunction: async () => {
+    //     await this.autoTriggerProductLarkSync();
+    //   },
+    //   enabled: true,
+    // },
     {
       name: 'order_supplier',
       syncFunction: async () => {
@@ -297,7 +297,7 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
-  @Cron('0 22 * * *', {
+  @Cron('4 15 * * *', {
     name: 'daily_product_sync',
     timeZone: 'Asia/Ho_Chi_Minh',
   })
@@ -1408,9 +1408,7 @@ export class BusSchedulerService implements OnModuleInit {
 
         if (orderSuppliersDetailToSync.length > 0) {
           try {
-            await this.larkOrderSupplierSyncService.syncOrderSupplierDetailsToLarkBase(
-              orderSuppliersDetailToSync,
-            );
+            await this.larkOrderSupplierSyncService.syncOrderSupplierDetailsToLarkBase();
 
             await this.prismaService.syncControl.update({
               where: { name: 'order_supplier_detail_lark_sync' },
@@ -2060,8 +2058,47 @@ export class BusSchedulerService implements OnModuleInit {
         },
       });
 
-      this.logger.log('📊 Starting OrderSupplierDetail sync from database...');
-    } catch (error) {}
+      const orderSupplierDetailsToSync =
+        await this.prismaService.orderSupplierDetail.findMany({
+          where: {
+            OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+          },
+        });
+
+      if (orderSupplierDetailsToSync.length === 0) {
+        this.logger.log('📋 No OrderSupplierDetails need sync');
+        await this.prismaService.syncControl.update({
+          where: { name: 'order_supplier_detail_historical' },
+          data: {
+            isRunning: false,
+            status: 'completed',
+            completedAt: new Date(),
+          },
+        });
+        return;
+      }
+
+      this.logger.log(
+        `🔄 Syncing ${orderSupplierDetailsToSync.length} OrderSupplierDetails...`,
+      );
+
+      await this.larkOrderSupplierSyncService.syncOrderSupplierDetailsToLarkBase();
+
+      await this.prismaService.syncControl.update({
+        where: { name: 'order_supplier_detail_historical' },
+        data: {
+          isRunning: false,
+          status: 'completed',
+          completedAt: new Date(),
+        },
+      });
+    } catch (error) {
+      await this.prismaService.syncControl.update({
+        where: { name: 'order_supplier_detail_historical' },
+        data: { isRunning: false, status: 'failed', error: error.message },
+      });
+      throw error;
+    }
   }
 
   private async waitForSyncCompletion(

@@ -244,20 +244,23 @@ export class LarkOrderSupplierSyncService {
     }
   }
 
-  async syncOrderSupplierDetailsToLarkBase(
-    order_suppliers_detail: any[],
-  ): Promise<void> {
+  async syncOrderSupplierDetailsToLarkBase(): Promise<void> {
     const lockKey = `lark_order_supplier_detail_sync_lock_${Date.now()}`;
 
     try {
       await this.acquireDetailSyncLock(lockKey);
 
-      this.logger.log(
-        `🚀 Starting LarkBase sync for ${order_suppliers_detail.length}...`,
-      );
+      this.logger.log('🚀 Starting LarkBase sync for OrderSupplierDetails...');
 
-      const orderSupplierDetailsToSync = order_suppliers_detail.filter(
-        (o) => o.larkSyncStatus === 'PENDING' || o.larkSyncStatus === 'FAILED',
+      const orderSupplierDetailsToSync =
+        await this.prismaService.orderSupplierDetail.findMany({
+          where: {
+            OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+          },
+        });
+
+      this.logger.log(
+        `📋 Found ${orderSupplierDetailsToSync.length} order_supplier_details to sync`,
       );
 
       if (orderSupplierDetailsToSync.length === 0) {
@@ -266,10 +269,10 @@ export class LarkOrderSupplierSyncService {
         return;
       }
 
-      const pendingDetailCount = order_suppliers_detail.filter(
+      const pendingDetailCount = orderSupplierDetailsToSync.filter(
         (d) => d.larkSyncStatus === 'PENDING',
       ).length;
-      const failedDetailCount = order_suppliers_detail.filter(
+      const failedDetailCount = orderSupplierDetailsToSync.filter(
         (d) => d.larkSyncStatus === 'FAILED',
       ).length;
 
@@ -283,7 +286,7 @@ export class LarkOrderSupplierSyncService {
 
       if (!cacheDetailLoaded) {
         this.logger.warn(
-          '⚠️ Cache loading failed - will use alternative duplicate detection',
+          '⚠️ OrderSupplierDetail cache loading failed - will use alternative duplicate detection',
         );
       }
 
