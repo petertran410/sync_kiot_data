@@ -253,28 +253,28 @@ export class LarkOrderSupplierSyncService {
       await this.acquireDetailSyncLock(lockKey);
 
       this.logger.log(
-        `🚀 Starting LarkBase sync for ${order_suppliers_detail.length} order_suppliers_detail...`,
+        `🚀 Starting LarkBase sync for ${order_suppliers_detail.length}...`,
       );
 
-      const orderSuppliersDetailToSync = order_suppliers_detail.filter(
+      const orderSupplierDetailsToSync = order_suppliers_detail.filter(
         (o) => o.larkSyncStatus === 'PENDING' || o.larkSyncStatus === 'FAILED',
       );
 
-      if (orderSuppliersDetailToSync.length === 0) {
-        this.logger.log('📋 No order_supplier_detail need LarkBase sync');
+      if (orderSupplierDetailsToSync.length === 0) {
+        this.logger.log('📋 No order_supplier_details need LarkBase sync');
         await this.releaseDetailSyncLock(lockKey);
         return;
       }
 
       const pendingDetailCount = order_suppliers_detail.filter(
-        (o) => o.larkSyncStatus === 'PENDING',
+        (d) => d.larkSyncStatus === 'PENDING',
       ).length;
       const failedDetailCount = order_suppliers_detail.filter(
-        (o) => o.larkSyncStatus === 'FAILED',
+        (d) => d.larkSyncStatus === 'FAILED',
       ).length;
 
       this.logger.log(
-        `📊 Including: ${pendingDetailCount} PENDING + ${failedDetailCount} FAILED order_suppliers_detail`,
+        `📊 Including: ${pendingDetailCount} PENDING + ${failedDetailCount} FAILED order_supplier_details`,
       );
 
       await this.testLarkBaseDetailConnection();
@@ -288,10 +288,10 @@ export class LarkOrderSupplierSyncService {
       }
 
       const { newOrderSuppliersDetail, updateOrderSuppliersDetail } =
-        this.categorizeOrderSuppliersDetail(orderSuppliersDetailToSync);
+        this.categorizeOrderSuppliersDetail(orderSupplierDetailsToSync);
 
       this.logger.log(
-        `📋 Categorization: ${newOrderSuppliersDetail.length} new, ${updateOrderSuppliersDetail.length} updates`,
+        `📋 OrderSupplierDetail Categorization: ${newOrderSuppliersDetail.length} new, ${updateOrderSuppliersDetail.length} updates`,
       );
 
       const BATCH_SIZE_FOR_SYNC = 50;
@@ -307,7 +307,7 @@ export class LarkOrderSupplierSyncService {
             i + BATCH_SIZE_FOR_SYNC,
           );
           this.logger.log(
-            `Processing new order_suppliers_detail batch ${Math.floor(i / BATCH_SIZE_FOR_SYNC) + 1}/${Math.ceil(newOrderSuppliersDetail.length / BATCH_SIZE_FOR_SYNC)}`,
+            `Processing new order_supplier_details batch ${Math.floor(i / BATCH_SIZE_FOR_SYNC) + 1}/${Math.ceil(newOrderSuppliersDetail.length / BATCH_SIZE_FOR_SYNC)}`,
           );
           await this.processNewOrderSuppliersDetail(batch);
         }
@@ -324,17 +324,18 @@ export class LarkOrderSupplierSyncService {
             i + BATCH_SIZE_FOR_SYNC,
           );
           this.logger.log(
-            `Processing update order_suppliers_detail batch ${Math.floor(i / BATCH_SIZE_FOR_SYNC) + 1}/${Math.ceil(updateOrderSuppliersDetail.length / BATCH_SIZE_FOR_SYNC)}`,
+            `Processing update order_supplier_details batch ${Math.floor(i / BATCH_SIZE_FOR_SYNC) + 1}/${Math.ceil(updateOrderSuppliersDetail.length / BATCH_SIZE_FOR_SYNC)}`,
           );
           await this.processUpdateOrderSuppliersDetail(batch);
         }
       }
 
       await this.releaseDetailSyncLock(lockKey);
-      this.logger.log('🎉 LarkBase order_supplier_detail sync completed!');
+      this.logger.log('🎉 LarkBase OrderSupplierDetail sync completed!');
     } catch (error) {
       this.logger.error(
-        `💥 LarkBase order_supplier_detail sync failed: ${error.message}`,
+        `❌ OrderSupplierDetail sync failed: ${error.message}`,
+        error.stack,
       );
       await this.releaseDetailSyncLock(lockKey);
       throw error;
@@ -1886,35 +1887,117 @@ export class LarkOrderSupplierSyncService {
     order_supplier_detail: any,
   ): Record<string, any> {
     const fields: Record<string, any> = {};
+
     fields[LARK_ORDER_SUPPLIER_DETAIL_FIELDS.kiotVietId] =
       this.safeBigIntToNumber(order_supplier_detail.kiotVietId);
 
+    if (order_supplier_detail.orderSupplierCode) {
+      fields[LARK_ORDER_SUPPLIER_DETAIL_FIELDS.ORDER_SUPPLIER_CODE] =
+        order_supplier_detail.orderSupplierCode;
+    }
+
+    if (order_supplier_detail.productCode) {
+      fields[LARK_ORDER_SUPPLIER_DETAIL_FIELDS.PRODUCT_CODE] =
+        order_supplier_detail.productCode;
+    }
+
+    if (order_supplier_detail.productName) {
+      fields[LARK_ORDER_SUPPLIER_DETAIL_FIELDS.PRODUCT_NAME] =
+        order_supplier_detail.productName;
+    }
+
+    if (
+      order_supplier_detail.quantity &&
+      order_supplier_detail.quantity !== undefined
+    ) {
+      fields[LARK_ORDER_SUPPLIER_DETAIL_FIELDS.QUANTITY] = Number(
+        order_supplier_detail.quantity || 0,
+      );
+    }
+
+    if (
+      order_supplier_detail.price &&
+      order_supplier_detail.price !== undefined
+    ) {
+      fields[LARK_ORDER_SUPPLIER_DETAIL_FIELDS.PRICE] = Number(
+        order_supplier_detail.price || 0,
+      );
+    }
+
+    if (
+      order_supplier_detail.discount &&
+      order_supplier_detail.discount !== undefined
+    ) {
+      fields[LARK_ORDER_SUPPLIER_DETAIL_FIELDS.DISCOUNT] = Number(
+        order_supplier_detail.discount || 0,
+      );
+    }
+
+    if (
+      order_supplier_detail.allocation &&
+      order_supplier_detail.allocation !== undefined
+    ) {
+      fields[LARK_ORDER_SUPPLIER_DETAIL_FIELDS.ALLOCATION] = Number(
+        order_supplier_detail.allocation || 0,
+      );
+    }
+
+    if (order_supplier_detail.description) {
+      fields[LARK_ORDER_SUPPLIER_DETAIL_FIELDS.DESCRIPTION] =
+        order_supplier_detail.description || '';
+    }
+
+    if (
+      order_supplier_detail.orderByNumber &&
+      order_supplier_detail.orderByNumber !== undefined
+    ) {
+      fields[LARK_ORDER_SUPPLIER_DETAIL_FIELDS.ORDER_BY_NUMBER] = Number(
+        order_supplier_detail.orderByNumber || 0,
+      );
+    }
+
+    if (
+      order_supplier_detail.allocationSuppliers &&
+      order_supplier_detail.allocationSuppliers !== undefined
+    ) {
+      fields[LARK_ORDER_SUPPLIER_DETAIL_FIELDS.ALLOCATION_SUPPLIERS] = Number(
+        order_supplier_detail.allocationSuppliers || 0,
+      );
+    }
+
+    if (
+      order_supplier_detail.allocationThirdParty &&
+      order_supplier_detail.allocationThirdParty !== undefined
+    ) {
+      fields[LARK_ORDER_SUPPLIER_DETAIL_FIELDS.ALLOCATION_THIRD_PARTY] = Number(
+        order_supplier_detail.allocationThirdParty || 0,
+      );
+    }
+
+    if (
+      order_supplier_detail.orderQuantity &&
+      order_supplier_detail.orderQuantity !== undefined
+    ) {
+      fields[LARK_ORDER_SUPPLIER_DETAIL_FIELDS.ORDER_QUANTITY] = Number(
+        order_supplier_detail.orderQuantity || 0,
+      );
+    }
+
+    if (
+      order_supplier_detail.subTotal &&
+      order_supplier_detail.subTotal !== undefined
+    ) {
+      fields[LARK_ORDER_SUPPLIER_DETAIL_FIELDS.SUB_TOTAL] = Number(
+        order_supplier_detail.subTotal || 0,
+      );
+    }
+
+    if (order_supplier_detail.createdDate) {
+      fields[LARK_ORDER_SUPPLIER_DETAIL_FIELDS.CREATED_DATE] = new Date(
+        order_supplier_detail.createdDate,
+      ).getTime();
+    }
+
     return fields;
-  }
-
-  async getSyncProgress(): Promise<any> {
-    const total = await this.prismaService.orderSupplier.count();
-    const synced = await this.prismaService.orderSupplier.count({
-      where: { larkSyncStatus: 'SYNCED' },
-    });
-    const pending = await this.prismaService.orderSupplier.count({
-      where: { larkSyncStatus: 'PENDING' },
-    });
-    const failed = await this.prismaService.orderSupplier.count({
-      where: { larkSyncStatus: 'FAILED' },
-    });
-
-    const progress = total > 0 ? Math.round((synced / total) * 100) : 0;
-    const canRetryFailed = failed > 0;
-
-    return {
-      total,
-      synced,
-      pending,
-      failed,
-      progress,
-      canRetryFailed,
-      summary: `${synced}/${total} synced (${progress}%)`,
-    };
   }
 }

@@ -64,6 +64,17 @@ export class BusSchedulerService implements OnModuleInit {
       enabled: true,
     },
     {
+      name: 'order_supplier_detail',
+      syncFunction: async () => {
+        await this.enableAndRunOrderSupplierDetailSync();
+      },
+      larkSyncFunction: async () => {
+        await this.autoTriggerOrderSupplierDetailLarkSync();
+      },
+      dependencies: ['order_supplier'],
+      enabled: true,
+    },
+    {
       name: 'purchase_order',
       syncFunction: async () => {
         await this.enableAndRunPurchaseOrderSync();
@@ -111,124 +122,124 @@ export class BusSchedulerService implements OnModuleInit {
     }, 5000);
   }
 
-  @Cron('*/4 * * * *', {
-    name: 'main_sync_cycle',
-    timeZone: 'Asia/Ho_Chi_Minh',
-  })
-  async handleMainSyncCycle() {
-    if (this.isDailyCycleRunning || this.dailyCyclePriorityLevel > 0) {
-      if (!this.mainSchedulerSuspendedForDaily) {
-        this.logger.log(
-          '🛑 SUSPENDING 7-minute cycle - Daily cycle has priority',
-        );
-        this.mainSchedulerSuspendedForDaily = true;
+  // @Cron('*/4 * * * *', {
+  //   name: 'main_sync_cycle',
+  //   timeZone: 'Asia/Ho_Chi_Minh',
+  // })
+  // async handleMainSyncCycle() {
+  //   if (this.isDailyCycleRunning || this.dailyCyclePriorityLevel > 0) {
+  //     if (!this.mainSchedulerSuspendedForDaily) {
+  //       this.logger.log(
+  //         '🛑 SUSPENDING 7-minute cycle - Daily cycle has priority',
+  //       );
+  //       this.mainSchedulerSuspendedForDaily = true;
 
-        if (this.mainCycleAbortController) {
-          this.mainCycleAbortController.abort();
-          this.logger.log('🚫 FORCE ABORTING ongoing 7-minute cycle');
-        }
-      }
+  //       if (this.mainCycleAbortController) {
+  //         this.mainCycleAbortController.abort();
+  //         this.logger.log('🚫 FORCE ABORTING ongoing 7-minute cycle');
+  //       }
+  //     }
 
-      this.logger.debug(
-        `⏸️ 4-minute cycle suspended (dailyCyclePriorityLevel: ${this.dailyCyclePriorityLevel}, isDailyCycleRunning: ${this.isDailyCycleRunning})`,
-      );
-      return;
-    }
+  //     this.logger.debug(
+  //       `⏸️ 4-minute cycle suspended (dailyCyclePriorityLevel: ${this.dailyCyclePriorityLevel}, isDailyCycleRunning: ${this.isDailyCycleRunning})`,
+  //     );
+  //     return;
+  //   }
 
-    if (
-      this.mainSchedulerSuspendedForDaily &&
-      !this.isDailyCycleRunning &&
-      this.dailyCyclePriorityLevel === 0
-    ) {
-      this.logger.log('▶️ RESUMING 4-minute cycle - Daily cycle completed');
-      this.mainSchedulerSuspendedForDaily = false;
-    }
+  //   if (
+  //     this.mainSchedulerSuspendedForDaily &&
+  //     !this.isDailyCycleRunning &&
+  //     this.dailyCyclePriorityLevel === 0
+  //   ) {
+  //     this.logger.log('▶️ RESUMING 4-minute cycle - Daily cycle completed');
+  //     this.mainSchedulerSuspendedForDaily = false;
+  //   }
 
-    if (!this.isMainSchedulerEnabled) {
-      this.logger.debug('🔇 Main scheduler is disabled');
-      return;
-    }
+  //   if (!this.isMainSchedulerEnabled) {
+  //     this.logger.debug('🔇 Main scheduler is disabled');
+  //     return;
+  //   }
 
-    this.mainCycleAbortController = new AbortController();
-    const signal = this.mainCycleAbortController.signal;
+  //   this.mainCycleAbortController = new AbortController();
+  //   const signal = this.mainCycleAbortController.signal;
 
-    try {
-      this.logger.log('🚀 Starting 4-minute parallel sync cycle...');
-      const startTime = Date.now();
+  //   try {
+  //     this.logger.log('🚀 Starting 4-minute parallel sync cycle...');
+  //     const startTime = Date.now();
 
-      if (signal.aborted) {
-        this.logger.log('🚫 7-minute cycle aborted before starting');
-        return;
-      }
+  //     if (signal.aborted) {
+  //       this.logger.log('🚫 7-minute cycle aborted before starting');
+  //       return;
+  //     }
 
-      const runningSyncs = await this.checkRunningSyncs();
-      if (runningSyncs.length > 0) {
-        this.logger.log(
-          `⏸️ Parallel sync skipped - running: ${runningSyncs.map((s) => s.name).join(', ')}`,
-        );
-        return;
-      }
+  //     const runningSyncs = await this.checkRunningSyncs();
+  //     if (runningSyncs.length > 0) {
+  //       this.logger.log(
+  //         `⏸️ Parallel sync skipped - running: ${runningSyncs.map((s) => s.name).join(', ')}`,
+  //       );
+  //       return;
+  //     }
 
-      await this.updateCycleTracking('main_cycle', 'running');
+  //     await this.updateCycleTracking('main_cycle', 'running');
 
-      const CYCLE_TIMEOUT_MS = 10 * 60 * 1000;
+  //     const CYCLE_TIMEOUT_MS = 10 * 60 * 1000;
 
-      try {
-        const cyclePromise = this.executeMainCycleWithAbortSignal(signal);
-        const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(
-            () => reject(new Error('Cycle timeout after 10 minutes')),
-            CYCLE_TIMEOUT_MS,
-          ),
-        );
+  //     try {
+  //       const cyclePromise = this.executeMainCycleWithAbortSignal(signal);
+  //       const timeoutPromise = new Promise<never>((_, reject) =>
+  //         setTimeout(
+  //           () => reject(new Error('Cycle timeout after 10 minutes')),
+  //           CYCLE_TIMEOUT_MS,
+  //         ),
+  //       );
 
-        await Promise.race([cyclePromise, timeoutPromise]);
-        await this.updateCycleTracking('main_cycle', 'completed');
+  //       await Promise.race([cyclePromise, timeoutPromise]);
+  //       await this.updateCycleTracking('main_cycle', 'completed');
 
-        const totalDuration = ((Date.now() - startTime) / 1000).toFixed(2);
-        this.logger.log(
-          `🎉 4-minute sync cycle completed in ${totalDuration}s`,
-        );
-      } catch (timeoutError) {
-        if (signal.aborted) {
-          this.logger.log(
-            '🚫 4-minute cycle was aborted by daily cycle priority',
-          );
-          await this.updateCycleTracking(
-            'main_cycle',
-            'aborted',
-            'Aborted by daily cycle priority',
-          );
-        } else if (
-          timeoutError instanceof Error &&
-          timeoutError.message.includes('timeout')
-        ) {
-          this.logger.error(`⏰ 4-minute cycle timed out after 15 minutes`);
-          await this.updateCycleTracking(
-            'main_cycle',
-            'timeout',
-            'Cycle exceeded 15 minute timeout',
-          );
-        } else {
-          throw timeoutError;
-        }
-      }
-    } catch (error) {
-      if (signal.aborted) {
-        this.logger.log('🚫 4-minute cycle aborted during execution');
-        await this.updateCycleTracking(
-          'main_cycle',
-          'aborted',
-          'Aborted by daily cycle priority',
-        );
-      } else {
-        this.logger.error(`❌ 4-minute sync cycle failed: ${error.message}`);
-        await this.updateCycleTracking('main_cycle', 'failed', error.message);
-      }
-    } finally {
-      this.mainCycleAbortController = null;
-    }
-  }
+  //       const totalDuration = ((Date.now() - startTime) / 1000).toFixed(2);
+  //       this.logger.log(
+  //         `🎉 4-minute sync cycle completed in ${totalDuration}s`,
+  //       );
+  //     } catch (timeoutError) {
+  //       if (signal.aborted) {
+  //         this.logger.log(
+  //           '🚫 4-minute cycle was aborted by daily cycle priority',
+  //         );
+  //         await this.updateCycleTracking(
+  //           'main_cycle',
+  //           'aborted',
+  //           'Aborted by daily cycle priority',
+  //         );
+  //       } else if (
+  //         timeoutError instanceof Error &&
+  //         timeoutError.message.includes('timeout')
+  //       ) {
+  //         this.logger.error(`⏰ 4-minute cycle timed out after 15 minutes`);
+  //         await this.updateCycleTracking(
+  //           'main_cycle',
+  //           'timeout',
+  //           'Cycle exceeded 15 minute timeout',
+  //         );
+  //       } else {
+  //         throw timeoutError;
+  //       }
+  //     }
+  //   } catch (error) {
+  //     if (signal.aborted) {
+  //       this.logger.log('🚫 4-minute cycle aborted during execution');
+  //       await this.updateCycleTracking(
+  //         'main_cycle',
+  //         'aborted',
+  //         'Aborted by daily cycle priority',
+  //       );
+  //     } else {
+  //       this.logger.error(`❌ 4-minute sync cycle failed: ${error.message}`);
+  //       await this.updateCycleTracking('main_cycle', 'failed', error.message);
+  //     }
+  //   } finally {
+  //     this.mainCycleAbortController = null;
+  //   }
+  // }
 
   private async executeMainCycleWithAbortSignal(
     signal: AbortSignal,
@@ -546,7 +557,9 @@ export class BusSchedulerService implements OnModuleInit {
         'pricebook_historical',
         'product_historical',
         'purchase_order_historical',
+        'purchase_order_detail_historical',
         'order_supplier_historical',
+        'order_supplier_detail_historical',
         'daily_product_cycle',
       ].includes(sync.name),
     );
@@ -1351,6 +1364,101 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
+  private async autoTriggerOrderSupplierDetailLarkSync(): Promise<void> {
+    try {
+      const historicalSync = await this.prismaService.syncControl.findFirst({
+        where: { name: 'order_supplier_detail_historical' },
+      });
+
+      const larkSync = await this.prismaService.syncControl.findFirst({
+        where: { name: 'order_supplier_detail_lark_sync' },
+      });
+
+      if (
+        historicalSync?.status === 'completed' &&
+        !historicalSync.isRunning &&
+        (!larkSync?.isRunning || !larkSync)
+      ) {
+        await this.prismaService.syncControl.upsert({
+          where: { name: 'order_supplier_detail_lark_sync' },
+          create: {
+            name: 'order_supplier_detail_lark_sync',
+            entities: ['order_supplier_detail'],
+            syncMode: 'lark_sync',
+            isRunning: true,
+            isEnabled: true,
+            status: 'running',
+            startedAt: new Date(),
+          },
+          update: {
+            isRunning: true,
+            status: 'running',
+            startedAt: new Date(),
+            error: null,
+          },
+        });
+
+        const orderSuppliersDetailToSync =
+          await this.prismaService.orderSupplierDetail.findMany({
+            where: {
+              OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+            },
+            take: 1000,
+          });
+
+        if (orderSuppliersDetailToSync.length > 0) {
+          try {
+            await this.larkOrderSupplierSyncService.syncOrderSupplierDetailsToLarkBase(
+              orderSuppliersDetailToSync,
+            );
+
+            await this.prismaService.syncControl.update({
+              where: { name: 'order_supplier_detail_lark_sync' },
+              data: {
+                isRunning: false,
+                status: 'completed',
+                completedAt: new Date(),
+              },
+            });
+
+            this.logger.log(
+              `✅ Auto-triggered order_suppliers_detail LarkBase sync: ${orderSuppliersDetailToSync.length} order_suppliers_detail`,
+            );
+          } catch (syncError) {
+            await this.prismaService.syncControl.update({
+              where: { name: 'order_supplier_detail_lark_sync' },
+              data: {
+                isRunning: false,
+                status: 'failed',
+                error: syncError.message,
+                completedAt: new Date(),
+              },
+            });
+
+            this.logger.error(
+              `❌ Auto order_supplier_detail LarkBase sync failed: ${syncError.message}`,
+            );
+          }
+        } else {
+          await this.prismaService.syncControl.update({
+            where: { name: 'order_supplier_detail_lark_sync' },
+            data: {
+              isRunning: false,
+              status: 'completed',
+              completedAt: new Date(),
+            },
+          });
+
+          this.logger.log('📋 No order_supplier_detail need LarkBase sync');
+        }
+      }
+    } catch (error) {
+      this.logger.error(
+        `❌ Auto order_supplier Lark sync failed: ${error.message}`,
+      );
+    }
+  }
+
   private async autoTriggerPurchaseOrderLarkSync(): Promise<void> {
     try {
       const historicalSync = await this.prismaService.syncControl.findFirst({
@@ -1615,19 +1723,19 @@ export class BusSchedulerService implements OnModuleInit {
       this.startupAbortController = new AbortController();
       const signal = this.startupAbortController.signal;
 
-      const startupPromises = [
-        this.executeAbortableStartupSync('customer', signal, () =>
-          this.customerService.checkAndRunAppropriateSync(),
-        ),
-        this.executeAbortableStartupSync('invoice', signal, () =>
-          this.invoiceService.checkAndRunAppropriateSync(),
-        ),
-        this.executeAbortableStartupSync('order', signal, () =>
-          this.orderService.checkAndRunAppropriateSync(),
-        ),
-      ];
+      // const startupPromises = [
+      //   this.executeAbortableStartupSync('customer', signal, () =>
+      //     this.customerService.checkAndRunAppropriateSync(),
+      //   ),
+      //   this.executeAbortableStartupSync('invoice', signal, () =>
+      //     this.invoiceService.checkAndRunAppropriateSync(),
+      //   ),
+      //   this.executeAbortableStartupSync('order', signal, () =>
+      //     this.orderService.checkAndRunAppropriateSync(),
+      //   ),
+      // ];
 
-      await Promise.allSettled(startupPromises);
+      // await Promise.allSettled(startupPromises);
 
       this.logger.log('✅ Startup check completed');
     } catch (error) {
@@ -1738,6 +1846,51 @@ export class BusSchedulerService implements OnModuleInit {
     } catch (error) {
       this.logger.error(`❌ OrderSupplier sync failed: ${error.message}`);
       throw new Error(`OrderSupplier sync failed: ${error.message}`);
+    }
+  }
+
+  private async enableAndRunOrderSupplierDetailSync(): Promise<void> {
+    try {
+      this.logger.log('📦 Enabling and running OrderSupplierDetail sync...');
+
+      const orderSupplierDetailSync =
+        await this.prismaService.syncControl.findFirst({
+          where: { name: 'order_supplier_detail_historical' },
+        });
+
+      if (
+        !orderSupplierDetailSync ||
+        orderSupplierDetailSync.status !== 'completed'
+      ) {
+        this.logger.warn(
+          '⚠️ OrderSupplierDetail sync not completed, skipping OrderSupplierDetail sync',
+        );
+        return;
+      }
+
+      await this.prismaService.syncControl.upsert({
+        where: { name: 'order_supplier_detail_historical' },
+        create: {
+          name: 'order_supplier_detail_historical',
+          entities: ['order_supplier_detail'],
+          syncMode: 'historical',
+          isEnabled: true,
+          isRunning: false,
+          status: 'idle',
+        },
+        update: {
+          isEnabled: true,
+          isRunning: false,
+          status: 'idle',
+          error: null,
+        },
+      });
+      await this.syncOrderSupplierDetailsFromDatabase();
+
+      this.logger.log('✅ OrderSupplierDetail sync initiated successfully');
+    } catch (error) {
+      this.logger.error(`❌ OrderSupplierDetail sync failed: ${error.message}`);
+      throw new Error(`OrderSupplierDetail sync failed: ${error.message}`);
     }
   }
 
@@ -1894,6 +2047,21 @@ export class BusSchedulerService implements OnModuleInit {
       this.logger.error(`❌ PurchaseOrderDetail sync failed: ${error.message}`);
       throw error;
     }
+  }
+
+  private async syncOrderSupplierDetailsFromDatabase(): Promise<void> {
+    try {
+      await this.prismaService.syncControl.update({
+        where: { name: 'order_supplier_detail_historical' },
+        data: {
+          isRunning: true,
+          status: 'running',
+          startedAt: new Date(),
+        },
+      });
+
+      this.logger.log('📊 Starting OrderSupplierDetail sync from database...');
+    } catch (error) {}
   }
 
   private async waitForSyncCompletion(

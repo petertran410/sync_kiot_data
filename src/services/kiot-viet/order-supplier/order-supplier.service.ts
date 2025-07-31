@@ -240,8 +240,6 @@ export class KiotVietOrderSupplierService {
           );
           await this.syncOrderSuppliersToLarkBase(savedOrderSuppliers);
 
-          await this.syncOrderSupplierDetailsToLarkBase(savedOrderSuppliers);
-
           processedCount += savedOrderSuppliers.length;
           currentItem += this.PAGE_SIZE;
 
@@ -627,57 +625,6 @@ export class KiotVietOrderSupplierService {
       } catch (updateError) {
         this.logger.error(
           `Failed to update order_supplier status: ${updateError.message}`,
-        );
-      }
-
-      throw new Error(`LarkBase sync failed: ${error.message}`);
-    }
-  }
-
-  async syncOrderSupplierDetailsToLarkBase(
-    order_suppliers_details: any[],
-  ): Promise<void> {
-    try {
-      this.logger.log(
-        `🚀 Starting LarkBase sync for ${order_suppliers_details.length} order_suppliers_details...`,
-      );
-
-      const orderSuppliersDetailsToSync = order_suppliers_details.filter(
-        (s) => s.larkSyncStatus === 'PENDING' || s.larkSyncStatus === 'FAILED',
-      );
-
-      if (orderSuppliersDetailsToSync.length === 0) {
-        this.logger.log('📋 No order_suppliers_details need LarkBase sync');
-        return;
-      }
-
-      await this.larkOrderSupplierSyncService.syncOrderSupplierDetailsToLarkBase(
-        orderSuppliersDetailsToSync,
-      );
-
-      this.logger.log(`✅ LarkBase sync completed successfully`);
-    } catch (error) {
-      this.logger.error(
-        `❌ LarkBase order_supplier_details sync failed: ${error.message}`,
-      );
-
-      try {
-        const orderSupplierDetailsIds = order_suppliers_details
-          .map((o) => o.id)
-          .filter((id) => id !== undefined);
-
-        if (orderSupplierDetailsIds.length > 0) {
-          await this.prismaService.orderSupplierDetail.updateMany({
-            where: { id: { in: orderSupplierDetailsIds } },
-            data: {
-              larkSyncedAt: new Date(),
-              larkSyncStatus: 'FAILED',
-            },
-          });
-        }
-      } catch (updateError) {
-        this.logger.error(
-          `Failed to update order_supplier_details status: ${updateError.message}`,
         );
       }
 
