@@ -66,6 +66,7 @@ interface KiotVietProduct {
     cost: number;
     onHand: number;
     reserved: number;
+    lineNumber: number;
     actualReserved?: number;
     minQuantity?: number;
     maxQuantity?: number;
@@ -654,7 +655,8 @@ export class KiotVietProductService {
         });
 
         if (productData.inventories && productData.inventories.length > 0) {
-          for (const detail of productData.inventories) {
+          for (let i = 0; i < productData.inventories.length; i++) {
+            const detail = productData.inventories[i];
             // const productInv = await this.prismaService.product.findFirst({
             //   where: { kiotVietId: BigInt(detail.productId) },
             //   select: { id: true, code: true, name: true },
@@ -666,7 +668,10 @@ export class KiotVietProductService {
 
             await this.prismaService.productInventory.upsert({
               where: {
-                productId: product?.id,
+                productId_lineNumber: {
+                  productId: product?.id,
+                  lineNumber: i + 1,
+                },
               },
               update: {
                 productCode: product.code,
@@ -676,6 +681,7 @@ export class KiotVietProductService {
                 cost: detail.cost,
                 onHand: detail.onHand,
                 reserved: detail.reserved,
+                lineNumber: i + 1,
                 actualReserved: detail.actualReserved,
                 minQuantity: detail.minQuantity,
                 maxQuantity: detail.maxQuantity,
@@ -691,6 +697,7 @@ export class KiotVietProductService {
                 cost: detail.cost,
                 onHand: detail.onHand,
                 reserved: detail.reserved,
+                lineNumber: i + 1,
                 actualReserved: detail.actualReserved,
                 minQuantity: detail.minQuantity,
                 maxQuantity: detail.maxQuantity,

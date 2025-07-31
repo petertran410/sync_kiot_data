@@ -125,7 +125,7 @@ model ProductImage {
 
 model ProductInventory {
   id               Int      @id @default(autoincrement())
-  productId        Int?     @unique
+  productId        Int
   productCode      String?
   productName      String?
   product          Product?  @relation(fields: [productId], references: [id])
@@ -134,6 +134,7 @@ model ProductInventory {
   // branch           Branch?   @relation(fields: [branchId], references: [id])
   onHand           Int?
   reserved         Int?
+  lineNumber       Int?
   actualReserved   Int?
   onOrder          Int?
   cost             Decimal? @db.Decimal(15, 2)
@@ -143,7 +144,7 @@ model ProductInventory {
   modifiedDate     DateTime @updatedAt
   lastSyncedAt     DateTime @default(now())
 
-  // @@unique([productId, branchId])
+  @@unique([productId, lineNumber])
   @@index([productId])
   @@index([branchId])
 }
