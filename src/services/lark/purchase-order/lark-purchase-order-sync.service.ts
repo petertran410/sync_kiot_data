@@ -1,10 +1,9 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { LarkAuthService } from '../auth/lark-auth.service';
-import { async, firstValueFrom, max } from 'rxjs';
-import { url } from 'inspector';
+import { firstValueFrom } from 'rxjs';
 
 const LARK_PURCHASE_ORDER_FIELDS = {
   PURCHASE_ORDER_CODE: 'Mã Nhập Hàng',
@@ -212,7 +211,7 @@ export class LarkPurchaseOrderSyncService {
   }
 
   async syncPurchaseOrderDetailsToLarkBase(
-    purchase_orders: any[], // Input là array của PurchaseOrder objects (KHÔNG có details)
+    purchase_orders: any[],
   ): Promise<void> {
     const lockKey = `lark_purchase_order_detail_sync_lock_${Date.now()}`;
 
@@ -223,7 +222,6 @@ export class LarkPurchaseOrderSyncService {
         `🚀 Starting LarkBase sync for ${purchase_orders.length} purchase_orders`,
       );
 
-      // CRITICAL: Query lại để lấy details relation vì input KHÔNG có details
       const purchaseOrderIds = purchase_orders
         .map((po) => po.id)
         .filter((id) => id);
@@ -259,16 +257,14 @@ export class LarkPurchaseOrderSyncService {
           },
         });
 
-      // Extract all details từ PurchaseOrder objects với details relation
       const allDetails: any[] = [];
 
       for (const purchaseOrder of purchaseOrdersWithDetails) {
         if (purchaseOrder.details && Array.isArray(purchaseOrder.details)) {
           for (const detail of purchaseOrder.details) {
-            // detail ở đây là PurchaseOrderDetail object trực tiếp
             allDetails.push({
               ...detail,
-              purchaseOrderCode: purchaseOrder.code, // Add reference to parent
+              purchaseOrderCode: purchaseOrder.code,
             });
           }
         }

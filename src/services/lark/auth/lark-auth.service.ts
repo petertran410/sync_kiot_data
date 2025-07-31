@@ -34,6 +34,9 @@ export class LarkAuthService {
   private orderSupplierAccessToken: string | null = null;
   private orderSupplierTokenExpiry: Date | null = null;
 
+  private orderSupplierDetailAccessToken: string | null = null;
+  private orderSupplierDetailTokenExpiry: Date | null = null;
+
   private purchaseOrderAccessToken: string | null = null;
   private purchaseOrderTokenExpiry: Date | null = null;
 
@@ -57,7 +60,9 @@ export class LarkAuthService {
       | 'product'
       | 'supplier'
       | 'orderSupplier'
-      | 'purchaseOrder',
+      | 'orderSupplierDetail'
+      | 'purchaseOrder'
+      | 'purchaseOrderDetail',
   ): Promise<string> {
     switch (service) {
       case 'customer':
@@ -72,8 +77,12 @@ export class LarkAuthService {
         return await this.getSupplierAccessToken();
       case 'orderSupplier':
         return await this.getOrderSupplierAccessToken();
+      case 'orderSupplierDetail':
+        return await this.getOrderSupplierDetailAccessToken();
       case 'purchaseOrder':
         return await this.getPurchaseOrderAccessToken();
+      case 'purchaseOrderDetail':
+        return await this.getPurchaseOrderDetailAccessToken();
       default:
         throw new Error(`Unknown service: ${service}`);
     }
@@ -608,6 +617,101 @@ export class LarkAuthService {
     this.orderSupplierAccessToken = null;
     this.orderSupplierTokenExpiry = null;
     await this.refreshOrderSupplierToken();
+  }
+
+  // ============================================================================
+  // ORDER_SUPPLIER_DETAIL TOKEN MANAGEMENT
+  // ============================================================================
+
+  async getOrderSupplierDetailHeaders(): Promise<Record<string, string>> {
+    const token = await this.getOrderSupplierDetailAccessToken();
+    return {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    };
+  }
+
+  private async getOrderSupplierDetailAccessToken(): Promise<string> {
+    if (
+      this.orderSupplierDetailAccessToken &&
+      this.orderSupplierDetailTokenExpiry &&
+      this.orderSupplierDetailTokenExpiry > new Date(Date.now() + 5 * 60 * 1000)
+    ) {
+      return this.orderSupplierDetailAccessToken;
+    }
+
+    return await this.refreshOrderSupplierDetailToken();
+  }
+
+  private async refreshOrderSupplierDetailToken(): Promise<string> {
+    try {
+      this.logger.log(
+        '🔄 Refreshing LarkBase order_supplier_detail access token...',
+      );
+
+      const appId = this.configService.get<string>(
+        'LARK_ORDER_SUPPLIER_DETAIL_SYNC_APP_ID',
+      );
+      const appSecret = this.configService.get<string>(
+        'LARK_ORDER_SUPPLIER_DETAIL_SYNC_APP_SECRET',
+      );
+
+      if (!appId || !appSecret) {
+        throw new Error(
+          'LarkBase order_supplier_detail credentials not configured',
+        );
+      }
+
+      const url =
+        'https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal';
+
+      const response = await firstValueFrom(
+        this.httpService.post<TenantAccessTokenResponse>(
+          url,
+          {
+            app_id: appId,
+            app_secret: appSecret,
+          },
+          {
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            timeout: 10000,
+          },
+        ),
+      );
+
+      if (response.data.code !== 0) {
+        throw new Error(
+          `LarkBase auth failed: ${response.data.msg} (code: ${response.data.code})`,
+        );
+      }
+
+      this.orderSupplierDetailAccessToken = response.data.tenant_access_token;
+      this.orderSupplierDetailTokenExpiry = new Date(
+        Date.now() + response.data.expire * 1000,
+      );
+
+      this.logger.log(
+        '✅ LarkBase orderSupplierDetail token refreshed successfully',
+      );
+      return this.orderSupplierDetailAccessToken;
+    } catch (error) {
+      this.logger.error(
+        `❌ Failed to refresh orderSupplierDetail token: ${error.message}`,
+      );
+
+      this.orderSupplierDetailAccessToken = null;
+      this.orderSupplierDetailTokenExpiry = null;
+
+      throw new Error(`Token refresh failed: ${error.message}`);
+    }
+  }
+
+  async forceRefreshOrderSupplierDetailToken(): Promise<void> {
+    this.orderSupplierDetailAccessToken = null;
+    this.orderSupplierDetailTokenExpiry = null;
+    await this.refreshOrderSupplierDetailToken();
   }
 
   // ============================================================================

@@ -544,7 +544,12 @@ model OrderSupplierDetail {
   allocationThirdParty  Decimal?           @db.Decimal(15, 2)
   orderQuantity         Float              @default(0)
   subTotal              Decimal            @db.Decimal(15, 2)
-  createdDate           DateTime           @default(now())
+  createdDate           DateTime?
+
+  larkRecordId          String?
+  larkSyncStatus        LarkSyncStatus                @default(PENDING)
+  larkSyncedAt          DateTime?
+  larkSyncRetries       Int                           @default(0)
   
   @@index([orderSupplierId])
   @@index([productId])

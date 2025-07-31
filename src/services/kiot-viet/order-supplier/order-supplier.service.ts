@@ -24,7 +24,10 @@ interface KiotVietOrderSupplier {
   orderSupplierDetails: Array<{
     id: number;
     orderSupplierId: number;
+    orderSupplierCode: string;
     productId: number;
+    productCode: string;
+    productName: string;
     quantity: number;
     price: number;
     discount: number;
@@ -236,6 +239,8 @@ export class KiotVietOrderSupplierService {
             orderSuppliersWithDetails,
           );
           await this.syncOrderSuppliersToLarkBase(savedOrderSuppliers);
+
+          await this.syncOrderSupplierDetailsToLarkBase(savedOrderSuppliers);
 
           processedCount += savedOrderSuppliers.length;
           currentItem += this.PAGE_SIZE;
@@ -512,14 +517,8 @@ export class KiotVietOrderSupplierService {
           for (const detail of orderSupplierData.orderSupplierDetails) {
             const product = await this.prismaService.product.findFirst({
               where: { kiotVietId: BigInt(detail.productId) },
-              select: { id: true },
+              select: { id: true, name: true, code: true },
             });
-
-            const orderSuppliers =
-              await this.prismaService.orderSupplier.findFirst({
-                where: { kiotVietId: BigInt(orderSupplierData.id) },
-                select: { id: true },
-              });
 
             if (product) {
               await this.prismaService.orderSupplierDetail.upsert({
@@ -527,8 +526,11 @@ export class KiotVietOrderSupplierService {
                   kiotVietId: detail.id ? BigInt(detail.id) : BigInt(0),
                 },
                 update: {
-                  orderSupplierId: orderSuppliers?.id,
+                  orderSupplierId: order_supplier.id,
+                  orderSupplierCode: order_supplier.code,
                   productId: product.id,
+                  productCode: product.code,
+                  productName: product.name,
                   quantity: detail.quantity,
                   price: new Prisma.Decimal(detail.price || 0),
                   discount: new Prisma.Decimal(detail.discount || 0),
@@ -545,8 +547,11 @@ export class KiotVietOrderSupplierService {
                 },
                 create: {
                   kiotVietId: BigInt(detail.id),
-                  orderSupplierId: orderSuppliers?.id ?? null,
+                  orderSupplierId: order_supplier.id,
+                  orderSupplierCode: order_supplier.code,
                   productId: product.id,
+                  productCode: product.code,
+                  productName: product.name,
                   price: new Prisma.Decimal(detail.price || 0),
                   quantity: detail.quantity,
                   discount: new Prisma.Decimal(detail.discount || 0),
@@ -622,6 +627,57 @@ export class KiotVietOrderSupplierService {
       } catch (updateError) {
         this.logger.error(
           `Failed to update order_supplier status: ${updateError.message}`,
+        );
+      }
+
+      throw new Error(`LarkBase sync failed: ${error.message}`);
+    }
+  }
+
+  async syncOrderSupplierDetailsToLarkBase(
+    order_suppliers_details: any[],
+  ): Promise<void> {
+    try {
+      this.logger.log(
+        `🚀 Starting LarkBase sync for ${order_suppliers_details.length} order_suppliers_details...`,
+      );
+
+      const orderSuppliersDetailsToSync = order_suppliers_details.filter(
+        (s) => s.larkSyncStatus === 'PENDING' || s.larkSyncStatus === 'FAILED',
+      );
+
+      if (orderSuppliersDetailsToSync.length === 0) {
+        this.logger.log('📋 No order_suppliers_details need LarkBase sync');
+        return;
+      }
+
+      await this.larkOrderSupplierSyncService.syncOrderSupplierDetailsToLarkBase(
+        orderSuppliersDetailsToSync,
+      );
+
+      this.logger.log(`✅ LarkBase sync completed successfully`);
+    } catch (error) {
+      this.logger.error(
+        `❌ LarkBase order_supplier_details sync failed: ${error.message}`,
+      );
+
+      try {
+        const orderSupplierDetailsIds = order_suppliers_details
+          .map((o) => o.id)
+          .filter((id) => id !== undefined);
+
+        if (orderSupplierDetailsIds.length > 0) {
+          await this.prismaService.orderSupplierDetail.updateMany({
+            where: { id: { in: orderSupplierDetailsIds } },
+            data: {
+              larkSyncedAt: new Date(),
+              larkSyncStatus: 'FAILED',
+            },
+          });
+        }
+      } catch (updateError) {
+        this.logger.error(
+          `Failed to update order_supplier_details status: ${updateError.message}`,
         );
       }
 
