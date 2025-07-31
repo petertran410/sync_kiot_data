@@ -655,51 +655,49 @@ export class KiotVietProductService {
 
         if (productData.inventories && productData.inventories.length > 0) {
           for (const detail of productData.inventories) {
-            const productInv = await this.prismaService.product.findFirst({
-              where: { kiotVietId: BigInt(detail.productId) },
-              select: { id: true, code: true, name: true },
-            });
-            const branch = await this.prismaService.branch.findFirst({
-              where: { kiotVietId: detail.branchId },
-              select: { id: true, name: true },
-            });
+            // const productInv = await this.prismaService.product.findFirst({
+            //   where: { kiotVietId: BigInt(detail.productId) },
+            //   select: { id: true, code: true, name: true },
+            // });
+            // const branch = await this.prismaService.branch.findFirst({
+            //   where: { kiotVietId: detail.branchId },
+            //   select: { id: true, name: true },
+            // });
 
-            if (productInv) {
-              await this.prismaService.productInventory.upsert({
-                where: {
-                  productId: product?.id,
-                },
-                update: {
-                  productCode: productInv.code,
-                  productName: productInv.name,
-                  branchId: branch?.id,
-                  branchName: branch?.name,
-                  cost: detail.cost,
-                  onHand: detail.onHand,
-                  reserved: detail.reserved,
-                  actualReserved: detail.actualReserved,
-                  minQuantity: detail.minQuantity,
-                  maxQuantity: detail.maxQuantity,
-                  isActive: detail.isActive,
-                  onOrder: detail.onOrder,
-                },
-                create: {
-                  productId: product.id,
-                  productCode: productInv.code,
-                  productName: productInv.name,
-                  branchId: branch?.id,
-                  branchName: branch?.name,
-                  cost: detail.cost,
-                  onHand: detail.onHand,
-                  reserved: detail.reserved,
-                  actualReserved: detail.actualReserved,
-                  minQuantity: detail.minQuantity,
-                  maxQuantity: detail.maxQuantity,
-                  isActive: detail.isActive,
-                  onOrder: detail.onOrder,
-                },
-              });
-            }
+            await this.prismaService.productInventory.upsert({
+              where: {
+                productId: product?.id,
+              },
+              update: {
+                productCode: product.code,
+                productName: product.name,
+                branchId: detail.branchId,
+                branchName: detail.branchName,
+                cost: detail.cost,
+                onHand: detail.onHand,
+                reserved: detail.reserved,
+                actualReserved: detail.actualReserved,
+                minQuantity: detail.minQuantity,
+                maxQuantity: detail.maxQuantity,
+                isActive: detail.isActive,
+                onOrder: detail.onOrder,
+              },
+              create: {
+                productId: product.id,
+                productCode: product.code,
+                productName: product.name,
+                branchId: detail.branchId,
+                branchName: detail.branchName,
+                cost: detail.cost,
+                onHand: detail.onHand,
+                reserved: detail.reserved,
+                actualReserved: detail.actualReserved,
+                minQuantity: detail.minQuantity,
+                maxQuantity: detail.maxQuantity,
+                isActive: detail.isActive,
+                onOrder: detail.onOrder,
+              },
+            });
           }
         }
 

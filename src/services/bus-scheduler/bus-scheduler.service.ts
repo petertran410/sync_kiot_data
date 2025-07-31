@@ -297,7 +297,7 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
-  @Cron('4 15 * * *', {
+  @Cron('25 15 * * *', {
     name: 'daily_product_sync',
     timeZone: 'Asia/Ho_Chi_Minh',
   })
@@ -1853,7 +1853,7 @@ export class BusSchedulerService implements OnModuleInit {
 
       const orderSupplierDetailSync =
         await this.prismaService.syncControl.findFirst({
-          where: { name: 'order_supplier_detail_historical' },
+          where: { name: 'order_supplier_historical' },
         });
 
       if (
