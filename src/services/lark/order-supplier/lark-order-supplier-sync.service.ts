@@ -233,8 +233,6 @@ export class LarkOrderSupplierSyncService {
         }
       }
 
-      await this.syncOrderSupplierDetailsToLarkBase(orderSuppliersToSync)
-
       await this.releaseSyncLock(lockKey);
       this.logger.log('🎉 LarkBase order_supplier sync completed!');
     } catch (error) {
@@ -258,52 +256,15 @@ export class LarkOrderSupplierSyncService {
         `🚀 Starting LarkBase sync for ${order_suppliers_detail.length} order_suppliers_detail...`,
       );
 
-      const orderSupplierDetailIds = order_suppliers_detail
-        .map((po) => po.id)
-        .filter((id) => id);
-
-      if (orderSupplierDetailIds.length === 0) {
-        this.logger.log('📋 No order_supplier_detail need LarkBase sync');
-        await this.releaseDetailSyncLock(lockKey);
-        return;
-      }
-
-      const orderSupplierDetailsWithDetails =
-        await this.prismaService.orderSupplier.findMany({
-          where: {
-            id: { in: orderSupplierDetailIds },
-            details: {
-              some: {
-                OR: [
-                  { larkSyncStatus: 'PENDING' },
-                  { larkSyncStatus: 'FAILED' },
-                ],
-              },
-            },
-          },
-          include: {
-            details: {
-              where: {
-                OR: [
-                  { larkSyncStatus: 'PENDING' },
-                  { larkSyncStatus: 'FAILED' },
-                ],
-              },
-            },
-          },
-        });
-
-      const allDetails: any[] = [];
-
-      for(const orderSupplier of orderSupplierDetailsWithDetails) {
-        if(orderSupplier.)
-      }
-
       const orderSuppliersDetailToSync = order_suppliers_detail.filter(
         (o) => o.larkSyncStatus === 'PENDING' || o.larkSyncStatus === 'FAILED',
       );
 
-      
+      if (orderSuppliersDetailToSync.length === 0) {
+        this.logger.log('📋 No order_supplier_detail need LarkBase sync');
+        await this.releaseDetailSyncLock(lockKey);
+        return;
+      }
 
       const pendingDetailCount = order_suppliers_detail.filter(
         (o) => o.larkSyncStatus === 'PENDING',
@@ -1100,7 +1061,7 @@ export class LarkOrderSupplierSyncService {
 
         if (response.data.code === 0) {
           const createdDetailRecords = response.data.data?.records || [];
-          const successDetailCount = createdRecords.length;
+          const successDetailCount = createdDetailRecords.length;
           const successDetailRecords = order_suppliers_detail.slice(
             0,
             successDetailCount,
@@ -1927,6 +1888,8 @@ export class LarkOrderSupplierSyncService {
     const fields: Record<string, any> = {};
     fields[LARK_ORDER_SUPPLIER_DETAIL_FIELDS.kiotVietId] =
       this.safeBigIntToNumber(order_supplier_detail.kiotVietId);
+
+    return fields;
   }
 
   async getSyncProgress(): Promise<any> {
