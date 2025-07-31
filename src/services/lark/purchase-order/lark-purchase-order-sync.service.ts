@@ -211,7 +211,7 @@ export class LarkPurchaseOrderSyncService {
   }
 
   async syncPurchaseOrderDetailsToLarkBase(
-    purchase_orders: any[],
+    purchase_orders_details: any[],
   ): Promise<void> {
     const lockKey = `lark_purchase_order_detail_sync_lock_${Date.now()}`;
 
@@ -219,72 +219,84 @@ export class LarkPurchaseOrderSyncService {
       await this.acquireDetailSyncLock(lockKey);
 
       this.logger.log(
-        `🚀 Starting LarkBase sync for ${purchase_orders.length} purchase_orders`,
+        `🚀 Starting LarkBase sync for ${purchase_orders_details.length} purchase_orders_details`,
       );
 
-      const purchaseOrderIds = purchase_orders
-        .map((po) => po.id)
-        .filter((id) => id);
+      const purchaseOrderDetailsToSync = purchase_orders_details.filter(
+        (s) =>
+          s.uniqueKey &&
+          (s.larkSyncStatus === 'PENDING' || s.larkSyncStatus === 'FAILED'),
+      );
 
-      if (purchaseOrderIds.length === 0) {
-        this.logger.log('📋 No valid purchase order IDs found');
-        await this.releaseDetailSyncLock(lockKey);
+      if (purchaseOrderDetailsToSync.length === 0) {
+        this.logger.log('📋 No purchase_orders_details need LarkBase sync');
+        await this.releaseSyncLock(lockKey);
         return;
       }
 
-      const purchaseOrdersWithDetails =
-        await this.prismaService.purchaseOrder.findMany({
-          where: {
-            id: { in: purchaseOrderIds },
-            details: {
-              some: {
-                OR: [
-                  { larkSyncStatus: 'PENDING' },
-                  { larkSyncStatus: 'FAILED' },
-                ],
-              },
-            },
-          },
-          include: {
-            details: {
-              where: {
-                OR: [
-                  { larkSyncStatus: 'PENDING' },
-                  { larkSyncStatus: 'FAILED' },
-                ],
-              },
-            },
-          },
-        });
+      // const purchaseOrderDetailsIds = purchase_orders_details
+      //   .map((po) => po.id)
+      //   .filter((id) => id);
 
-      const allDetails: any[] = [];
+      // if (purchaseOrderDetailsIds.length === 0) {
+      //   this.logger.log('📋 No valid purchase order IDs found');
+      //   await this.releaseDetailSyncLock(lockKey);
+      //   return;
+      // }
 
-      for (const purchaseOrder of purchaseOrdersWithDetails) {
-        if (purchaseOrder.details && Array.isArray(purchaseOrder.details)) {
-          for (const detail of purchaseOrder.details) {
-            allDetails.push({
-              ...detail,
-              purchaseOrderCode: purchaseOrder.code,
-            });
-          }
-        }
-      }
+      // const purchaseOrdersWithDetails =
+      //   await this.prismaService.purchaseOrder.findMany({
+      //     where: {
+      //       id: { in: purchaseOrderIds },
+      //       details: {
+      //         some: {
+      //           OR: [
+      //             { larkSyncStatus: 'PENDING' },
+      //             { larkSyncStatus: 'FAILED' },
+      //           ],
+      //         },
+      //       },
+      //     },
+      //     include: {
+      //       details: {
+      //         where: {
+      //           OR: [
+      //             { larkSyncStatus: 'PENDING' },
+      //             { larkSyncStatus: 'FAILED' },
+      //           ],
+      //         },
+      //       },
+      //     },
+      //   });
 
-      this.logger.log(
-        `📋 Extracted ${allDetails.length} purchase order details from ${purchaseOrdersWithDetails.length} purchase orders`,
-      );
+      // const allDetails: any[] = [];
 
-      if (allDetails.length === 0) {
-        this.logger.log('📋 No purchase order details found to sync');
-        await this.releaseDetailSyncLock(lockKey);
-        return;
-      }
+      // for (const purchaseOrder of purchaseOrdersWithDetails) {
+      //   if (purchaseOrder.details && Array.isArray(purchaseOrder.details)) {
+      //     for (const detail of purchaseOrder.details) {
+      //       allDetails.push({
+      //         ...detail,
+      //         purchaseOrderCode: purchaseOrder.code,
+      //       });
+      //     }
+      //   }
+      // }
 
-      const pendingDetailCount = allDetails.filter(
-        (p) => p.larkSyncStatus === 'PENDING',
+      // this.logger.log(
+      //   `📋 Extracted ${allDetails.length} purchase order details from ${purchaseOrdersWithDetails.length} purchase orders`,
+      // );
+
+      // if (allDetails.length === 0) {
+      //   this.logger.log('📋 No purchase order details found to sync');
+      //   await this.releaseDetailSyncLock(lockKey);
+      //   return;
+      // }
+
+      const pendingDetailCount = purchaseOrderDetailsToSync.filter(
+        (s) => s.larkSyncStatus === 'PENDING',
       ).length;
-      const failedDetailCount = allDetails.filter(
-        (p) => p.larkSyncStatus === 'FAILED',
+      const failedDetailCount = purchaseOrderDetailsToSync.filter(
+        (s) => s.larkSyncStatus === 'FAILED',
       ).length;
 
       this.logger.log(
@@ -302,7 +314,7 @@ export class LarkPurchaseOrderSyncService {
       }
 
       const { newPurchaseOrdersDetails, updatePurchaseOrdersDetails } =
-        this.categorizePurchaseOrderDetails(allDetails);
+        this.categorizePurchaseOrderDetails(purchaseOrderDetailsToSync);
 
       this.logger.log(
         `📋 PurchaseOrderDetail Categorization: ${newPurchaseOrdersDetails.length} new, ${updatePurchaseOrdersDetails.length} updates`,
@@ -1793,6 +1805,11 @@ export class LarkPurchaseOrderSyncService {
 
   private mapPurchaseOrderDetailToLarkBase(detail: any): Record<string, any> {
     const fields: Record<string, any> = {};
+
+    if (!detail) {
+      this.logger.warn('⚠️ Received undefined/null detail object');
+      return fields;
+    }
 
     if (detail.uniqueKey) {
       fields[LARK_PURCHASE_ORDER_DETAIL_FIELDS.UNIQUE_KEY] = detail.uniqueKey;

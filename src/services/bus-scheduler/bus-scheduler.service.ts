@@ -43,16 +43,16 @@ export class BusSchedulerService implements OnModuleInit {
   private dailyCycleStartTime: Date | null = null;
 
   private readonly DAILY_ENTITIES_CONFIG: DailyEntityConfig[] = [
-    {
-      name: 'pricebook_product_sequence',
-      syncFunction: async () => {
-        await this.runProductSequenceSync();
-      },
-      larkSyncFunction: async () => {
-        await this.autoTriggerProductLarkSync();
-      },
-      enabled: true,
-    },
+    // {
+    //   name: 'pricebook_product_sequence',
+    //   syncFunction: async () => {
+    //     await this.runProductSequenceSync();
+    //   },
+    //   larkSyncFunction: async () => {
+    //     await this.autoTriggerProductLarkSync();
+    //   },
+    //   enabled: true,
+    // },
     {
       name: 'order_supplier',
       syncFunction: async () => {
@@ -297,7 +297,7 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
-  @Cron('30 22 * * *', {
+  @Cron('50 0 * * *', {
     name: 'daily_product_sync',
     timeZone: 'Asia/Ho_Chi_Minh',
   })
@@ -1554,12 +1554,10 @@ export class BusSchedulerService implements OnModuleInit {
 
   private async autoTriggerPurchaseOrderDetailLarkSync(): Promise<void> {
     try {
-      // Check if historical sync is completed
       const historicalSync = await this.prismaService.syncControl.findFirst({
-        where: { name: 'purchase_order_detail_historical' },
+        where: { name: 'purchase_order_historical' },
       });
 
-      // Check if lark sync is already running
       const larkSync = await this.prismaService.syncControl.findFirst({
         where: { name: 'purchase_order_detail_lark_sync' },
       });
@@ -1588,41 +1586,18 @@ export class BusSchedulerService implements OnModuleInit {
           },
         });
 
-        // Get PurchaseOrders with details that need LarkBase sync
-        const purchaseOrdersWithPendingDetails =
-          await this.prismaService.purchaseOrder.findMany({
+        const purchaseOrderDetailsToSync =
+          await this.prismaService.purchaseOrderDetail.findMany({
             where: {
-              details: {
-                some: {
-                  OR: [
-                    { larkSyncStatus: 'PENDING' },
-                    { larkSyncStatus: 'FAILED' },
-                  ],
-                },
-              },
+              OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
             },
-            include: {
-              details: {
-                where: {
-                  OR: [
-                    { larkSyncStatus: 'PENDING' },
-                    { larkSyncStatus: 'FAILED' },
-                  ],
-                },
-              },
-            },
-            take: 500, // Limit for performance
-            orderBy: { createdDate: 'asc' },
+            take: 1000,
           });
 
-        if (purchaseOrdersWithPendingDetails.length > 0) {
-          const totalDetails = purchaseOrdersWithPendingDetails.flatMap(
-            (po) => po.details,
-          ).length;
-
+        if (purchaseOrderDetailsToSync.length > 0) {
           try {
             await this.larkPurchaseOrderSyncService.syncPurchaseOrderDetailsToLarkBase(
-              purchaseOrdersWithPendingDetails,
+              purchaseOrderDetailsToSync,
             );
 
             await this.prismaService.syncControl.update({
@@ -1635,7 +1610,7 @@ export class BusSchedulerService implements OnModuleInit {
             });
 
             this.logger.log(
-              `✅ Auto-triggered purchase_order_detail LarkBase sync: ${totalDetails} details from ${purchaseOrdersWithPendingDetails.length} purchase orders`,
+              `✅ Auto-triggered purchase_order_detail LarkBase sync: ${purchaseOrderDetailsToSync.length} details`,
             );
           } catch (syncError) {
             await this.prismaService.syncControl.update({
