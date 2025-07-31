@@ -43,16 +43,16 @@ export class BusSchedulerService implements OnModuleInit {
   private dailyCycleStartTime: Date | null = null;
 
   private readonly DAILY_ENTITIES_CONFIG: DailyEntityConfig[] = [
-    // {
-    //   name: 'pricebook_product_sequence',
-    //   syncFunction: async () => {
-    //     await this.runProductSequenceSync();
-    //   },
-    //   larkSyncFunction: async () => {
-    //     await this.autoTriggerProductLarkSync();
-    //   },
-    //   enabled: true,
-    // },
+    {
+      name: 'pricebook_product_sequence',
+      syncFunction: async () => {
+        await this.runProductSequenceSync();
+      },
+      larkSyncFunction: async () => {
+        await this.autoTriggerProductLarkSync();
+      },
+      enabled: true,
+    },
     {
       name: 'order_supplier',
       syncFunction: async () => {
