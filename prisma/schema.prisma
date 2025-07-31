@@ -131,14 +131,14 @@ model ProductInventory {
   product          Product?  @relation(fields: [productId], references: [id])
   branchId         Int?
   branchName       String?
-  branch           Branch?   @relation(fields: [branchId], references: [id])
-  onHand           Float?    @default(0)
-  reserved         Float?    @default(0)
-  actualReserved   Float?    @default(0)
-  onOrder          Float?    @default(0)
+  // branch           Branch?   @relation(fields: [branchId], references: [id])
+  onHand           Int?
+  reserved         Int?
+  actualReserved   Int?
+  onOrder          Int?
   cost             Decimal? @db.Decimal(15, 2)
-  minQuantity      Float?
-  maxQuantity      Float?
+  minQuantity      Int?
+  maxQuantity      Int?
   isActive         Boolean?
   modifiedDate     DateTime @updatedAt
   lastSyncedAt     DateTime @default(now())
@@ -315,7 +315,7 @@ model Branch {
   modifiedDate      DateTime           @updatedAt
   lastSyncedAt      DateTime           @default(now())
   
-  inventories       ProductInventory[]
+  // inventories       ProductInventory[]
   serials           ProductSerial[]
   batches           ProductBatchExpire[]
   customers         Customer[]
