@@ -61,21 +61,19 @@ export class KiotVietCategoryService {
 
       this.logger.log('🚀 Starting historical category sync...');
 
-      const MAX_CONSECUTIVE_EMPTY_PAGES = 3; // Reduced from 5 for faster detection
+      const MAX_CONSECUTIVE_EMPTY_PAGES = 3;
       const MAX_CONSECUTIVE_ERROR_PAGES = 3;
       const RETRY_DELAY_MS = 2000;
 
       while (true) {
         const currentPage = Math.floor(currentItem / this.PAGE_SIZE) + 1;
 
-        // Progress logging
         if (totalCategories > 0) {
           const progressPercentage = (processedCount / totalCategories) * 100;
           this.logger.log(
             `📄 Fetching page ${currentPage} (${processedCount}/${totalCategories} - ${progressPercentage.toFixed(1)}% completed)`,
           );
 
-          // FIXED: Early termination check based on processed count, not currentItem
           if (processedCount >= totalCategories) {
             this.logger.log(
               `✅ All categories processed successfully! Final count: ${processedCount}/${totalCategories}`,
@@ -109,17 +107,15 @@ export class KiotVietCategoryService {
             }
 
             await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
-            currentItem += this.PAGE_SIZE; // Move to next page even on null response
+            currentItem += this.PAGE_SIZE;
             continue;
           }
 
-          // Reset error counters on successful response
           consecutiveEmptyPages = 0;
           consecutiveErrorPages = 0;
 
           const { total, data: categories } = categoryListResponse;
 
-          // Set total count on first successful response
           if (total !== undefined && total !== null) {
             if (totalCategories === 0) {
               totalCategories = total;
@@ -134,14 +130,12 @@ export class KiotVietCategoryService {
             }
           }
 
-          // FIXED: Handle empty response data properly
           if (!categories || categories.length === 0) {
             this.logger.warn(
               `⚠️ Empty page received at position ${currentItem}`,
             );
             consecutiveEmptyPages++;
 
-            // FIXED: Check if we've reached expected end
             if (totalCategories > 0 && processedCount >= totalCategories) {
               this.logger.log(
                 '✅ All expected categories processed - pagination complete',
