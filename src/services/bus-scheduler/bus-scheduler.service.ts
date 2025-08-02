@@ -43,16 +43,16 @@ export class BusSchedulerService implements OnModuleInit {
   private dailyCycleStartTime: Date | null = null;
 
   private readonly DAILY_ENTITIES_CONFIG: DailyEntityConfig[] = [
-    {
-      name: 'pricebook_product_sequence',
-      syncFunction: async () => {
-        await this.runProductSequenceSync();
-      },
-      larkSyncFunction: async () => {
-        await this.autoTriggerProductLarkSync();
-      },
-      enabled: true,
-    },
+    // {
+    //   name: 'pricebook_product_sequence',
+    //   syncFunction: async () => {
+    //     await this.runProductSequenceSync();
+    //   },
+    //   larkSyncFunction: async () => {
+    //     await this.autoTriggerProductLarkSync();
+    //   },
+    //   enabled: true,
+    // },
     {
       name: 'order_supplier',
       syncFunction: async () => {
@@ -297,7 +297,7 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
-  @Cron('50 0 * * *', {
+  @Cron('25 19 * * *', {
     name: 'daily_product_sync',
     timeZone: 'Asia/Ho_Chi_Minh',
   })
@@ -1696,19 +1696,19 @@ export class BusSchedulerService implements OnModuleInit {
       this.startupAbortController = new AbortController();
       const signal = this.startupAbortController.signal;
 
-      const startupPromises = [
-        this.executeAbortableStartupSync('customer', signal, () =>
-          this.customerService.checkAndRunAppropriateSync(),
-        ),
-        this.executeAbortableStartupSync('invoice', signal, () =>
-          this.invoiceService.checkAndRunAppropriateSync(),
-        ),
-        this.executeAbortableStartupSync('order', signal, () =>
-          this.orderService.checkAndRunAppropriateSync(),
-        ),
-      ];
+      // const startupPromises = [
+      //   this.executeAbortableStartupSync('customer', signal, () =>
+      //     this.customerService.checkAndRunAppropriateSync(),
+      //   ),
+      //   this.executeAbortableStartupSync('invoice', signal, () =>
+      //     this.invoiceService.checkAndRunAppropriateSync(),
+      //   ),
+      //   this.executeAbortableStartupSync('order', signal, () =>
+      //     this.orderService.checkAndRunAppropriateSync(),
+      //   ),
+      // ];
 
-      await Promise.allSettled(startupPromises);
+      // await Promise.allSettled(startupPromises);
 
       this.logger.log('✅ Startup check completed');
     } catch (error) {

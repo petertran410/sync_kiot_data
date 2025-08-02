@@ -222,10 +222,21 @@ export class LarkPurchaseOrderSyncService {
         `🚀 Starting LarkBase sync for ${purchase_orders_details.length} purchase_orders_details`,
       );
 
-      const purchaseOrderDetailsToSync = purchase_orders_details.filter(
-        (s) =>
-          s.uniqueKey &&
-          (s.larkSyncStatus === 'PENDING' || s.larkSyncStatus === 'FAILED'),
+      // const purchaseOrderDetailsToSync = purchase_orders_details.filter(
+      //   (s) =>
+      //     s.uniqueKey &&
+      //     (s.larkSyncStatus === 'PENDING' || s.larkSyncStatus === 'FAILED'),
+      // );
+
+      const purchaseOrderDetailsToSync =
+        await this.prismaService.purchaseOrderDetail.findMany({
+          where: {
+            OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+          },
+        });
+
+      this.logger.log(
+        `📋 Found ${purchaseOrderDetailsToSync.length} order_supplier_details to sync`,
       );
 
       if (purchaseOrderDetailsToSync.length === 0) {
