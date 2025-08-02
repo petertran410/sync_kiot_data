@@ -5,6 +5,8 @@ import { KiotVietCustomerService } from '../services/kiot-viet/customer/customer
 import { KiotVietInvoiceService } from '../services/kiot-viet/invoice/invoice.service';
 import { KiotVietOrderService } from 'src/services/kiot-viet/order/order.service';
 import { KiotVietProductService } from 'src/services/kiot-viet/product/product.service';
+import { KiotVietCategoryService } from '../services/kiot-viet/category/category.service';
+import { KiotVietCustomerGroupService } from 'src/services/kiot-viet/customer-group/customer-group.service';
 
 @Controller('sync')
 export class SyncController {
@@ -16,6 +18,8 @@ export class SyncController {
     private readonly invoiceService: KiotVietInvoiceService,
     private readonly orderService: KiotVietOrderService,
     private readonly productService: KiotVietProductService,
+    private readonly categoryService: KiotVietCategoryService,
+    private readonly customerGroupService: KiotVietCustomerGroupService,
   ) {}
 
   // ============================================================================
@@ -292,6 +296,58 @@ export class SyncController {
         success: false,
         error: error.message,
         stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
+      };
+    }
+  }
+
+  @Post('categories')
+  async syncCategories() {
+    try {
+      this.logger.log('🗂️ Starting category sync...');
+
+      // Enable historical sync first
+      await this.categoryService.enableHistoricalSync();
+
+      // Run the sync
+      await this.categoryService.syncHistoricalCategories();
+
+      return {
+        success: true,
+        message: 'Category sync completed successfully',
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error) {
+      this.logger.error(`❌ Category sync failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
+
+  @Post('customer-groups')
+  async syncCustomerGroups() {
+    try {
+      this.logger.log('👥 Starting customer group sync...');
+
+      // Enable historical sync first
+      await this.customerGroupService.enableHistoricalSync();
+
+      // Run the sync
+      await this.customerGroupService.syncHistoricalCustomerGroups();
+
+      return {
+        success: true,
+        message: 'Customer group sync completed successfully',
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error) {
+      this.logger.error(`❌ Customer group sync failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
       };
     }
   }

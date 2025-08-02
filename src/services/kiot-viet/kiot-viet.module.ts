@@ -5,7 +5,7 @@ import { ConfigModule } from '@nestjs/config';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { KiotVietAuthService } from './auth.service';
 import { KiotVietCustomerService } from './customer/customer.service';
-// import { KiotVietCustomerGroupService } from './customer-group/customer-group.service';
+import { KiotVietCustomerGroupService } from './customer-group/customer-group.service';
 import { KiotVietUserService } from './user/user.service';
 import { KiotVietSaleChannelService } from './sale-channel/sale-channel.service';
 import { KiotVietSurchargeService } from './surcharge/surcharge.service';
@@ -20,7 +20,7 @@ import { KiotVietOrderSupplierService } from './order-supplier/order-supplier.se
 import { KiotVietPurchaseOrderService } from './purchase-order/purchase-order.service';
 // import { KiotVietBranchService } from './branch/branch.service';
 // import { KiotVietTradeMarkService } from './trademark/trademark.service';
-// import { KiotVietCategoryService } from './category/category.service';
+import { KiotVietCategoryService } from './category/category.service';
 
 @Module({
   imports: [
@@ -36,14 +36,14 @@ import { KiotVietPurchaseOrderService } from './purchase-order/purchase-order.se
     KiotVietAuthService,
     KiotVietCustomerService,
     // KiotVietBranchService,
-    // KiotVietCustomerGroupService,
+    KiotVietCustomerGroupService,
     // KiotVietTradeMarkService,
     KiotVietPriceBookService,
     KiotVietUserService,
     KiotVietSaleChannelService,
     KiotVietSurchargeService,
     KiotVietBankAccountService,
-    // KiotVietCategoryService,
+    KiotVietCategoryService,
     KiotVietProductService,
     KiotVietInvoiceService,
     KiotVietOrderService,
@@ -55,14 +55,14 @@ import { KiotVietPurchaseOrderService } from './purchase-order/purchase-order.se
     KiotVietAuthService,
     KiotVietCustomerService,
     // KiotVietBranchService,
-    // KiotVietCustomerGroupService,
+    KiotVietCustomerGroupService,
     // KiotVietTradeMarkService,
     KiotVietPriceBookService,
     KiotVietUserService,
     KiotVietSaleChannelService,
     KiotVietSurchargeService,
     KiotVietBankAccountService,
-    // KiotVietCategoryService,
+    KiotVietCategoryService,
     KiotVietProductService,
     KiotVietInvoiceService,
     KiotVietOrderService,

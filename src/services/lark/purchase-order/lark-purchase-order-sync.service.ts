@@ -931,24 +931,24 @@ export class LarkPurchaseOrderSyncService {
       await Promise.all(
         chunk.map(async (detail) => {
           try {
-            const updated = await this.updateSinglePurchaseOrderDetail(
-              detail.purchaseOrderDetails,
-            );
+            // ✅ FIX: sử dụng detail trực tiếp (giống orderSupplier)
+            const updated = await this.updateSinglePurchaseOrderDetail(detail);
 
             if (updated) {
               successDetailCount++;
-              await this.updateDetailDatabaseStatus(
-                [detail.purchaseOrderDetails],
-                'SYNCED',
-              );
+              // ✅ FIX: sử dụng [detail] trực tiếp
+              await this.updateDetailDatabaseStatus([detail], 'SYNCED');
             } else {
-              createFallbacks.push(detail.purchaseOrderDetails);
+              // ✅ FIX: sử dụng detail trực tiếp
+              createFallbacks.push(detail);
             }
           } catch (error) {
+            // ✅ FIX: sử dụng detail.uniqueKey trực tiếp (giống orderSupplier dùng .code)
             this.logger.warn(
-              `Update failed for detail ${detail.purchaseOrderDetails.uniqueKey}: ${error.message}`,
+              `Update failed for detail ${detail.uniqueKey}: ${error.message}`,
             );
-            createFallbacks.push(detail.purchaseOrderDetails);
+            // ✅ FIX: sử dụng detail trực tiếp
+            createFallbacks.push(detail);
           }
         }),
       );
