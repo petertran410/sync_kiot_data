@@ -122,7 +122,7 @@ export class BusSchedulerService implements OnModuleInit {
     }, 5000);
   }
 
-  @Cron('*/4 * * * *', {
+  @Cron('*/1 * * * *', {
     name: 'main_sync_cycle',
     timeZone: 'Asia/Ho_Chi_Minh',
   })
@@ -130,18 +130,18 @@ export class BusSchedulerService implements OnModuleInit {
     if (this.isDailyCycleRunning || this.dailyCyclePriorityLevel > 0) {
       if (!this.mainSchedulerSuspendedForDaily) {
         this.logger.log(
-          '🛑 SUSPENDING 7-minute cycle - Daily cycle has priority',
+          '🛑 SUSPENDING 1-minute cycle - Daily cycle has priority',
         );
         this.mainSchedulerSuspendedForDaily = true;
 
         if (this.mainCycleAbortController) {
           this.mainCycleAbortController.abort();
-          this.logger.log('🚫 FORCE ABORTING ongoing 7-minute cycle');
+          this.logger.log('🚫 FORCE ABORTING ongoing 1-minute cycle');
         }
       }
 
       this.logger.debug(
-        `⏸️ 4-minute cycle suspended (dailyCyclePriorityLevel: ${this.dailyCyclePriorityLevel}, isDailyCycleRunning: ${this.isDailyCycleRunning})`,
+        `⏸️ 1-minute cycle suspended (dailyCyclePriorityLevel: ${this.dailyCyclePriorityLevel}, isDailyCycleRunning: ${this.isDailyCycleRunning})`,
       );
       return;
     }
@@ -151,7 +151,7 @@ export class BusSchedulerService implements OnModuleInit {
       !this.isDailyCycleRunning &&
       this.dailyCyclePriorityLevel === 0
     ) {
-      this.logger.log('▶️ RESUMING 4-minute cycle - Daily cycle completed');
+      this.logger.log('▶️ RESUMING 1-minute cycle - Daily cycle completed');
       this.mainSchedulerSuspendedForDaily = false;
     }
 
@@ -168,7 +168,7 @@ export class BusSchedulerService implements OnModuleInit {
       const startTime = Date.now();
 
       if (signal.aborted) {
-        this.logger.log('🚫 7-minute cycle aborted before starting');
+        this.logger.log('🚫 1-minute cycle aborted before starting');
         return;
       }
 
@@ -203,7 +203,7 @@ export class BusSchedulerService implements OnModuleInit {
       } catch (timeoutError) {
         if (signal.aborted) {
           this.logger.log(
-            '🚫 4-minute cycle was aborted by daily cycle priority',
+            '🚫 1-minute cycle was aborted by daily cycle priority',
           );
           await this.updateCycleTracking(
             'main_cycle',
@@ -214,7 +214,7 @@ export class BusSchedulerService implements OnModuleInit {
           timeoutError instanceof Error &&
           timeoutError.message.includes('timeout')
         ) {
-          this.logger.error(`⏰ 4-minute cycle timed out after 15 minutes`);
+          this.logger.error(`⏰ 1-minute cycle timed out after 15 minutes`);
           await this.updateCycleTracking(
             'main_cycle',
             'timeout',
@@ -233,7 +233,7 @@ export class BusSchedulerService implements OnModuleInit {
           'Aborted by daily cycle priority',
         );
       } else {
-        this.logger.error(`❌ 4-minute sync cycle failed: ${error.message}`);
+        this.logger.error(`❌ 1-minute sync cycle failed: ${error.message}`);
         await this.updateCycleTracking('main_cycle', 'failed', error.message);
       }
     } finally {

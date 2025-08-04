@@ -964,20 +964,23 @@ model Return {
   kiotVietId        BigInt             @unique
   code              String             @unique
   invoiceId         Int?
+  invoiceCode       String?
   invoice           Invoice?           @relation(fields: [invoiceId], references: [id])
-  returnDate        DateTime
+  returnDate        DateTime?
   branchId          Int
+  branchName        String
   branch            Branch             @relation(fields: [branchId], references: [id])
   receivedById      BigInt?
+  soldByName        String
   customerId        Int?
+  customerCode      String?
+  customerName      String?
   customer          Customer?          @relation(fields: [customerId], references: [id])
   returnTotal       Decimal            @db.Decimal(15, 2)
-  returnDiscount    Decimal?           @db.Decimal(15, 2)
-  returnFee         Decimal?           @db.Decimal(15, 2)
   totalPayment      Decimal            @db.Decimal(15, 2)
   status            Int
-  retailerId        Int?
-  createdDate       DateTime           @default(now())
+  statusValue       String?
+  createdDate       DateTime  
   modifiedDate      DateTime           @updatedAt
   lastSyncedAt      DateTime           @default(now())
   
@@ -993,10 +996,12 @@ model Return {
 
 model ReturnDetail {
   id                Int                @id @default(autoincrement())
-  kiotVietId        BigInt?            @unique
   returnId          Int
+  lineNumber        Int
   return            Return             @relation(fields: [returnId], references: [id])
   productId         Int
+  productCode       String
+  productName       String
   product           Product            @relation(fields: [productId], references: [id])
   quantity          Float
   price             Decimal            @db.Decimal(15, 2)
@@ -1004,6 +1009,7 @@ model ReturnDetail {
   usePoint          Boolean            @default(false)
   subTotal          Decimal            @db.Decimal(15, 2)
   
+  @@unique([returnId, lineNumber])
   @@index([returnId])
   @@index([productId])
 }
