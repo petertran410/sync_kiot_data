@@ -273,14 +273,12 @@ model CustomerGroup {
   kiotVietId        Int                   @unique
   name              String
   description       String?
-  discount          Decimal?              @db.Decimal(15, 2)
   retailerId        Int?
-  createdDate       DateTime              @default(now())
-  modifiedDate      DateTime              @updatedAt
+  createdDate       DateTime
+  createdBy         Int?
   lastSyncedAt      DateTime              @default(now())
   
   customers         CustomerGroupRelation[]
-  priceBooks        PriceBookCustomerGroup[]
 
   @@index([kiotVietId])
 }
@@ -292,7 +290,7 @@ model CustomerGroupRelation {
   customer          Customer        @relation(fields: [customerId], references: [id])
   customerGroupId   Int
   customerGroup     CustomerGroup   @relation(fields: [customerGroupId], references: [id])
-  
+
   @@unique([customerId, customerGroupId])
   @@index([customerId])
   @@index([customerGroupId])
@@ -1070,7 +1068,6 @@ model PriceBookCustomerGroup {
   priceBookId       Int
   priceBook         PriceBook          @relation(fields: [priceBookId], references: [id])
   customerGroupId   Int
-  customerGroup     CustomerGroup      @relation(fields: [customerGroupId], references: [id])
   
   @@unique([priceBookId, customerGroupId])
   @@index([priceBookId])

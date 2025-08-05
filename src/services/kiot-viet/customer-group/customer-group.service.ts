@@ -363,56 +363,6 @@ export class KiotVietCustomerGroupService {
     return enrichedCustomerGroups;
   }
 
-  private validateCustomerGroups(
-    customerGroups: KiotVietCustomerGroup[],
-  ): KiotVietCustomerGroup[] {
-    const validGroups: KiotVietCustomerGroup[] = [];
-
-    for (const group of customerGroups) {
-      if (this.validateCustomerGroupData(group)) {
-        validGroups.push(group);
-      }
-    }
-
-    this.logger.log(
-      `✅ Validation complete: ${validGroups.length}/${customerGroups.length} customer groups valid`,
-    );
-
-    return validGroups;
-  }
-
-  private validateCustomerGroupData(group: KiotVietCustomerGroup): boolean {
-    // Required field validation
-    if (!group.id || typeof group.id !== 'number') {
-      this.logger.warn(`⚠️ Invalid group ID: ${group.id}`);
-      return false;
-    }
-
-    if (
-      !group.name ||
-      typeof group.name !== 'string' ||
-      group.name.trim() === ''
-    ) {
-      this.logger.warn(
-        `⚠️ Invalid group name for ID ${group.id}: '${group.name}'`,
-      );
-      return false;
-    }
-
-    // Discount validation
-    if (
-      group.discount &&
-      (typeof group.discount !== 'number' || group.discount < 0)
-    ) {
-      this.logger.warn(
-        `⚠️ Invalid discount for group ${group.id}: ${group.discount}`,
-      );
-      return false;
-    }
-
-    return true;
-  }
-
   private async saveCustomerGroupsToDatabase(
     customerGroups: KiotVietCustomerGroup[],
   ): Promise<any[]> {
@@ -429,28 +379,16 @@ export class KiotVietCustomerGroupService {
           update: {
             name: groupData.name.trim(),
             description: groupData.description?.trim() || null,
-            discount: groupData.discount
-              ? new Prisma.Decimal(groupData.discount)
-              : null,
             retailerId: groupData.retailerId || null,
-            modifiedDate: groupData.modifiedDate
-              ? new Date(groupData.modifiedDate)
-              : new Date(),
             lastSyncedAt: new Date(),
           },
           create: {
             kiotVietId: groupData.id,
             name: groupData.name.trim(),
             description: groupData.description?.trim() || null,
-            discount: groupData.discount
-              ? new Prisma.Decimal(groupData.discount)
-              : null,
             retailerId: groupData.retailerId || null,
             createdDate: groupData.createdDate
               ? new Date(groupData.createdDate)
-              : new Date(),
-            modifiedDate: groupData.modifiedDate
-              ? new Date(groupData.modifiedDate)
               : new Date(),
             lastSyncedAt: new Date(),
           },
@@ -547,10 +485,6 @@ export class KiotVietCustomerGroupService {
       throw error;
     }
   }
-
-  // ============================================================================
-  // LEGACY METHODS (for backward compatibility)
-  // ============================================================================
 
   // async fetchCustomerGroups() {
   //   return this.fetchCustomerGroupsWithRetry();
