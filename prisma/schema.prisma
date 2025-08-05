@@ -270,25 +270,25 @@ model Customer {
 
 model CustomerGroup {
   id                Int                   @id @default(autoincrement())
-  kiotVietId        Int  @unique
+  kiotVietId        Int?
+  uniqueKey         String
   name              String?
   description       String?
-  retailerId        Int
+  retailerId        Int?
   createdDate       DateTime?
   createdBy         Int?
   discount          Int?
-  // lineNumber        Int
-  // uniqueKey         String?               @unique
   lastSyncedAt      DateTime              @default(now())
   
   customers         CustomerGroupRelation[]
 
+  @@unique([uniqueKey])
   @@index([kiotVietId])
 }
 
 model CustomerGroupRelation {
   id                Int             @id @default(autoincrement())
-  kiotVietId        BigInt         @unique
+  kiotVietId        BigInt          @unique
   customerId        Int
   customer          Customer        @relation(fields: [customerId], references: [id])
   groupId           Int

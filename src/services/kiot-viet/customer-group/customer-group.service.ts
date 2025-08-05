@@ -12,8 +12,9 @@ interface KiotVietCustomerGroup {
   description?: string;
   createdDate?: string;
   createdBy?: number;
-  retailerId: number;
+  retailerId?: number;
   discount?: number;
+  uniqueKey: string;
   customerGroupDetails: Array<{
     id: number;
     customerId: number;
@@ -378,60 +379,64 @@ export class KiotVietCustomerGroupService {
         // });
 
         const group = await this.prismaService.customerGroup.upsert({
-          where: { kiotVietId: Number(customerGroup.id) },
+          where: {
+            uniqueKey: customerGroup.createdBy + '.' + customerGroup.id,
+          },
           update: {
             name: customerGroup.name || '',
             description: customerGroup.description || '',
-            retailerId: Number(customerGroup.retailerId),
+            retailerId: Number(customerGroup.retailerId) || null,
             createdDate: customerGroup.createdDate
               ? new Date(customerGroup.createdDate)
               : new Date(),
+            uniqueKey: customerGroup.createdBy + '.' + customerGroup.id,
             createdBy: customerGroup.createdBy,
             discount: customerGroup.discount || 0,
             lastSyncedAt: new Date(),
           },
           create: {
-            kiotVietId: customerGroup.id,
+            kiotVietId: Number(customerGroup.id),
             name: customerGroup.name || '',
             description: customerGroup.description || '',
-            retailerId: Number(customerGroup.retailerId),
+            retailerId: Number(customerGroup.retailerId) || null,
             createdDate: customerGroup.createdDate
               ? new Date(customerGroup.createdDate)
               : new Date(),
+            uniqueKey: customerGroup.createdBy + '.' + customerGroup.id,
             createdBy: customerGroup.createdBy,
             discount: customerGroup.discount || 0,
             lastSyncedAt: new Date(),
           },
         });
 
-        if (
-          customerGroup.customerGroupDetails &&
-          customerGroup.customerGroupDetails.length > 0
-        ) {
-          for (const detail of customerGroup.customerGroupDetails) {
-            const customer = await this.prismaService.customer.findFirst({
-              where: { kiotVietId: BigInt(detail.customerId) },
-              select: { id: true },
-            });
+        // if (
+        //   customerGroup.customerGroupDetails &&
+        //   customerGroup.customerGroupDetails.length > 0
+        // ) {
+        //   for (const detail of customerGroup.customerGroupDetails) {
+        //     const customer = await this.prismaService.customer.findFirst({
+        //       where: { kiotVietId: BigInt(detail.customerId) },
+        //       select: { id: true },
+        //     });
 
-            if (customer) {
-              await this.prismaService.customerGroupRelation.upsert({
-                where: {
-                  kiotVietId: BigInt(detail.id),
-                },
-                update: {
-                  customerId: customer.id,
-                  groupId: detail.groupId,
-                },
-                create: {
-                  kiotVietId: BigInt(detail.id),
-                  customerId: customer.id,
-                  groupId: detail.groupId,
-                },
-              });
-            }
-          }
-        }
+        //     if (customer) {
+        //       await this.prismaService.customerGroupRelation.upsert({
+        //         where: {
+        //           kiotVietId: BigInt(detail.id),
+        //         },
+        //         update: {
+        //           customerId: customer.id,
+        //           groupId: detail.groupId,
+        //         },
+        //         create: {
+        //           kiotVietId: BigInt(detail.id),
+        //           customerId: customer.id,
+        //           groupId: detail.groupId,
+        //         },
+        //       });
+        //     }
+        //   }
+        // }
         savedGroups.push(group);
       } catch (error) {
         this.logger.error(
