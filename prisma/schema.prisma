@@ -276,6 +276,8 @@ model CustomerGroup {
   retailerId        Int?
   createdDate       DateTime
   createdBy         Int?
+  createdByName     String?
+  discount          Int?
   lastSyncedAt      DateTime              @default(now())
   
   customers         CustomerGroupRelation[]

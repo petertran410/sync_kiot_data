@@ -5,18 +5,17 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { KiotVietAuthService } from '../auth.service';
 import { firstValueFrom } from 'rxjs';
 import { Prisma } from '@prisma/client';
-import { response } from 'express';
 
 interface KiotVietCustomerGroup {
   id: number;
   name: string;
   description?: string;
-  discount?: number;
-  retailerId?: number;
   createdDate?: string;
-  modifiedDate?: string;
   createdBy?: number;
-  customerGroupDetails?: Array<{
+  retailerId?: number;
+  discount: number;
+  createdByName?: string;
+  customerGroupDetails: Array<{
     id: number;
     customerId: number;
     groupId: number;
@@ -374,38 +373,69 @@ export class KiotVietCustomerGroupService {
 
     for (const groupData of customerGroups) {
       try {
+        const user = await this.prismaService.user.findFirst({
+          where: { kiotVietId: groupData.createdBy },
+          select: { id: true, userName: true },
+        });
+
         const group = await this.prismaService.customerGroup.upsert({
           where: { kiotVietId: groupData.id },
           update: {
-            name: groupData.name.trim(),
-            description: groupData.description?.trim() || null,
-            retailerId: groupData.retailerId || null,
+            name: groupData.name,
+            description: groupData.description || '',
+            retailerId: groupData.retailerId,
+            createdDate: groupData.createdDate
+              ? new Date(groupData.createdDate)
+              : new Date(),
+            createdBy: user?.id,
+            discount: groupData.discount,
+            createdByName: user?.userName,
             lastSyncedAt: new Date(),
           },
           create: {
             kiotVietId: groupData.id,
-            name: groupData.name.trim(),
-            description: groupData.description?.trim() || null,
-            retailerId: groupData.retailerId || null,
+            name: groupData.name,
+            description: groupData.description || '',
+            retailerId: groupData.retailerId,
             createdDate: groupData.createdDate
               ? new Date(groupData.createdDate)
               : new Date(),
+            discount: groupData.discount,
+            createdBy: user?.id,
+            createdByName: user?.userName,
             lastSyncedAt: new Date(),
           },
         });
 
-        savedGroups.push(group);
-
-        // Process customer group relationships if available
         if (
           groupData.customerGroupDetails &&
           groupData.customerGroupDetails.length > 0
         ) {
-          await this.syncCustomerGroupRelations(
-            group.id,
-            groupData.customerGroupDetails,
-          );
+          for (const detail of groupData.customerGroupDetails) {
+            const customer = await this.prismaService.customer.findFirst({
+              where: { kiotVietId: BigInt(detail.customerId) },
+              select: { id: true },
+            });
+
+            if (customer) {
+              await this.prismaService.customerGroupRelation.upsert({
+                where: {
+                  kiotVietId: detail.id ? BigInt(detail.id) : BigInt(0),
+                },
+                update: {
+                  customerId: customer.id,
+                  customerGroupId: detail.groupId,
+                },
+                create: {
+                  kiotVietId: BigInt(detail.id),
+                  customerId: customer.id,
+                  customerGroupId: detail.groupId,
+                },
+              });
+            }
+          }
         }
+        savedGroups.push(group);
       } catch (error) {
         this.logger.error(
           `❌ Failed to save customer group ${groupData.name}: ${error.message}`,
@@ -417,44 +447,6 @@ export class KiotVietCustomerGroupService {
       `💾 Saved ${savedGroups.length} customer groups to database`,
     );
     return savedGroups;
-  }
-
-  private async syncCustomerGroupRelations(
-    customerGroupId: number,
-    relations: Array<{ id: number; customerId: number; groupId: number }>,
-  ): Promise<void> {
-    try {
-      for (const relation of relations) {
-        // Find customer in database
-        const customer = await this.prismaService.customer.findFirst({
-          where: { kiotVietId: BigInt(relation.customerId) },
-          select: { id: true },
-        });
-
-        if (customer) {
-          await this.prismaService.customerGroupRelation.upsert({
-            where: {
-              customerId_customerGroupId: {
-                customerId: customer.id,
-                customerGroupId: customerGroupId,
-              },
-            },
-            update: {
-              kiotVietId: BigInt(relation.id),
-            },
-            create: {
-              kiotVietId: BigInt(relation.id),
-              customerId: customer.id,
-              customerGroupId: customerGroupId,
-            },
-          });
-        }
-      }
-    } catch (error) {
-      this.logger.warn(
-        `⚠️ Failed to sync customer group relations for group ${customerGroupId}: ${error.message}`,
-      );
-    }
   }
 
   private async updateSyncControl(name: string, data: any): Promise<void> {
@@ -485,10 +477,6 @@ export class KiotVietCustomerGroupService {
       throw error;
     }
   }
-
-  // async fetchCustomerGroups() {
-  //   return this.fetchCustomerGroupsWithRetry();
-  // }
 
   async syncCustomerGroups(): Promise<void> {
     this.logger.warn(
