@@ -8,12 +8,12 @@ import { Prisma } from '@prisma/client';
 
 interface KiotVietCustomerGroup {
   id: number;
-  name: string;
+  name?: string;
   description?: string;
   createdDate?: string;
   createdBy?: number;
   retailerId?: number;
-  discount: number;
+  discount?: number;
   createdByName?: string;
   customerGroupDetails: Array<{
     id: number;
@@ -381,28 +381,28 @@ export class KiotVietCustomerGroupService {
         const group = await this.prismaService.customerGroup.upsert({
           where: { kiotVietId: groupData.id },
           update: {
-            name: groupData.name,
+            name: groupData.name || '',
             description: groupData.description || '',
-            retailerId: groupData.retailerId,
+            retailerId: groupData.retailerId || null,
             createdDate: groupData.createdDate
               ? new Date(groupData.createdDate)
               : new Date(),
             createdBy: user?.id,
-            discount: groupData.discount,
-            createdByName: user?.userName,
+            discount: groupData.discount || 0,
+            createdByName: user?.userName || '',
             lastSyncedAt: new Date(),
           },
           create: {
-            kiotVietId: groupData.id,
-            name: groupData.name,
+            kiotVietId: groupData.id || null,
+            name: groupData.name || '',
             description: groupData.description || '',
-            retailerId: groupData.retailerId,
+            retailerId: groupData.retailerId || null,
             createdDate: groupData.createdDate
               ? new Date(groupData.createdDate)
               : new Date(),
-            discount: groupData.discount,
             createdBy: user?.id,
-            createdByName: user?.userName,
+            discount: groupData.discount || 0,
+            createdByName: user?.userName || '',
             lastSyncedAt: new Date(),
           },
         });
@@ -420,16 +420,16 @@ export class KiotVietCustomerGroupService {
             if (customer) {
               await this.prismaService.customerGroupRelation.upsert({
                 where: {
-                  kiotVietId: detail.id ? BigInt(detail.id) : BigInt(0),
+                  kiotVietId: BigInt(detail.id),
                 },
                 update: {
                   customerId: customer.id,
-                  customerGroupId: detail.groupId,
+                  groupId: detail.groupId,
                 },
                 create: {
                   kiotVietId: BigInt(detail.id),
                   customerId: customer.id,
-                  customerGroupId: detail.groupId,
+                  groupId: detail.groupId,
                 },
               });
             }
