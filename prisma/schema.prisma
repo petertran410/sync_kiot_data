@@ -260,6 +260,7 @@ model CustomerGroup {
   kiotVietId            Int                     @unique
   name                  String
   description           String?
+  discount              Int?
   retailerId            Int?
   createdDate           DateTime
   lastSyncedAt          DateTime                @default(now())

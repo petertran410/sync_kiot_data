@@ -380,7 +380,7 @@ export class KiotVietCustomerGroupService {
 
         const group = await this.prismaService.customerGroup.upsert({
           where: {
-            uniqueKey: customerGroup.createdBy + '.' + customerGroup.id,
+            kiotVietId: customerGroup.id,
           },
           update: {
             name: customerGroup.name || '',
@@ -389,7 +389,6 @@ export class KiotVietCustomerGroupService {
             createdDate: customerGroup.createdDate
               ? new Date(customerGroup.createdDate)
               : new Date(),
-            uniqueKey: customerGroup.createdBy + '.' + customerGroup.id,
             createdBy: customerGroup.createdBy,
             discount: customerGroup.discount || 0,
             lastSyncedAt: new Date(),
@@ -402,7 +401,6 @@ export class KiotVietCustomerGroupService {
             createdDate: customerGroup.createdDate
               ? new Date(customerGroup.createdDate)
               : new Date(),
-            uniqueKey: customerGroup.createdBy + '.' + customerGroup.id,
             createdBy: customerGroup.createdBy,
             discount: customerGroup.discount || 0,
             lastSyncedAt: new Date(),
