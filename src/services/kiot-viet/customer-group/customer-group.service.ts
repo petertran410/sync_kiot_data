@@ -12,9 +12,8 @@ interface KiotVietCustomerGroup {
   description?: string;
   createdDate?: string;
   createdBy?: number;
-  retailerId?: number;
+  retailerId: number;
   discount?: number;
-  createdByName?: string;
   customerGroupDetails: Array<{
     id: number;
     customerId: number;
@@ -116,7 +115,7 @@ export class KiotVietCustomerGroupService {
             `📄 Fetching page ${currentPage} (items ${currentItem} - ${currentItem + this.PAGE_SIZE - 1})`,
           );
 
-          const response = await this.fetchCustomerGroupsWithRetry({
+          const response = await this.fetchCustomerGroupsListWithRetry({
             currentItem,
             pageSize: this.PAGE_SIZE,
           });
@@ -171,7 +170,7 @@ export class KiotVietCustomerGroupService {
           const newCustomerGroups = customer_groups.filter((customer_group) => {
             if (processedCustomerGroupsIds.has(customer_group.id)) {
               this.logger.debug(
-                `⚠️ Duplicate customer_group ID detected: ${customer_group.id} (${customer_group.code})`,
+                `⚠️ Duplicate customer_group ID detected: ${customer_group.id} (${customer_group.name})`,
               );
               return false;
             }
@@ -275,7 +274,7 @@ export class KiotVietCustomerGroupService {
     }
   }
 
-  async fetchCustomerGroupsWithRetry(
+  async fetchCustomerGroupsListWithRetry(
     params: {
       currentItem?: number;
       pageSize?: number;
@@ -294,8 +293,8 @@ export class KiotVietCustomerGroupService {
         );
 
         if (attempt < maxRetries) {
-          const delayMs = 1000 * Math.pow(2, attempt - 1);
-          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          const delay = 2000 * attempt;
+          await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }
     }
@@ -353,7 +352,7 @@ export class KiotVietCustomerGroupService {
         await new Promise((resolve) => setTimeout(resolve, 50));
       } catch (error) {
         this.logger.warn(
-          `Failed to enrich supplier ${customer_group.name}: ${error.message}`,
+          `Failed to enrich customer_group ${customer_group.name}: ${error.message}`,
         );
 
         enrichedCustomerGroups.push(customer_group);
@@ -371,47 +370,45 @@ export class KiotVietCustomerGroupService {
 
     const savedGroups: any[] = [];
 
-    for (const groupData of customerGroups) {
+    for (const customerGroup of customerGroups) {
       try {
-        const user = await this.prismaService.user.findFirst({
-          where: { kiotVietId: groupData.createdBy },
-          select: { id: true, userName: true },
-        });
+        // const user = await this.prismaService.user.findFirst({
+        //   where: { kiotVietId: groupData.createdBy },
+        //   select: { id: true, userName: true },
+        // });
 
         const group = await this.prismaService.customerGroup.upsert({
-          where: { kiotVietId: groupData.id },
+          where: { kiotVietId: Number(customerGroup.id) },
           update: {
-            name: groupData.name || '',
-            description: groupData.description || '',
-            retailerId: groupData.retailerId || null,
-            createdDate: groupData.createdDate
-              ? new Date(groupData.createdDate)
+            name: customerGroup.name || '',
+            description: customerGroup.description || '',
+            retailerId: Number(customerGroup.retailerId),
+            createdDate: customerGroup.createdDate
+              ? new Date(customerGroup.createdDate)
               : new Date(),
-            createdBy: user?.id,
-            discount: groupData.discount || 0,
-            createdByName: user?.userName || '',
+            createdBy: customerGroup.createdBy,
+            discount: customerGroup.discount || 0,
             lastSyncedAt: new Date(),
           },
           create: {
-            kiotVietId: groupData.id || null,
-            name: groupData.name || '',
-            description: groupData.description || '',
-            retailerId: groupData.retailerId || null,
-            createdDate: groupData.createdDate
-              ? new Date(groupData.createdDate)
+            kiotVietId: customerGroup.id,
+            name: customerGroup.name || '',
+            description: customerGroup.description || '',
+            retailerId: Number(customerGroup.retailerId),
+            createdDate: customerGroup.createdDate
+              ? new Date(customerGroup.createdDate)
               : new Date(),
-            createdBy: user?.id,
-            discount: groupData.discount || 0,
-            createdByName: user?.userName || '',
+            createdBy: customerGroup.createdBy,
+            discount: customerGroup.discount || 0,
             lastSyncedAt: new Date(),
           },
         });
 
         if (
-          groupData.customerGroupDetails &&
-          groupData.customerGroupDetails.length > 0
+          customerGroup.customerGroupDetails &&
+          customerGroup.customerGroupDetails.length > 0
         ) {
-          for (const detail of groupData.customerGroupDetails) {
+          for (const detail of customerGroup.customerGroupDetails) {
             const customer = await this.prismaService.customer.findFirst({
               where: { kiotVietId: BigInt(detail.customerId) },
               select: { id: true },
@@ -438,7 +435,7 @@ export class KiotVietCustomerGroupService {
         savedGroups.push(group);
       } catch (error) {
         this.logger.error(
-          `❌ Failed to save customer group ${groupData.name}: ${error.message}`,
+          `❌ Failed to save customer group ${customerGroup.name}: ${error.message}`,
         );
       }
     }
@@ -476,12 +473,5 @@ export class KiotVietCustomerGroupService {
       );
       throw error;
     }
-  }
-
-  async syncCustomerGroups(): Promise<void> {
-    this.logger.warn(
-      '⚠️ Using legacy syncCustomerGroups method. Consider using syncHistoricalCustomerGroups instead.',
-    );
-    return this.syncHistoricalCustomerGroups();
   }
 }

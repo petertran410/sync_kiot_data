@@ -428,7 +428,7 @@ export class KiotVietOrderSupplierService {
         const order_supplier = await this.prismaService.orderSupplier.upsert({
           where: { kiotVietId: BigInt(orderSupplierData.id) },
           update: {
-            code: orderSupplierData.code.trim(),
+            code: orderSupplierData.code,
             orderDate: orderSupplierData.orderDate
               ? new Date(orderSupplierData.orderDate)
               : new Date(),
@@ -468,7 +468,7 @@ export class KiotVietOrderSupplierService {
           },
           create: {
             kiotVietId: BigInt(orderSupplierData.id),
-            code: orderSupplierData.code.trim(),
+            code: orderSupplierData.code,
             orderDate: orderSupplierData.orderDate
               ? new Date(orderSupplierData.orderDate)
               : new Date(),

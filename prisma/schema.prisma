@@ -270,14 +270,15 @@ model Customer {
 
 model CustomerGroup {
   id                Int                   @id @default(autoincrement())
-  kiotVietId        Int?                   @unique
-  name              String
+  kiotVietId        Int  @unique
+  name              String?
   description       String?
-  retailerId        Int?
-  createdDate       DateTime
+  retailerId        Int
+  createdDate       DateTime?
   createdBy         Int?
-  createdByName     String?
   discount          Int?
+  // lineNumber        Int
+  // uniqueKey         String?               @unique
   lastSyncedAt      DateTime              @default(now())
   
   customers         CustomerGroupRelation[]
