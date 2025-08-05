@@ -8,20 +8,19 @@ datasource db {
 }
 
 model Category {
-  id             Int       @id @default(autoincrement())
-  kiotVietId     Int?      @unique
-  name           String
-  parentId       Int?
-  parent         Category? @relation("CategoryHierarchy", fields: [parentId], references: [id])
-  children       Category[] @relation("CategoryHierarchy")
-  hasChild       Boolean    @default(false)
-  rank           Int?
-  retailerId     Int?
-  createdDate    DateTime  @default(now())
-  modifiedDate   DateTime  @updatedAt
-  lastSyncedAt   DateTime  @default(now())
-  
-  products       Product[]
+  id                      Int                       @id @default(autoincrement())
+  kiotVietId              Int?                      @unique
+  name                    String
+  parentId                Int?
+  retailerId              Int?
+  createdDate             DateTime                  @default(now())
+  modifiedDate            DateTime                  @updatedAt
+  lastSyncedAt            DateTime                  @default(now())
+  hasChild                Boolean                   @default(false)
+  rank                    Int?
+  parent                  Category?                 @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children                Category[]                @relation("CategoryHierarchy")
+  products                Product[]
   VoucherCampaignCategory VoucherCampaignCategory[]
 
   @@index([kiotVietId])
@@ -30,67 +29,58 @@ model Category {
 }
 
 model Product {
-  id                     Int                      @id @default(autoincrement())
-  kiotVietId             BigInt                   @unique
-  code                   String                   @unique
-  barCode                String?
-  name                   String
-  fullName               String
-  categoryId             Int?
-  category               Category?                @relation(fields: [categoryId], references: [id])
-  tradeMarkId            Int?
-  tradeMarkName          String?
-  tradeMark              TradeMark?               @relation(fields: [tradeMarkId], references: [id])
-  type                   Int?
-  description            String?                  @db.Text
-  allowsSale             Boolean                  @default(true)
-  hasVariants            Boolean                  @default(false)
-  basePrice              Decimal?                  @db.Decimal(15, 2)
-  unit                   String?
-  masterProductId        BigInt?
-  masterProduct          Product?                 @relation("ProductVariants", fields: [masterProductId], references: [kiotVietId])
-  variants               Product[]                @relation("ProductVariants")
-  masterUnitId           BigInt?
-  conversionValue        Float?
-  weight                 Float?
-  isLotSerialControl     Boolean                  @default(false)
-  isBatchExpireControl   Boolean                  @default(false)
-  orderTemplate          String?                  @db.Text
-  minQuantity            Int?
-  maxQuantity            Int?
-  isRewardPoint          Boolean                  @default(true)
-  isActive               Boolean                  @default(true)
-  retailerId             Int?
-  createdDate            DateTime                 @default(now())
-  modifiedDate           DateTime                 @updatedAt
-  lastSyncedAt           DateTime                 @default(now())
-
-  larkRecordId           String?
-  larkSyncStatus         LarkSyncStatus           @default(PENDING)
-  larkSyncedAt           DateTime?
-  larkSyncRetries        Int                      @default(0)
-  
-  attributes             ProductAttribute[]
-  images                 ProductImage[]
-  inventories            ProductInventory[]
-  serials                ProductSerial[]
-  batches                ProductBatchExpire[]
-  warranties             ProductWarranty[]
-  
-  // For combo products
-  productAsCombo         ProductFormula[]         @relation("ComboProduct")
-  productAsComponent     ProductFormula[]         @relation("ComponentProduct")
-  orderSupplierDetails  OrderSupplierDetail[]
-  
-  
-  // Relationships to other entities
-  orderDetails           OrderDetail[]
-  invoiceDetails         InvoiceDetail[]
-  purchaseOrderDetails   PurchaseOrderDetail[]
-  transferDetails        TransferDetail[]
-  returnDetails          ReturnDetail[]
-  priceBookDetails       PriceBookDetail[]
-  voucherCampaigns       VoucherCampaignProduct[]
+  id                   Int                      @id @default(autoincrement())
+  kiotVietId           BigInt                   @unique
+  code                 String                   @unique
+  barCode              String?
+  name                 String
+  fullName             String
+  categoryId           Int?
+  tradeMarkId          Int?
+  type                 Int?
+  description          String?
+  allowsSale           Boolean                  @default(true)
+  hasVariants          Boolean                  @default(false)
+  basePrice            Decimal?                 @db.Decimal(15, 2)
+  unit                 String?
+  masterProductId      BigInt?
+  masterUnitId         BigInt?
+  conversionValue      Float?
+  weight               Float?
+  isLotSerialControl   Boolean                  @default(false)
+  isBatchExpireControl Boolean                  @default(false)
+  orderTemplate        String?
+  minQuantity          Int?
+  maxQuantity          Int?
+  isRewardPoint        Boolean                  @default(true)
+  isActive             Boolean                  @default(true)
+  retailerId           Int?
+  createdDate          DateTime                 @default(now())
+  modifiedDate         DateTime                 @updatedAt
+  lastSyncedAt         DateTime                 @default(now())
+  larkRecordId         String?
+  larkSyncRetries      Int                      @default(0)
+  larkSyncStatus       LarkSyncStatus           @default(PENDING)
+  larkSyncedAt         DateTime?
+  tradeMarkName        String?
+  invoiceDetails       InvoiceDetail[]
+  orderDetails         OrderDetail[]
+  orderSupplierDetails OrderSupplierDetail[]
+  priceBookDetails     PriceBookDetail[]
+  category             Category?                @relation(fields: [categoryId], references: [id])
+  tradeMark            TradeMark?               @relation(fields: [tradeMarkId], references: [id])
+  attributes           ProductAttribute[]
+  batches              ProductBatchExpire[]
+  productAsComponent   ProductFormula[]         @relation("ComponentProduct")
+  productAsCombo       ProductFormula[]         @relation("ComboProduct")
+  images               ProductImage[]
+  inventories          ProductInventory[]
+  serials              ProductSerial[]
+  warranties           ProductWarranty[]
+  purchaseOrderDetails PurchaseOrderDetail[]
+  returnDetails        ReturnDetail[]
+  transferDetails      TransferDetail[]
+  voucherCampaigns     VoucherCampaignProduct[]
 
   @@index([kiotVietId])
   @@index([code])
@@ -100,49 +90,48 @@ model Product {
 }
 
 model ProductAttribute {
-  id               Int      @id @default(autoincrement())
-  kiotVietId       BigInt?  @unique
-  productId        Int
-  product          Product  @relation(fields: [productId], references: [id])
-  attributeName    String
-  attributeValue   String
-  lastSyncedAt     DateTime @default(now())
+  id             Int      @id @default(autoincrement())
+  kiotVietId     BigInt?  @unique
+  productId      Int
+  attributeName  String
+  attributeValue String
+  lastSyncedAt   DateTime @default(now())
+  product        Product  @relation(fields: [productId], references: [id])
 
   @@unique([productId, attributeName, attributeValue])
   @@index([productId])
 }
 
 model ProductImage {
-  id               Int      @id @default(autoincrement())
-  productId        Int
-  product          Product  @relation(fields: [productId], references: [id])
-  imageUrl         String
-  displayOrder     Int      @default(0)
-  lastSyncedAt     DateTime @default(now())
+  id           Int      @id @default(autoincrement())
+  productId    Int
+  imageUrl     String
+  displayOrder Int      @default(0)
+  lastSyncedAt DateTime @default(now())
+  product      Product  @relation(fields: [productId], references: [id])
 
   @@index([productId])
 }
 
 model ProductInventory {
-  id               Int      @id @default(autoincrement())
-  productId        Int
-  productCode      String?
-  productName      String?
-  product          Product?  @relation(fields: [productId], references: [id])
-  branchId         Int?
-  branchName       String?
-  // branch           Branch?   @relation(fields: [branchId], references: [id])
-  onHand           Int?
-  reserved         Int?
-  lineNumber       Int?
-  actualReserved   Int?
-  onOrder          Int?
-  cost             Decimal? @db.Decimal(15, 2)
-  minQuantity      Int?
-  maxQuantity      Int?
-  isActive         Boolean?
-  modifiedDate     DateTime @updatedAt
-  lastSyncedAt     DateTime @default(now())
+  id             Int      @id @default(autoincrement())
+  productId      Int
+  branchId       Int?
+  onHand         Int?
+  reserved       Int?
+  onOrder        Int?
+  cost           Decimal? @db.Decimal(15, 2)
+  minQuantity    Int?
+  maxQuantity    Int?
+  modifiedDate   DateTime @updatedAt
+  lastSyncedAt   DateTime @default(now())
+  branchName     String?
+  productCode    String?
+  productName    String?
+  actualReserved Int?
+  isActive       Boolean?
+  lineNumber     Int?
+  product        Product  @relation(fields: [productId], references: [id])
 
   @@unique([productId, lineNumber])
   @@index([productId])
@@ -150,18 +139,18 @@ model ProductInventory {
 }
 
 model ProductSerial {
-  id               Int      @id @default(autoincrement())
-  kiotVietId       BigInt?  @unique
-  productId        Int
-  product          Product  @relation(fields: [productId], references: [id])
-  serialNumber     String
-  branchId         Int
-  branch           Branch   @relation(fields: [branchId], references: [id])
-  status           Int      // 1: in stock, 0: sold
-  quantity         Float    @default(1)
-  createdDate      DateTime @default(now())
-  modifiedDate     DateTime @updatedAt
-  lastSyncedAt     DateTime @default(now())
+  id           Int      @id @default(autoincrement())
+  kiotVietId   BigInt?  @unique
+  productId    Int
+  serialNumber String
+  branchId     Int
+  status       Int
+  quantity     Float    @default(1)
+  createdDate  DateTime @default(now())
+  modifiedDate DateTime @updatedAt
+  lastSyncedAt DateTime @default(now())
+  branch       Branch   @relation(fields: [branchId], references: [id])
+  product      Product  @relation(fields: [productId], references: [id])
 
   @@unique([productId, serialNumber, branchId])
   @@index([productId])
@@ -169,18 +158,18 @@ model ProductSerial {
 }
 
 model ProductBatchExpire {
-  id               Int       @id @default(autoincrement())
-  kiotVietId       BigInt?   @unique
-  productId        Int
-  product          Product   @relation(fields: [productId], references: [id])
-  batchName        String?
-  fullNameVirgule  String?
-  onHand           Float     @default(0)
-  branchId         Int
-  branch           Branch    @relation(fields: [branchId], references: [id])
-  createdDate      DateTime  @default(now())
-  lastSyncedAt     DateTime  @default(now())
-  purchaseOrderDetailBatches  PurchaseOrderDetailBatch[]
+  id                         Int                        @id @default(autoincrement())
+  kiotVietId                 BigInt?                    @unique
+  productId                  Int
+  batchName                  String?
+  fullNameVirgule            String?
+  onHand                     Float                      @default(0)
+  branchId                   Int
+  createdDate                DateTime                   @default(now())
+  lastSyncedAt               DateTime                   @default(now())
+  branch                     Branch                     @relation(fields: [branchId], references: [id])
+  product                    Product                    @relation(fields: [productId], references: [id])
+  purchaseOrderDetailBatches PurchaseOrderDetailBatch[]
 
   @@unique([productId, batchName, branchId])
   @@index([productId])
@@ -188,31 +177,31 @@ model ProductBatchExpire {
 }
 
 model ProductWarranty {
-  id               Int       @id @default(autoincrement())
-  kiotVietId       BigInt?   @unique
-  productId        Int
-  product          Product   @relation(fields: [productId], references: [id])
-  description      String?
-  numberTime       Int
-  timeType         Int       // 1: day, 2: month, 3: year
-  warrantyType     Int       // 1: warranty, 3: maintenance
-  createdDate      DateTime  @default(now())
-  modifiedDate     DateTime  @updatedAt
-  lastSyncedAt     DateTime  @default(now())
+  id           Int      @id @default(autoincrement())
+  kiotVietId   BigInt?  @unique
+  productId    Int
+  description  String?
+  numberTime   Int
+  timeType     Int
+  warrantyType Int
+  createdDate  DateTime @default(now())
+  modifiedDate DateTime @updatedAt
+  lastSyncedAt DateTime @default(now())
+  product      Product  @relation(fields: [productId], references: [id])
 
   @@index([productId])
 }
 
 model ProductFormula {
-  id               Int       @id @default(autoincrement())
-  kiotVietId       BigInt?   @unique
-  productId        Int       // Combo product
-  product          Product   @relation("ComboProduct", fields: [productId], references: [id])
-  materialId       Int       // Component product
-  materialProduct  Product   @relation("ComponentProduct", fields: [materialId], references: [id])
-  quantity         Float
-  basePrice        Decimal   @db.Decimal(15, 2)
-  lastSyncedAt     DateTime  @default(now())
+  id              Int      @id @default(autoincrement())
+  kiotVietId      BigInt?  @unique
+  productId       Int
+  materialId      Int
+  quantity        Float
+  basePrice       Decimal  @db.Decimal(15, 2)
+  lastSyncedAt    DateTime @default(now())
+  materialProduct Product  @relation("ComponentProduct", fields: [materialId], references: [id])
+  product         Product  @relation("ComboProduct", fields: [productId], references: [id])
 
   @@unique([productId, materialId])
   @@index([productId])
@@ -220,186 +209,178 @@ model ProductFormula {
 }
 
 model Customer {
-  id                Int                @id @default(autoincrement())
-  kiotVietId        BigInt?            @unique
-  code              String             @unique
-  name              String
-  type              Int?
-  gender            Boolean?
-  birthDate         DateTime?
-  contactNumber     String?
-  address           String?
-  locationName      String?
-  wardName          String?
-  email             String?
-  organization      String?
-  comments          String?            @db.Text
-  taxCode           String?
-  groups            String?
-  debt              Decimal?           @db.Decimal(15, 2)
-  totalInvoiced     Decimal?           @db.Decimal(15, 2)
-  totalPoint        Float?
-  totalRevenue      Decimal?           @db.Decimal(15, 2)
-  rewardPoint       BigInt?
-  psidFacebook      BigInt?
-  isActive          Boolean            @default(true)
-  retailerId        Int?
-  branchId         Int?
-  branch           Branch?               @relation(fields: [branchId], references: [id])
-  createdDate       DateTime?
-  modifiedDate      DateTime?
-  lastSyncedAt      DateTime           @default(now())
-  larkRecordId      String?
-  larkSyncStatus    LarkSyncStatus     @default(PENDING)
-  larkSyncedAt      DateTime?
-  larkSyncRetries   Int                @default(0)
-  
-  orders            Order[]
-  invoices          Invoice[]
-  
+  id                    Int                     @id @default(autoincrement())
+  kiotVietId            BigInt?                 @unique
+  code                  String                  @unique
+  name                  String
+  type                  Int?
+  gender                Boolean?
+  birthDate             DateTime?
+  contactNumber         String?
+  address               String?
+  locationName          String?
+  wardName              String?
+  email                 String?
+  organization          String?
+  taxCode               String?
+  comments              String?
+  debt                  Decimal?                @db.Decimal(15, 2)
+  totalInvoiced         Decimal?                @db.Decimal(15, 2)
+  totalPoint            Float?
+  totalRevenue          Decimal?                @db.Decimal(15, 2)
+  rewardPoint           BigInt?
+  psidFacebook          BigInt?
+  retailerId            Int?
+  branchId              Int?
+  isActive              Boolean                 @default(true)
+  createdDate           DateTime?
+  modifiedDate          DateTime?
+  lastSyncedAt          DateTime                @default(now())
+  larkRecordId          String?
+  larkSyncRetries       Int                     @default(0)
+  larkSyncStatus        LarkSyncStatus          @default(PENDING)
+  larkSyncedAt          DateTime?
+  groups                String?
+  branch                Branch?                 @relation(fields: [branchId], references: [id])
+  CustomerGroupRelation CustomerGroupRelation[]
+  invoices              Invoice[]
+  orders                Order[]
+  Return                Return[]
+
   @@index([kiotVietId])
   @@index([code])
   @@index([lastSyncedAt])
   @@index([larkSyncStatus])
   @@index([branchId])
   @@index([groups])
-  CustomerGroupRelation CustomerGroupRelation[]
-  Return Return[]
 }
 
-
 model CustomerGroup {
-  id                Int                   @id @default(autoincrement())
-  kiotVietId        Int?
-  uniqueKey         String
-  name              String?
-  description       String?
-  retailerId        Int?
-  createdDate       DateTime?
-  createdBy         Int?
-  discount          Int?
-  lastSyncedAt      DateTime              @default(now())
-  
-  customers         CustomerGroupRelation[]
+  id                    Int                     @id @default(autoincrement())
+  kiotVietId            Int                     @unique
+  name                  String
+  description           String?
+  retailerId            Int?
+  createdDate           DateTime
+  lastSyncedAt          DateTime                @default(now())
+  createdBy             Int?
+  CustomerGroupRelation CustomerGroupRelation[]
 
-  @@unique([uniqueKey])
   @@index([kiotVietId])
 }
 
 model CustomerGroupRelation {
-  id                Int             @id @default(autoincrement())
-  kiotVietId        BigInt          @unique
-  customerId        Int
-  customer          Customer        @relation(fields: [customerId], references: [id])
-  groupId           Int
-  customerGroup     CustomerGroup   @relation(fields: [groupId], references: [id])
+  id              Int           @id @default(autoincrement())
+  kiotVietId      BigInt?       @unique
+  customerId      Int
+  customerGroupId Int
+  CustomerGroup   CustomerGroup @relation(fields: [customerGroupId], references: [id])
+  customer        Customer      @relation(fields: [customerId], references: [id])
 
+  @@unique([customerId, customerGroupId])
   @@index([customerId])
-  @@index([groupId])
+  @@index([customerGroupId])
 }
 
 model Branch {
-  id                Int                @id @default(autoincrement())
-  kiotVietId        Int                @unique
-  name              String
-  code              String?
-  contactNumber     String?
-  subContactNumber  String?
-  email             String?
-  address           String?
-  location          String?
-  wardName          String?
-  isActive          Boolean            @default(true)
-  isLock            Boolean            @default(false)
-  retailerId        Int?
-  createdDate       DateTime           @default(now())
-  modifiedDate      DateTime           @updatedAt
-  lastSyncedAt      DateTime           @default(now())
-  
-  // inventories       ProductInventory[]
-  serials           ProductSerial[]
-  batches           ProductBatchExpire[]
-  customers         Customer[]
-  orders            Order[]            @relation("BranchOrders")
-  invoices          Invoice[]          @relation("BranchInvoices")
-  transfersFrom     Transfer[]         @relation("SourceBranch")
-  transfersTo       Transfer[]         @relation("DestinationBranch")
-  purchaseOrders    PurchaseOrder[]
-  returns           Return[]
-  priceBooks        PriceBookBranch[]
-  voucherCampaigns  VoucherCampaignBranch[]
-  orderSuppliers        OrderSupplier[]
+  id               Int                     @id @default(autoincrement())
+  kiotVietId       Int                     @unique
+  name             String
+  code             String?
+  contactNumber    String?
+  subContactNumber String?
+  email            String?
+  address          String?
+  location         String?
+  wardName         String?
+  isActive         Boolean                 @default(true)
+  isLock           Boolean                 @default(false)
+  retailerId       Int?
+  createdDate      DateTime                @default(now())
+  modifiedDate     DateTime                @updatedAt
+  lastSyncedAt     DateTime                @default(now())
+  Cashflow         Cashflow[]
+  customers        Customer[]
+  Invoice          Invoice[]
+  Order            Order[]
+  orderSuppliers   OrderSupplier[]
+  priceBooks       PriceBookBranch[]
+  batches          ProductBatchExpire[]
+  serials          ProductSerial[]
+  purchaseOrders   PurchaseOrder[]
+  returns          Return[]
+  transfersFrom    Transfer[]              @relation("SourceBranch")
+  transfersTo      Transfer[]              @relation("DestinationBranch")
+  voucherCampaigns VoucherCampaignBranch[]
+  invoices         Invoice[]               @relation("BranchInvoices")
+  orders           Order[]                 @relation("BranchOrders")
 
   @@index([kiotVietId])
-  Cashflow Cashflow[]
-  Invoice Invoice[]
-  Order Order[]
 }
 
 model User {
-  id                Int                @id @default(autoincrement())
-  kiotVietId        BigInt             @unique
-  userName          String
-  givenName         String
-  address           String?
-  mobilePhone       String?
-  email             String?
-  description       String?
-  birthDate         DateTime?
-  retailerId        Int?
-  isActive          Boolean?
-  createdDate       DateTime           @default(now())
-  modifiedDate      DateTime           @updatedAt
-  lastSyncedAt      DateTime           @default(now())
-  
-  orders            Order[]            @relation("OrderSoldBy")
-  invoices          Invoice[]          @relation("InvoiceSoldBy")
-  priceBooks        PriceBookUser[]
-  voucherCampaigns  VoucherCampaignUser[]
+  id               Int                   @id @default(autoincrement())
+  kiotVietId       BigInt                @unique
+  userName         String
+  givenName        String
+  address          String?
+  mobilePhone      String?
+  email            String?
+  description      String?
+  birthDate        DateTime?
+  retailerId       Int?
+  createdDate      DateTime              @default(now())
+  modifiedDate     DateTime              @updatedAt
+  lastSyncedAt     DateTime              @default(now())
+  isActive         Boolean?
+  invoices         Invoice[]             @relation("InvoiceSoldBy")
+  orders           Order[]               @relation("OrderSoldBy")
+  priceBooks       PriceBookUser[]
+  voucherCampaigns VoucherCampaignUser[]
 
   @@index([kiotVietId])
 }
 
 model Order {
-  id                Int                @id @default(autoincrement())
-  kiotVietId        BigInt             @unique
-  code              String             @unique
-  purchaseDate      DateTime
-  branchId          Int?
-  branch            Branch?             @relation(fields: [branchId], references: [id])
-  soldById          BigInt?
-  soldBy            User?              @relation("OrderSoldBy", fields: [soldById], references: [kiotVietId])
-  cashierId         BigInt?
-  customerId        Int?
-  customerCode      String?
-  customerName      String?
-  customer          Customer?          @relation(fields: [customerId], references: [id])
-  total             Decimal            @db.Decimal(15, 2)
-  totalPayment      Decimal            @db.Decimal(15, 2)
-  discount          Decimal?           @db.Decimal(15, 2)
-  discountRatio     Float?
-  status            Int?
-  statusValue       String?
-  description       String?            @db.Text
-  usingCod          Boolean            @default(false)
-  saleChannelId     Int?
-  saleChannelName   String?
-  saleChannel       SaleChannel?       @relation(fields: [saleChannelId], references: [id])
-  expectedDelivery  DateTime?
-  retailerId        Int?
-  createdDate       DateTime?
-  modifiedDate      DateTime?
-  lastSyncedAt      DateTime           @default(now())
-  larkRecordId      String?
-  larkSyncStatus    LarkSyncStatus     @default(PENDING)
-  larkSyncedAt      DateTime?
-  larkSyncRetries   Int                @default(0)
-  
-  orderDetails      OrderDetail[]
-  orderDelivery     OrderDelivery?
-  orderSurcharges   OrderSurcharge[]
-  payments          Payment[]
-  invoices          Invoice[]
+  id               Int              @id @default(autoincrement())
+  kiotVietId       BigInt           @unique
+  code             String           @unique
+  purchaseDate     DateTime
+  branchId         Int?
+  soldById         BigInt?
+  cashierId        BigInt?
+  customerId       Int?
+  total            Decimal          @db.Decimal(15, 2)
+  totalPayment     Decimal          @db.Decimal(15, 2)
+  discount         Decimal?         @db.Decimal(15, 2)
+  discountRatio    Float?
+  status           Int?
+  description      String?
+  usingCod         Boolean          @default(false)
+  saleChannelId    Int?
+  expectedDelivery DateTime?
+  retailerId       Int?
+  createdDate      DateTime?
+  modifiedDate     DateTime?
+  lastSyncedAt     DateTime         @default(now())
+  larkRecordId     String?
+  larkSyncRetries  Int              @default(0)
+  larkSyncStatus   LarkSyncStatus   @default(PENDING)
+  larkSyncedAt     DateTime?
+  statusValue      String?
+  customerCode     String?
+  customerName     String?
+  saleChannelName  String?
+  invoices         Invoice[]
+  branch           Branch?          @relation(fields: [branchId], references: [id])
+  customer         Customer?        @relation(fields: [customerId], references: [id])
+  saleChannel      SaleChannel?     @relation(fields: [saleChannelId], references: [id])
+  soldBy           User?            @relation("OrderSoldBy", fields: [soldById], references: [kiotVietId])
+  orderDelivery    OrderDelivery?
+  orderDetails     OrderDetail[]
+  orderSurcharges  OrderSurcharge[]
+  payments         Payment[]
+  Branch           Branch[]         @relation("BranchOrders")
 
   @@index([kiotVietId])
   @@index([code])
@@ -409,25 +390,24 @@ model Order {
   @@index([saleChannelId])
   @@index([lastSyncedAt])
   @@index([larkSyncStatus])
-  Branch Branch[] @relation("BranchOrders")
 }
 
 model OrderDetail {
-  id                Int                @id @default(autoincrement())
-  orderId           Int
-  order             Order              @relation(fields: [orderId], references: [id])
-  productId         Int
-  product           Product            @relation(fields: [productId], references: [id])
-  productName       String
-  productCode       String
-  quantity          Float
-  lineNumber        Int?
-  price             Decimal            @db.Decimal(15, 2)
-  discount          Decimal?           @db.Decimal(15, 2)
-  discountRatio     Float?
-  note              String?
-  isMaster          Boolean            @default(true)
-  
+  id            Int      @id @default(autoincrement())
+  orderId       Int
+  productId     Int
+  quantity      Float
+  price         Decimal  @db.Decimal(15, 2)
+  discount      Decimal? @db.Decimal(15, 2)
+  discountRatio Float?
+  note          String?
+  isMaster      Boolean  @default(true)
+  productCode   String
+  productName   String
+  lineNumber    Int?
+  order         Order    @relation(fields: [orderId], references: [id])
+  product       Product  @relation(fields: [productId], references: [id])
+
   @@unique([orderId, lineNumber])
   @@index([orderId])
   @@index([productId])
@@ -435,85 +415,83 @@ model OrderDetail {
 }
 
 model OrderDelivery {
-  id                Int                @id @default(autoincrement())
-  orderId           Int                @unique
-  order             Order              @relation(fields: [orderId], references: [id])
-  deliveryCode      String?
-  type              Int?
-  price             Decimal?           @db.Decimal(15, 2)
-  receiver          String?
-  contactNumber     String?
-  address           String?
-  locationId        Int?
-  locationName      String?
-  wardName          String?
-  weight            Float?
-  length            Float?
-  width             Float?
-  height            Float?
-  
+  id            Int      @id @default(autoincrement())
+  orderId       Int      @unique
+  deliveryCode  String?
+  type          Int?
+  price         Decimal? @db.Decimal(15, 2)
+  receiver      String?
+  contactNumber String?
+  address       String?
+  locationId    Int?
+  locationName  String?
+  wardName      String?
+  weight        Float?
+  length        Float?
+  width         Float?
+  height        Float?
+  order         Order    @relation(fields: [orderId], references: [id])
+
   @@index([orderId])
 }
 
 model OrderSurcharge {
-  id                Int                @id @default(autoincrement())
-  kiotVietId        BigInt?            @unique
-  orderId           Int
-  order             Order              @relation(fields: [orderId], references: [id])
-  surchargeId       Int?
-  surcharge         Surcharge?         @relation(fields: [surchargeId], references: [id])
-  surchargeName     String?
-  surValue          Decimal?           @db.Decimal(15, 2)
-  price             Decimal?           @db.Decimal(15, 2)
-  createdDate       DateTime           @default(now())
-  
+  id            Int        @id @default(autoincrement())
+  kiotVietId    BigInt?    @unique
+  orderId       Int
+  surchargeId   Int?
+  surchargeName String?
+  surValue      Decimal?   @db.Decimal(15, 2)
+  price         Decimal?   @db.Decimal(15, 2)
+  createdDate   DateTime   @default(now())
+  order         Order      @relation(fields: [orderId], references: [id])
+  surcharge     Surcharge? @relation(fields: [surchargeId], references: [id])
+
   @@index([orderId])
   @@index([surchargeId])
 }
 
 model OrderSupplier {
-  id                    Int                           @id @default(autoincrement())
-  kiotVietId            BigInt                        @unique
-  code                  String                        @unique
+  id                    Int                          @id @default(autoincrement())
+  kiotVietId            BigInt                       @unique
+  code                  String                       @unique
   orderDate             DateTime
   branchId              Int?
-  branch                Branch?                        @relation(fields: [branchId], references: [id])
-  retailerId            Int? 
+  retailerId            Int?
   userId                BigInt?
-  description           String?                       @db.Text
+  description           String?
   status                Int?
   statusValue           String?
   discountRatio         Float?
   productQty            Float?
-  discount              Decimal?                      @db.Decimal(15, 2)
-  total                 Decimal                       @db.Decimal(15, 2)
-  exReturnSuppliers     Decimal?                      @db.Decimal(15, 2)
-  exReturnThirdParty    Decimal?                      @db.Decimal(15, 2)
-  totalAmt              Decimal?                      @db.Decimal(15, 2)
+  discount              Decimal?                     @db.Decimal(15, 2)
+  total                 Decimal                      @db.Decimal(15, 2)
+  exReturnSuppliers     Decimal?                     @db.Decimal(15, 2)
+  exReturnThirdParty    Decimal?                     @db.Decimal(15, 2)
+  totalAmt              Decimal?                     @db.Decimal(15, 2)
   totalQty              Float?
   totalQuantity         Float
   totalProductType      Int?
-  subTotal              Decimal                       @db.Decimal(15, 2)
-  paidAmount            Decimal?                      @db.Decimal(15, 2)
-  toComplete            Boolean                       @default(false)
-  viewPrice             Boolean                       @default(false)
-  supplierDebt          Decimal?                      @db.Decimal(15, 2)
-  supplierOldDebt       Decimal?                      @db.Decimal(15, 2)
+  subTotal              Decimal                      @db.Decimal(15, 2)
+  paidAmount            Decimal?                     @db.Decimal(15, 2)
+  toComplete            Boolean                      @default(false)
+  viewPrice             Boolean                      @default(false)
+  supplierDebt          Decimal?                     @db.Decimal(15, 2)
+  supplierOldDebt       Decimal?                     @db.Decimal(15, 2)
   purchaseOrderCodes    String?
   createdBy             BigInt?
   createdDate           DateTime?
-  modifiedDate          DateTime                      @updatedAt
-  lastSyncedAt          DateTime                      @default(now())
-  
+  modifiedDate          DateTime                     @updatedAt
+  lastSyncedAt          DateTime                     @default(now())
   larkRecordId          String?
-  larkSyncStatus        LarkSyncStatus                @default(PENDING)
+  larkSyncStatus        LarkSyncStatus               @default(PENDING)
   larkSyncedAt          DateTime?
-  larkSyncRetries       Int                           @default(0)
-  
+  larkSyncRetries       Int                          @default(0)
+  branch                Branch?                      @relation(fields: [branchId], references: [id])
   orderSupplierDetails  OrderSupplierDetail[]
   orderSupplierExpenses OrderSupplierExpense[]
   purchaseOrderLinks    OrderSupplierPurchaseOrder[]
-  
+
   @@index([kiotVietId])
   @@index([code])
   @@index([branchId])
@@ -526,69 +504,68 @@ model OrderSupplier {
 }
 
 model OrderSupplierDetail {
-  id                    Int                @id @default(autoincrement())
-  kiotVietId            BigInt            @unique
-  orderSupplierId       Int?
-  orderSupplierCode     String?
-  orderSupplier         OrderSupplier?      @relation(fields: [orderSupplierId], references: [id], onDelete: Cascade)
-  productId             Int?
-  productName           String?
-  productCode           String?
-  product               Product?            @relation(fields: [productId], references: [id])
-  quantity              Float
-  price                 Decimal            @db.Decimal(15, 2)
-  discount              Decimal?           @db.Decimal(15, 2)
-  allocation            Decimal?           @db.Decimal(15, 2)
-  description           String?            @db.Text
-  orderByNumber         Int?
-  allocationSuppliers   Decimal?           @db.Decimal(15, 2)
-  allocationThirdParty  Decimal?           @db.Decimal(15, 2)
-  orderQuantity         Float              @default(0)
-  subTotal              Decimal            @db.Decimal(15, 2)
-  createdDate           DateTime?
+  id                   Int            @id @default(autoincrement())
+  kiotVietId           BigInt         @unique
+  orderSupplierId      Int?
+  productId            Int?
+  quantity             Float
+  price                Decimal        @db.Decimal(15, 2)
+  discount             Decimal?       @db.Decimal(15, 2)
+  allocation           Decimal?       @db.Decimal(15, 2)
+  description          String?
+  orderByNumber        Int?
+  allocationSuppliers  Decimal?       @db.Decimal(15, 2)
+  allocationThirdParty Decimal?       @db.Decimal(15, 2)
+  orderQuantity        Float          @default(0)
+  subTotal             Decimal        @db.Decimal(15, 2)
+  createdDate          DateTime?
+  orderSupplierCode    String?
+  productCode          String?
+  productName          String?
+  larkRecordId         String?
+  larkSyncRetries      Int            @default(0)
+  larkSyncStatus       LarkSyncStatus @default(PENDING)
+  larkSyncedAt         DateTime?
+  orderSupplier        OrderSupplier? @relation(fields: [orderSupplierId], references: [id], onDelete: Cascade)
+  product              Product?       @relation(fields: [productId], references: [id])
 
-  larkRecordId          String?
-  larkSyncStatus        LarkSyncStatus                @default(PENDING)
-  larkSyncedAt          DateTime?
-  larkSyncRetries       Int                           @default(0)
-  
   @@index([orderSupplierId])
   @@index([productId])
   @@index([kiotVietId])
 }
 
 model OrderSupplierExpense {
-  id                    Int                @id @default(autoincrement())
-  kiotVietId            BigInt?            @unique
-  orderSupplierId       Int
-  orderSupplier         OrderSupplier      @relation(fields: [orderSupplierId], references: [id], onDelete: Cascade)
-  form                  Int?
-  expensesOtherOrder    Int?
-  expensesOtherCode     String?
-  expensesOtherName     String?
-  expensesOtherId       Int?
-  price                 Decimal            @db.Decimal(15, 2)
-  isReturnAuto          Boolean?           @default(false)
-  exValue               Decimal?           @db.Decimal(15, 2)
-  createdDate           DateTime           @default(now())
-  
+  id                 Int           @id @default(autoincrement())
+  kiotVietId         BigInt?       @unique
+  orderSupplierId    Int
+  form               Int?
+  expensesOtherOrder Int?
+  expensesOtherCode  String?
+  expensesOtherName  String?
+  expensesOtherId    Int?
+  price              Decimal       @db.Decimal(15, 2)
+  isReturnAuto       Boolean?      @default(false)
+  exValue            Decimal?      @db.Decimal(15, 2)
+  createdDate        DateTime      @default(now())
+  orderSupplier      OrderSupplier @relation(fields: [orderSupplierId], references: [id], onDelete: Cascade)
+
   @@index([orderSupplierId])
   @@index([kiotVietId])
   @@index([expensesOtherId])
 }
 
 model OrderSupplierPurchaseOrder {
-  id                    Int                @id @default(autoincrement())
-  orderSupplierId       Int
-  orderSupplier         OrderSupplier      @relation(fields: [orderSupplierId], references: [id], onDelete: Cascade)
-  purchaseOrderId       Int
-  purchaseOrder         PurchaseOrder      @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
-  purchaseOrderCode     String
-  linkOrder             Int?
-  isActive              Boolean            @default(true)
-  createdDate           DateTime           @default(now())
-  lastSyncedAt          DateTime           @default(now())
-  
+  id                Int           @id @default(autoincrement())
+  orderSupplierId   Int
+  purchaseOrderId   Int
+  purchaseOrderCode String
+  linkOrder         Int?
+  isActive          Boolean       @default(true)
+  createdDate       DateTime      @default(now())
+  lastSyncedAt      DateTime      @default(now())
+  orderSupplier     OrderSupplier @relation(fields: [orderSupplierId], references: [id], onDelete: Cascade)
+  purchaseOrder     PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+
   @@unique([orderSupplierId, purchaseOrderId])
   @@index([orderSupplierId])
   @@index([purchaseOrderId])
@@ -602,42 +579,41 @@ model Invoice {
   code              String             @unique
   orderCode         String?
   orderId           Int?
-  order             Order?             @relation(fields: [orderId], references: [id])
   purchaseDate      DateTime
   branchId          Int?
-  branch            Branch?             @relation(fields: [branchId], references: [id])
   soldById          BigInt?
-  soldBy            User?              @relation("InvoiceSoldBy", fields: [soldById], references: [kiotVietId])
   customerId        Int?
-  customerCode      String?
-  customerName      String?
-  customer          Customer?          @relation(fields: [customerId], references: [id])
   total             Decimal            @db.Decimal(15, 2)
   totalPayment      Decimal            @db.Decimal(15, 2)
   discount          Decimal?           @db.Decimal(15, 2)
   discountRatio     Float?
   status            Int
-  statusValue       String?
-  description       String?            @db.Text
+  description       String?
   usingCod          Boolean            @default(false)
   saleChannelId     Int?
-  saleChannel       SaleChannel?       @relation(fields: [saleChannelId], references: [id])
   isApplyVoucher    Boolean            @default(false)
   retailerId        Int?
   createdDate       DateTime?
   modifiedDate      DateTime?
   lastSyncedAt      DateTime           @default(now())
-
   larkRecordId      String?
+  larkSyncRetries   Int                @default(0)
   larkSyncStatus    LarkSyncStatus     @default(PENDING)
   larkSyncedAt      DateTime?
-  larkSyncRetries   Int                @default(0)
-  
-  invoiceDetails    InvoiceDetail[]
+  customerCode      String?
+  customerName      String?
+  statusValue       String?
+  branch            Branch?            @relation(fields: [branchId], references: [id])
+  customer          Customer?          @relation(fields: [customerId], references: [id])
+  order             Order?             @relation(fields: [orderId], references: [id])
+  saleChannel       SaleChannel?       @relation(fields: [saleChannelId], references: [id])
+  soldBy            User?              @relation("InvoiceSoldBy", fields: [soldById], references: [kiotVietId])
   invoiceDelivery   InvoiceDelivery?
+  invoiceDetails    InvoiceDetail[]
   invoiceSurcharges InvoiceSurcharge[]
   payments          Payment[]
   returns           Return[]
+  Branch            Branch[]           @relation("BranchInvoices")
 
   @@index([kiotVietId])
   @@index([code])
@@ -650,25 +626,24 @@ model Invoice {
   @@index([saleChannelId])
   @@index([lastSyncedAt])
   @@index([larkSyncStatus])
-  Branch Branch[] @relation("BranchInvoices")
 }
 
 model InvoiceDetail {
-  id                Int                @id @default(autoincrement())
-  invoiceId         Int                
-  invoice           Invoice            @relation(fields: [invoiceId], references: [id])
-  productId         Int
-  productName       String?
-  productCode       String?
-  product           Product            @relation(fields: [productId], references: [id])
-  lineNumber        Int?
-  quantity          Float
-  price             Decimal            @db.Decimal(15, 2)
-  discount          Decimal?           @db.Decimal(15, 2)
-  discountRatio     Float?
-  note              String?
-  serialNumbers     String?
-  subTotal          Decimal            @db.Decimal(15, 2)
+  id            Int      @id @default(autoincrement())
+  invoiceId     Int
+  productId     Int
+  quantity      Float
+  price         Decimal  @db.Decimal(15, 2)
+  discount      Decimal? @db.Decimal(15, 2)
+  discountRatio Float?
+  note          String?
+  serialNumbers String?
+  subTotal      Decimal  @db.Decimal(15, 2)
+  lineNumber    Int?
+  productCode   String?
+  productName   String?
+  invoice       Invoice  @relation(fields: [invoiceId], references: [id])
+  product       Product  @relation(fields: [productId], references: [id])
 
   @@unique([invoiceId, lineNumber])
   @@index([invoiceId])
@@ -677,70 +652,68 @@ model InvoiceDetail {
 }
 
 model InvoiceDelivery {
-  id                Int                @id @default(autoincrement())
-  invoiceId         Int?               @unique
-  invoice           Invoice?           @relation(fields: [invoiceId], references: [id])
-  deliveryCode      String?
-  status            Int
-  type              Int?
-  price             Decimal?           @db.Decimal(15, 2)
-  receiver          String?
-  contactNumber     String?
-  address           String?
-  locationId        Int?
-  locationName      String?
-  wardName          String?
-  usingPriceCod     Boolean            @default(false)
-  priceCodPayment   Decimal?           @db.Decimal(15, 2)
-  weight            Float?
-  length            Float?
-  width             Float?
-  height            Float?
-  
+  id              Int      @id @default(autoincrement())
+  invoiceId       Int?     @unique
+  deliveryCode    String?
+  status          Int
+  type            Int?
+  price           Decimal? @db.Decimal(15, 2)
+  receiver        String?
+  contactNumber   String?
+  address         String?
+  locationId      Int?
+  locationName    String?
+  wardName        String?
+  usingPriceCod   Boolean  @default(false)
+  priceCodPayment Decimal? @db.Decimal(15, 2)
+  weight          Float?
+  length          Float?
+  width           Float?
+  height          Float?
+  invoice         Invoice? @relation(fields: [invoiceId], references: [id])
+
   @@index([invoiceId])
 }
 
 model InvoiceSurcharge {
-  id                Int                @id @default(autoincrement())
-  kiotVietId        BigInt?            @unique
-  invoiceId         Int
-  invoice           Invoice            @relation(fields: [invoiceId], references: [id])
-  surchargeId       Int?
-  surcharge         Surcharge?         @relation(fields: [surchargeId], references: [id])
-  surchargeName     String?
-  surValue          Decimal?           @db.Decimal(15, 2)
-  price             Decimal?           @db.Decimal(15, 2)
-  createdDate       DateTime           @default(now())
-  
+  id            Int        @id @default(autoincrement())
+  kiotVietId    BigInt?    @unique
+  invoiceId     Int
+  surchargeId   Int?
+  surchargeName String?
+  surValue      Decimal?   @db.Decimal(15, 2)
+  price         Decimal?   @db.Decimal(15, 2)
+  createdDate   DateTime   @default(now())
+  invoice       Invoice    @relation(fields: [invoiceId], references: [id])
+  surcharge     Surcharge? @relation(fields: [surchargeId], references: [id])
+
   @@index([invoiceId])
   @@index([surchargeId])
 }
 
 model Payment {
-  id                Int                @id @default(autoincrement())
-  kiotVietId        BigInt?            @unique
-  code              String?
-  amount            Decimal            @db.Decimal(15, 2)
-  method            String
-  status            Int?
-  statusValue       String?
-  transDate         DateTime
-  accountId         Int?
-  bankAccount       BankAccount?       @relation(fields: [accountId], references: [id])
-  bankAccountInfo   String?
-  
-  invoiceId         Int?
-  invoice           Invoice?           @relation(fields: [invoiceId], references: [id])
-  orderId           Int?
-  order             Order?             @relation(fields: [orderId], references: [id])
-  returnId          Int?
-  return            Return?            @relation(fields: [returnId], references: [id])
-  purchaseOrderId   Int?
-  purchaseOrder     PurchaseOrder?     @relation(fields: [purchaseOrderId], references: [id])
-  
-  description       String?
-  createdDate       DateTime?
-  
+  id              Int            @id @default(autoincrement())
+  kiotVietId      BigInt?        @unique
+  code            String?
+  amount          Decimal        @db.Decimal(15, 2)
+  method          String
+  status          Int?
+  transDate       DateTime
+  accountId       Int?
+  bankAccountInfo String?
+  invoiceId       Int?
+  orderId         Int?
+  returnId        Int?
+  purchaseOrderId Int?
+  description     String?
+  createdDate     DateTime?
+  statusValue     String?
+  bankAccount     BankAccount?   @relation(fields: [accountId], references: [id])
+  invoice         Invoice?       @relation(fields: [invoiceId], references: [id])
+  order           Order?         @relation(fields: [orderId], references: [id])
+  purchaseOrder   PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id])
+  return          Return?        @relation(fields: [returnId], references: [id])
+
   @@index([invoiceId])
   @@index([orderId])
   @@index([returnId])
@@ -760,88 +733,81 @@ model Surcharge {
   isActive          Boolean            @default(true)
   createdDate       DateTime           @default(now())
   modifiedDate      DateTime           @updatedAt
-  
-  orderSurcharges   OrderSurcharge[]
   invoiceSurcharges InvoiceSurcharge[]
-  
+  orderSurcharges   OrderSurcharge[]
+
   @@index([kiotVietId])
 }
 
 model BankAccount {
-  id                Int                @id @default(autoincrement())
-  kiotVietId        Int                @unique
-  bankName          String
-  accountNumber     String?
-  description       String?
-  retailerId        Int?
-  createdDate       DateTime           @default(now())
-  modifiedDate      DateTime           @updatedAt
-  lastSyncedAt      DateTime           @default(now())
-  
-  payments          Payment[]
-  
+  id            Int        @id @default(autoincrement())
+  kiotVietId    Int        @unique
+  bankName      String
+  accountNumber String?
+  description   String?
+  retailerId    Int?
+  createdDate   DateTime   @default(now())
+  modifiedDate  DateTime   @updatedAt
+  lastSyncedAt  DateTime   @default(now())
+  Cashflow      Cashflow[]
+  payments      Payment[]
+
   @@index([kiotVietId])
-  Cashflow Cashflow[]
 }
 
 model SaleChannel {
-  id                Int                @id @default(autoincrement())
-  kiotVietId        Int                @unique
-  name              String
-  isActive          Boolean            @default(true)
-  img               String?
-  isNotDelete       Boolean            @default(false)
-  position          Int?
-  retailerId        Int?
-  createdDate       DateTime           @default(now())
-  
-  orders            Order[]
-  invoices          Invoice[]
-  
+  id          Int       @id @default(autoincrement())
+  kiotVietId  Int       @unique
+  name        String
+  isActive    Boolean   @default(true)
+  img         String?
+  isNotDelete Boolean   @default(false)
+  position    Int?
+  retailerId  Int?
+  createdDate DateTime  @default(now())
+  invoices    Invoice[]
+  orders      Order[]
+
   @@index([kiotVietId])
 }
 
 model PurchaseOrder {
-  id                Int                         @id @default(autoincrement())
-  kiotVietId        BigInt                      @unique
-  retailerId        Int?
-  code              String                      @unique
-  branchId          Int?
-  branch            Branch?                      @relation(fields: [branchId], references: [id])
-  branchName        String?
-  purchaseDate      DateTime?
-  discountRatio     Float?
-  discount          Decimal?                    @db.Decimal(15, 2)
-  total             Decimal                     @db.Decimal(15, 2)
-  totalPayment      Decimal?                    @db.Decimal(15, 2)
-  status            Int?
-  description       String?                     @db.Text
+  id                 Int                          @id @default(autoincrement())
+  kiotVietId         BigInt                       @unique
+  code               String                       @unique
+  branchId           Int?
+  purchaseDate       DateTime?
+  discountRatio      Float?
+  discount           Decimal?                     @db.Decimal(15, 2)
+  total              Decimal                      @db.Decimal(15, 2)
+  supplierId         Int?
+  purchaseById       BigInt?
+  paidAmount         Decimal?                     @db.Decimal(15, 2)
+  retailerId         Int?
+  createdDate        DateTime?
+  modifiedDate       DateTime?                    @updatedAt
+  lastSyncedAt       DateTime                     @default(now())
+  branchName         String?
+  description        String?
+  larkRecordId       String?
+  larkSyncRetries    Int                          @default(0)
+  larkSyncStatus     LarkSyncStatus               @default(PENDING)
+  larkSyncedAt       DateTime?
+  partnerType        String?
+  purchaseName       String?
+  status             Int?
+  supplierCode       String?
+  supplierName       String?
+  totalPayment       Decimal?                     @db.Decimal(15, 2)
+  exReturnSuppliers  Decimal?                     @db.Decimal(15, 2)
+  exReturnThirdParty Decimal?                     @db.Decimal(15, 2)
+  orderSupplierLinks OrderSupplierPurchaseOrder[]
+  payments           Payment[]
+  branch             Branch?                      @relation(fields: [branchId], references: [id])
+  supplier           Supplier?                    @relation(fields: [supplierId], references: [id])
+  details            PurchaseOrderDetail[]
+  surcharges         PurchaseOrderSurcharge[]
 
-  supplierId        Int?
-  supplier          Supplier?                   @relation(fields: [supplierId], references: [id])
-  supplierName      String?
-  supplierCode      String?
-  partnerType       String?
-  
-  purchaseById      BigInt?
-  purchaseName      String?
-  paidAmount        Decimal?                    @db.Decimal(15, 2)
-  exReturnSuppliers Decimal?                    @db.Decimal(15,2)
-  exReturnThirdParty Decimal?                    @db.Decimal(15,2)
-  createdDate       DateTime?
-  modifiedDate      DateTime?                    @updatedAt
-  lastSyncedAt      DateTime                    @default(now())
-  
-  larkRecordId      String?
-  larkSyncStatus    LarkSyncStatus              @default(PENDING)
-  larkSyncedAt      DateTime?
-  larkSyncRetries   Int                         @default(0)
-  
-  details           PurchaseOrderDetail[]
-  payments          Payment[]
-  surcharges        PurchaseOrderSurcharge[]
-  orderSupplierLinks    OrderSupplierPurchaseOrder[]
-  
   @@index([kiotVietId])
   @@index([code])
   @@index([branchId])
@@ -853,29 +819,26 @@ model PurchaseOrder {
 }
 
 model PurchaseOrderDetail {
-  id                      Int                             @id @default(autoincrement())
-  purchaseOrderId         Int?
-  purchaseOrderCode       String?
-  purchaseOrder           PurchaseOrder?                   @relation(fields: [purchaseOrderId], references: [id])
-  lineNumber              Int?
-  productId               Int?
-  product                 Product?                         @relation(fields: [productId], references: [id])
-  productCode             String?
-  productName             String?
-  quantity                Float
-  price                   Decimal                         @db.Decimal(15, 2)
-  discount                Decimal?                        @db.Decimal(15, 2)
-  serialNumbers           String?
+  id                Int                        @id @default(autoincrement())
+  purchaseOrderId   Int?
+  productId         Int?
+  quantity          Float
+  price             Decimal                    @db.Decimal(15, 2)
+  discount          Decimal?                   @db.Decimal(15, 2)
+  serialNumbers     String?
+  productCode       String?
+  productName       String?
+  purchaseOrderCode String?
+  lineNumber        Int?
+  larkRecordId      String?
+  larkSyncRetries   Int                        @default(0)
+  larkSyncStatus    LarkSyncStatus             @default(PENDING)
+  larkSyncedAt      DateTime?
+  uniqueKey         String?                    @unique
+  product           Product?                   @relation(fields: [productId], references: [id])
+  purchaseOrder     PurchaseOrder?             @relation(fields: [purchaseOrderId], references: [id])
+  batchExpires      PurchaseOrderDetailBatch[]
 
-  uniqueKey               String?                         @unique
-
-  larkRecordId            String?
-  larkSyncStatus          LarkSyncStatus                  @default(PENDING)
-  larkSyncedAt            DateTime?
-  larkSyncRetries         Int                             @default(0)
-  
-  batchExpires            PurchaseOrderDetailBatch[]
-  
   @@unique([purchaseOrderId, lineNumber])
   @@index([purchaseOrderId])
   @@index([productId])
@@ -885,57 +848,56 @@ model PurchaseOrderDetail {
 }
 
 model PurchaseOrderDetailBatch {
-  id                      Int                             @id @default(autoincrement())
-  kiotVietId              BigInt?                         @unique
-  purchaseOrderDetailId   Int
-  purchaseOrderDetail     PurchaseOrderDetail             @relation(fields: [purchaseOrderDetailId], references: [id])
-  productBatchExpireId    Int
-  productBatchExpire      ProductBatchExpire              @relation(fields: [productBatchExpireId], references: [id])
-  quantity                Float
-  createdDate             DateTime                        @default(now())
-  
+  id                    Int                 @id @default(autoincrement())
+  kiotVietId            BigInt?             @unique
+  purchaseOrderDetailId Int
+  productBatchExpireId  Int
+  quantity              Float
+  createdDate           DateTime            @default(now())
+  productBatchExpire    ProductBatchExpire  @relation(fields: [productBatchExpireId], references: [id])
+  purchaseOrderDetail   PurchaseOrderDetail @relation(fields: [purchaseOrderDetailId], references: [id])
+
   @@unique([purchaseOrderDetailId, productBatchExpireId])
   @@index([purchaseOrderDetailId])
   @@index([productBatchExpireId])
 }
 
 model PurchaseOrderSurcharge {
-  id                      Int                             @id @default(autoincrement())
-  kiotVietId              BigInt?                         @unique
-  purchaseOrderId         Int
-  purchaseOrder           PurchaseOrder                   @relation(fields: [purchaseOrderId], references: [id])
-  code                    String?                         // Mã chi phí
-  name                    String                          // Tên chi phí
-  value                   Decimal?                        @db.Decimal(15, 2)
-  valueRatio              Decimal?                        @db.Decimal(5, 2)
-  isSupplierExpense       Boolean                         @default(false)
-  type                    Int?
-  createdDate             DateTime                        @default(now())
-  
+  id                Int           @id @default(autoincrement())
+  kiotVietId        BigInt?       @unique
+  purchaseOrderId   Int
+  code              String?
+  name              String
+  value             Decimal?      @db.Decimal(15, 2)
+  valueRatio        Decimal?      @db.Decimal(5, 2)
+  isSupplierExpense Boolean       @default(false)
+  type              Int?
+  createdDate       DateTime      @default(now())
+  purchaseOrder     PurchaseOrder @relation(fields: [purchaseOrderId], references: [id])
+
   @@index([purchaseOrderId])
 }
 
 model Transfer {
-  id                Int                @id @default(autoincrement())
-  kiotVietId        BigInt             @unique
-  code              String             @unique
+  id                Int              @id @default(autoincrement())
+  kiotVietId        BigInt           @unique
+  code              String           @unique
   status            Int
   transferredDate   DateTime?
   receivedDate      DateTime?
   createdById       BigInt?
   fromBranchId      Int
-  fromBranch        Branch             @relation("SourceBranch", fields: [fromBranchId], references: [id])
   toBranchId        Int
-  toBranch          Branch             @relation("DestinationBranch", fields: [toBranchId], references: [id])
   noteBySource      String?
   noteByDestination String?
   retailerId        Int?
-  createdDate       DateTime           @default(now())
-  modifiedDate      DateTime           @updatedAt
-  lastSyncedAt      DateTime           @default(now())
-  
+  createdDate       DateTime         @default(now())
+  modifiedDate      DateTime         @updatedAt
+  lastSyncedAt      DateTime         @default(now())
+  fromBranch        Branch           @relation("SourceBranch", fields: [fromBranchId], references: [id])
+  toBranch          Branch           @relation("DestinationBranch", fields: [toBranchId], references: [id])
   details           TransferDetail[]
-  
+
   @@index([kiotVietId])
   @@index([code])
   @@index([fromBranchId])
@@ -943,50 +905,49 @@ model Transfer {
 }
 
 model TransferDetail {
-  id                  Int                @id @default(autoincrement())
-  kiotVietId          BigInt?            @unique
+  id                  Int      @id @default(autoincrement())
+  kiotVietId          BigInt?  @unique
   transferId          Int
-  transfer            Transfer           @relation(fields: [transferId], references: [id])
   productId           Int
-  product             Product            @relation(fields: [productId], references: [id])
   transferredQuantity Float
   receivedQuantity    Float?
-  price               Decimal            @db.Decimal(15, 2)
-  sendPrice           Decimal?           @db.Decimal(15, 2)
-  receivePrice        Decimal?           @db.Decimal(15, 2)
-  
+  price               Decimal  @db.Decimal(15, 2)
+  sendPrice           Decimal? @db.Decimal(15, 2)
+  receivePrice        Decimal? @db.Decimal(15, 2)
+  product             Product  @relation(fields: [productId], references: [id])
+  transfer            Transfer @relation(fields: [transferId], references: [id])
+
   @@index([transferId])
   @@index([productId])
 }
 
 model Return {
-  id                Int                @id @default(autoincrement())
-  kiotVietId        BigInt             @unique
-  code              String             @unique
-  invoiceId         Int?
-  invoiceCode       String?
-  invoice           Invoice?           @relation(fields: [invoiceId], references: [id])
-  returnDate        DateTime?
-  branchId          Int
-  branchName        String
-  branch            Branch             @relation(fields: [branchId], references: [id])
-  receivedById      BigInt?
-  soldByName        String
-  customerId        Int?
-  customerCode      String?
-  customerName      String?
-  customer          Customer?          @relation(fields: [customerId], references: [id])
-  returnTotal       Decimal            @db.Decimal(15, 2)
-  totalPayment      Decimal            @db.Decimal(15, 2)
-  status            Int
-  statusValue       String?
-  createdDate       DateTime  
-  modifiedDate      DateTime           @updatedAt
-  lastSyncedAt      DateTime           @default(now())
-  
-  details           ReturnDetail[]
-  payments          Payment[]
-  
+  id           Int            @id @default(autoincrement())
+  kiotVietId   BigInt         @unique
+  code         String         @unique
+  invoiceId    Int?
+  returnDate   DateTime?
+  branchId     Int
+  receivedById BigInt?
+  customerId   Int?
+  returnTotal  Decimal        @db.Decimal(15, 2)
+  totalPayment Decimal        @db.Decimal(15, 2)
+  status       Int
+  createdDate  DateTime
+  modifiedDate DateTime       @updatedAt
+  lastSyncedAt DateTime       @default(now())
+  branchName   String
+  customerCode String?
+  customerName String?
+  invoiceCode  String?
+  soldByName   String
+  statusValue  String?
+  payments     Payment[]
+  branch       Branch         @relation(fields: [branchId], references: [id])
+  customer     Customer?      @relation(fields: [customerId], references: [id])
+  invoice      Invoice?       @relation(fields: [invoiceId], references: [id])
+  details      ReturnDetail[]
+
   @@index([kiotVietId])
   @@index([code])
   @@index([invoiceId])
@@ -995,342 +956,337 @@ model Return {
 }
 
 model ReturnDetail {
-  id                Int                @id @default(autoincrement())
-  returnId          Int
-  lineNumber        Int
-  return            Return             @relation(fields: [returnId], references: [id])
-  productId         Int
-  productCode       String
-  productName       String
-  product           Product            @relation(fields: [productId], references: [id])
-  quantity          Float
-  price             Decimal            @db.Decimal(15, 2)
-  note              String?
-  usePoint          Boolean            @default(false)
-  subTotal          Decimal            @db.Decimal(15, 2)
-  
+  id          Int     @id @default(autoincrement())
+  returnId    Int
+  productId   Int
+  quantity    Float
+  price       Decimal @db.Decimal(15, 2)
+  note        String?
+  usePoint    Boolean @default(false)
+  subTotal    Decimal @db.Decimal(15, 2)
+  lineNumber  Int
+  productCode String
+  productName String
+  product     Product @relation(fields: [productId], references: [id])
+  return      Return  @relation(fields: [returnId], references: [id])
+
   @@unique([returnId, lineNumber])
   @@index([returnId])
   @@index([productId])
 }
 
 model PriceBook {
-  id                Int                      @id @default(autoincrement())
-  kiotVietId        Int                      @unique
-  name              String
-  isActive          Boolean                  @default(true)
-  isGlobal          Boolean                  @default(false)
-  startDate         DateTime?
-  endDate           DateTime?
-  forAllCusGroup    Boolean                  @default(false)
-  forAllUser        Boolean                  @default(false)
-  retailerId        Int?
-  createdDate       DateTime                 @default(now())
-  modifiedDate      DateTime                 @updatedAt
-  lastSyncedAt      DateTime                 @default(now())
-  
-  details           PriceBookDetail[]
-  branches          PriceBookBranch[]
-  customerGroups    PriceBookCustomerGroup[]
-  users             PriceBookUser[]
-  
+  id             Int                      @id @default(autoincrement())
+  kiotVietId     Int                      @unique
+  name           String
+  isActive       Boolean                  @default(true)
+  isGlobal       Boolean                  @default(false)
+  startDate      DateTime?
+  endDate        DateTime?
+  forAllCusGroup Boolean                  @default(false)
+  forAllUser     Boolean                  @default(false)
+  retailerId     Int?
+  createdDate    DateTime                 @default(now())
+  modifiedDate   DateTime                 @updatedAt
+  lastSyncedAt   DateTime                 @default(now())
+  branches       PriceBookBranch[]
+  customerGroups PriceBookCustomerGroup[]
+  details        PriceBookDetail[]
+  users          PriceBookUser[]
+
   @@index([kiotVietId])
 }
 
 model PriceBookDetail {
-  id                Int                @id @default(autoincrement())
-  kiotVietId        BigInt?            @unique
-  priceBookId       Int
-  priceBook         PriceBook          @relation(fields: [priceBookId], references: [id])
-  productId         Int
-  product           Product            @relation(fields: [productId], references: [id])
-  price             Decimal            @db.Decimal(15, 2)
-  
+  id          Int       @id @default(autoincrement())
+  kiotVietId  BigInt?   @unique
+  priceBookId Int
+  productId   Int
+  price       Decimal   @db.Decimal(15, 2)
+  priceBook   PriceBook @relation(fields: [priceBookId], references: [id])
+  product     Product   @relation(fields: [productId], references: [id])
+
   @@unique([priceBookId, productId])
   @@index([priceBookId])
   @@index([productId])
 }
 
 model PriceBookBranch {
-  id                Int                @id @default(autoincrement())
-  kiotVietId        BigInt?            @unique
-  priceBookId       Int
-  priceBook         PriceBook          @relation(fields: [priceBookId], references: [id])
-  branchId          Int
-  branch            Branch             @relation(fields: [branchId], references: [id])
-  
+  id          Int       @id @default(autoincrement())
+  kiotVietId  BigInt?   @unique
+  priceBookId Int
+  branchId    Int
+  branch      Branch    @relation(fields: [branchId], references: [id])
+  priceBook   PriceBook @relation(fields: [priceBookId], references: [id])
+
   @@unique([priceBookId, branchId])
   @@index([priceBookId])
   @@index([branchId])
 }
 
 model PriceBookCustomerGroup {
-  id                Int                @id @default(autoincrement())
-  kiotVietId        BigInt?            @unique
-  priceBookId       Int
-  priceBook         PriceBook          @relation(fields: [priceBookId], references: [id])
-  customerGroupId   Int
-  
+  id              Int       @id @default(autoincrement())
+  kiotVietId      BigInt?   @unique
+  priceBookId     Int
+  customerGroupId Int
+  priceBook       PriceBook @relation(fields: [priceBookId], references: [id])
+
   @@unique([priceBookId, customerGroupId])
   @@index([priceBookId])
   @@index([customerGroupId])
 }
 
 model PriceBookUser {
-  id                Int                @id @default(autoincrement())
-  kiotVietId        BigInt?            @unique
-  priceBookId       Int
-  priceBook         PriceBook          @relation(fields: [priceBookId], references: [id])
-  userId            BigInt
-  user              User               @relation(fields: [userId], references: [kiotVietId])
-  
+  id          Int       @id @default(autoincrement())
+  kiotVietId  BigInt?   @unique
+  priceBookId Int
+  userId      BigInt
+  priceBook   PriceBook @relation(fields: [priceBookId], references: [id])
+  user        User      @relation(fields: [userId], references: [kiotVietId])
+
   @@unique([priceBookId, userId])
   @@index([priceBookId])
   @@index([userId])
 }
 
 model TradeMark {
-  id                Int                @id @default(autoincrement())
-  kiotVietId        Int                @unique
-  name              String
-  retailerId        Int?
-  createdDate       DateTime           @default(now())
-  modifiedDate      DateTime           @updatedAt
-  lastSyncedAt      DateTime           @default(now())
-  
-  products          Product[]
-  
+  id           Int       @id @default(autoincrement())
+  kiotVietId   Int       @unique
+  name         String
+  retailerId   Int?
+  createdDate  DateTime  @default(now())
+  modifiedDate DateTime  @updatedAt
+  lastSyncedAt DateTime  @default(now())
+  products     Product[]
+
   @@index([kiotVietId])
 }
 
 model Supplier {
-  id                Int                @id @default(autoincrement())
-  kiotVietId        BigInt             @unique
-  code              String             @unique
-  name              String
-  contactNumber     String?
-  email             String?
-  address           String?
-  locationName      String?
-  wardName          String?
-  organization      String?
-  taxCode           String?
-  comments          String?            @db.Text
-  groups            String?
-  isActive          Boolean?           @default(true)
-  debt              Decimal?           @db.Decimal(15, 2)
-  totalInvoiced     Decimal?           @db.Decimal(15, 2)
-  totalInvoicedWithoutReturn Decimal?  @db.Decimal(15, 2)
-  retailerId        Int?
-  branchId          Int?
-  createdDate       DateTime?
-  modifiedDate      DateTime?          @updatedAt
-  lastSyncedAt      DateTime           @default(now())
-  larkRecordId      String?
-  larkSyncStatus    LarkSyncStatus     @default(PENDING)
-  larkSyncedAt      DateTime?
-  larkSyncRetries   Int                @default(0)
-
-  purchaseOrders    PurchaseOrder[]
+  id                         Int             @id @default(autoincrement())
+  kiotVietId                 BigInt          @unique
+  code                       String          @unique
+  name                       String
+  contactNumber              String?
+  email                      String?
+  address                    String?
+  locationName               String?
+  wardName                   String?
+  organization               String?
+  taxCode                    String?
+  comments                   String?
+  isActive                   Boolean?        @default(true)
+  debt                       Decimal?        @db.Decimal(15, 2)
+  totalInvoiced              Decimal?        @db.Decimal(15, 2)
+  totalInvoicedWithoutReturn Decimal?        @db.Decimal(15, 2)
+  retailerId                 Int?
+  branchId                   Int?
+  createdDate                DateTime?
+  modifiedDate               DateTime?       @updatedAt
+  lastSyncedAt               DateTime        @default(now())
+  groups                     String?
+  larkRecordId               String?
+  larkSyncRetries            Int             @default(0)
+  larkSyncStatus             LarkSyncStatus  @default(PENDING)
+  larkSyncedAt               DateTime?
+  purchaseOrders             PurchaseOrder[]
 
   @@index([kiotVietId])
   @@index([code])
 }
 
 model Location {
-  id                Int                @id @default(autoincrement())
-  kiotVietId        Int                @unique
-  name              String
-  normalName        String?
-  lastSyncedAt      DateTime           @default(now())
-  
-  wards             Ward[]
-  
+  id           Int      @id @default(autoincrement())
+  kiotVietId   Int      @unique
+  name         String
+  normalName   String?
+  lastSyncedAt DateTime @default(now())
+  wards        Ward[]
+
   @@index([kiotVietId])
 }
 
 model Ward {
-  id                Int                @id @default(autoincrement())
-  kiotVietId        Int                @unique
-  name              String
-  locationId        Int
-  location          Location           @relation(fields: [locationId], references: [id])
-  lastSyncedAt      DateTime           @default(now())
-  
+  id           Int      @id @default(autoincrement())
+  kiotVietId   Int      @unique
+  name         String
+  locationId   Int
+  lastSyncedAt DateTime @default(now())
+  location     Location @relation(fields: [locationId], references: [id])
+
   @@index([kiotVietId])
   @@index([locationId])
 }
 
 model VoucherCampaign {
-  id                Int                   @id @default(autoincrement())
-  kiotVietId        Int                   @unique
-  code              String
-  name              String
-  isActive          Boolean               @default(true)
-  startDate         DateTime
-  endDate           DateTime
-  expireTime        Int?
-  prereqPrice       Decimal?              @db.Decimal(15, 2)
-  quantity          Int
-  price             Decimal               @db.Decimal(15, 2)
-  useVoucherCombineInvoice Boolean        @default(false)
-  isGlobal          Boolean               @default(false)
-  forAllCusGroup    Boolean               @default(false)
-  forAllUser        Boolean               @default(false)
-  retailerId        Int?
-  createdDate       DateTime              @default(now())
-  modifiedDate      DateTime              @updatedAt
-  lastSyncedAt      DateTime              @default(now())
-  
-  products          VoucherCampaignProduct[]
-  categories        VoucherCampaignCategory[]
-  branches          VoucherCampaignBranch[]
-  users             VoucherCampaignUser[]
-  vouchers          Voucher[]
-  
+  id                       Int                       @id @default(autoincrement())
+  kiotVietId               Int                       @unique
+  code                     String
+  name                     String
+  isActive                 Boolean                   @default(true)
+  startDate                DateTime
+  endDate                  DateTime
+  expireTime               Int?
+  prereqPrice              Decimal?                  @db.Decimal(15, 2)
+  quantity                 Int
+  price                    Decimal                   @db.Decimal(15, 2)
+  useVoucherCombineInvoice Boolean                   @default(false)
+  isGlobal                 Boolean                   @default(false)
+  forAllCusGroup           Boolean                   @default(false)
+  forAllUser               Boolean                   @default(false)
+  retailerId               Int?
+  createdDate              DateTime                  @default(now())
+  modifiedDate             DateTime                  @updatedAt
+  lastSyncedAt             DateTime                  @default(now())
+  vouchers                 Voucher[]
+  branches                 VoucherCampaignBranch[]
+  categories               VoucherCampaignCategory[]
+  products                 VoucherCampaignProduct[]
+  users                    VoucherCampaignUser[]
+
   @@index([kiotVietId])
 }
 
 model VoucherCampaignProduct {
-  id                Int                @id @default(autoincrement())
-  campaignId        Int
-  campaign          VoucherCampaign    @relation(fields: [campaignId], references: [id])
-  productId         Int
-  product           Product            @relation(fields: [productId], references: [id])
-  
+  id         Int             @id @default(autoincrement())
+  campaignId Int
+  productId  Int
+  campaign   VoucherCampaign @relation(fields: [campaignId], references: [id])
+  product    Product         @relation(fields: [productId], references: [id])
+
   @@unique([campaignId, productId])
   @@index([campaignId])
   @@index([productId])
 }
 
 model VoucherCampaignCategory {
-  id                Int                @id @default(autoincrement())
-  campaignId        Int
-  campaign          VoucherCampaign    @relation(fields: [campaignId], references: [id])
-  categoryId        Int
-  category          Category           @relation(fields: [categoryId], references: [id])
-  
+  id         Int             @id @default(autoincrement())
+  campaignId Int
+  categoryId Int
+  campaign   VoucherCampaign @relation(fields: [campaignId], references: [id])
+  category   Category        @relation(fields: [categoryId], references: [id])
+
   @@unique([campaignId, categoryId])
   @@index([campaignId])
   @@index([categoryId])
 }
 
 model VoucherCampaignBranch {
-  id                Int                @id @default(autoincrement())
-  campaignId        Int
-  campaign          VoucherCampaign    @relation(fields: [campaignId], references: [id])
-  branchId          Int
-  branch            Branch             @relation(fields: [branchId], references: [id])
-  
+  id         Int             @id @default(autoincrement())
+  campaignId Int
+  branchId   Int
+  branch     Branch          @relation(fields: [branchId], references: [id])
+  campaign   VoucherCampaign @relation(fields: [campaignId], references: [id])
+
   @@unique([campaignId, branchId])
   @@index([campaignId])
   @@index([branchId])
 }
 
 model VoucherCampaignUser {
-  id                Int                @id @default(autoincrement())
-  campaignId        Int
-  campaign          VoucherCampaign    @relation(fields: [campaignId], references: [id])
-  userId            BigInt
-  user              User               @relation(fields: [userId], references: [kiotVietId])
-  
+  id         Int             @id @default(autoincrement())
+  campaignId Int
+  userId     BigInt
+  campaign   VoucherCampaign @relation(fields: [campaignId], references: [id])
+  user       User            @relation(fields: [userId], references: [kiotVietId])
+
   @@unique([campaignId, userId])
   @@index([campaignId])
   @@index([userId])
 }
 
 model Voucher {
-  id                Int                @id @default(autoincrement())
-  kiotVietId        Int                @unique
-  code              String             @unique
+  id                Int             @id @default(autoincrement())
+  kiotVietId        Int             @unique
+  code              String          @unique
   voucherCampaignId Int
-  voucherCampaign   VoucherCampaign    @relation(fields: [voucherCampaignId], references: [id])
   releaseDate       DateTime?
   expireDate        DateTime?
   usedDate          DateTime?
-  status            Int                // 0: unused, 1: issued, 2: used, 3: canceled
-  sellType          Int                // 0: gift, 1: sold
-  price             Decimal            @db.Decimal(15, 2)
+  status            Int
+  sellType          Int
+  price             Decimal         @db.Decimal(15, 2)
   partnerType       String?
   partnerId         BigInt?
   partnerName       String?
   retailerId        Int?
-  createdDate       DateTime           @default(now())
-  lastSyncedAt      DateTime           @default(now())
-  
+  createdDate       DateTime        @default(now())
+  lastSyncedAt      DateTime        @default(now())
+  voucherCampaign   VoucherCampaign @relation(fields: [voucherCampaignId], references: [id])
+
   @@index([kiotVietId])
   @@index([code])
   @@index([voucherCampaignId])
 }
 
 model Settings {
-  id                        Int       @id @default(autoincrement())
-  retailerId                Int       @unique
-  managerCustomerByBranch   Boolean   @default(false)
-  allowOrderWhenOutStock    Boolean   @default(false)
+  id                         Int      @id @default(autoincrement())
+  retailerId                 Int      @unique
+  managerCustomerByBranch    Boolean  @default(false)
+  allowOrderWhenOutStock     Boolean  @default(false)
   allowSellWhenOrderOutStock Boolean  @default(false)
-  allowSellWhenOutStock     Boolean   @default(false)
-  lastSyncedAt              DateTime  @default(now())
+  allowSellWhenOutStock      Boolean  @default(false)
+  lastSyncedAt               DateTime @default(now())
 }
 
 model SyncLog {
-  id                Int                @id @default(autoincrement())
-  entityType        String
-  entityId          String
-  operation         String             // create/update/delete
-  status            String             // success/failed
-  errorMessage      String?            @db.Text
-  createdDate       DateTime           @default(now())
-  
+  id           Int      @id @default(autoincrement())
+  entityType   String
+  entityId     String
+  operation    String
+  status       String
+  errorMessage String?
+  createdDate  DateTime @default(now())
+
   @@index([entityType, entityId])
   @@index([status])
   @@index([createdDate])
 }
 
 model Webhook {
-  id                Int                @id @default(autoincrement())
-  kiotVietId        Int                @unique
-  type              String
-  url               String
-  isActive          Boolean            @default(true)
-  description       String?
-  secret            String?
-  retailerId        Int?
-  createdDate       DateTime           @default(now())
-  modifiedDate      DateTime           @updatedAt
-  
+  id           Int      @id @default(autoincrement())
+  kiotVietId   Int      @unique
+  type         String
+  url          String
+  isActive     Boolean  @default(true)
+  description  String?
+  secret       String?
+  retailerId   Int?
+  createdDate  DateTime @default(now())
+  modifiedDate DateTime @updatedAt
+
   @@index([kiotVietId])
   @@index([type])
 }
 
 model Cashflow {
-  id                     Int       @id @default(autoincrement())
-  kiotVietId             BigInt    @unique
-  code                   String    @unique
-  address                String?
-  branchId               Int?
-  branch                 Branch?   @relation(fields: [branchId], references: [id])
-  wardName               String?
-  contactNumber          String?
-  createdBy              BigInt?
+  id                        Int          @id @default(autoincrement())
+  kiotVietId                BigInt       @unique
+  code                      String       @unique
+  address                   String?
+  branchId                  Int?
+  wardName                  String?
+  contactNumber             String?
+  createdBy                 BigInt?
   usedForFinancialReporting Int?
-  cashFlowGroupId        Int?
-  method                 String
-  partnerType            String
-  partnerId              BigInt?
-  status                 Int
-  statusValue            String?
-  transDate              DateTime
-  amount                 Decimal   @db.Decimal(15, 2)
-  partnerName            String?
-  userName               String?
-  accountId              Int?
-  bankAccount            BankAccount? @relation(fields: [accountId], references: [id])
-  description            String?
-  isReceipt              Boolean
-  retailerId             Int?
-  createdDate            DateTime  @default(now())
-  lastSyncedAt           DateTime  @default(now())
+  cashFlowGroupId           Int?
+  method                    String
+  partnerType               String
+  partnerId                 BigInt?
+  status                    Int
+  statusValue               String?
+  transDate                 DateTime
+  amount                    Decimal      @db.Decimal(15, 2)
+  partnerName               String?
+  userName                  String?
+  accountId                 Int?
+  description               String?
+  isReceipt                 Boolean
+  retailerId                Int?
+  createdDate               DateTime     @default(now())
+  lastSyncedAt              DateTime     @default(now())
+  bankAccount               BankAccount? @relation(fields: [accountId], references: [id])
+  branch                    Branch?      @relation(fields: [branchId], references: [id])
 
   @@index([kiotVietId])
   @@index([branchId])
@@ -1353,7 +1309,7 @@ model SyncControl {
   currentEntity     String?
   syncMode          String
   status            String
-  error             String?   @db.Text
+  error             String?
   lastRunAt         DateTime?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
@@ -1363,7 +1319,7 @@ model SyncControl {
 
 enum LarkSyncStatus {
   PENDING
-  SYNCED 
+  SYNCED
   FAILED
   SKIP
 }
