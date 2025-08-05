@@ -92,7 +92,7 @@ export class LarkCustomerSyncService {
   private customerCodeCache: Map<string, string> = new Map();
   private cacheLoaded: boolean = false;
   private lastCacheLoadTime: Date | null = null;
-  private readonly CACHE_VALIDITY_MINUTES = 30;
+  private readonly CACHE_VALIDITY_MINUTES = 180;
 
   constructor(
     private readonly httpService: HttpService,
@@ -115,10 +115,6 @@ export class LarkCustomerSyncService {
     this.tableId = tableId;
   }
 
-  // ============================================================================
-  // MAIN SYNC METHOD WITH IMPROVED ERROR HANDLING
-  // ============================================================================
-
   async syncCustomersToLarkBase(customers: any[]): Promise<void> {
     const lockKey = `lark_customer_sync_lock_${Date.now()}`;
 
@@ -135,6 +131,16 @@ export class LarkCustomerSyncService {
 
       if (customersToSync.length === 0) {
         this.logger.log('📋 No customers need LarkBase sync');
+        await this.releaseSyncLock(lockKey);
+        return;
+      }
+
+      if (customersToSync.length < 20) {
+        this.logger.log(
+          `🏃‍♂️ Small sync (${customersToSync.length} customers) - using lightweight mode`,
+        );
+        await this.syncWithoutCache(customersToSync);
+        await this.releaseSyncLock(lockKey);
         return;
       }
 
@@ -149,20 +155,17 @@ export class LarkCustomerSyncService {
         `📊 Including: ${pendingCount} PENDING + ${failedCount} FAILED customers`,
       );
 
-      // Test LarkBase connection
       await this.testLarkBaseConnection();
 
-      // Load cache with retry mechanism
       const cacheLoaded = await this.loadExistingRecordsWithRetry();
 
       if (!cacheLoaded) {
-        this.logger.warn(
-          '⚠️ Cache loading failed - will use alternative duplicate detection',
-        );
-        // Continue with careful duplicate handling instead of stopping
+        this.logger.warn('⚠️ Cache loading failed - using lightweight mode');
+        await this.syncWithoutCache(customersToSync);
+        await this.releaseSyncLock(lockKey);
+        return;
       }
 
-      // Categorize customers
       const { newCustomers, updateCustomers } =
         this.categorizeCustomers(customersToSync);
 
@@ -170,10 +173,8 @@ export class LarkCustomerSyncService {
         `📋 Categorization: ${newCustomers.length} new, ${updateCustomers.length} updates`,
       );
 
-      // Process in smaller batches to avoid timeouts
       const BATCH_SIZE_FOR_SYNC = 50;
 
-      // Process new customers in batches
       if (newCustomers.length > 0) {
         for (let i = 0; i < newCustomers.length; i += BATCH_SIZE_FOR_SYNC) {
           const batch = newCustomers.slice(i, i + BATCH_SIZE_FOR_SYNC);
@@ -184,7 +185,6 @@ export class LarkCustomerSyncService {
         }
       }
 
-      // Process updates in batches
       if (updateCustomers.length > 0) {
         for (let i = 0; i < updateCustomers.length; i += BATCH_SIZE_FOR_SYNC) {
           const batch = updateCustomers.slice(i, i + BATCH_SIZE_FOR_SYNC);
@@ -198,19 +198,12 @@ export class LarkCustomerSyncService {
       this.logger.log(`🎉 LarkBase sync completed successfully`);
     } catch (error) {
       this.logger.error(`❌ LarkBase sync failed: ${error.message}`);
-
-      // Mark all as failed to prevent data corruption
       await this.updateDatabaseStatus(customers, 'FAILED');
-
       throw error;
     } finally {
       await this.releaseSyncLock(lockKey);
     }
   }
-
-  // ============================================================================
-  // IMPROVED CACHE LOADING WITH STRING HANDLING
-  // ============================================================================
 
   private async loadExistingRecordsWithRetry(): Promise<boolean> {
     const maxRetries = 3;
@@ -221,19 +214,27 @@ export class LarkCustomerSyncService {
           `📥 Loading cache (attempt ${attempt}/${maxRetries})...`,
         );
 
-        // Check if cache is still valid
-        if (this.isCacheValid()) {
-          this.logger.log('✅ Using existing valid cache');
+        if (this.isCacheValid() && this.existingRecordsCache.size > 5000) {
+          this.logger.log(
+            `✅ Large cache available (${this.existingRecordsCache.size} records) - skipping reload`,
+          );
           return true;
         }
 
-        // Clear old cache
-        this.clearCache();
+        if (this.lastCacheLoadTime) {
+          const cacheAgeMinutes =
+            (Date.now() - this.lastCacheLoadTime.getTime()) / (1000 * 60);
+          if (cacheAgeMinutes < 60 && this.existingRecordsCache.size > 1000) {
+            this.logger.log(
+              `✅ Recent cache (${cacheAgeMinutes.toFixed(1)}min old, ${this.existingRecordsCache.size} records) - skipping reload`,
+            );
+            return true;
+          }
+        }
 
-        // Load new cache
+        this.clearCache();
         await this.loadExistingRecordsCache();
 
-        // Validate cache
         if (this.existingRecordsCache.size > 0) {
           this.logger.log(
             `✅ Cache loaded successfully: ${this.existingRecordsCache.size} records`,
@@ -249,7 +250,7 @@ export class LarkCustomerSyncService {
         );
 
         if (attempt < maxRetries) {
-          const delay = attempt * 3000;
+          const delay = attempt * 2000;
           this.logger.log(`⏳ Waiting ${delay / 1000}s before retry...`);
           await new Promise((resolve) => setTimeout(resolve, delay));
         }
@@ -273,130 +274,119 @@ export class LarkCustomerSyncService {
   private async loadExistingRecordsCache(): Promise<void> {
     try {
       const headers = await this.larkAuthService.getCustomerHeaders();
-      let page_token = '';
+      let pageToken = '';
       let totalLoaded = 0;
       let cacheBuilt = 0;
-      let stringConversions = 0;
-      const pageSize = 100;
+      const pageSize = 1000;
 
       do {
         const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records`;
-        const params = new URLSearchParams({
-          page_size: pageSize.toString(),
-          ...(page_token && { page_token }),
-        });
+
+        const params: any = {
+          page_size: pageSize,
+          ...(pageToken && { page_token: pageToken }),
+        };
 
         const startTime = Date.now();
 
-        try {
-          const response = await firstValueFrom(
-            this.httpService.get<LarkBatchResponse>(`${url}?${params}`, {
-              headers,
-              timeout: 60000, // Increased to 60s
-            }),
-          );
+        const response = await firstValueFrom(
+          this.httpService.get(url, {
+            headers,
+            params,
+            timeout: 15000,
+          }),
+        );
 
-          const loadTime = Date.now() - startTime;
+        const loadTime = Date.now() - startTime;
 
-          if (response.data.code === 0) {
-            const records = response.data.data?.items || [];
+        if (response.data.code === 0) {
+          const records = response.data.data?.items || [];
 
-            for (const record of records) {
-              // CRITICAL FIX: Handle string kiotVietId from LarkBase
-              const kiotVietIdRaw =
-                record.fields[LARK_CUSTOMER_FIELDS.KIOTVIET_ID];
+          for (const record of records) {
+            const kiotVietIdField =
+              record.fields[LARK_CUSTOMER_FIELDS.KIOTVIET_ID];
 
-              // Enhanced conversion with better string handling
-              let kiotVietId = 0;
-
-              if (kiotVietIdRaw !== null && kiotVietIdRaw !== undefined) {
-                if (typeof kiotVietIdRaw === 'string') {
-                  const trimmed = kiotVietIdRaw.trim();
-                  if (trimmed !== '') {
-                    const parsed = parseInt(trimmed, 10);
-                    if (!isNaN(parsed) && parsed > 0) {
-                      kiotVietId = parsed;
-                      stringConversions++;
-                    }
-                  }
-                } else if (typeof kiotVietIdRaw === 'number') {
-                  kiotVietId = Math.floor(kiotVietIdRaw);
-                }
-              }
-
+            if (kiotVietIdField) {
+              const kiotVietId = this.safeBigIntToNumber(kiotVietIdField);
               if (kiotVietId > 0) {
                 this.existingRecordsCache.set(kiotVietId, record.record_id);
                 cacheBuilt++;
-
-                // Debug first few conversions
-                if (cacheBuilt <= 3) {
-                  this.logger.debug(
-                    `✅ Cached: "${kiotVietIdRaw}" (${typeof kiotVietIdRaw}) → ${kiotVietId} → ${record.record_id}`,
-                  );
-                }
-              }
-
-              // Also cache by customer code
-              const customerCode =
-                record.fields[LARK_CUSTOMER_FIELDS.CUSTOMER_CODE];
-              if (customerCode) {
-                this.customerCodeCache.set(
-                  String(customerCode).trim(),
-                  record.record_id,
-                );
               }
             }
 
-            totalLoaded += records.length;
-            page_token = response.data.data?.page_token || '';
-
-            this.logger.debug(
-              `📥 Loaded ${records.length} records in ${loadTime}ms (total: ${totalLoaded}, cached: ${cacheBuilt})`,
-            );
-
-            // Progress update
-            if (totalLoaded % 1000 === 0 || !page_token) {
-              this.logger.log(
-                `📊 Cache progress: ${cacheBuilt}/${totalLoaded} records processed (${stringConversions} string conversions)`,
+            const customerCodeField =
+              record.fields[LARK_CUSTOMER_FIELDS.CUSTOMER_CODE];
+            if (customerCodeField) {
+              this.customerCodeCache.set(
+                String(customerCodeField).trim(),
+                record.record_id,
               );
             }
-          } else {
-            throw new Error(
-              `LarkBase API error: ${response.data.msg} (code: ${response.data.code})`,
+          }
+
+          totalLoaded += records.length;
+          pageToken = response.data.data?.page_token || '';
+
+          if (totalLoaded % 2000 === 0 || !pageToken) {
+            this.logger.log(
+              `📊 Cache progress: ${cacheBuilt}/${totalLoaded} records (${loadTime}ms/page)`,
             );
           }
-        } catch (error) {
-          if (error.code === 'ECONNABORTED') {
-            throw new Error(
-              'Request timeout - LarkBase took too long to respond',
-            );
-          }
-          if (error.response?.status === 400) {
-            throw new Error(
-              'Bad request - check table permissions and field names',
-            );
-          }
-          throw error;
+        } else {
+          throw new Error(
+            `LarkBase API error: ${response.data.msg} (code: ${response.data.code})`,
+          );
         }
-      } while (page_token);
+      } while (pageToken);
 
       this.cacheLoaded = true;
-
       const successRate =
         totalLoaded > 0 ? Math.round((cacheBuilt / totalLoaded) * 100) : 0;
 
       this.logger.log(
-        `✅ Cache loaded: ${this.existingRecordsCache.size} by ID, ${this.customerCodeCache.size} by code (${successRate}% success, ${stringConversions} string→number conversions)`,
+        `✅ Customer cache loaded: ${this.existingRecordsCache.size} by ID, ${this.customerCodeCache.size} by code (${successRate}% success)`,
       );
     } catch (error) {
-      this.logger.error(`❌ Cache loading failed: ${error.message}`);
+      this.logger.error(`❌ Customer cache loading failed: ${error.message}`);
       throw error;
     }
   }
 
-  // ============================================================================
-  // IMPROVED CATEGORIZATION
-  // ============================================================================
+  private async syncWithoutCache(customers: any[]): Promise<void> {
+    this.logger.log(`🏃‍♂️ Running lightweight sync without full cache...`);
+
+    const existingCustomers = await this.prismaService.customer.findMany({
+      where: {
+        kiotVietId: { in: customers.map((c) => c.kiotVietId) },
+      },
+      select: { kiotVietId: true, larkRecordId: true },
+    });
+
+    const quickCache = new Map<number, string>();
+    existingCustomers.forEach((c) => {
+      if (c.larkRecordId) {
+        quickCache.set(Number(c.kiotVietId), c.larkRecordId);
+      }
+    });
+
+    const originalCache = this.existingRecordsCache;
+    this.existingRecordsCache = quickCache;
+
+    try {
+      const { newCustomers, updateCustomers } =
+        this.categorizeCustomers(customers);
+
+      if (newCustomers.length > 0) {
+        await this.processNewCustomers(newCustomers);
+      }
+
+      if (updateCustomers.length > 0) {
+        await this.processUpdateCustomers(updateCustomers);
+      }
+    } finally {
+      this.existingRecordsCache = originalCache;
+    }
+  }
 
   private categorizeCustomers(customers: any[]): {
     newCustomers: any[];

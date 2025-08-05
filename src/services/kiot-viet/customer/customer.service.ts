@@ -56,10 +56,6 @@ export class KiotVietCustomerService {
     this.baseUrl = baseUrl;
   }
 
-  // ============================================================================
-  // SYNC CONTROL & TRACKING SYSTEM
-  // ============================================================================
-
   async checkAndRunAppropriateSync(): Promise<void> {
     try {
       const historicalSync = await this.prismaService.syncControl.findFirst({
@@ -80,13 +76,13 @@ export class KiotVietCustomerService {
       // Then recent sync
       if (recentSync?.isEnabled && !recentSync.isRunning) {
         this.logger.log('Starting recent customer sync...');
-        await this.syncRecentCustomers(3);
+        await this.syncRecentCustomers(1);
         return;
       }
 
       // Default: recent sync
       this.logger.log('Running default recent customer sync...');
-      await this.syncRecentCustomers(3);
+      await this.syncRecentCustomers(1);
     } catch (error) {
       this.logger.error(`Sync check failed: ${error.message}`);
       throw error;
@@ -453,7 +449,7 @@ export class KiotVietCustomerService {
   // RECENT SYNC (Incremental updates)
   // ============================================================================
 
-  async syncRecentCustomers(days: number = 3): Promise<void> {
+  async syncRecentCustomers(days: number = 1): Promise<void> {
     const syncName = 'customer_recent';
 
     try {

@@ -146,13 +146,13 @@ export class KiotVietInvoiceService {
       // Then recent sync
       if (recentSync?.isEnabled && !recentSync.isRunning) {
         this.logger.log('Starting recent invoice sync...');
-        await this.syncRecentInvoices(7);
+        await this.syncRecentInvoices(5);
         return;
       }
 
       // Default: recent sync
       this.logger.log('Running default recent invoice sync...');
-      await this.syncRecentInvoices(7);
+      await this.syncRecentInvoices(5);
     } catch (error) {
       this.logger.error(`Sync check failed: ${error.message}`);
       throw error;
@@ -437,7 +437,7 @@ export class KiotVietInvoiceService {
   // RECENT SYNC
   // ============================================================================
 
-  async syncRecentInvoices(days: number = 7): Promise<void> {
+  async syncRecentInvoices(days: number = 5): Promise<void> {
     const syncName = 'invoice_recent';
 
     try {

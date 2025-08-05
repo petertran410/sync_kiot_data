@@ -139,7 +139,7 @@ export class LarkInvoiceSyncService {
   private invoiceCodeCache: Map<string, string> = new Map();
   private cacheLoaded: boolean = false;
   private lastCacheLoadTime: Date | null = null;
-  private readonly CACHE_VALIDITY_MINUTES = 30;
+  private readonly CACHE_VALIDITY_MINUTES = 180;
 
   constructor(
     private readonly httpService: HttpService,
@@ -162,10 +162,6 @@ export class LarkInvoiceSyncService {
     this.tableId = tableId;
   }
 
-  // ============================================================================
-  // MAIN SYNC METHOD
-  // ============================================================================
-
   async syncInvoicesToLarkBase(invoices: any[]): Promise<void> {
     const lockKey = `lark_invoice_sync_lock_${Date.now()}`;
 
@@ -186,6 +182,15 @@ export class LarkInvoiceSyncService {
         return;
       }
 
+      if (invoicesToSync.length < 15) {
+        this.logger.log(
+          `🏃‍♂️ Small sync (${invoicesToSync.length} invoices) - using lightweight mode`,
+        );
+        await this.syncWithoutCache(invoicesToSync);
+        await this.releaseSyncLock(lockKey);
+        return;
+      }
+
       const pendingCount = invoices.filter(
         (i) => i.larkSyncStatus === 'PENDING',
       ).length;
@@ -197,19 +202,17 @@ export class LarkInvoiceSyncService {
         `📊 Including: ${pendingCount} PENDING + ${failedCount} FAILED invoices`,
       );
 
-      // Test LarkBase connection
       await this.testLarkBaseConnection();
 
-      // Load cache with retry mechanism
       const cacheLoaded = await this.loadExistingRecordsWithRetry();
 
       if (!cacheLoaded) {
-        this.logger.warn(
-          '⚠️ Cache loading failed - will use alternative duplicate detection',
-        );
+        this.logger.warn('⚠️ Cache loading failed - using lightweight mode');
+        await this.syncWithoutCache(invoicesToSync);
+        await this.releaseSyncLock(lockKey);
+        return;
       }
 
-      // Categorize invoices
       const { newInvoices, updateInvoices } =
         this.categorizeInvoices(invoicesToSync);
 
@@ -217,10 +220,8 @@ export class LarkInvoiceSyncService {
         `📋 Categorization: ${newInvoices.length} new, ${updateInvoices.length} updates`,
       );
 
-      // Process in smaller batches
       const BATCH_SIZE_FOR_SYNC = 50;
 
-      // Process new invoices
       if (newInvoices.length > 0) {
         for (let i = 0; i < newInvoices.length; i += BATCH_SIZE_FOR_SYNC) {
           const batch = newInvoices.slice(i, i + BATCH_SIZE_FOR_SYNC);
@@ -231,29 +232,24 @@ export class LarkInvoiceSyncService {
         }
       }
 
-      // Process updates
       if (updateInvoices.length > 0) {
         for (let i = 0; i < updateInvoices.length; i += BATCH_SIZE_FOR_SYNC) {
           const batch = updateInvoices.slice(i, i + BATCH_SIZE_FOR_SYNC);
           this.logger.log(
-            `Processing update batch ${Math.floor(i / BATCH_SIZE_FOR_SYNC) + 1}/${Math.ceil(updateInvoices.length / BATCH_SIZE_FOR_SYNC)}`,
+            `Processing update invoices batch ${Math.floor(i / BATCH_SIZE_FOR_SYNC) + 1}/${Math.ceil(updateInvoices.length / BATCH_SIZE_FOR_SYNC)}`,
           );
           await this.processUpdateInvoices(batch);
         }
       }
 
       this.logger.log('✅ LarkBase invoice sync completed successfully');
-      await this.releaseSyncLock(lockKey);
     } catch (error) {
       this.logger.error(`❌ LarkBase invoice sync failed: ${error.message}`);
-      await this.releaseSyncLock(lockKey);
       throw error;
+    } finally {
+      await this.releaseSyncLock(lockKey);
     }
   }
-
-  // ============================================================================
-  // CACHE LOADING WITH RETRY
-  // ============================================================================
 
   private async loadExistingRecordsWithRetry(): Promise<boolean> {
     const maxRetries = 3;
@@ -264,9 +260,22 @@ export class LarkInvoiceSyncService {
           `📥 Loading cache (attempt ${attempt}/${maxRetries})...`,
         );
 
-        if (this.isCacheValid()) {
-          this.logger.log('✅ Using existing valid cache');
+        if (this.isCacheValid() && this.existingRecordsCache.size > 3000) {
+          this.logger.log(
+            `✅ Large cache available (${this.existingRecordsCache.size} records) - skipping reload`,
+          );
           return true;
+        }
+
+        if (this.lastCacheLoadTime) {
+          const cacheAgeMinutes =
+            (Date.now() - this.lastCacheLoadTime.getTime()) / (1000 * 60);
+          if (cacheAgeMinutes < 45 && this.existingRecordsCache.size > 500) {
+            this.logger.log(
+              `✅ Recent cache (${cacheAgeMinutes.toFixed(1)}min old, ${this.existingRecordsCache.size} records) - skipping reload`,
+            );
+            return true;
+          }
         }
 
         this.clearCache();
@@ -287,7 +296,7 @@ export class LarkInvoiceSyncService {
         );
 
         if (attempt < maxRetries) {
-          const delay = attempt * 3000;
+          const delay = attempt * 2000;
           this.logger.log(`⏳ Waiting ${delay / 1000}s before retry...`);
           await new Promise((resolve) => setTimeout(resolve, delay));
         }
@@ -311,121 +320,118 @@ export class LarkInvoiceSyncService {
   private async loadExistingRecordsCache(): Promise<void> {
     try {
       const headers = await this.larkAuthService.getInvoiceHeaders();
-      let page_token = '';
+      let pageToken = '';
       let totalLoaded = 0;
       let cacheBuilt = 0;
-      let stringConversions = 0;
-      const pageSize = 100;
+      const pageSize = 1000;
 
       do {
         const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records`;
-        const params = new URLSearchParams({
-          page_size: pageSize.toString(),
-          ...(page_token && { page_token }),
-        });
+
+        const params: any = {
+          page_size: pageSize,
+          ...(pageToken && { page_token: pageToken }),
+        };
 
         const startTime = Date.now();
 
-        try {
-          const response = await firstValueFrom(
-            this.httpService.get<LarkBatchResponse>(`${url}?${params}`, {
-              headers,
-              timeout: 60000,
-            }),
-          );
+        const response = await firstValueFrom(
+          this.httpService.get(url, {
+            headers,
+            params,
+            timeout: 15000,
+          }),
+        );
 
-          const loadTime = Date.now() - startTime;
+        const loadTime = Date.now() - startTime;
 
-          if (response.data.code === 0) {
-            const records = response.data.data?.items || [];
+        if (response.data.code === 0) {
+          const records = response.data.data?.items || [];
 
-            for (const record of records) {
-              // Handle string kiotVietId
-              const kiotVietIdRaw =
-                record.fields[LARK_INVOICE_FIELDS.KIOTVIET_ID];
+          for (const record of records) {
+            const kiotVietIdField =
+              record.fields[LARK_INVOICE_FIELDS.KIOTVIET_ID];
 
-              let kiotVietId = 0;
-
-              if (kiotVietIdRaw !== null && kiotVietIdRaw !== undefined) {
-                if (typeof kiotVietIdRaw === 'string') {
-                  const trimmed = kiotVietIdRaw.trim();
-                  if (trimmed !== '') {
-                    const parsed = parseInt(trimmed, 10);
-                    if (!isNaN(parsed) && parsed > 0) {
-                      kiotVietId = parsed;
-                      stringConversions++;
-                    }
-                  }
-                } else if (typeof kiotVietIdRaw === 'number') {
-                  kiotVietId = Math.floor(kiotVietIdRaw);
-                }
-              }
-
+            if (kiotVietIdField) {
+              const kiotVietId = this.safeBigIntToNumber(kiotVietIdField);
               if (kiotVietId > 0) {
                 this.existingRecordsCache.set(kiotVietId, record.record_id);
                 cacheBuilt++;
               }
-
-              // Also cache by invoice code
-              const invoiceCode =
-                record.fields[LARK_INVOICE_FIELDS.PRIMARY_CODE];
-              if (invoiceCode) {
-                this.invoiceCodeCache.set(
-                  String(invoiceCode).trim(),
-                  record.record_id,
-                );
-              }
             }
 
-            totalLoaded += records.length;
-            page_token = response.data.data?.page_token || '';
-
-            this.logger.debug(
-              `📥 Loaded ${records.length} records in ${loadTime}ms (total: ${totalLoaded}, cached: ${cacheBuilt})`,
-            );
-
-            if (totalLoaded % 1000 === 0 || !page_token) {
-              this.logger.log(
-                `📊 Cache progress: ${cacheBuilt}/${totalLoaded} records processed (${stringConversions} string conversions)`,
+            const invoiceCodeField =
+              record.fields[LARK_INVOICE_FIELDS.PRIMARY_CODE];
+            if (invoiceCodeField) {
+              this.invoiceCodeCache.set(
+                String(invoiceCodeField).trim(),
+                record.record_id,
               );
             }
-          } else {
-            throw new Error(
-              `LarkBase API error: ${response.data.msg} (code: ${response.data.code})`,
+          }
+
+          totalLoaded += records.length;
+          pageToken = response.data.data?.page_token || '';
+
+          if (totalLoaded % 1500 === 0 || !pageToken) {
+            this.logger.log(
+              `📊 Cache progress: ${cacheBuilt}/${totalLoaded} records (${loadTime}ms/page)`,
             );
           }
-        } catch (error) {
-          if (error.code === 'ECONNABORTED') {
-            throw new Error(
-              'Request timeout - LarkBase took too long to respond',
-            );
-          }
-          if (error.response?.status === 400) {
-            throw new Error(
-              'Bad request - check table permissions and field names',
-            );
-          }
-          throw error;
+        } else {
+          throw new Error(
+            `LarkBase API error: ${response.data.msg} (code: ${response.data.code})`,
+          );
         }
-      } while (page_token);
+      } while (pageToken);
 
       this.cacheLoaded = true;
-
       const successRate =
         totalLoaded > 0 ? Math.round((cacheBuilt / totalLoaded) * 100) : 0;
 
       this.logger.log(
-        `✅ Cache loaded: ${this.existingRecordsCache.size} by ID, ${this.invoiceCodeCache.size} by code (${successRate}% success)`,
+        `✅ Invoice cache loaded: ${this.existingRecordsCache.size} by ID, ${this.invoiceCodeCache.size} by code (${successRate}% success)`,
       );
     } catch (error) {
-      this.logger.error(`❌ Cache loading failed: ${error.message}`);
+      this.logger.error(`❌ Invoice cache loading failed: ${error.message}`);
       throw error;
     }
   }
 
-  // ============================================================================
-  // CATEGORIZATION
-  // ============================================================================
+  private async syncWithoutCache(invoices: any[]): Promise<void> {
+    this.logger.log(`🏃‍♂️ Running lightweight sync without full cache...`);
+
+    const existingInvoices = await this.prismaService.invoice.findMany({
+      where: {
+        kiotVietId: { in: invoices.map((i) => i.kiotVietId) },
+      },
+      select: { kiotVietId: true, larkRecordId: true },
+    });
+
+    const quickCache = new Map<number, string>();
+    existingInvoices.forEach((i) => {
+      if (i.larkRecordId) {
+        quickCache.set(Number(i.kiotVietId), i.larkRecordId);
+      }
+    });
+
+    const originalCache = this.existingRecordsCache;
+    this.existingRecordsCache = quickCache;
+
+    try {
+      const { newInvoices, updateInvoices } = this.categorizeInvoices(invoices);
+
+      if (newInvoices.length > 0) {
+        await this.processNewInvoices(newInvoices);
+      }
+
+      if (updateInvoices.length > 0) {
+        await this.processUpdateInvoices(updateInvoices);
+      }
+    } finally {
+      this.existingRecordsCache = originalCache;
+    }
+  }
 
   private categorizeInvoices(invoices: any[]): {
     newInvoices: any[];

@@ -122,7 +122,7 @@ export class BusSchedulerService implements OnModuleInit {
     }, 5000);
   }
 
-  @Cron('*/1 * * * *', {
+  @Cron('*/2 * * * *', {
     name: 'main_sync_cycle',
     timeZone: 'Asia/Ho_Chi_Minh',
   })
@@ -164,7 +164,7 @@ export class BusSchedulerService implements OnModuleInit {
     const signal = this.mainCycleAbortController.signal;
 
     try {
-      this.logger.log('🚀 Starting 4-minute parallel sync cycle...');
+      this.logger.log('🚀 Starting 1-minute parallel sync cycle...');
       const startTime = Date.now();
 
       if (signal.aborted) {
@@ -172,23 +172,36 @@ export class BusSchedulerService implements OnModuleInit {
         return;
       }
 
-      const runningSyncs = await this.checkRunningSyncs();
+      const runningSyncs = await this.checkRunningSyncsWithTimeout();
       if (runningSyncs.length > 0) {
-        this.logger.log(
-          `⏸️ Parallel sync skipped - running: ${runningSyncs.map((s) => s.name).join(', ')}`,
-        );
-        return;
+        const runningTooLong = runningSyncs.some((sync) => {
+          if (!sync.startedAt) return false;
+          const runningTime = Date.now() - sync.startedAt.getTime();
+          return runningTime > 5 * 60 * 1000;
+        });
+
+        if (runningTooLong) {
+          this.logger.warn(
+            '⚠️ Detected long-running syncs - triggering cleanup',
+          );
+          await this.cleanupStuckSyncs();
+        } else {
+          this.logger.log(
+            `⏸️ Parallel sync skipped - running: ${runningSyncs.map((s) => s.name).join(', ')}`,
+          );
+          return;
+        }
       }
 
       await this.updateCycleTracking('main_cycle', 'running');
 
-      const CYCLE_TIMEOUT_MS = 10 * 60 * 1000;
+      const CYCLE_TIMEOUT_MS = 8 * 60 * 1000;
 
       try {
         const cyclePromise = this.executeMainCycleWithAbortSignal(signal);
         const timeoutPromise = new Promise<never>((_, reject) =>
           setTimeout(
-            () => reject(new Error('Cycle timeout after 10 minutes')),
+            () => reject(new Error('Cycle timeout after 8 minutes')),
             CYCLE_TIMEOUT_MS,
           ),
         );
@@ -198,7 +211,7 @@ export class BusSchedulerService implements OnModuleInit {
 
         const totalDuration = ((Date.now() - startTime) / 1000).toFixed(2);
         this.logger.log(
-          `🎉 4-minute sync cycle completed in ${totalDuration}s`,
+          `🎉 1-minute sync cycle completed in ${totalDuration}s`,
         );
       } catch (timeoutError) {
         if (signal.aborted) {
@@ -214,11 +227,11 @@ export class BusSchedulerService implements OnModuleInit {
           timeoutError instanceof Error &&
           timeoutError.message.includes('timeout')
         ) {
-          this.logger.error(`⏰ 1-minute cycle timed out after 15 minutes`);
+          this.logger.error(`⏰ 1-minute cycle timed out after 8 minutes`);
           await this.updateCycleTracking(
             'main_cycle',
             'timeout',
-            'Cycle exceeded 15 minute timeout',
+            'Cycle exceeded 8 minute timeout',
           );
         } else {
           throw timeoutError;
@@ -226,7 +239,7 @@ export class BusSchedulerService implements OnModuleInit {
       }
     } catch (error) {
       if (signal.aborted) {
-        this.logger.log('🚫 4-minute cycle aborted during execution');
+        this.logger.log('🚫 1-minute cycle aborted during execution');
         await this.updateCycleTracking(
           'main_cycle',
           'aborted',
@@ -239,6 +252,43 @@ export class BusSchedulerService implements OnModuleInit {
     } finally {
       this.mainCycleAbortController = null;
     }
+  }
+
+  private async checkRunningSyncsWithTimeout(): Promise<any[]> {
+    const runningSyncs = await this.prismaService.syncControl.findMany({
+      where: { isRunning: true },
+    });
+
+    const now = Date.now();
+    const cleanupPromises = runningSyncs
+      .filter(
+        (sync) =>
+          sync.startedAt && now - sync.startedAt.getTime() > 10 * 60 * 1000,
+      )
+      .map((sync) =>
+        this.prismaService.syncControl.update({
+          where: { id: sync.id },
+          data: {
+            isRunning: false,
+            status: 'auto_cleanup',
+            error: 'Auto-cleaned due to timeout',
+            completedAt: new Date(),
+          },
+        }),
+      );
+
+    if (cleanupPromises.length > 0) {
+      this.logger.warn(
+        `🧹 Auto-cleaning ${cleanupPromises.length} stuck syncs`,
+      );
+      await Promise.all(cleanupPromises);
+
+      return await this.prismaService.syncControl.findMany({
+        where: { isRunning: true },
+      });
+    }
+
+    return runningSyncs;
   }
 
   private async executeMainCycleWithAbortSignal(
@@ -703,11 +753,11 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
-  async cleanupStuckSyncs(): Promise<number> {
+  public async cleanupStuckSyncs(): Promise<number> {
     this.logger.log('🧹 Starting stuck sync cleanup...');
 
     const now = new Date();
-    const stuckThresholdMs = 1 * 60 * 60 * 1000;
+    const stuckThresholdMs = 5 * 60 * 1000;
 
     const stuckSyncs = await this.prismaService.syncControl.findMany({
       where: {
@@ -729,18 +779,13 @@ export class BusSchedulerService implements OnModuleInit {
     let cleanedCount = 0;
 
     for (const sync of stuckSyncs) {
-      if (!sync.startedAt) {
-        this.logger.warn(
-          `⚠️ Skipping sync ${sync.name} - no startedAt timestamp`,
-        );
-        continue;
-      }
+      if (!sync.startedAt) continue;
 
       const stuckDuration = now.getTime() - sync.startedAt.getTime();
-      const stuckHours = Math.round(stuckDuration / (60 * 60 * 1000));
+      const stuckMinutes = Math.round(stuckDuration / (60 * 1000));
 
       this.logger.warn(
-        `🔧 Cleaning stuck sync: ${sync.name} (running ${stuckHours}h)`,
+        `🔧 Cleaning stuck sync: ${sync.name} (running ${stuckMinutes}min)`,
       );
 
       try {
@@ -749,12 +794,12 @@ export class BusSchedulerService implements OnModuleInit {
           data: {
             isRunning: false,
             status: 'force_stopped',
-            error: `Force stopped after ${stuckHours}h (stuck sync cleanup)`,
+            error: `Force stopped after ${stuckMinutes}min (aggressive cleanup)`,
             completedAt: now,
             progress: {
               ...((sync.progress as any) || {}),
               forceStoppedAt: now.toISOString(),
-              stuckDuration: `${stuckHours}h`,
+              stuckDuration: `${stuckMinutes}min`,
             },
           },
         });
