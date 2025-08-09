@@ -5,7 +5,6 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { LarkAuthService } from '../auth/lark-auth.service';
 import { firstValueFrom } from 'rxjs';
 
-// ✅ EXACT field names from Đơn Hàng.rtf
 const LARK_ORDER_FIELDS = {
   PRIMARY_CODE: 'Mã Đơn Hàng',
   KIOTVIET_ID: 'kiotVietId',

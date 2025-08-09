@@ -288,6 +288,12 @@ export class KiotVietOrderSupplierService {
         progress: { processedCount, expectedTotal: totalOrderSuppliers },
       });
 
+      await this.updateSyncControl('order_supplier_historical', {
+        isEnabled: false,
+        isRunning: false,
+        status: 'idle',
+      });
+
       const completionRate =
         totalOrderSuppliers > 0
           ? (processedCount / totalOrderSuppliers) * 100

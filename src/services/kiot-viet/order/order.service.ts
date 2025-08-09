@@ -107,10 +107,6 @@ export class KiotVietOrderService {
     this.baseUrl = baseUrl;
   }
 
-  // ============================================================================
-  // SYNC CONTROL & TRACKING - EXACT COPY FROM INVOICE
-  // ============================================================================
-
   async checkAndRunAppropriateSync(): Promise<void> {
     try {
       const historicalSync = await this.prismaService.syncControl.findFirst({
@@ -153,10 +149,6 @@ export class KiotVietOrderService {
 
     this.logger.log('✅ Historical order sync enabled');
   }
-
-  // ============================================================================
-  // HISTORICAL SYNC - ENHANCED WITH RATE LIMITING
-  // ============================================================================
 
   async syncHistoricalOrders(): Promise<void> {
     const syncName = 'order_historical';
@@ -413,10 +405,6 @@ export class KiotVietOrderService {
     }
   }
 
-  // ============================================================================
-  // RECENT SYNC - ENHANCED WITH RATE LIMITING
-  // ============================================================================
-
   async syncRecentOrders(days: number = 6): Promise<void> {
     const syncName = 'order_recent';
 
@@ -477,10 +465,6 @@ export class KiotVietOrderService {
     }
   }
 
-  // ============================================================================
-  // API METHODS with ENHANCED Rate Limiting & Retry Logic
-  // ============================================================================
-
   async fetchOrdersListWithRetry(
     params: {
       currentItem?: number;
@@ -490,7 +474,7 @@ export class KiotVietOrderService {
       includeOrderDelivery?: boolean;
       includePayment?: boolean;
     },
-    maxRetries: number = 5, // Keep existing retry count
+    maxRetries: number = 5,
   ): Promise<any> {
     let lastError: Error | undefined;
 

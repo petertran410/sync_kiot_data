@@ -285,6 +285,12 @@ export class KiotVietPurchaseOrderService {
         progress: { processedCount, expectedTotal: totalPurchaseOrder },
       });
 
+      await this.updateSyncControl('purchase_order_historical', {
+        isEnabled: false,
+        isRunning: false,
+        status: 'idle',
+      });
+
       const completionRate =
         totalPurchaseOrder > 0
           ? (processedCount / totalPurchaseOrder) * 100

@@ -1,23 +1,18 @@
-// src/services/kiot-viet/return/return.service.ts - Replace existing file
-
 import { Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { KiotVietAuthService } from '../auth.service';
-import { firstValueFrom } from 'rxjs';
+import { async, firstValueFrom, of } from 'rxjs';
 import { Prisma } from '@prisma/client';
 
-// ============================================================================
-// INTERFACES
-// ============================================================================
 interface KiotVietReturn {
   id: number;
   code: string;
   invoiceId?: number;
   returnDate: string;
-  branchId: number;
-  branchName: string;
+  branchId?: number;
+  branchName?: string;
   receivedById?: number;
   soldByName: string;
   customerId?: number;
@@ -62,9 +57,6 @@ export class KiotVietReturnService {
   private readonly logger = new Logger(KiotVietReturnService.name);
   private readonly baseUrl: string;
   private readonly PAGE_SIZE = 100;
-  private readonly MAX_RETRIES = 3;
-  private readonly MAX_EMPTY_PAGES = 3;
-  private readonly MAX_ERROR_PAGES = 5;
 
   constructor(
     private readonly httpService: HttpService,
@@ -79,136 +71,262 @@ export class KiotVietReturnService {
     this.baseUrl = baseUrl;
   }
 
-  // ============================================================================
-  // MAIN HISTORICAL SYNC METHOD
-  // ============================================================================
+  async checkAndRunAppropriateSync(): Promise<void> {
+    try {
+      const historicalSync = await this.prismaService.syncControl.findFirst({
+        where: { name: 'return_historical' },
+      });
+
+      if (historicalSync?.isEnabled && !historicalSync.isRunning) {
+        this.logger.log('Starting historical return sync');
+        await this.syncHistoricalReturns();
+        return;
+      }
+      this.logger.log('Running default historical return sync...');
+      await this.syncHistoricalReturns();
+    } catch (error) {
+      this.logger.log(`Sync check failed: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async enableHistoricalSync(): Promise<void> {
+    await this.updateSyncControl('return_historical', {
+      isEnabled: true,
+      isRunning: false,
+      status: 'idle',
+    });
+
+    this.logger.log('✅ Historical return sync enabled');
+  }
 
   async syncHistoricalReturns(): Promise<void> {
     const syncName = 'return_historical';
+
+    let currentItem = 0;
+    let processedCount = 0;
+    let totalReturns = 0;
+    let consecutiveEmptyPages = 0;
+    let consecutiveErrorPages = 0;
+    let lastValidTotal = 0;
+    let processedReturnIds = new Set<number>();
 
     try {
       await this.updateSyncControl(syncName, {
         isRunning: true,
         status: 'running',
         startedAt: new Date(),
-        progress: { processedCount: 0 },
+        error: null,
       });
 
       this.logger.log('🚀 Starting historical return sync...');
 
-      let currentItem = 0;
-      let processedCount = 0;
-      let totalReturns = 0;
-      let consecutiveEmptyPages = 0;
-      let consecutiveErrorPages = 0;
-      let processedReturnIds = new Set<number>();
+      const MAX_CONSECUTIVE_EMPTY_PAGES = 5;
+      const MAX_CONSECUTIVE_ERROR_PAGES = 3;
+      const RETRY_DELAY_MS = 2000;
+      const MAX_TOTAL_RETRIES = 10;
 
-      while (
-        consecutiveEmptyPages < this.MAX_EMPTY_PAGES &&
-        consecutiveErrorPages < this.MAX_ERROR_PAGES
-      ) {
-        try {
+      let totalRetries = 0;
+
+      while (true) {
+        const currentPage = Math.floor(currentItem / this.PAGE_SIZE) + 1;
+
+        if (totalReturns > 0) {
+          if (currentItem >= totalReturns) {
+            this.logger.log(
+              `✅ Pagination complete. Processed ${processedCount}/${totalReturns} returns`,
+            );
+            break;
+          }
+
+          const progressPercentage = (currentItem / totalReturns) * 100;
           this.logger.log(
-            `📄 Fetching page ${Math.floor(currentItem / this.PAGE_SIZE) + 1} (items ${currentItem} - ${currentItem + this.PAGE_SIZE - 1})`,
+            `📄 Fetching page ${currentPage} (${currentItem}/${totalReturns} - ${progressPercentage.toFixed(1)}%)`,
+          );
+        } else {
+          this.logger.log(
+            `📄 Fetching page ${currentPage} (currentItem: ${currentItem})`,
           );
 
-          const response = await this.fetchReturnsWithRetry({
-            pageSize: this.PAGE_SIZE,
-            currentItem,
-            includePayment: true,
-          });
+          try {
+            const response = await this.fetchReturnsWithRetry({
+              pageSize: this.PAGE_SIZE,
+              currentItem,
+              orderBy: 'createdBy',
+              orderDirection: 'DESC',
+              includePayment: true,
+            });
 
-          if (!response?.data || response.data.length === 0) {
-            consecutiveEmptyPages++;
-            this.logger.log(
-              `📄 Empty page ${consecutiveEmptyPages}/${this.MAX_EMPTY_PAGES}`,
+            if (!response) {
+              consecutiveEmptyPages++;
+              this.logger.warn('⚠️ Received null response from KiotViet API');
+
+              if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
+                this.logger.log(
+                  `🔚 Reached end after ${consecutiveEmptyPages} empty pages`,
+                );
+                break;
+              }
+
+              await new Promise((resolve) =>
+                setTimeout(resolve, RETRY_DELAY_MS),
+              );
+              continue;
+            }
+
+            consecutiveEmptyPages = 0;
+            consecutiveErrorPages = 0;
+
+            const { total, data: returns } = response;
+
+            if (total !== undefined && total !== null) {
+              if (totalReturns === 0) {
+                totalReturns = total;
+                this.logger.log(`📊 Total orders detected: ${totalReturns}`);
+              } else if (total !== totalReturns) {
+                this.logger.warn(
+                  `⚠️ Total count changed: ${totalReturns} -> ${total}. Using latest.`,
+                );
+                totalReturns = total;
+              }
+              lastValidTotal = total;
+            }
+
+            if (!returns || returns.length === 0) {
+              this.logger.warn(
+                `⚠️ Empty page received at position ${currentItem}`,
+              );
+
+              consecutiveEmptyPages++;
+
+              if (totalReturns > 0 && currentItem >= totalReturns) {
+                this.logger.log(
+                  '✅ Reached end of data (empty page past total)',
+                );
+                break;
+              }
+
+              if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
+                this.logger.log(
+                  `🔚 Stopping after ${consecutiveEmptyPages} consecutive empty pages`,
+                );
+                break;
+              }
+
+              currentItem += this.PAGE_SIZE;
+              continue;
+            }
+
+            const uniqueReturns = returns.filter(
+              (returnData: KiotVietReturn) => {
+                if (processedReturnIds.has(returnData.id)) {
+                  this.logger.debug(
+                    `⚠️ Duplicate return ID detected: ${returnData.id} (${returnData.code})`,
+                  );
+                  return false;
+                }
+                processedReturnIds.add(returnData.id);
+                return true;
+              },
             );
 
-            if (consecutiveEmptyPages >= this.MAX_EMPTY_PAGES) {
-              this.logger.log('📄 No more data, completing sync');
-              break;
-            }
-
-            currentItem += this.PAGE_SIZE;
-            continue;
-          }
-
-          consecutiveEmptyPages = 0;
-          consecutiveErrorPages = 0;
-
-          const returns = response.data;
-          totalReturns = response.total || returns.length;
-
-          // Filter out duplicates
-          const uniqueReturns = returns.filter((returnData: KiotVietReturn) => {
-            if (processedReturnIds.has(returnData.id)) {
-              this.logger.debug(
-                `⚠️ Duplicate return ID detected: ${returnData.id} (${returnData.code})`,
+            if (uniqueReturns.length === returns.length) {
+              this.logger.warn(
+                `🔄 Filtered out ${returns.length - uniqueReturns.length} duplicate returns on page ${currentPage}`,
               );
-              return false;
             }
-            processedReturnIds.add(returnData.id);
-            return true;
-          });
 
-          if (uniqueReturns.length === 0) {
-            this.logger.log('📄 No unique returns found in this page');
+            if (uniqueReturns.length === 0) {
+              this.logger.log(
+                `⏭️ Skipping page ${currentPage} - all returns already processed`,
+              );
+              currentItem += this.PAGE_SIZE;
+              continue;
+            }
+
+            this.logger.log(
+              `🔄 Processing ${uniqueReturns.length} returns from page ${currentPage}...`,
+            );
+
+            const returnsWithDetails =
+              await this.enrichReturnsWithDetails(uniqueReturns);
+            const savedReturns =
+              await this.saveReturnsToDatabase(returnsWithDetails);
+
+            processedCount += savedReturns.length;
             currentItem += this.PAGE_SIZE;
-            continue;
+
+            if (totalReturns > 0) {
+              const completionPercentage =
+                (processedCount / totalReturns) * 100;
+              this.logger.log(
+                `📈 Progress: ${processedCount}/${totalReturns} (${completionPercentage.toFixed(1)}%)`,
+              );
+
+              if (processedCount >= totalReturns) {
+                this.logger.log('🎉 All returns processed successfully!');
+                break;
+              }
+            }
+
+            if (totalReturns > 0) {
+              if (
+                currentItem >= totalReturns &&
+                processedCount >= totalReturns * 0.95
+              ) {
+                this.logger.log(
+                  '✅ Sync completed - reached expected data range',
+                );
+                break;
+              }
+            }
+
+            await new Promise((resolve) => setTimeout(resolve, 100));
+          } catch (error) {
+            consecutiveErrorPages++;
+            totalReturns++;
+
+            this.logger.error(
+              `❌ API error on page ${currentPage}: ${error.message}`,
+            );
+
+            if (consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES) {
+              throw new Error(`Too many consecutive errors: ${error.message}`);
+            }
+
+            if (totalRetries >= MAX_TOTAL_RETRIES) {
+              throw new Error(
+                `Maximum total retries exceeded: ${error.message}`,
+              );
+            }
+
+            const delay =
+              RETRY_DELAY_MS * Math.pow(2, consecutiveErrorPages - 1);
+            this.logger.log(`⏳ Retrying after ${delay}ms delay...`);
+            await new Promise((resolve) => setTimeout(resolve, delay));
           }
-
-          // Validate and save to database
-          const validReturns = this.validateReturns(uniqueReturns);
-          const savedReturns = await this.saveReturnsToDatabase(validReturns);
-
-          processedCount += savedReturns.length;
-
-          // Update progress
-          await this.updateSyncControl(syncName, {
-            progress: { processedCount, expectedTotal: totalReturns },
-          });
-
-          this.logger.log(
-            `✅ Page processed: ${savedReturns.length}/${uniqueReturns.length} returns saved. Total: ${processedCount}`,
-          );
-
-          currentItem += this.PAGE_SIZE;
-
-          // Rate limiting
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        } catch (error) {
-          consecutiveErrorPages++;
-          this.logger.error(
-            `❌ Page ${Math.floor(currentItem / this.PAGE_SIZE) + 1} failed (attempt ${consecutiveErrorPages}/${this.MAX_ERROR_PAGES}): ${error.message}`,
-          );
-
-          if (consecutiveErrorPages >= this.MAX_ERROR_PAGES) {
-            throw new Error(`Too many consecutive errors: ${error.message}`);
-          }
-
-          // Wait before retry
-          await new Promise((resolve) =>
-            setTimeout(resolve, 2000 * consecutiveErrorPages),
-          );
-          currentItem += this.PAGE_SIZE;
         }
+
+        await this.updateSyncControl(syncName, {
+          isRunning: false,
+          status: 'completed',
+          completedAt: new Date(),
+          progress: { processedCount, expectedTotal: totalReturns },
+        });
+
+        await this.updateSyncControl('return_historical', {
+          isEnabled: false,
+          isRunning: false,
+          status: 'idle',
+        });
+
+        const completionRate =
+          totalReturns > 0 ? (processedCount / totalReturns) * 100 : 100;
+
+        this.logger.log(
+          `✅ Historical order sync completed: ${processedCount}/${totalReturns} (${completionRate.toFixed(1)}% completion rate)`,
+        );
       }
-
-      const completionRate =
-        totalReturns > 0
-          ? Math.round((processedCount / totalReturns) * 100)
-          : 100;
-
-      await this.updateSyncControl(syncName, {
-        isRunning: false,
-        status: 'completed',
-        completedAt: new Date(),
-        progress: { processedCount, expectedTotal: totalReturns },
-      });
-
-      this.logger.log(
-        `✅ Historical return sync completed: ${processedCount}/${totalReturns} (${completionRate}% completion rate)`,
-      );
     } catch (error) {
       await this.updateSyncControl(syncName, {
         isRunning: false,
@@ -221,10 +339,6 @@ export class KiotVietReturnService {
       throw error;
     }
   }
-
-  // ============================================================================
-  // API METHODS WITH RETRY
-  // ============================================================================
 
   async fetchReturnsWithRetry(
     params: {
@@ -243,7 +357,7 @@ export class KiotVietReturnService {
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        return await this.fetchReturnsFromAPI(params);
+        return await this.fetchReturnsList(params);
       } catch (error) {
         lastError = error as Error;
         this.logger.warn(
@@ -251,8 +365,9 @@ export class KiotVietReturnService {
         );
 
         if (attempt < maxRetries) {
-          const delayMs = 1000 * Math.pow(2, attempt - 1);
-          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          const delay = 2000 * attempt;
+          this.logger.log(`⏳ Retrying after ${delay / 1000}s delay...`);
+          await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }
     }
@@ -260,7 +375,7 @@ export class KiotVietReturnService {
     throw lastError;
   }
 
-  private async fetchReturnsFromAPI(params: {
+  private async fetchReturnsList(params: {
     pageSize?: number;
     currentItem?: number;
     includePayment?: boolean;
@@ -305,74 +420,36 @@ export class KiotVietReturnService {
     return response.data;
   }
 
-  // ============================================================================
-  // VALIDATION
-  // ============================================================================
+  private async enrichReturnsWithDetails(
+    returns: KiotVietReturn[],
+  ): Promise<KiotVietReturn[]> {
+    this.logger.log(`🔍 Enriching ${returns.length} returns with details...`);
 
-  private validateReturns(returns: KiotVietReturn[]): KiotVietReturn[] {
-    const validReturns: KiotVietReturn[] = [];
-
+    const enrichedReturns: any[] = [];
     for (const returnData of returns) {
-      if (this.validateReturnData(returnData)) {
-        validReturns.push(returnData);
+      try {
+        const headers = await this.authService.getRequestHeaders();
+        const response = await firstValueFrom(
+          this.httpService.get(`${this.baseUrl}/returns/${returnData.id}`, {
+            headers,
+          }),
+        );
+        if (response.data) {
+          enrichedReturns.push(response.data);
+        } else {
+          enrichedReturns.push(returnData);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      } catch (error) {
+        this.logger.warn(
+          `⚠️ Failed to enrich return ${returnData.id}: ${error.message}`,
+        );
+        enrichedReturns.push(returnData);
       }
     }
 
-    this.logger.log(
-      `✅ Validation complete: ${validReturns.length}/${returns.length} returns valid`,
-    );
-
-    return validReturns;
+    return enrichedReturns;
   }
-
-  private validateReturnData(returnData: KiotVietReturn): boolean {
-    // Required field validation
-    if (!returnData.id || typeof returnData.id !== 'number') {
-      this.logger.warn(`⚠️ Invalid return ID: ${returnData.id}`);
-      return false;
-    }
-
-    if (
-      !returnData.code ||
-      typeof returnData.code !== 'string' ||
-      returnData.code.trim() === ''
-    ) {
-      this.logger.warn(
-        `⚠️ Invalid return code for ID ${returnData.id}: '${returnData.code}'`,
-      );
-      return false;
-    }
-
-    if (!returnData.returnDate) {
-      this.logger.warn(`⚠️ Missing return date for ID ${returnData.id}`);
-      return false;
-    }
-
-    if (!returnData.branchId || typeof returnData.branchId !== 'number') {
-      this.logger.warn(
-        `⚠️ Invalid branch ID for return ${returnData.id}: ${returnData.branchId}`,
-      );
-      return false;
-    }
-
-    // Amount validation
-    if (
-      returnData.returnTotal === null ||
-      returnData.returnTotal === undefined ||
-      typeof returnData.returnTotal !== 'number'
-    ) {
-      this.logger.warn(
-        `⚠️ Invalid return total for return ${returnData.id}: ${returnData.returnTotal}`,
-      );
-      return false;
-    }
-
-    return true;
-  }
-
-  // ============================================================================
-  // DATABASE OPERATIONS
-  // ============================================================================
 
   private async saveReturnsToDatabase(
     returns: KiotVietReturn[],
@@ -383,31 +460,45 @@ export class KiotVietReturnService {
 
     for (const returnData of returns) {
       try {
-        const [invoice, branch, customer] = await Promise.all([
-          returnData.invoiceId
-            ? this.prismaService.invoice.findFirst({
-                where: { kiotVietId: BigInt(returnData.invoiceId) },
-                select: { id: true, code: true },
-              })
-            : Promise.resolve(null),
-          this.prismaService.branch.findFirst({
-            where: { kiotVietId: returnData.branchId },
-            select: { id: true, name: true },
-          }),
-          returnData.customerId
-            ? this.prismaService.customer.findFirst({
-                where: { kiotVietId: BigInt(returnData.customerId) },
-                select: { id: true, code: true, name: true },
-              })
-            : Promise.resolve(null),
-        ]);
+        // const [invoice, branch, customer] = await Promise.all([
+        //   returnData.invoiceId
+        //     ? this.prismaService.invoice.findFirst({
+        //         where: { kiotVietId: BigInt(returnData.invoiceId) },
+        //         select: { id: true, code: true },
+        //       })
+        //     : Promise.resolve(null),
+        //   this.prismaService.branch.findFirst({
+        //     where: { kiotVietId: returnData.branchId },
+        //     select: { id: true, name: true },
+        //   }),
+        //   returnData.customerId
+        //     ? this.prismaService.customer.findFirst({
+        //         where: { kiotVietId: BigInt(returnData.customerId) },
+        //         select: { id: true, code: true, name: true },
+        //       })
+        //     : Promise.resolve(null),
+        // ]);
 
-        if (!branch) {
-          this.logger.warn(
-            `⚠️ Branch ${returnData.branchId} not found for return ${returnData.id}`,
-          );
-          continue;
-        }
+        const invoice = returnData.invoiceId
+          ? await this.prismaService.invoice.findFirst({
+              where: { kiotVietId: BigInt(returnData.invoiceId) },
+              select: { id: true, code: true },
+            })
+          : null;
+
+        const branch = returnData.branchId
+          ? await this.prismaService.branch.findFirst({
+              where: { kiotVietId: returnData.branchId },
+              select: { id: true, name: true },
+            })
+          : null;
+
+        const customer = returnData.customerId
+          ? await this.prismaService.customer.findFirst({
+              where: { kiotVietId: BigInt(returnData.customerId) },
+              select: { id: true, name: true, code: true },
+            })
+          : null;
 
         const returnRecord = await this.prismaService.return.upsert({
           where: { kiotVietId: BigInt(returnData.id) },
@@ -416,8 +507,8 @@ export class KiotVietReturnService {
             invoiceId: invoice?.id || null,
             invoiceCode: invoice?.code,
             returnDate: new Date(returnData.returnDate),
-            branchId: branch.id,
-            branchName: branch.name,
+            branchId: branch?.id,
+            branchName: branch?.name,
             receivedById: returnData.receivedById
               ? BigInt(returnData.receivedById)
               : null,
@@ -443,8 +534,8 @@ export class KiotVietReturnService {
             invoiceId: invoice?.id || null,
             invoiceCode: invoice?.code,
             returnDate: new Date(returnData.returnDate),
-            branchId: branch.id,
-            branchName: branch.name,
+            branchId: branch?.id,
+            branchName: branch?.name,
             receivedById: returnData.receivedById
               ? BigInt(returnData.receivedById)
               : null,
@@ -592,20 +683,6 @@ export class KiotVietReturnService {
         `⚠️ Failed to save return payments for return ${returnId}: ${error.message}`,
       );
     }
-  }
-
-  // ============================================================================
-  // SYNC CONTROL
-  // ============================================================================
-
-  async enableHistoricalSync(): Promise<void> {
-    await this.updateSyncControl('return_historical', {
-      isEnabled: true,
-      isRunning: false,
-      status: 'idle',
-    });
-
-    this.logger.log('✅ Historical return sync enabled');
   }
 
   private async updateSyncControl(name: string, data: any): Promise<void> {

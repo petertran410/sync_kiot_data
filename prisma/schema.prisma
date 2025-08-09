@@ -928,7 +928,8 @@ model Return {
   code         String         @unique
   invoiceId    Int?
   returnDate   DateTime?
-  branchId     Int
+  branchId     Int?
+  brancnName   String?
   receivedById BigInt?
   customerId   Int?
   returnTotal  Decimal        @db.Decimal(15, 2)
@@ -944,7 +945,7 @@ model Return {
   soldByName   String
   statusValue  String?
   payments     Payment[]
-  branch       Branch         @relation(fields: [branchId], references: [id])
+  branch       Branch?         @relation(fields: [branchId], references: [id])
   customer     Customer?      @relation(fields: [customerId], references: [id])
   invoice      Invoice?       @relation(fields: [invoiceId], references: [id])
   details      ReturnDetail[]
