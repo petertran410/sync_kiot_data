@@ -3,7 +3,7 @@ import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { KiotVietAuthService } from '../auth.service';
-import { async, firstValueFrom, of } from 'rxjs';
+import { async, firstValueFrom } from 'rxjs';
 import { Prisma } from '@prisma/client';
 
 interface KiotVietReturn {
@@ -486,12 +486,10 @@ export class KiotVietReturnService {
             })
           : null;
 
-        const branch = returnData.branchId
-          ? await this.prismaService.branch.findFirst({
-              where: { kiotVietId: returnData.branchId },
-              select: { id: true, name: true },
-            })
-          : null;
+        const branch = await this.prismaService.branch.findFirst({
+          where: { kiotVietId: returnData.branchId },
+          select: { id: true, name: true },
+        });
 
         const customer = returnData.customerId
           ? await this.prismaService.customer.findFirst({
