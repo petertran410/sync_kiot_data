@@ -459,8 +459,7 @@ export class KiotVietReturnService {
           where: { kiotVietId: BigInt(returnData.id) },
           update: {
             code: returnData.code,
-            invoiceId: invoice?.id || null,
-            invoiceCode: invoice?.code,
+            invoiceId: returnData.invoiceId || null,
             returnDate: new Date(returnData.returnDate),
             branchId: branch?.id,
             branchName: branch?.name,
@@ -474,7 +473,6 @@ export class KiotVietReturnService {
             returnTotal: new Prisma.Decimal(returnData.returnTotal),
             totalPayment: new Prisma.Decimal(returnData.totalPayment),
             status: returnData.status,
-            statusValue: returnData.statusValue,
             createdDate: returnData.createdDate
               ? new Date(returnData.createdDate)
               : new Date(),
@@ -486,8 +484,7 @@ export class KiotVietReturnService {
           create: {
             kiotVietId: BigInt(returnData.id),
             code: returnData.code,
-            invoiceId: invoice?.id || null,
-            invoiceCode: invoice?.code,
+            invoiceId: returnData.invoiceId || null,
             returnDate: new Date(returnData.returnDate),
             branchId: branch?.id,
             branchName: branch?.name,
@@ -501,7 +498,6 @@ export class KiotVietReturnService {
             returnTotal: new Prisma.Decimal(returnData.returnTotal),
             totalPayment: new Prisma.Decimal(returnData.totalPayment),
             status: returnData.status,
-            statusValue: returnData.statusValue,
             createdDate: returnData.createdDate
               ? new Date(returnData.createdDate)
               : new Date(),

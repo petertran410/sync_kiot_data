@@ -940,9 +940,7 @@ model Return {
   branchName   String?
   customerCode String?
   customerName String?
-  invoiceCode  String?
   soldByName   String
-  statusValue  String?
   payments     Payment[]
   branch       Branch?         @relation(fields: [branchId], references: [id])
   customer     Customer?      @relation(fields: [customerId], references: [id])
