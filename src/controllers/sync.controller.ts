@@ -1,4 +1,3 @@
-// src/controllers/sync.controller.ts
 import { Controller, Get, Post, Query, Logger } from '@nestjs/common';
 import { BusSchedulerService } from '../services/bus-scheduler/bus-scheduler.service';
 import { KiotVietCustomerService } from '../services/kiot-viet/customer/customer.service';
@@ -7,6 +6,7 @@ import { KiotVietOrderService } from 'src/services/kiot-viet/order/order.service
 import { KiotVietProductService } from 'src/services/kiot-viet/product/product.service';
 import { KiotVietCategoryService } from '../services/kiot-viet/category/category.service';
 import { KiotVietCustomerGroupService } from 'src/services/kiot-viet/customer-group/customer-group.service';
+import { KiotVietReturnService } from 'src/services/kiot-viet/returns/return.service';
 
 @Controller('sync')
 export class SyncController {
@@ -20,11 +20,8 @@ export class SyncController {
     private readonly productService: KiotVietProductService,
     private readonly categoryService: KiotVietCategoryService,
     private readonly customerGroupService: KiotVietCustomerGroupService,
+    private readonly returnService: KiotVietReturnService,
   ) {}
-
-  // ============================================================================
-  // SCHEDULER STATUS & MONITORING
-  // ============================================================================
 
   @Get('status')
   async getStatus() {
@@ -40,10 +37,6 @@ export class SyncController {
       };
     }
   }
-
-  // ============================================================================
-  // SYNC CONTROLS & CLEANUP
-  // ============================================================================
 
   @Post('reset')
   async resetAllSyncs() {
@@ -94,10 +87,6 @@ export class SyncController {
     }
   }
 
-  // ============================================================================
-  // MANUAL TRIGGERS - CUSTOMER
-  // ============================================================================
-
   @Post('customer/historical')
   async triggerHistoricalCustomer() {
     try {
@@ -138,10 +127,6 @@ export class SyncController {
       };
     }
   }
-
-  // ============================================================================
-  // MANUAL TRIGGERS - INVOICE ← THÊM TOÀN BỘ SECTION NÀY
-  // ============================================================================
 
   @Post('invoice/historical')
   async triggerHistoricalInvoice() {
@@ -250,27 +235,6 @@ export class SyncController {
     }
   }
 
-  @Post('order/test-4days')
-  async testOrderSync4Days() {
-    try {
-      this.logger.log('🧪 Testing order sync with 4 days...');
-
-      await this.orderService.syncRecentOrders(4);
-
-      return {
-        success: true,
-        message: 'Order sync test (4 days) completed successfully',
-        note: 'Check logs for detailed results',
-      };
-    } catch (error) {
-      this.logger.error(`Order 4-day test failed: ${error.message}`);
-      return {
-        success: false,
-        error: error.message,
-      };
-    }
-  }
-
   @Post('product/historical')
   async triggerHistoricalProduct() {
     try {
@@ -305,10 +269,8 @@ export class SyncController {
     try {
       this.logger.log('🗂️ Starting category sync...');
 
-      // Enable historical sync first
       await this.categoryService.enableHistoricalSync();
 
-      // Run the sync
       await this.categoryService.syncHistoricalCategories();
 
       return {
@@ -331,10 +293,8 @@ export class SyncController {
     try {
       this.logger.log('👥 Starting customer group sync...');
 
-      // Enable historical sync first
       await this.customerGroupService.enableHistoricalSync();
 
-      // Run the sync
       await this.customerGroupService.syncHistoricalCustomerGroups();
 
       return {
@@ -344,6 +304,30 @@ export class SyncController {
       };
     } catch (error) {
       this.logger.error(`❌ Customer group sync failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
+
+  @Post('returns')
+  async syncReturns() {
+    try {
+      this.logger.log('👥 Starting return sync...');
+
+      await this.returnService.enableHistoricalSync();
+
+      await this.returnService.syncHistoricalReturns();
+
+      return {
+        success: true,
+        message: 'Return sync completed successfully',
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error) {
+      this.logger.error(`❌ Return sync failed: ${error.message}`);
       return {
         success: false,
         error: error.message,

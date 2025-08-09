@@ -929,7 +929,6 @@ model Return {
   invoiceId    Int?
   returnDate   DateTime?
   branchId     Int?
-  brancnName   String?
   receivedById BigInt?
   customerId   Int?
   returnTotal  Decimal        @db.Decimal(15, 2)
@@ -938,7 +937,7 @@ model Return {
   createdDate  DateTime
   modifiedDate DateTime       @updatedAt
   lastSyncedAt DateTime       @default(now())
-  branchName   String
+  branchName   String?
   customerCode String?
   customerName String?
   invoiceCode  String?

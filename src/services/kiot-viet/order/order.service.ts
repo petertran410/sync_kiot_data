@@ -802,9 +802,6 @@ export class KiotVietOrderService {
           }
         }
 
-        // ============================================================================
-        // SAVE ORDER SURCHARGES (OPTIONAL)
-        // ============================================================================
         if (
           orderData.invoiceOrderSurcharges &&
           orderData.invoiceOrderSurcharges.length > 0

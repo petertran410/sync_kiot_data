@@ -21,6 +21,7 @@ import { KiotVietPurchaseOrderService } from './purchase-order/purchase-order.se
 // import { KiotVietBranchService } from './branch/branch.service';
 // import { KiotVietTradeMarkService } from './trademark/trademark.service';
 import { KiotVietCategoryService } from './category/category.service';
+import { KiotVietReturnService } from './returns/return.service';
 
 @Module({
   imports: [
@@ -50,6 +51,7 @@ import { KiotVietCategoryService } from './category/category.service';
     KiotVietSupplierService,
     KiotVietOrderSupplierService,
     KiotVietPurchaseOrderService,
+    KiotVietReturnService,
   ],
   exports: [
     KiotVietAuthService,
@@ -69,6 +71,7 @@ import { KiotVietCategoryService } from './category/category.service';
     KiotVietSupplierService,
     KiotVietOrderSupplierService,
     KiotVietPurchaseOrderService,
+    KiotVietReturnService,
   ],
 })
 export class KiotVietModule {}

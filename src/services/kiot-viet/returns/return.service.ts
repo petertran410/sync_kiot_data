@@ -108,7 +108,6 @@ export class KiotVietReturnService {
     let totalReturns = 0;
     let consecutiveEmptyPages = 0;
     let consecutiveErrorPages = 0;
-    let lastValidTotal = 0;
     let processedReturnIds = new Set<number>();
 
     try {
@@ -124,187 +123,165 @@ export class KiotVietReturnService {
       const MAX_CONSECUTIVE_EMPTY_PAGES = 5;
       const MAX_CONSECUTIVE_ERROR_PAGES = 3;
       const RETRY_DELAY_MS = 2000;
-      const MAX_TOTAL_RETRIES = 10;
-
-      let totalRetries = 0;
 
       while (true) {
         const currentPage = Math.floor(currentItem / this.PAGE_SIZE) + 1;
 
         if (totalReturns > 0) {
-          if (currentItem >= totalReturns) {
+          const progressPercentage = (processedCount / totalReturns) * 100;
+          this.logger.log(
+            `📄 Fetching page ${currentPage} (${processedCount}/${totalReturns} - ${progressPercentage.toFixed(1)}% completed)`,
+          );
+
+          if (processedCount >= totalReturns) {
             this.logger.log(
-              `✅ Pagination complete. Processed ${processedCount}/${totalReturns} returns`,
+              `✅ All returns processed successfully! Final count: ${processedCount}/${totalReturns}`,
             );
             break;
           }
-
-          const progressPercentage = (currentItem / totalReturns) * 100;
-          this.logger.log(
-            `📄 Fetching page ${currentPage} (${currentItem}/${totalReturns} - ${progressPercentage.toFixed(1)}%)`,
-          );
         } else {
           this.logger.log(
             `📄 Fetching page ${currentPage} (currentItem: ${currentItem})`,
           );
+        }
 
-          try {
-            const response = await this.fetchReturnsWithRetry({
-              pageSize: this.PAGE_SIZE,
-              currentItem,
-              orderBy: 'createdBy',
-              orderDirection: 'DESC',
-              includePayment: true,
-            });
+        try {
+          const returnListResponse = await this.fetchReturnsWithRetry({
+            orderBy: 'createdDate',
+            orderDirection: 'DESC',
+            pageSize: this.PAGE_SIZE,
+            currentItem,
+            includePayment: true,
+          });
 
-            if (!response) {
-              consecutiveEmptyPages++;
-              this.logger.warn('⚠️ Received null response from KiotViet API');
-
-              if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
-                this.logger.log(
-                  `🔚 Reached end after ${consecutiveEmptyPages} empty pages`,
-                );
-                break;
-              }
-
-              await new Promise((resolve) =>
-                setTimeout(resolve, RETRY_DELAY_MS),
-              );
-              continue;
-            }
-
-            consecutiveEmptyPages = 0;
-            consecutiveErrorPages = 0;
-
-            const { total, data: returns } = response;
-
-            if (total !== undefined && total !== null) {
-              if (totalReturns === 0) {
-                totalReturns = total;
-                this.logger.log(`📊 Total orders detected: ${totalReturns}`);
-              } else if (total !== totalReturns) {
-                this.logger.warn(
-                  `⚠️ Total count changed: ${totalReturns} -> ${total}. Using latest.`,
-                );
-                totalReturns = total;
-              }
-              lastValidTotal = total;
-            }
-
-            if (!returns || returns.length === 0) {
-              this.logger.warn(
-                `⚠️ Empty page received at position ${currentItem}`,
-              );
-
-              consecutiveEmptyPages++;
-
-              if (totalReturns > 0 && currentItem >= totalReturns) {
-                this.logger.log(
-                  '✅ Reached end of data (empty page past total)',
-                );
-                break;
-              }
-
-              if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
-                this.logger.log(
-                  `🔚 Stopping after ${consecutiveEmptyPages} consecutive empty pages`,
-                );
-                break;
-              }
-
-              currentItem += this.PAGE_SIZE;
-              continue;
-            }
-
-            const uniqueReturns = returns.filter(
-              (returnData: KiotVietReturn) => {
-                if (processedReturnIds.has(returnData.id)) {
-                  this.logger.debug(
-                    `⚠️ Duplicate return ID detected: ${returnData.id} (${returnData.code})`,
-                  );
-                  return false;
-                }
-                processedReturnIds.add(returnData.id);
-                return true;
-              },
-            );
-
-            if (uniqueReturns.length === returns.length) {
-              this.logger.warn(
-                `🔄 Filtered out ${returns.length - uniqueReturns.length} duplicate returns on page ${currentPage}`,
-              );
-            }
-
-            if (uniqueReturns.length === 0) {
+          if (!returnListResponse) {
+            this.logger.warn('⚠️ Received null response from KiotViet API');
+            consecutiveEmptyPages++;
+            if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
               this.logger.log(
-                `⏭️ Skipping page ${currentPage} - all returns already processed`,
+                `🔚 API returned null ${consecutiveEmptyPages} times - ending pagination`,
               );
-              currentItem += this.PAGE_SIZE;
-              continue;
+              break;
             }
 
-            this.logger.log(
-              `🔄 Processing ${uniqueReturns.length} returns from page ${currentPage}...`,
-            );
-
-            const returnsWithDetails =
-              await this.enrichReturnsWithDetails(uniqueReturns);
-            const savedReturns =
-              await this.saveReturnsToDatabase(returnsWithDetails);
-
-            processedCount += savedReturns.length;
+            await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
             currentItem += this.PAGE_SIZE;
-
-            if (totalReturns > 0) {
-              const completionPercentage =
-                (processedCount / totalReturns) * 100;
-              this.logger.log(
-                `📈 Progress: ${processedCount}/${totalReturns} (${completionPercentage.toFixed(1)}%)`,
-              );
-
-              if (processedCount >= totalReturns) {
-                this.logger.log('🎉 All returns processed successfully!');
-                break;
-              }
-            }
-
-            if (totalReturns > 0) {
-              if (
-                currentItem >= totalReturns &&
-                processedCount >= totalReturns * 0.95
-              ) {
-                this.logger.log(
-                  '✅ Sync completed - reached expected data range',
-                );
-                break;
-              }
-            }
-
-            await new Promise((resolve) => setTimeout(resolve, 100));
-          } catch (error) {
-            consecutiveErrorPages++;
-            totalReturns++;
-
-            this.logger.error(
-              `❌ API error on page ${currentPage}: ${error.message}`,
-            );
-
-            if (consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES) {
-              throw new Error(`Too many consecutive errors: ${error.message}`);
-            }
-
-            if (totalRetries >= MAX_TOTAL_RETRIES) {
-              throw new Error(
-                `Maximum total retries exceeded: ${error.message}`,
-              );
-            }
-
-            const delay =
-              RETRY_DELAY_MS * Math.pow(2, consecutiveErrorPages - 1);
-            this.logger.log(`⏳ Retrying after ${delay}ms delay...`);
-            await new Promise((resolve) => setTimeout(resolve, delay));
+            continue;
           }
+
+          consecutiveEmptyPages = 0;
+          consecutiveErrorPages = 0;
+
+          const { total, data: returns } = returnListResponse;
+
+          if (total !== undefined && total !== null) {
+            if (totalReturns === 0) {
+              totalReturns = total;
+              this.logger.log(`📊 Total categories detected: ${totalReturns}`);
+            } else if (total! == totalReturns) {
+              this.logger.warn(
+                `⚠️ Total count updated: ${totalReturns} → ${total}`,
+              );
+              totalReturns = total;
+            }
+          }
+
+          if (!returns || returns.length === 0) {
+            this.logger.warn(
+              `⚠️ Empty page received at position ${currentItem}`,
+            );
+            consecutiveEmptyPages++;
+
+            if (totalReturns > 0 && processedCount >= totalReturns) {
+              this.logger.log(
+                '✅ All expected returns processed - pagination complete',
+              );
+              break;
+            }
+
+            if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
+              this.logger.log(
+                `🔚 Stopping after ${consecutiveEmptyPages} consecutive empty pages`,
+              );
+              break;
+            }
+
+            currentItem += this.PAGE_SIZE;
+            continue;
+          }
+
+          const newReturns = returns.filter((returnData) => {
+            if (!returnData.id || !returnData.code) {
+              this.logger.warn(
+                `⚠️ Skipping invalid return: id=${returnData.id}, code='${returnData.code}'`,
+              );
+              return false;
+            }
+
+            if (processedReturnIds.has(returnData.id)) {
+              this.logger.debug(
+                `⚠️ Duplicate return ID detected: ${returnData.id} (${returnData.code})`,
+              );
+              return false;
+            }
+
+            processedReturnIds.add(returnData.id);
+            return true;
+          });
+
+          if (newReturns.length !== returns.length) {
+            this.logger.warn(
+              `🔄 Filtered out ${returns.length - newReturns.length} invalid/duplicate returns on page ${currentPage}`,
+            );
+          }
+
+          if (newReturns.length === 0) {
+            this.logger.log(
+              `⏭️ Skipping page ${currentPage} - all returns were filtered out`,
+            );
+            currentItem += this.PAGE_SIZE;
+            continue;
+          }
+
+          this.logger.log(
+            `🔄 Processing ${newReturns.length} returns from page ${currentPage}...`,
+          );
+
+          const returnsWithDetails =
+            await this.enrichReturnsWithDetails(newReturns);
+          const savedReturns =
+            await this.saveReturnsToDatabase(returnsWithDetails);
+
+          processedCount += savedReturns.length;
+
+          if (totalReturns > 0) {
+            const completionPercentage = (processedCount / totalReturns) * 100;
+            this.logger.log(
+              `📈 Progress: ${processedCount}/${totalReturns} (${completionPercentage.toFixed(1)}%)`,
+            );
+          } else {
+            this.logger.log(`📈 Progress: ${processedCount} returns processed`);
+          }
+
+          currentItem += this.PAGE_SIZE;
+
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        } catch (error) {
+          consecutiveErrorPages++;
+          this.logger.error(
+            `❌ Error fetching page ${currentPage}: ${error.message}`,
+          );
+
+          if (consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES) {
+            this.logger.error(
+              `💥 Too many consecutive errors (${consecutiveErrorPages}). Stopping sync.`,
+            );
+            throw error;
+          }
+
+          await new Promise((resolve) =>
+            setTimeout(resolve, RETRY_DELAY_MS * consecutiveErrorPages),
+          );
         }
 
         await this.updateSyncControl(syncName, {
@@ -312,12 +289,6 @@ export class KiotVietReturnService {
           status: 'completed',
           completedAt: new Date(),
           progress: { processedCount, expectedTotal: totalReturns },
-        });
-
-        await this.updateSyncControl('return_historical', {
-          isEnabled: false,
-          isRunning: false,
-          status: 'idle',
         });
 
         const completionRate =
@@ -357,7 +328,7 @@ export class KiotVietReturnService {
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        return await this.fetchReturnsList(params);
+        return await this.fetchReturns(params);
       } catch (error) {
         lastError = error as Error;
         this.logger.warn(
@@ -365,7 +336,7 @@ export class KiotVietReturnService {
         );
 
         if (attempt < maxRetries) {
-          const delay = 2000 * attempt;
+          const delay = 1000 * Math.pow(2, attempt - 1);
           this.logger.log(`⏳ Retrying after ${delay / 1000}s delay...`);
           await new Promise((resolve) => setTimeout(resolve, delay));
         }
@@ -375,7 +346,7 @@ export class KiotVietReturnService {
     throw lastError;
   }
 
-  private async fetchReturnsList(params: {
+  private async fetchReturns(params: {
     pageSize?: number;
     currentItem?: number;
     includePayment?: boolean;
@@ -425,18 +396,23 @@ export class KiotVietReturnService {
   ): Promise<KiotVietReturn[]> {
     this.logger.log(`🔍 Enriching ${returns.length} returns with details...`);
 
-    const enrichedReturns: any[] = [];
+    const enrichedReturns: KiotVietReturn[] = [];
     for (const returnData of returns) {
       try {
         const headers = await this.authService.getRequestHeaders();
         const response = await firstValueFrom(
           this.httpService.get(`${this.baseUrl}/returns/${returnData.id}`, {
             headers,
+            timeout: 15000,
           }),
         );
-        if (response.data) {
+
+        if (response.data && response.data.id) {
           enrichedReturns.push(response.data);
         } else {
+          this.logger.warn(
+            `⚠️ No detailed data for return ${returnData.id}, using basic data`,
+          );
           enrichedReturns.push(returnData);
         }
         await new Promise((resolve) => setTimeout(resolve, 50));
@@ -460,25 +436,6 @@ export class KiotVietReturnService {
 
     for (const returnData of returns) {
       try {
-        // const [invoice, branch, customer] = await Promise.all([
-        //   returnData.invoiceId
-        //     ? this.prismaService.invoice.findFirst({
-        //         where: { kiotVietId: BigInt(returnData.invoiceId) },
-        //         select: { id: true, code: true },
-        //       })
-        //     : Promise.resolve(null),
-        //   this.prismaService.branch.findFirst({
-        //     where: { kiotVietId: returnData.branchId },
-        //     select: { id: true, name: true },
-        //   }),
-        //   returnData.customerId
-        //     ? this.prismaService.customer.findFirst({
-        //         where: { kiotVietId: BigInt(returnData.customerId) },
-        //         select: { id: true, code: true, name: true },
-        //       })
-        //     : Promise.resolve(null),
-        // ]);
-
         const invoice = returnData.invoiceId
           ? await this.prismaService.invoice.findFirst({
               where: { kiotVietId: BigInt(returnData.invoiceId) },
@@ -555,8 +512,6 @@ export class KiotVietReturnService {
           },
         });
 
-        savedReturns.push(returnRecord);
-
         if (returnData.returnDetails && returnData.returnDetails.length > 0) {
           for (let i = 0; i < returnData.returnDetails.length; i++) {
             const detail = returnData.returnDetails[i];
@@ -568,8 +523,6 @@ export class KiotVietReturnService {
                 name: true,
               },
             });
-
-            // const acsNumber: number = i + 1;
 
             if (product) {
               await this.prismaService.returnDetail.upsert({
@@ -608,7 +561,44 @@ export class KiotVietReturnService {
         }
 
         if (returnData.payments && returnData.payments.length > 0) {
+          for (const payment of returnData.payments) {
+            const bankAccount = payment.accountId
+              ? await this.prismaService.bankAccount.findFirst({
+                  where: { kiotVietId: payment.accountId },
+                  select: { id: true },
+                })
+              : null;
+
+            await this.prismaService.payment.upsert({
+              where: {
+                kiotVietId: payment.id ? BigInt(payment.id) : BigInt(0),
+              },
+              update: {
+                code: payment.code,
+                amount: new Prisma.Decimal(payment.amount),
+                method: payment.method,
+                status: payment.status,
+                transDate: new Date(payment.transDate),
+                accountId: bankAccount?.id ?? null,
+                description: payment.description,
+                returnId: returnRecord.id,
+              },
+              create: {
+                kiotVietId: payment.id ? BigInt(payment.id) : null,
+                code: payment.code,
+                amount: new Prisma.Decimal(payment.amount),
+                method: payment.method,
+                status: payment.status,
+                transDate: new Date(payment.transDate),
+                accountId: bankAccount?.id ?? null,
+                description: payment.description,
+                returnId: returnRecord.id,
+              },
+            });
+          }
         }
+
+        savedReturns.push(returnRecord);
       } catch (error) {
         this.logger.error(
           `❌ Failed to save return ${returnData.code}: ${error.message}`,
@@ -618,69 +608,6 @@ export class KiotVietReturnService {
 
     this.logger.log(`💾 Saved ${savedReturns.length} returns to database`);
     return savedReturns;
-  }
-
-  private async saveReturnPayments(
-    returnId: number,
-    payments: Array<{
-      id: number;
-      code: string;
-      amount: number;
-      method: string;
-      status?: number;
-      statusValue?: string;
-      transDate: string;
-      bankAccount?: string;
-      accountId?: number;
-      description?: string;
-    }>,
-  ): Promise<void> {
-    try {
-      for (const payment of payments) {
-        // Find bank account if exists
-        const bankAccount = payment.accountId
-          ? await this.prismaService.bankAccount.findFirst({
-              where: { kiotVietId: payment.accountId },
-              select: { id: true },
-            })
-          : null;
-
-        await this.prismaService.payment.upsert({
-          where: {
-            kiotVietId: BigInt(payment.id),
-          },
-          update: {
-            code: payment.code,
-            amount: new Prisma.Decimal(payment.amount),
-            method: payment.method,
-            status: payment.status || null,
-            statusValue: payment.statusValue || null,
-            transDate: new Date(payment.transDate),
-            accountId: bankAccount?.id || null,
-            bankAccountInfo: payment.bankAccount || null,
-            description: payment.description || null,
-            returnId: returnId,
-          },
-          create: {
-            kiotVietId: BigInt(payment.id),
-            returnId: returnId,
-            code: payment.code,
-            amount: new Prisma.Decimal(payment.amount),
-            method: payment.method,
-            status: payment.status || null,
-            statusValue: payment.statusValue || null,
-            transDate: new Date(payment.transDate),
-            accountId: bankAccount?.id || null,
-            bankAccountInfo: payment.bankAccount || null,
-            description: payment.description || null,
-          },
-        });
-      }
-    } catch (error) {
-      this.logger.warn(
-        `⚠️ Failed to save return payments for return ${returnId}: ${error.message}`,
-      );
-    }
   }
 
   private async updateSyncControl(name: string, data: any): Promise<void> {
@@ -710,20 +637,5 @@ export class KiotVietReturnService {
       );
       throw error;
     }
-  }
-
-  // ============================================================================
-  // LEGACY METHODS (for backward compatibility)
-  // ============================================================================
-
-  async fetchReturns(params?: any) {
-    return this.fetchReturnsWithRetry(params || {});
-  }
-
-  async syncReturns(): Promise<void> {
-    this.logger.warn(
-      '⚠️ Using legacy syncReturns method. Consider using syncHistoricalReturns instead.',
-    );
-    return this.syncHistoricalReturns();
   }
 }
