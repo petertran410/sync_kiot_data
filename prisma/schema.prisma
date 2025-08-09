@@ -613,7 +613,6 @@ model Invoice {
   invoiceDetails    InvoiceDetail[]
   invoiceSurcharges InvoiceSurcharge[]
   payments          Payment[]
-  returns           Return[]
   Branch            Branch[]           @relation("BranchInvoices")
 
   @@index([kiotVietId])
@@ -944,7 +943,6 @@ model Return {
   payments     Payment[]
   branch       Branch?         @relation(fields: [branchId], references: [id])
   customer     Customer?      @relation(fields: [customerId], references: [id])
-  invoice      Invoice?       @relation(fields: [invoiceId], references: [id])
   details      ReturnDetail[]
 
   @@index([kiotVietId])
