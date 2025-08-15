@@ -36,6 +36,7 @@ model Product {
   name                 String
   fullName             String
   categoryId           Int?
+  categoryName         String?
   tradeMarkId          Int?
   type                 Int?
   description          String?
@@ -70,13 +71,8 @@ model Product {
   category             Category?                @relation(fields: [categoryId], references: [id])
   tradeMark            TradeMark?               @relation(fields: [tradeMarkId], references: [id])
   attributes           ProductAttribute[]
-  batches              ProductBatchExpire[]
-  productAsComponent   ProductFormula[]         @relation("ComponentProduct")
-  productAsCombo       ProductFormula[]         @relation("ComboProduct")
   images               ProductImage[]
   inventories          ProductInventory[]
-  serials              ProductSerial[]
-  warranties           ProductWarranty[]
   purchaseOrderDetails PurchaseOrderDetail[]
   returnDetails        ReturnDetail[]
   transferDetails      TransferDetail[]
@@ -91,14 +87,14 @@ model Product {
 
 model ProductAttribute {
   id             Int      @id @default(autoincrement())
-  kiotVietId     BigInt?  @unique
   productId      Int
   attributeName  String
   attributeValue String
+  lineNumber     Int
   lastSyncedAt   DateTime @default(now())
   product        Product  @relation(fields: [productId], references: [id])
 
-  @@unique([productId, attributeName, attributeValue])
+  @@unique([productId, lineNumber])
   @@index([productId])
 }
 
@@ -106,10 +102,11 @@ model ProductImage {
   id           Int      @id @default(autoincrement())
   productId    Int
   imageUrl     String
-  displayOrder Int      @default(0)
+  lineNumber   Int
   lastSyncedAt DateTime @default(now())
   product      Product  @relation(fields: [productId], references: [id])
 
+  @@unique([productId, lineNumber])
   @@index([productId])
 }
 
@@ -136,76 +133,6 @@ model ProductInventory {
   @@unique([productId, lineNumber])
   @@index([productId])
   @@index([branchId])
-}
-
-model ProductSerial {
-  id           Int      @id @default(autoincrement())
-  kiotVietId   BigInt?  @unique
-  productId    Int
-  serialNumber String
-  branchId     Int
-  status       Int
-  quantity     Float    @default(1)
-  createdDate  DateTime @default(now())
-  modifiedDate DateTime @updatedAt
-  lastSyncedAt DateTime @default(now())
-  branch       Branch   @relation(fields: [branchId], references: [id])
-  product      Product  @relation(fields: [productId], references: [id])
-
-  @@unique([productId, serialNumber, branchId])
-  @@index([productId])
-  @@index([branchId])
-}
-
-model ProductBatchExpire {
-  id                         Int                        @id @default(autoincrement())
-  kiotVietId                 BigInt?                    @unique
-  productId                  Int
-  batchName                  String?
-  fullNameVirgule            String?
-  onHand                     Float                      @default(0)
-  branchId                   Int
-  createdDate                DateTime                   @default(now())
-  lastSyncedAt               DateTime                   @default(now())
-  branch                     Branch                     @relation(fields: [branchId], references: [id])
-  product                    Product                    @relation(fields: [productId], references: [id])
-  purchaseOrderDetailBatches PurchaseOrderDetailBatch[]
-
-  @@unique([productId, batchName, branchId])
-  @@index([productId])
-  @@index([branchId])
-}
-
-model ProductWarranty {
-  id           Int      @id @default(autoincrement())
-  kiotVietId   BigInt?  @unique
-  productId    Int
-  description  String?
-  numberTime   Int
-  timeType     Int
-  warrantyType Int
-  createdDate  DateTime @default(now())
-  modifiedDate DateTime @updatedAt
-  lastSyncedAt DateTime @default(now())
-  product      Product  @relation(fields: [productId], references: [id])
-
-  @@index([productId])
-}
-
-model ProductFormula {
-  id              Int      @id @default(autoincrement())
-  kiotVietId      BigInt?  @unique
-  productId       Int
-  materialId      Int
-  quantity        Float
-  basePrice       Decimal  @db.Decimal(15, 2)
-  lastSyncedAt    DateTime @default(now())
-  materialProduct Product  @relation("ComponentProduct", fields: [materialId], references: [id])
-  product         Product  @relation("ComboProduct", fields: [productId], references: [id])
-
-  @@unique([productId, materialId])
-  @@index([productId])
-  @@index([materialId])
 }
 
 model Customer {
@@ -266,6 +193,7 @@ model CustomerGroup {
   lastSyncedAt          DateTime                @default(now())
   createdBy             Int?
   CustomerGroupRelation CustomerGroupRelation[]
+  PriceBookCustomerGroup  PriceBookCustomerGroup[]
 
   @@index([kiotVietId])
 }
@@ -306,8 +234,6 @@ model Branch {
   Order            Order[]
   orderSuppliers   OrderSupplier[]
   priceBooks       PriceBookBranch[]
-  batches          ProductBatchExpire[]
-  serials          ProductSerial[]
   purchaseOrders   PurchaseOrder[]
   returns          Return[]
   transfersFrom    Transfer[]              @relation("SourceBranch")
@@ -854,7 +780,6 @@ model PurchaseOrderDetailBatch {
   productBatchExpireId  Int
   quantity              Float
   createdDate           DateTime            @default(now())
-  productBatchExpire    ProductBatchExpire  @relation(fields: [productBatchExpireId], references: [id])
   purchaseOrderDetail   PurchaseOrderDetail @relation(fields: [purchaseOrderDetailId], references: [id])
 
   @@unique([purchaseOrderDetailId, productBatchExpireId])
@@ -1010,38 +935,50 @@ model PriceBookDetail {
 
 model PriceBookBranch {
   id          Int       @id @default(autoincrement())
-  kiotVietId  BigInt?   @unique
+  kiotVietId  BigInt?
   priceBookId Int
-  branchId    Int
-  branch      Branch    @relation(fields: [branchId], references: [id])
+  branchId    Int?
+  branchName  String?
+  retailerId  Int?
+  lineNumber  Int
+  lastSyncedAt  DateTime @default(now())
+  branch      Branch?    @relation(fields: [branchId], references: [id])
   priceBook   PriceBook @relation(fields: [priceBookId], references: [id])
 
-  @@unique([priceBookId, branchId])
+  @@unique([priceBookId, lineNumber])
   @@index([priceBookId])
   @@index([branchId])
 }
 
 model PriceBookCustomerGroup {
   id              Int       @id @default(autoincrement())
-  kiotVietId      BigInt?   @unique
+  kiotVietId      BigInt?
   priceBookId     Int
-  customerGroupId Int
+  retailerId      Int?
+  lineNumber      Int
+  customerGroupId Int?
+  customerGroupName String?
+  lastSyncedAt  DateTime @default(now())
   priceBook       PriceBook @relation(fields: [priceBookId], references: [id])
+  CustomerGroup CustomerGroup? @relation(fields: [customerGroupId], references: [id])
 
-  @@unique([priceBookId, customerGroupId])
+  @@unique([priceBookId, lineNumber])
   @@index([priceBookId])
   @@index([customerGroupId])
 }
 
 model PriceBookUser {
   id          Int       @id @default(autoincrement())
-  kiotVietId  BigInt?   @unique
+  kiotVietId  BigInt?
   priceBookId Int
-  userId      BigInt
+  userId      BigInt?
+  userName    String?
+  lineNumber  Int
+  lastSyncedAt  DateTime @default(now())
   priceBook   PriceBook @relation(fields: [priceBookId], references: [id])
-  user        User      @relation(fields: [userId], references: [kiotVietId])
+  user        User?      @relation(fields: [userId], references: [kiotVietId])
 
-  @@unique([priceBookId, userId])
+  @@unique([priceBookId, lineNumber])
   @@index([priceBookId])
   @@index([userId])
 }

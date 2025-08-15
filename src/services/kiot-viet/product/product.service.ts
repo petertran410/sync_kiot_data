@@ -1,4 +1,3 @@
-// src/services/kiot-viet/product/product.service.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
@@ -40,7 +39,6 @@ interface KiotVietProduct {
   modifiedDate?: string;
   createdDate?: string;
 
-  // Detailed fields from enrichment
   attributes?: Array<{
     productId: number;
     attributeName: string;
@@ -148,17 +146,12 @@ export class KiotVietProductService {
     this.baseUrl = baseUrl;
   }
 
-  // ============================================================================
-  // SYNC CONTROL & TRACKING - EXACT COPY FROM INVOICE
-  // ============================================================================
-
   async checkAndRunAppropriateSync(): Promise<void> {
     try {
       const historicalSync = await this.prismaService.syncControl.findFirst({
         where: { name: 'product_historical' },
       });
 
-      // Priority: Historical sync first
       if (historicalSync?.isEnabled && !historicalSync.isRunning) {
         this.logger.log('Starting historical product sync...');
         await this.syncHistoricalProducts();
@@ -182,10 +175,6 @@ export class KiotVietProductService {
 
     this.logger.log('✅ Historical product sync enabled');
   }
-
-  // ============================================================================
-  // HISTORICAL SYNC - ENHANCED WITH ADVANCED ERROR HANDLING
-  // ============================================================================
 
   async syncHistoricalProducts(): Promise<void> {
     const syncName = 'product_historical';
@@ -362,7 +351,6 @@ export class KiotVietProductService {
         }
       }
 
-      // Auto-disable historical sync and update final status
       await this.updateSyncControl(syncName, {
         isRunning: false,
         isEnabled: false,
@@ -391,10 +379,6 @@ export class KiotVietProductService {
       throw error;
     }
   }
-
-  // ============================================================================
-  // API METHODS WITH RETRY LOGIC
-  // ============================================================================
 
   async fetchProductsListWithRetry(
     params: {
@@ -475,10 +459,6 @@ export class KiotVietProductService {
     return response.data;
   }
 
-  // ============================================================================
-  // ENRICH PRODUCTS WITH DETAILS - CORE LOGIC
-  // ============================================================================
-
   private async enrichProductsWithDetails(
     products: KiotVietProduct[],
   ): Promise<KiotVietProduct[]> {
@@ -490,7 +470,6 @@ export class KiotVietProductService {
       try {
         const headers = await this.authService.getRequestHeaders();
 
-        // Fetch detailed product information
         const queryParams = new URLSearchParams({
           includeInventory: 'true',
           includePricebook: 'true',
@@ -515,7 +494,6 @@ export class KiotVietProductService {
           enrichedProducts.push(product);
         }
 
-        // Rate limiting
         await new Promise((resolve) => setTimeout(resolve, 50));
       } catch (error) {
         this.logger.warn(
@@ -528,10 +506,6 @@ export class KiotVietProductService {
     return enrichedProducts;
   }
 
-  // ============================================================================
-  // SAVE PRODUCTS TO DATABASE - COMPLETE LOGIC
-  // ============================================================================
-
   private async saveProductsToDatabase(
     products: KiotVietProduct[],
   ): Promise<any[]> {
@@ -541,45 +515,54 @@ export class KiotVietProductService {
 
     for (const productData of products) {
       try {
-        if (!productData.id || !productData.code || !productData.name) {
-          continue;
-        }
+        const category = await this.prismaService.category.findFirst({
+          where: { kiotVietId: productData.categoryId },
+          select: { id: true, name: true },
+        });
 
-        let categoryId: number | null = null;
-        if (productData.categoryId && productData.categoryName) {
-          const category = await this.prismaService.category.upsert({
-            where: { kiotVietId: productData.categoryId },
-            update: {
-              name: productData.categoryName.trim(),
-              lastSyncedAt: new Date(),
-            },
-            create: {
-              kiotVietId: productData.categoryId,
-              name: productData.categoryName.trim(),
-              lastSyncedAt: new Date(),
-            },
-            select: { id: true },
-          });
-          categoryId = category.id;
-        }
+        const tradeMark = await this.prismaService.tradeMark.findFirst({
+          where: { kiotVietId: productData.tradeMarkId },
+          select: { id: true, name: true },
+        });
+        // if (!productData.id || !productData.code || !productData.name) {
+        //   continue;
+        // }
 
-        let tradeMarkId: number | null = null;
-        if (productData.tradeMarkId && productData.tradeMarkName) {
-          const tradeMark = await this.prismaService.tradeMark.upsert({
-            where: { kiotVietId: productData.tradeMarkId },
-            update: {
-              name: productData.tradeMarkName.trim(),
-              lastSyncedAt: new Date(),
-            },
-            create: {
-              kiotVietId: productData.tradeMarkId,
-              name: productData.tradeMarkName.trim(),
-              lastSyncedAt: new Date(),
-            },
-            select: { id: true },
-          });
-          tradeMarkId = tradeMark.id;
-        }
+        // let categoryId: number | null = null;
+        // if (productData.categoryId && productData.categoryName) {
+        //   const category = await this.prismaService.category.upsert({
+        //     where: { kiotVietId: productData.categoryId },
+        //     update: {
+        //       name: productData.categoryName.trim(),
+        //       lastSyncedAt: new Date(),
+        //     },
+        //     create: {
+        //       kiotVietId: productData.categoryId,
+        //       name: productData.categoryName.trim(),
+        //       lastSyncedAt: new Date(),
+        //     },
+        //     select: { id: true },
+        //   });
+        //   categoryId = category.id;
+        // }
+
+        // let tradeMarkId: number | null = null;
+        // if (productData.tradeMarkId && productData.tradeMarkName) {
+        //   const tradeMark = await this.prismaService.tradeMark.upsert({
+        //     where: { kiotVietId: productData.tradeMarkId },
+        //     update: {
+        //       name: productData.tradeMarkName.trim(),
+        //       lastSyncedAt: new Date(),
+        //     },
+        //     create: {
+        //       kiotVietId: productData.tradeMarkId,
+        //       name: productData.tradeMarkName.trim(),
+        //       lastSyncedAt: new Date(),
+        //     },
+        //     select: { id: true },
+        //   });
+        //   tradeMarkId = tradeMark.id;
+        // }
 
         const product = await this.prismaService.product.upsert({
           where: { kiotVietId: BigInt(productData.id) },
@@ -587,9 +570,10 @@ export class KiotVietProductService {
             code: productData.code.trim(),
             name: productData.name.trim(),
             fullName: productData.fullName?.trim() || productData.name.trim(),
-            categoryId,
-            tradeMarkId,
-            tradeMarkName: productData.tradeMarkName || null,
+            categoryId: category?.id,
+            categoryName: category?.name,
+            tradeMarkId: tradeMark?.id,
+            tradeMarkName: tradeMark?.name,
             allowsSale: productData.allowsSale ?? true,
             type: productData.type ?? 1,
             hasVariants: productData.hasVariants ?? false,
@@ -622,9 +606,10 @@ export class KiotVietProductService {
             code: productData.code.trim(),
             name: productData.name.trim(),
             fullName: productData.fullName?.trim() || productData.name.trim(),
-            categoryId,
-            tradeMarkId,
-            tradeMarkName: productData.tradeMarkName || null,
+            categoryId: category?.id,
+            categoryName: category?.name,
+            tradeMarkId: tradeMark?.id,
+            tradeMarkName: tradeMark?.name,
             allowsSale: productData.allowsSale ?? true,
             type: productData.type ?? 1,
             hasVariants: productData.hasVariants ?? false,
@@ -657,15 +642,6 @@ export class KiotVietProductService {
         if (productData.inventories && productData.inventories.length > 0) {
           for (let i = 0; i < productData.inventories.length; i++) {
             const detail = productData.inventories[i];
-            // const productInv = await this.prismaService.product.findFirst({
-            //   where: { kiotVietId: BigInt(detail.productId) },
-            //   select: { id: true, code: true, name: true },
-            // });
-            // const branch = await this.prismaService.branch.findFirst({
-            //   where: { kiotVietId: detail.branchId },
-            //   select: { id: true, name: true },
-            // });
-
             await this.prismaService.productInventory.upsert({
               where: {
                 productId_lineNumber: {
@@ -687,6 +663,7 @@ export class KiotVietProductService {
                 maxQuantity: detail.maxQuantity,
                 isActive: detail.isActive,
                 onOrder: detail.onOrder,
+                lastSyncedAt: new Date(),
               },
               create: {
                 productId: product.id,
@@ -703,52 +680,66 @@ export class KiotVietProductService {
                 maxQuantity: detail.maxQuantity,
                 isActive: detail.isActive,
                 onOrder: detail.onOrder,
+                lastSyncedAt: new Date(),
               },
             });
           }
         }
 
         if (productData.attributes && productData.attributes.length > 0) {
-          await this.saveProductAttributes(product.id, productData.attributes);
+          for (let i = 0; i < productData.attributes.length; i++) {
+            const detail = productData.attributes[i];
+
+            await this.prismaService.productAttribute.upsert({
+              where: {
+                productId_lineNumber: {
+                  productId: product.id,
+                  lineNumber: i + 1,
+                },
+              },
+              update: {
+                productId: product.id,
+                attributeName: detail.attributeName,
+                attributeValue: detail.attributeValue,
+                lineNumber: i + 1,
+                lastSyncedAt: new Date(),
+              },
+              create: {
+                productId: product.id,
+                attributeName: detail.attributeName,
+                attributeValue: detail.attributeValue,
+                lineNumber: i + 1,
+                lastSyncedAt: new Date(),
+              },
+            });
+          }
         }
 
         if (productData.images && productData.images.length > 0) {
-          await this.saveProductImages(product.id, productData.images);
-        }
+          for (let i = 0; i < productData.images.length; i++) {
+            const detail = productData.images[i];
 
-        if (productData.priceBooks && productData.priceBooks.length > 0) {
-          await this.saveProductPriceBooks(product.id, productData.priceBooks);
-        }
-
-        if (
-          productData.productSerials &&
-          productData.productSerials.length > 0
-        ) {
-          await this.saveProductSerials(product.id, productData.productSerials);
-        }
-
-        if (
-          productData.productBatchExpires &&
-          productData.productBatchExpires.length > 0
-        ) {
-          await this.saveProductBatchExpires(
-            product.id,
-            productData.productBatchExpires,
-          );
-        }
-
-        if (productData.warranties && productData.warranties.length > 0) {
-          await this.saveProductWarranties(product.id, productData.warranties);
-        }
-
-        if (
-          productData.productFormulas &&
-          productData.productFormulas.length > 0
-        ) {
-          await this.saveProductFormulas(
-            product.id,
-            productData.productFormulas,
-          );
+            await this.prismaService.productImage.upsert({
+              where: {
+                productId_lineNumber: {
+                  productId: product.id,
+                  lineNumber: i + 1,
+                },
+              },
+              update: {
+                productId: product.id,
+                imageUrl: detail.image,
+                lineNumber: i + 1,
+                lastSyncedAt: new Date(),
+              },
+              create: {
+                productId: product.id,
+                imageUrl: detail.image,
+                lineNumber: i + 1,
+                lastSyncedAt: new Date(),
+              },
+            });
+          }
         }
 
         savedProducts.push(product);
@@ -761,308 +752,6 @@ export class KiotVietProductService {
 
     this.logger.log(`✅ Saved ${savedProducts.length} products successfully`);
     return savedProducts;
-  }
-
-  // ============================================================================
-  // HELPER METHODS FOR SAVING RELATED DATA
-  // ============================================================================
-
-  private async saveProductAttributes(
-    productId: number,
-    attributes: any[],
-  ): Promise<void> {
-    try {
-      await this.prismaService.productAttribute.deleteMany({
-        where: { productId },
-      });
-
-      for (const attr of attributes) {
-        await this.prismaService.productAttribute.create({
-          data: {
-            productId,
-            attributeName: attr.attributeName,
-            attributeValue: attr.attributeValue,
-            lastSyncedAt: new Date(),
-          },
-        });
-      }
-    } catch (error) {
-      this.logger.error(
-        `❌ Failed to save attributes for product ${productId}: ${error.message}`,
-      );
-    }
-  }
-
-  private async saveProductImages(
-    productId: number,
-    images: any[],
-  ): Promise<void> {
-    if (!images || !Array.isArray(images) || images.length === 0) {
-      this.logger.debug(`No images to save for product ${productId}`);
-      return;
-    }
-
-    try {
-      // Clear existing images
-      await this.prismaService.productImage.deleteMany({
-        where: { productId },
-      });
-
-      let processedCount = 0;
-      let skippedCount = 0;
-
-      for (let i = 0; i < images.length; i++) {
-        const imageItem = images[i];
-        let imageUrl: string | null = null;
-
-        if (typeof imageItem === 'string' && imageItem.trim() !== '') {
-          imageUrl = imageItem.trim();
-        } else if (typeof imageItem === 'object' && imageItem !== null) {
-          if (
-            imageItem.Image &&
-            typeof imageItem.Image === 'string' &&
-            imageItem.Image.trim() !== ''
-          ) {
-            imageUrl = imageItem.Image.trim();
-          } else if (
-            imageItem.image &&
-            typeof imageItem.image === 'string' &&
-            imageItem.image.trim() !== ''
-          ) {
-            imageUrl = imageItem.image.trim();
-          } else if (
-            imageItem.url &&
-            typeof imageItem.url === 'string' &&
-            imageItem.url.trim() !== ''
-          ) {
-            imageUrl = imageItem.url.trim();
-          }
-        }
-
-        if (!imageUrl) {
-          skippedCount++;
-          continue;
-        }
-
-        try {
-          await this.prismaService.productImage.create({
-            data: {
-              productId,
-              imageUrl,
-              displayOrder: i,
-              lastSyncedAt: new Date(),
-            },
-          });
-          processedCount++;
-        } catch (createError) {
-          this.logger.error(
-            `❌ Failed to create image record for product ${productId}, URL: '${imageUrl}': ${createError.message}`,
-          );
-          skippedCount++;
-        }
-      }
-
-      this.logger.log(
-        `✅ Product ${productId} images: ${processedCount} processed, ${skippedCount} skipped`,
-      );
-    } catch (error) {
-      this.logger.error(
-        `❌ Failed to save images for product ${productId}: ${error.message}`,
-      );
-    }
-  }
-
-  private async saveProductPriceBooks(
-    productId: number,
-    priceBooks: any[],
-  ): Promise<void> {
-    if (!priceBooks || !Array.isArray(priceBooks) || priceBooks.length === 0) {
-      this.logger.debug(`No pricebooks to save for product ${productId}`);
-      return;
-    }
-
-    try {
-      await this.prismaService.priceBookDetail.deleteMany({
-        where: { productId },
-      });
-
-      let processedCount = 0;
-      let skippedCount = 0;
-
-      for (const priceBook of priceBooks) {
-        const priceBookKiotVietId = priceBook.priceBookId;
-
-        if (!priceBookKiotVietId) {
-          skippedCount++;
-          continue;
-        }
-
-        const existingPriceBook = await this.prismaService.priceBook.findFirst({
-          where: { kiotVietId: priceBookKiotVietId },
-          select: { id: true, name: true },
-        });
-
-        if (!existingPriceBook) {
-          skippedCount++;
-          continue;
-        }
-
-        await this.prismaService.priceBookDetail.create({
-          data: {
-            priceBookId: existingPriceBook.id,
-            productId,
-            price: new Prisma.Decimal(priceBook.price || 0),
-          },
-        });
-        processedCount++;
-      }
-
-      this.logger.log(
-        `✅ Product ${productId} pricebooks: ${processedCount} processed, ${skippedCount} skipped`,
-      );
-    } catch (error) {
-      this.logger.error(
-        `❌ Failed to save price books for product ${productId}: ${error.message}`,
-      );
-    }
-  }
-
-  private async saveProductSerials(
-    productId: number,
-    serials: any[],
-  ): Promise<void> {
-    try {
-      await this.prismaService.productSerial.deleteMany({
-        where: { productId },
-      });
-
-      for (const serial of serials) {
-        const branch = await this.prismaService.branch.findFirst({
-          where: { kiotVietId: serial.branchId },
-          select: { id: true },
-        });
-
-        if (branch) {
-          await this.prismaService.productSerial.create({
-            data: {
-              productId,
-              serialNumber: serial.serialNumber,
-              branchId: branch.id,
-              status: serial.status,
-              quantity: serial.quantity || 1,
-              createdDate: serial.createdDate
-                ? new Date(serial.createdDate)
-                : new Date(),
-              lastSyncedAt: new Date(),
-            },
-          });
-        }
-      }
-    } catch (error) {
-      this.logger.error(
-        `❌ Failed to save serials for product ${productId}: ${error.message}`,
-      );
-    }
-  }
-
-  private async saveProductBatchExpires(
-    productId: number,
-    batches: any[],
-  ): Promise<void> {
-    try {
-      await this.prismaService.productBatchExpire.deleteMany({
-        where: { productId },
-      });
-
-      for (const batch of batches) {
-        const branch = await this.prismaService.branch.findFirst({
-          where: { kiotVietId: batch.branchId },
-          select: { id: true },
-        });
-
-        if (branch) {
-          await this.prismaService.productBatchExpire.create({
-            data: {
-              productId,
-              batchName: batch.batchName,
-              fullNameVirgule: batch.fullNameVirgule,
-              onHand: batch.onHand || 0,
-              branchId: branch.id,
-              lastSyncedAt: new Date(),
-            },
-          });
-        }
-      }
-    } catch (error) {
-      this.logger.error(
-        `❌ Failed to save batch expires for product ${productId}: ${error.message}`,
-      );
-    }
-  }
-
-  private async saveProductWarranties(
-    productId: number,
-    warranties: any[],
-  ): Promise<void> {
-    try {
-      await this.prismaService.productWarranty.deleteMany({
-        where: { productId },
-      });
-
-      for (const warranty of warranties) {
-        await this.prismaService.productWarranty.create({
-          data: {
-            productId,
-            description: warranty.description || null,
-            numberTime: warranty.numberTime,
-            timeType: warranty.timeType,
-            warrantyType: warranty.warrantyType,
-            createdDate: warranty.createdDate
-              ? new Date(warranty.createdDate)
-              : new Date(),
-            lastSyncedAt: new Date(),
-          },
-        });
-      }
-    } catch (error) {
-      this.logger.error(
-        `❌ Failed to save warranties for product ${productId}: ${error.message}`,
-      );
-    }
-  }
-
-  private async saveProductFormulas(
-    productId: number,
-    formulas: any[],
-  ): Promise<void> {
-    try {
-      await this.prismaService.productFormula.deleteMany({
-        where: { productId },
-      });
-
-      for (const formula of formulas) {
-        const materialProduct = await this.prismaService.product.findFirst({
-          where: { kiotVietId: BigInt(formula.materialId) },
-          select: { id: true },
-        });
-
-        if (materialProduct) {
-          await this.prismaService.productFormula.create({
-            data: {
-              productId,
-              materialId: materialProduct.id,
-              quantity: formula.quantity,
-              basePrice: new Prisma.Decimal(formula.basePrice || 0),
-              lastSyncedAt: new Date(),
-            },
-          });
-        }
-      }
-    } catch (error) {
-      this.logger.error(
-        `❌ Failed to save formulas for product ${productId}: ${error.message}`,
-      );
-    }
   }
 
   async syncProductsToLarkBase(products: any[]): Promise<void> {

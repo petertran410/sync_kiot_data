@@ -43,16 +43,16 @@ export class BusSchedulerService implements OnModuleInit {
   private dailyCycleStartTime: Date | null = null;
 
   private readonly DAILY_ENTITIES_CONFIG: DailyEntityConfig[] = [
-    {
-      name: 'pricebook_product_sequence',
-      syncFunction: async () => {
-        await this.runProductSequenceSync();
-      },
-      larkSyncFunction: async () => {
-        await this.autoTriggerProductLarkSync();
-      },
-      enabled: true,
-    },
+    // {
+    //   name: 'pricebook_product_sequence',
+    //   syncFunction: async () => {
+    //     await this.runProductSequenceSync();
+    //   },
+    //   larkSyncFunction: async () => {
+    //     await this.autoTriggerProductLarkSync();
+    //   },
+    //   enabled: true,
+    // },
     {
       name: 'order_supplier',
       syncFunction: async () => {
@@ -122,137 +122,137 @@ export class BusSchedulerService implements OnModuleInit {
     }, 5000);
   }
 
-  @Cron('*/2 * * * *', {
-    name: 'main_sync_cycle',
-    timeZone: 'Asia/Ho_Chi_Minh',
-  })
-  async handleMainSyncCycle() {
-    if (this.isDailyCycleRunning || this.dailyCyclePriorityLevel > 0) {
-      if (!this.mainSchedulerSuspendedForDaily) {
-        this.logger.log(
-          '🛑 SUSPENDING 2-minute cycle - Daily cycle has priority',
-        );
-        this.mainSchedulerSuspendedForDaily = true;
+  // @Cron('*/2 * * * *', {
+  //   name: 'main_sync_cycle',
+  //   timeZone: 'Asia/Ho_Chi_Minh',
+  // })
+  // async handleMainSyncCycle() {
+  //   if (this.isDailyCycleRunning || this.dailyCyclePriorityLevel > 0) {
+  //     if (!this.mainSchedulerSuspendedForDaily) {
+  //       this.logger.log(
+  //         '🛑 SUSPENDING 2-minute cycle - Daily cycle has priority',
+  //       );
+  //       this.mainSchedulerSuspendedForDaily = true;
 
-        if (this.mainCycleAbortController) {
-          this.mainCycleAbortController.abort();
-          this.logger.log('🚫 FORCE ABORTING ongoing 1-minute cycle');
-        }
-      }
+  //       if (this.mainCycleAbortController) {
+  //         this.mainCycleAbortController.abort();
+  //         this.logger.log('🚫 FORCE ABORTING ongoing 1-minute cycle');
+  //       }
+  //     }
 
-      this.logger.debug(
-        `⏸️ 1-minute cycle suspended (dailyCyclePriorityLevel: ${this.dailyCyclePriorityLevel}, isDailyCycleRunning: ${this.isDailyCycleRunning})`,
-      );
-      return;
-    }
+  //     this.logger.debug(
+  //       `⏸️ 1-minute cycle suspended (dailyCyclePriorityLevel: ${this.dailyCyclePriorityLevel}, isDailyCycleRunning: ${this.isDailyCycleRunning})`,
+  //     );
+  //     return;
+  //   }
 
-    if (
-      this.mainSchedulerSuspendedForDaily &&
-      !this.isDailyCycleRunning &&
-      this.dailyCyclePriorityLevel === 0
-    ) {
-      this.logger.log('▶️ RESUMING 2-minute cycle - Daily cycle completed');
-      this.mainSchedulerSuspendedForDaily = false;
-    }
+  //   if (
+  //     this.mainSchedulerSuspendedForDaily &&
+  //     !this.isDailyCycleRunning &&
+  //     this.dailyCyclePriorityLevel === 0
+  //   ) {
+  //     this.logger.log('▶️ RESUMING 2-minute cycle - Daily cycle completed');
+  //     this.mainSchedulerSuspendedForDaily = false;
+  //   }
 
-    if (!this.isMainSchedulerEnabled) {
-      this.logger.debug('🔇 Main scheduler is disabled');
-      return;
-    }
+  //   if (!this.isMainSchedulerEnabled) {
+  //     this.logger.debug('🔇 Main scheduler is disabled');
+  //     return;
+  //   }
 
-    this.mainCycleAbortController = new AbortController();
-    const signal = this.mainCycleAbortController.signal;
+  //   this.mainCycleAbortController = new AbortController();
+  //   const signal = this.mainCycleAbortController.signal;
 
-    try {
-      this.logger.log('🚀 Starting 2-minute parallel sync cycle...');
-      const startTime = Date.now();
+  //   try {
+  //     this.logger.log('🚀 Starting 2-minute parallel sync cycle...');
+  //     const startTime = Date.now();
 
-      if (signal.aborted) {
-        this.logger.log('🚫 2-minute cycle aborted before starting');
-        return;
-      }
+  //     if (signal.aborted) {
+  //       this.logger.log('🚫 2-minute cycle aborted before starting');
+  //       return;
+  //     }
 
-      const runningSyncs = await this.checkRunningSyncsWithTimeout();
-      if (runningSyncs.length > 0) {
-        const runningTooLong = runningSyncs.some((sync) => {
-          if (!sync.startedAt) return false;
-          const runningTime = Date.now() - sync.startedAt.getTime();
-          return runningTime > 5 * 60 * 1000;
-        });
+  //     const runningSyncs = await this.checkRunningSyncsWithTimeout();
+  //     if (runningSyncs.length > 0) {
+  //       const runningTooLong = runningSyncs.some((sync) => {
+  //         if (!sync.startedAt) return false;
+  //         const runningTime = Date.now() - sync.startedAt.getTime();
+  //         return runningTime > 5 * 60 * 1000;
+  //       });
 
-        if (runningTooLong) {
-          this.logger.warn(
-            '⚠️ Detected long-running syncs - triggering cleanup',
-          );
-          await this.cleanupStuckSyncs();
-        } else {
-          this.logger.log(
-            `⏸️ Parallel sync skipped - running: ${runningSyncs.map((s) => s.name).join(', ')}`,
-          );
-          return;
-        }
-      }
+  //       if (runningTooLong) {
+  //         this.logger.warn(
+  //           '⚠️ Detected long-running syncs - triggering cleanup',
+  //         );
+  //         await this.cleanupStuckSyncs();
+  //       } else {
+  //         this.logger.log(
+  //           `⏸️ Parallel sync skipped - running: ${runningSyncs.map((s) => s.name).join(', ')}`,
+  //         );
+  //         return;
+  //       }
+  //     }
 
-      await this.updateCycleTracking('main_cycle', 'running');
+  //     await this.updateCycleTracking('main_cycle', 'running');
 
-      const CYCLE_TIMEOUT_MS = 8 * 60 * 1000;
+  //     const CYCLE_TIMEOUT_MS = 8 * 60 * 1000;
 
-      try {
-        const cyclePromise = this.executeMainCycleWithAbortSignal(signal);
-        const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(
-            () => reject(new Error('Cycle timeout after 8 minutes')),
-            CYCLE_TIMEOUT_MS,
-          ),
-        );
+  //     try {
+  //       const cyclePromise = this.executeMainCycleWithAbortSignal(signal);
+  //       const timeoutPromise = new Promise<never>((_, reject) =>
+  //         setTimeout(
+  //           () => reject(new Error('Cycle timeout after 8 minutes')),
+  //           CYCLE_TIMEOUT_MS,
+  //         ),
+  //       );
 
-        await Promise.race([cyclePromise, timeoutPromise]);
-        await this.updateCycleTracking('main_cycle', 'completed');
+  //       await Promise.race([cyclePromise, timeoutPromise]);
+  //       await this.updateCycleTracking('main_cycle', 'completed');
 
-        const totalDuration = ((Date.now() - startTime) / 1000).toFixed(2);
-        this.logger.log(
-          `🎉 1-minute sync cycle completed in ${totalDuration}s`,
-        );
-      } catch (timeoutError) {
-        if (signal.aborted) {
-          this.logger.log(
-            '🚫 2-minute cycle was aborted by daily cycle priority',
-          );
-          await this.updateCycleTracking(
-            'main_cycle',
-            'aborted',
-            'Aborted by daily cycle priority',
-          );
-        } else if (
-          timeoutError instanceof Error &&
-          timeoutError.message.includes('timeout')
-        ) {
-          this.logger.error(`⏰ 2-minute cycle timed out after 8 minutes`);
-          await this.updateCycleTracking(
-            'main_cycle',
-            'timeout',
-            'Cycle exceeded 8 minute timeout',
-          );
-        } else {
-          throw timeoutError;
-        }
-      }
-    } catch (error) {
-      if (signal.aborted) {
-        this.logger.log('🚫 2-minute cycle aborted during execution');
-        await this.updateCycleTracking(
-          'main_cycle',
-          'aborted',
-          'Aborted by daily cycle priority',
-        );
-      } else {
-        this.logger.error(`❌ 2-minute sync cycle failed: ${error.message}`);
-        await this.updateCycleTracking('main_cycle', 'failed', error.message);
-      }
-    } finally {
-      this.mainCycleAbortController = null;
-    }
-  }
+  //       const totalDuration = ((Date.now() - startTime) / 1000).toFixed(2);
+  //       this.logger.log(
+  //         `🎉 1-minute sync cycle completed in ${totalDuration}s`,
+  //       );
+  //     } catch (timeoutError) {
+  //       if (signal.aborted) {
+  //         this.logger.log(
+  //           '🚫 2-minute cycle was aborted by daily cycle priority',
+  //         );
+  //         await this.updateCycleTracking(
+  //           'main_cycle',
+  //           'aborted',
+  //           'Aborted by daily cycle priority',
+  //         );
+  //       } else if (
+  //         timeoutError instanceof Error &&
+  //         timeoutError.message.includes('timeout')
+  //       ) {
+  //         this.logger.error(`⏰ 2-minute cycle timed out after 8 minutes`);
+  //         await this.updateCycleTracking(
+  //           'main_cycle',
+  //           'timeout',
+  //           'Cycle exceeded 8 minute timeout',
+  //         );
+  //       } else {
+  //         throw timeoutError;
+  //       }
+  //     }
+  //   } catch (error) {
+  //     if (signal.aborted) {
+  //       this.logger.log('🚫 2-minute cycle aborted during execution');
+  //       await this.updateCycleTracking(
+  //         'main_cycle',
+  //         'aborted',
+  //         'Aborted by daily cycle priority',
+  //       );
+  //     } else {
+  //       this.logger.error(`❌ 2-minute sync cycle failed: ${error.message}`);
+  //       await this.updateCycleTracking('main_cycle', 'failed', error.message);
+  //     }
+  //   } finally {
+  //     this.mainCycleAbortController = null;
+  //   }
+  // }
 
   private async checkRunningSyncsWithTimeout(): Promise<any[]> {
     const runningSyncs = await this.prismaService.syncControl.findMany({
@@ -317,6 +317,13 @@ export class BusSchedulerService implements OnModuleInit {
       }),
     );
 
+    syncPromises.push(
+      this.executeAbortableSync('product', signal, async () => {
+        await this.runProductSync();
+        await this.runProductLarkSync();
+      }),
+    );
+
     await Promise.all(syncPromises);
   }
 
@@ -347,7 +354,7 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
-  @Cron('30 22 * * *', {
+  @Cron('39 09 * * *', {
     name: 'daily_product_sync',
     timeZone: 'Asia/Ho_Chi_Minh',
   })
@@ -509,6 +516,19 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
+  private async runProductLarkSync(): Promise<void> {
+    const productsToSync = await this.prismaService.product.findMany({
+      where: {
+        larkSyncStatus: { in: ['PENDING', 'FAILED'] },
+      },
+      take: 100,
+    });
+
+    if (productsToSync.length > 0) {
+      await this.larkProductSyncService.syncProductsToLarkBase(productsToSync);
+    }
+  }
+
   private async executeEntitySequentially(
     entity: DailyEntityConfig,
   ): Promise<void> {
@@ -593,19 +613,21 @@ export class BusSchedulerService implements OnModuleInit {
         'customer_recent',
         'invoice_recent',
         'order_recent',
+        'product_historical',
       ].includes(sync.name),
     );
 
     const larkBaseSyncs = runningSyncs.filter((sync) =>
-      ['customer_lark_sync', 'invoice_lark_sync', 'order_lark_sync'].includes(
-        sync.name,
-      ),
+      [
+        'customer_lark_sync',
+        'invoice_lark_sync',
+        'order_lark_sync',
+        'product_lark_sync',
+      ].includes(sync.name),
     );
 
     const dailyCycleSyncs = runningSyncs.filter((sync) =>
       [
-        'pricebook_historical',
-        'product_historical',
         'purchase_order_historical',
         'purchase_order_detail_historical',
         'order_supplier_historical',
@@ -641,14 +663,14 @@ export class BusSchedulerService implements OnModuleInit {
             this.isDailyCycleRunning || this.dailyCyclePriorityLevel > 0
               ? `Suspended during daily cycle (Priority Level ${this.dailyCyclePriorityLevel})`
               : '4 minutes interval',
-          entities: ['customer', 'invoice', 'order'],
+          entities: ['customer', 'invoice', 'order', 'product'],
           note: 'Enhanced priority management with force abort capability',
         },
         dailyProductSequenceScheduler: {
           enabled: this.isDailyProductSchedulerEnabled,
           currentStatus: this.isDailyCycleRunning ? 'RUNNING' : 'IDLE',
           priorityLevel: this.dailyCyclePriorityLevel,
-          nextRun: 'Daily at 23:00 (Vietnam time)',
+          nextRun: 'Daily at 22:30 (Vietnam time)',
           entities: this.DAILY_ENTITIES_CONFIG.map((e) => e.name),
           sequence: 'Sequential: Entity sync → LarkBase sync → Next entity',
           isolation:
@@ -753,6 +775,22 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
+  private async runProductSync(): Promise<void> {
+    try {
+      this.logger.log('📋 [Product] Starting parallel sync...');
+
+      const startTime = Date.now();
+
+      await this.productService.checkAndRunAppropriateSync();
+      await this.autoTriggerProductLarkSync();
+      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+      this.logger.log(`✅ [Product] Parallel sync completed in ${duration}s`);
+    } catch (error) {
+      this.logger.error(`❌ [Product] Parallel sync failed: ${error.message}`);
+      throw new Error(`Product sync failed: ${error.message}`);
+    }
+  }
+
   public async cleanupStuckSyncs(): Promise<number> {
     this.logger.log('🧹 Starting stuck sync cleanup...');
 
@@ -816,45 +854,38 @@ export class BusSchedulerService implements OnModuleInit {
     return cleanedCount;
   }
 
-  private async runProductSequenceSync(): Promise<void> {
-    try {
-      this.logger.log(
-        '📦 [ProductSequence] Starting sequential dependency sync...',
-      );
-      const startTime = Date.now();
+  // private async runProductSequenceSync(): Promise<void> {
+  //   try {
+  //     const startTime = Date.now();
 
-      this.logger.log(
-        '💰 [1/2] Syncing PriceBooks (dependency for Product)...',
-      );
+  //     if (!this.priceBookService) {
+  //       throw new Error(
+  //         'PriceBookService not injected - cannot sync Product without PriceBook dependency',
+  //       );
+  //     }
 
-      if (!this.priceBookService) {
-        throw new Error(
-          'PriceBookService not injected - cannot sync Product without PriceBook dependency',
-        );
-      }
+  //     await this.enableAndRunPriceBookSync();
+  //     await this.waitForSyncCompletion('pricebook_historical', 300);
 
-      await this.enableAndRunPriceBookSync();
-      await this.waitForSyncCompletion('pricebook_historical', 300);
+  //     this.logger.log(
+  //       '📦 [2/2] Syncing Products (with PriceBook dependency satisfied)...',
+  //     );
+  //     await this.enableAndRunProductSync();
+  //     await this.waitForSyncCompletion('product_historical', 360);
 
-      this.logger.log(
-        '📦 [2/2] Syncing Products (with PriceBook dependency satisfied)...',
-      );
-      await this.enableAndRunProductSync();
-      await this.waitForSyncCompletion('product_historical', 360);
+  //     const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+  //     this.logger.log(
+  //       `✅ [ProductSequence] Sequential sync completed in ${duration}s`,
+  //     );
 
-      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-      this.logger.log(
-        `✅ [ProductSequence] Sequential sync completed in ${duration}s`,
-      );
-
-      return Promise.resolve();
-    } catch (error) {
-      this.logger.error(
-        `❌ [ProductSequence] Sequential sync failed: ${error.message}`,
-      );
-      throw new Error(`ProductSequence sync failed: ${error.message}`);
-    }
-  }
+  //     return Promise.resolve();
+  //   } catch (error) {
+  //     this.logger.error(
+  //       `❌ [ProductSequence] Sequential sync failed: ${error.message}`,
+  //     );
+  //     throw new Error(`ProductSequence sync failed: ${error.message}`);
+  //   }
+  // }
 
   private async autoTriggerCustomerLarkSync(): Promise<void> {
     try {
@@ -1600,7 +1631,7 @@ export class BusSchedulerService implements OnModuleInit {
   private async autoTriggerPurchaseOrderDetailLarkSync(): Promise<void> {
     try {
       const historicalSync = await this.prismaService.syncControl.findFirst({
-        where: { name: 'purchase_order_historical' },
+        where: { name: 'purchase_order_detail_historical' },
       });
 
       const larkSync = await this.prismaService.syncControl.findFirst({
@@ -1704,12 +1735,12 @@ export class BusSchedulerService implements OnModuleInit {
 
   enableDailyProductScheduler() {
     this.isDailyProductSchedulerEnabled = true;
-    this.logger.log('✅ Daily product scheduler (23:00) enabled');
+    this.logger.log('✅ Daily product scheduler (22:30) enabled');
   }
 
   disableDailyProductScheduler() {
     this.isDailyProductSchedulerEnabled = false;
-    this.logger.log('🔇 Daily sync scheduler (23:00) disabled');
+    this.logger.log('🔇 Daily sync scheduler (22:30) disabled');
   }
 
   private async runStartupCheck() {
@@ -1741,19 +1772,22 @@ export class BusSchedulerService implements OnModuleInit {
       this.startupAbortController = new AbortController();
       const signal = this.startupAbortController.signal;
 
-      const startupPromises = [
-        this.executeAbortableStartupSync('customer', signal, () =>
-          this.customerService.checkAndRunAppropriateSync(),
-        ),
-        this.executeAbortableStartupSync('invoice', signal, () =>
-          this.invoiceService.checkAndRunAppropriateSync(),
-        ),
-        this.executeAbortableStartupSync('order', signal, () =>
-          this.orderService.checkAndRunAppropriateSync(),
-        ),
-      ];
+      // const startupPromises = [
+      //   this.executeAbortableStartupSync('customer', signal, () =>
+      //     this.customerService.checkAndRunAppropriateSync(),
+      //   ),
+      //   this.executeAbortableStartupSync('invoice', signal, () =>
+      //     this.invoiceService.checkAndRunAppropriateSync(),
+      //   ),
+      //   this.executeAbortableStartupSync('order', signal, () =>
+      //     this.orderService.checkAndRunAppropriateSync(),
+      //   ),
+      //   this.executeAbortableStartupSync('product', signal, () =>
+      //     this.productService.checkAndRunAppropriateSync(),
+      //   ),
+      // ];
 
-      await Promise.allSettled(startupPromises);
+      // await Promise.allSettled(startupPromises);
 
       this.logger.log('✅ Startup check completed');
     } catch (error) {
@@ -1822,35 +1856,35 @@ export class BusSchedulerService implements OnModuleInit {
     );
   }
 
-  private async enableAndRunPriceBookSync(): Promise<void> {
-    try {
-      this.logger.log('💰 Enabling and running PriceBook sync...');
+  // private async enableAndRunPriceBookSync(): Promise<void> {
+  //   try {
+  //     this.logger.log('💰 Enabling and running PriceBook sync...');
 
-      await this.priceBookService.enableHistoricalSync();
+  //     await this.priceBookService.enableHistoricalSync();
 
-      await this.priceBookService.syncHistoricalPriceBooks();
+  //     await this.priceBookService.syncHistoricalPriceBooks();
 
-      this.logger.log('✅ PriceBook sync initiated successfully');
-    } catch (error) {
-      this.logger.error(`❌ PriceBook sync failed: ${error.message}`);
-      throw new Error(`PriceBook sync failed: ${error.message}`);
-    }
-  }
+  //     this.logger.log('✅ PriceBook sync initiated successfully');
+  //   } catch (error) {
+  //     this.logger.error(`❌ PriceBook sync failed: ${error.message}`);
+  //     throw new Error(`PriceBook sync failed: ${error.message}`);
+  //   }
+  // }
 
-  private async enableAndRunProductSync(): Promise<void> {
-    try {
-      this.logger.log('📦 Enabling and running Product sync...');
+  // private async enableAndRunProductSync(): Promise<void> {
+  //   try {
+  //     this.logger.log('📦 Enabling and running Product sync...');
 
-      await this.productService.enableHistoricalSync();
+  //     await this.productService.enableHistoricalSync();
 
-      await this.productService.syncHistoricalProducts();
+  //     await this.productService.syncHistoricalProducts();
 
-      this.logger.log('✅ Product sync initiated successfully');
-    } catch (error) {
-      this.logger.error(`❌ Product sync failed: ${error.message}`);
-      throw new Error(`Product sync failed: ${error.message}`);
-    }
-  }
+  //     this.logger.log('✅ Product sync initiated successfully');
+  //   } catch (error) {
+  //     this.logger.error(`❌ Product sync failed: ${error.message}`);
+  //     throw new Error(`Product sync failed: ${error.message}`);
+  //   }
+  // }
 
   private async enableAndRunOrderSupplierSync(): Promise<void> {
     try {
@@ -1873,7 +1907,7 @@ export class BusSchedulerService implements OnModuleInit {
 
       const orderSupplierDetailSync =
         await this.prismaService.syncControl.findFirst({
-          where: { name: 'order_supplier_historical' },
+          where: { name: 'order_supplier_detail_historical' },
         });
 
       if (
@@ -1932,7 +1966,7 @@ export class BusSchedulerService implements OnModuleInit {
       this.logger.log('📦 Enabling and running Purchase Order Detail sync...');
 
       const purchaseOrderSync = await this.prismaService.syncControl.findFirst({
-        where: { name: 'purchase_order_historical' },
+        where: { name: 'purchase_order_detail_historical' },
       });
 
       if (!purchaseOrderSync || purchaseOrderSync.status !== 'completed') {
@@ -2036,7 +2070,6 @@ export class BusSchedulerService implements OnModuleInit {
         `📊 Found ${purchaseOrdersWithDetails.length} PurchaseOrders with ${allDetailIds.length} details to sync`,
       );
 
-      // Sync the details to LarkBase
       await this.larkPurchaseOrderSyncService.syncPurchaseOrderDetailsToLarkBase(
         purchaseOrdersWithDetails,
       );
@@ -2121,44 +2154,44 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
-  private async waitForSyncCompletion(
-    syncName: string,
-    maxWaitSeconds: number,
-  ): Promise<void> {
-    const CHECK_INTERVAL_MS = 5000;
-    let waitedSeconds = 0;
+  // private async waitForSyncCompletion(
+  //   syncName: string,
+  //   maxWaitSeconds: number,
+  // ): Promise<void> {
+  //   const CHECK_INTERVAL_MS = 5000;
+  //   let waitedSeconds = 0;
 
-    this.logger.log(
-      `⏳ Waiting for ${syncName} completion (max ${maxWaitSeconds}s)...`,
-    );
+  //   this.logger.log(
+  //     `⏳ Waiting for ${syncName} completion (max ${maxWaitSeconds}s)...`,
+  //   );
 
-    while (waitedSeconds < maxWaitSeconds) {
-      const syncControl = await this.prismaService.syncControl.findFirst({
-        where: { name: syncName },
-      });
+  //   while (waitedSeconds < maxWaitSeconds) {
+  //     const syncControl = await this.prismaService.syncControl.findFirst({
+  //       where: { name: syncName },
+  //     });
 
-      if (!syncControl?.isRunning) {
-        if (syncControl?.status === 'completed') {
-          this.logger.log(`✅ ${syncName} completed successfully`);
-          return;
-        } else if (syncControl?.status === 'failed') {
-          throw new Error(
-            `${syncName} failed: ${syncControl.error || 'Unknown error'}`,
-          );
-        } else {
-          this.logger.log(
-            `✅ ${syncName} finished with status: ${syncControl?.status}`,
-          );
-          return;
-        }
-      }
+  //     if (!syncControl?.isRunning) {
+  //       if (syncControl?.status === 'completed') {
+  //         this.logger.log(`✅ ${syncName} completed successfully`);
+  //         return;
+  //       } else if (syncControl?.status === 'failed') {
+  //         throw new Error(
+  //           `${syncName} failed: ${syncControl.error || 'Unknown error'}`,
+  //         );
+  //       } else {
+  //         this.logger.log(
+  //           `✅ ${syncName} finished with status: ${syncControl?.status}`,
+  //         );
+  //         return;
+  //       }
+  //     }
 
-      await new Promise((resolve) => setTimeout(resolve, CHECK_INTERVAL_MS));
-      waitedSeconds += CHECK_INTERVAL_MS / 1000;
-    }
+  //     await new Promise((resolve) => setTimeout(resolve, CHECK_INTERVAL_MS));
+  //     waitedSeconds += CHECK_INTERVAL_MS / 1000;
+  //   }
 
-    throw new Error(`${syncName} timeout after ${maxWaitSeconds} seconds`);
-  }
+  //   throw new Error(`${syncName} timeout after ${maxWaitSeconds} seconds`);
+  // }
 
   private async checkRunningSyncs(): Promise<any[]> {
     return await this.prismaService.syncControl.findMany({
@@ -2175,8 +2208,8 @@ export class BusSchedulerService implements OnModuleInit {
       completedToday: isCompletedToday,
       lastSyncDate: this.lastProductSyncDate,
       nextAvailableTime: isCompletedToday
-        ? 'Tomorrow 23:00'
-        : 'Today 23:00 or manual trigger',
+        ? 'Tomorrow 22:30'
+        : 'Today 22:30 or manual trigger',
       dailyCycleRunning: this.isDailyCycleRunning,
       dailyCycleStartTime: this.dailyCycleStartTime?.toISOString() || null,
     };
@@ -2295,6 +2328,7 @@ export class BusSchedulerService implements OnModuleInit {
             { name: 'customer_recent' },
             { name: 'invoice_recent' },
             { name: 'order_recent' },
+            { name: 'product_historical' },
             { name: 'main_cycle' },
             { name: 'main_sync_cycle' },
           ],
@@ -2309,6 +2343,7 @@ export class BusSchedulerService implements OnModuleInit {
               { name: 'customer_recent' },
               { name: 'invoice_recent' },
               { name: 'order_recent' },
+              { name: 'product_historical' },
               { name: 'main_cycle' },
               { name: 'main_sync_cycle' },
             ],

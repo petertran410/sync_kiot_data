@@ -123,9 +123,6 @@ const BRANCH_INVENTORY_MAPPING: Record<number, string> = {
   5: LARK_PRODUCT_FIELDS.TON_KHO_KHO_BAN_HANG, // Kho bán hàng
 } as const;
 
-// ============================================================================
-// INTERFACES - EXACT COPY FROM INVOICE PATTERN
-// ============================================================================
 interface LarkBaseRecord {
   record_id?: string;
   fields: Record<string, any>;
@@ -153,9 +150,6 @@ interface BatchResult {
   failedRecords: any[];
 }
 
-// ============================================================================
-// MAIN SERVICE - EXACT PATTERN FROM CUSTOMER/INVOICE/ORDER
-// ============================================================================
 @Injectable()
 export class LarkProductSyncService {
   private readonly logger = new Logger(LarkProductSyncService.name);
@@ -166,7 +160,6 @@ export class LarkProductSyncService {
   private readonly AUTH_ERROR_CODES = [99991663, 99991664, 99991665];
   private readonly MAX_AUTH_RETRIES = 3;
 
-  // Cache management - EXACTLY LIKE INVOICE/ORDER PATTERN
   private existingRecordsCache: Map<number, string> = new Map();
   private productCodeCache: Map<string, string> = new Map();
   private cacheLoaded: boolean = false;
@@ -193,10 +186,6 @@ export class LarkProductSyncService {
     this.baseToken = baseToken;
     this.tableId = tableId;
   }
-
-  // ============================================================================
-  // MAIN SYNC METHOD - EXACT COPY FROM INVOICE PATTERN
-  // ============================================================================
 
   async syncProductsToLarkBase(products: any[]): Promise<void> {
     const lockKey = `lark_product_sync_lock_${Date.now()}`;
@@ -441,10 +430,6 @@ export class LarkProductSyncService {
     }
   }
 
-  // ============================================================================
-  // CATEGORIZATION - EXACT COPY FROM INVOICE PATTERN
-  // ============================================================================
-
   private categorizeProducts(products: any[]): {
     newProducts: any[];
     updateProducts: any[];
@@ -475,10 +460,6 @@ export class LarkProductSyncService {
 
     return { newProducts, updateProducts };
   }
-
-  // ============================================================================
-  // PROCESS NEW PRODUCTS - EXACT COPY FROM INVOICE PATTERN
-  // ============================================================================
 
   private async processNewProducts(products: any[]): Promise<void> {
     if (products.length === 0) return;
@@ -518,10 +499,6 @@ export class LarkProductSyncService {
       `🎯 Create complete: ${totalCreated} success, ${totalFailed} failed`,
     );
   }
-
-  // ============================================================================
-  // PROCESS UPDATE PRODUCTS - EXACT COPY FROM INVOICE PATTERN
-  // ============================================================================
 
   private async processUpdateProducts(products: any[]): Promise<void> {
     if (products.length === 0) return;

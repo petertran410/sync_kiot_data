@@ -1,4 +1,3 @@
-// src/services/kiot-viet/category/category.service.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';

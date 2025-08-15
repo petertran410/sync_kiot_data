@@ -1,4 +1,3 @@
-// src/services/kiot-viet/kiot-viet.module.ts
 import { Module } from '@nestjs/common';
 import { HttpModule } from '@nestjs/axios';
 import { ConfigModule } from '@nestjs/config';
@@ -27,7 +26,7 @@ import { KiotVietReturnService } from './returns/return.service';
   imports: [
     HttpModule.register({
       timeout: 60000,
-      maxRedirects: 5,
+      maxRedirects: 10,
     }),
     ConfigModule,
     PrismaModule,

@@ -7,6 +7,7 @@ import { KiotVietProductService } from 'src/services/kiot-viet/product/product.s
 import { KiotVietCategoryService } from '../services/kiot-viet/category/category.service';
 import { KiotVietCustomerGroupService } from 'src/services/kiot-viet/customer-group/customer-group.service';
 import { KiotVietReturnService } from 'src/services/kiot-viet/returns/return.service';
+import { KiotVietPriceBookService } from 'src/services/kiot-viet/pricebook/pricebook.service';
 
 @Controller('sync')
 export class SyncController {
@@ -21,6 +22,7 @@ export class SyncController {
     private readonly categoryService: KiotVietCategoryService,
     private readonly customerGroupService: KiotVietCustomerGroupService,
     private readonly returnService: KiotVietReturnService,
+    private readonly priceBookService: KiotVietPriceBookService,
   ) {}
 
   @Get('status')
@@ -328,6 +330,30 @@ export class SyncController {
       };
     } catch (error) {
       this.logger.error(`❌ Return sync failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
+
+  @Post('pricebooks')
+  async syncPriceBooks() {
+    try {
+      this.logger.log('Starting pricebook sync ...');
+
+      await this.priceBookService.enableHistoricalSync();
+
+      await this.priceBookService.syncHistoricalPriceBooks();
+
+      return {
+        success: true,
+        message: 'Pricebook sync completed successfully',
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error) {
+      this.logger.error(`❌ Pricebook sync failed: ${error.message}`);
       return {
         success: false,
         error: error.message,
