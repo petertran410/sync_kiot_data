@@ -74,6 +74,7 @@ interface KiotVietProduct {
 
   priceBooks?: Array<{
     productId: number;
+    productName: string;
     priceBookId: number;
     priceBookName: string;
     price: number;
@@ -717,8 +718,6 @@ export class KiotVietProductService {
 
         if (productData.images && productData.images.length > 0) {
           for (let i = 0; i < productData.images.length; i++) {
-            const detail = productData.images[i];
-
             await this.prismaService.productImage.upsert({
               where: {
                 productId_lineNumber: {
@@ -728,13 +727,13 @@ export class KiotVietProductService {
               },
               update: {
                 productId: product.id,
-                imageUrl: detail.image || null,
+                imageUrl: productData.images,
                 lineNumber: i + 1,
                 lastSyncedAt: new Date(),
               },
               create: {
                 productId: product.id,
-                imageUrl: detail.image || null,
+                imageUrl: productData.images,
                 lineNumber: i + 1,
                 lastSyncedAt: new Date(),
               },
@@ -742,6 +741,43 @@ export class KiotVietProductService {
           }
         } else {
           continue;
+        }
+
+        if (productData.priceBooks) {
+          for (let i = 0; i < productData.priceBooks.length; i++) {
+            const detail = productData.priceBooks[i];
+            const pricebook = await this.prismaService.priceBook.findFirst({
+              where: { kiotVietId: detail.priceBookId },
+              select: { id: true, name: true },
+            });
+
+            await this.prismaService.priceBookDetail.upsert({
+              where: {
+                productId_lineNumber: {
+                  productId: product.id,
+                  lineNumber: i + 1,
+                },
+              },
+              update: {
+                lineNumber: i + 1,
+                priceBookId: pricebook?.id,
+                priceBookName: pricebook?.name,
+                price: detail.price,
+                lastSyncedAt: new Date(),
+                productId: product.id,
+                productName: product.name,
+              },
+              create: {
+                lineNumber: i + 1,
+                priceBookId: pricebook?.id,
+                priceBookName: pricebook?.name,
+                price: detail.price,
+                lastSyncedAt: new Date(),
+                productId: product.id,
+                productName: product.name,
+              },
+            });
+          }
         }
 
         savedProducts.push(product);

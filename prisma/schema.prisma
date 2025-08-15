@@ -101,7 +101,7 @@ model ProductAttribute {
 model ProductImage {
   id           Int      @id @default(autoincrement())
   productId    Int
-  imageUrl     String?
+  imageUrl     Json?
   lineNumber   Int
   lastSyncedAt DateTime @default(now())
   product      Product  @relation(fields: [productId], references: [id])
@@ -921,14 +921,17 @@ model PriceBook {
 
 model PriceBookDetail {
   id          Int       @id @default(autoincrement())
-  kiotVietId  BigInt?   @unique
-  priceBookId Int
+  priceBookId Int?
+  priceBookName String?
   productId   Int
+  productName String?
   price       Decimal   @db.Decimal(15, 2)
-  priceBook   PriceBook @relation(fields: [priceBookId], references: [id])
+  lineNumber  Int?
+  priceBook   PriceBook? @relation(fields: [priceBookId], references: [id])
   product     Product   @relation(fields: [productId], references: [id])
+  lastSyncedAt   DateTime                 @default(now())
 
-  @@unique([priceBookId, productId])
+  @@unique([productId, lineNumber])
   @@index([priceBookId])
   @@index([productId])
 }

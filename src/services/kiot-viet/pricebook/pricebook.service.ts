@@ -42,6 +42,16 @@ interface KiotVietPriceBook {
     userName?: string;
     lastSyncedAt: string;
   }>;
+  priceBooks?: Array<{
+    priceBookId: number;
+    priceBookName: string;
+    productId: number;
+    isActive: boolean;
+    startDate: string;
+    endDate: string;
+    lineNumber: number;
+    price: number;
+  }>;
 }
 
 @Injectable()
@@ -373,12 +383,13 @@ export class KiotVietPriceBookService {
             { headers, timeout: 30000 },
           ),
         );
-
         if (response.data) {
           enrichedPricebooks.push(response.data);
         } else {
           enrichedPricebooks.push(pricebook);
         }
+
+        // enrichedPricebooks.push(pricebook);
 
         await new Promise((resolve) => setTimeout(resolve, 50));
       } catch (error) {
@@ -452,8 +463,6 @@ export class KiotVietPriceBookService {
             lastSyncedAt: new Date(),
           },
         });
-
-        savedPricebooks.push(pricebook);
 
         if (
           priceBookData.priceBookBranches &&
@@ -577,6 +586,8 @@ export class KiotVietPriceBookService {
             });
           }
         }
+
+        savedPricebooks.push(pricebook);
       } catch (error) {
         this.logger.error(
           `❌ Failed to save pricebook ${priceBookData.name}: ${error.message}`,

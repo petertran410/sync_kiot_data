@@ -237,34 +237,34 @@ export class SyncController {
     }
   }
 
-  @Post('product/historical')
-  async triggerHistoricalProduct() {
-    try {
-      this.logger.log('🔧 Manual historical product sync triggered');
+  // @Post('product/historical')
+  // async triggerHistoricalProduct() {
+  //   try {
+  //     this.logger.log('🔧 Manual historical product sync triggered');
 
-      await this.productService.enableHistoricalSync();
+  //     await this.productService.enableHistoricalSync();
 
-      return {
-        success: true,
-        message: 'Historical product sync enabled and started',
-        estimatedDuration: '15-30 minutes',
-        phases: [
-          'Product sync',
-          'Nested data processing',
-          'LarkBase integration',
-        ],
-      };
-    } catch (error) {
-      this.logger.error(
-        `Manual historical product sync failed: ${error.message}`,
-      );
-      return {
-        success: false,
-        error: error.message,
-        stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
-      };
-    }
-  }
+  //     return {
+  //       success: true,
+  //       message: 'Historical product sync enabled and started',
+  //       estimatedDuration: '15-30 minutes',
+  //       phases: [
+  //         'Product sync',
+  //         'Nested data processing',
+  //         'LarkBase integration',
+  //       ],
+  //     };
+  //   } catch (error) {
+  //     this.logger.error(
+  //       `Manual historical product sync failed: ${error.message}`,
+  //     );
+  //     return {
+  //       success: false,
+  //       error: error.message,
+  //       stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
+  //     };
+  //   }
+  // }
 
   @Post('categories')
   async syncCategories() {
@@ -354,6 +354,30 @@ export class SyncController {
       };
     } catch (error) {
       this.logger.error(`❌ Pricebook sync failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
+
+  @Post('products')
+  async syncProducts() {
+    try {
+      this.logger.log('Starting product sync...');
+
+      // await this.productService.enableHistoricalSync();
+
+      await this.productService.syncHistoricalProducts();
+
+      return {
+        success: true,
+        message: 'Product sync completed successfully',
+        timestamp: new Date().toISOString,
+      };
+    } catch (error) {
+      this.logger.error(`❌ Product sync failed: ${error.message}`);
       return {
         success: false,
         error: error.message,
