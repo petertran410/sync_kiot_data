@@ -400,15 +400,19 @@ export class KiotVietPriceBookService {
     const savedPricebooks: any[] = [];
 
     for (const priceBookData of priceBooks) {
+      if (!priceBookData || !priceBookData.id || !priceBookData.name) {
+        this.logger.warn(`Skipping invalid pricebook:`, {
+          hasData: !!priceBookData,
+          id: priceBookData?.id,
+          name: priceBookData?.name,
+        });
+        continue;
+      }
       try {
-        if (!priceBookData.id || !priceBookData.name) {
-          continue;
-        }
-
         const pricebook = await this.prismaService.priceBook.upsert({
           where: { kiotVietId: priceBookData.id },
           update: {
-            name: priceBookData.name.trim(),
+            name: priceBookData.name,
             isActive: priceBookData.isActive ?? true,
             isGlobal: priceBookData.isGlobal ?? false,
             startDate: priceBookData.startDate
@@ -427,7 +431,7 @@ export class KiotVietPriceBookService {
           },
           create: {
             kiotVietId: priceBookData.id,
-            name: priceBookData.name.trim(),
+            name: priceBookData.name,
             isActive: priceBookData.isActive ?? true,
             isGlobal: priceBookData.isGlobal ?? false,
             startDate: priceBookData.startDate
