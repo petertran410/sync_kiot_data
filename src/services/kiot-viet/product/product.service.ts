@@ -728,18 +728,20 @@ export class KiotVietProductService {
               },
               update: {
                 productId: product.id,
-                imageUrl: detail.image,
+                imageUrl: detail.image || null,
                 lineNumber: i + 1,
                 lastSyncedAt: new Date(),
               },
               create: {
                 productId: product.id,
-                imageUrl: detail.image,
+                imageUrl: detail.image || null,
                 lineNumber: i + 1,
                 lastSyncedAt: new Date(),
               },
             });
           }
+        } else {
+          continue;
         }
 
         savedProducts.push(product);
