@@ -317,12 +317,12 @@ export class BusSchedulerService implements OnModuleInit {
       }),
     );
 
-    syncPromises.push(
-      this.executeAbortableSync('product', signal, async () => {
-        await this.runProductSync();
-        await this.runProductLarkSync();
-      }),
-    );
+    // syncPromises.push(
+    //   this.executeAbortableSync('product', signal, async () => {
+    //     await this.runProductSync();
+    //     await this.runProductLarkSync();
+    //   }),
+    // );
 
     await Promise.all(syncPromises);
   }
@@ -613,7 +613,7 @@ export class BusSchedulerService implements OnModuleInit {
         'customer_recent',
         'invoice_recent',
         'order_recent',
-        'product_historical',
+        // 'product_historical',
       ].includes(sync.name),
     );
 
@@ -622,7 +622,7 @@ export class BusSchedulerService implements OnModuleInit {
         'customer_lark_sync',
         'invoice_lark_sync',
         'order_lark_sync',
-        'product_lark_sync',
+        // 'product_lark_sync',
       ].includes(sync.name),
     );
 
@@ -1782,9 +1782,9 @@ export class BusSchedulerService implements OnModuleInit {
         this.executeAbortableStartupSync('order', signal, () =>
           this.orderService.checkAndRunAppropriateSync(),
         ),
-        this.executeAbortableStartupSync('product', signal, () =>
-          this.productService.checkAndRunAppropriateSync(),
-        ),
+        // this.executeAbortableStartupSync('product', signal, () =>
+        //   this.productService.checkAndRunAppropriateSync(),
+        // ),
       ];
 
       await Promise.allSettled(startupPromises);
@@ -2328,7 +2328,7 @@ export class BusSchedulerService implements OnModuleInit {
             { name: 'customer_recent' },
             { name: 'invoice_recent' },
             { name: 'order_recent' },
-            { name: 'product_historical' },
+            // { name: 'product_historical' },
             { name: 'main_cycle' },
             { name: 'main_sync_cycle' },
           ],
@@ -2343,7 +2343,7 @@ export class BusSchedulerService implements OnModuleInit {
               { name: 'customer_recent' },
               { name: 'invoice_recent' },
               { name: 'order_recent' },
-              { name: 'product_historical' },
+              // { name: 'product_historical' },
               { name: 'main_cycle' },
               { name: 'main_sync_cycle' },
             ],
