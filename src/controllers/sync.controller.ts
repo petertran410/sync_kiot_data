@@ -8,6 +8,8 @@ import { KiotVietCategoryService } from '../services/kiot-viet/category/category
 import { KiotVietCustomerGroupService } from 'src/services/kiot-viet/customer-group/customer-group.service';
 import { KiotVietReturnService } from 'src/services/kiot-viet/returns/return.service';
 import { KiotVietPriceBookService } from 'src/services/kiot-viet/pricebook/pricebook.service';
+import { LarkProductSyncService } from 'src/services/lark/product/lark-product-sync.service';
+import { PrismaService } from 'src/prisma/prisma.service';
 
 @Controller('sync')
 export class SyncController {
@@ -23,6 +25,8 @@ export class SyncController {
     private readonly customerGroupService: KiotVietCustomerGroupService,
     private readonly returnService: KiotVietReturnService,
     private readonly priceBookService: KiotVietPriceBookService,
+    private readonly larkProductSevice: LarkProductSyncService,
+    private readonly prismaService: PrismaService,
   ) {}
 
   @Get('status')
@@ -367,9 +371,18 @@ export class SyncController {
     try {
       this.logger.log('Starting product sync...');
 
-      // await this.productService.enableHistoricalSync();
+      await this.productService.enableHistoricalSync();
 
       await this.productService.syncHistoricalProducts();
+
+      const productsToSync = await this.prismaService.product.findMany({
+        where: {
+          OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+        },
+        take: 1000,
+      });
+
+      await this.larkProductSevice.syncProductsToLarkBase(productsToSync);
 
       return {
         success: true,
