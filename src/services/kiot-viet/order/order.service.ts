@@ -117,21 +117,18 @@ export class KiotVietOrderService {
         where: { name: 'order_recent' },
       });
 
-      // Priority: Historical sync first
       if (historicalSync?.isEnabled && !historicalSync.isRunning) {
         this.logger.log('Starting historical order sync...');
         await this.syncHistoricalOrders();
         return;
       }
 
-      // Then recent sync
       if (recentSync?.isEnabled && !recentSync.isRunning) {
         this.logger.log('Starting recent order sync...');
         await this.syncRecentOrders(6);
         return;
       }
 
-      // Default: recent sync
       this.logger.log('Running default recent order sync...');
       await this.syncRecentOrders(6);
     } catch (error) {
@@ -253,7 +250,6 @@ export class KiotVietOrderService {
               break;
             }
 
-            // If too many consecutive empty pages, stop
             if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
               this.logger.log(
                 `🔚 Stopping after ${consecutiveEmptyPages} consecutive empty pages`,
@@ -261,7 +257,6 @@ export class KiotVietOrderService {
               break;
             }
 
-            // Move to next page
             currentItem += this.PAGE_SIZE;
             continue;
           }
@@ -359,14 +354,12 @@ export class KiotVietOrderService {
             throw new Error(`Maximum total retries exceeded: ${error.message}`);
           }
 
-          // Exponential backoff
           const delay = RETRY_DELAY_MS * Math.pow(2, consecutiveErrorPages - 1);
           this.logger.log(`⏳ Retrying after ${delay}ms delay...`);
           await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }
 
-      // Final logging and cleanup
       await this.updateSyncControl(syncName, {
         isRunning: false,
         isEnabled: false,
@@ -529,10 +522,12 @@ export class KiotVietOrderService {
 
   async fetchRecentOrders(fromDate: Date): Promise<any[]> {
     const headers = await this.authService.getRequestHeaders();
-    const fromDateStr = fromDate.toISOString();
+    const fromDateStr = fromDate.toISOString().split('T')[0];
+    const toDateStr = new Date().toISOString().split('T')[0];
 
     const queryParams = new URLSearchParams({
       lastModifiedFrom: fromDateStr,
+      toDate: toDateStr,
       currentItem: '0',
       pageSize: '100',
       orderBy: 'createdDate',
