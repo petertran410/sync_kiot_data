@@ -169,10 +169,6 @@ export class KiotVietInvoiceService {
     this.logger.log('✅ Historical invoice sync enabled');
   }
 
-  // ============================================================================
-  // HISTORICAL SYNC - ENHANCED WITH ADVANCED ERROR HANDLING
-  // ============================================================================
-
   async syncHistoricalInvoices(): Promise<void> {
     const syncName = 'invoice_historical';
 
@@ -433,11 +429,7 @@ export class KiotVietInvoiceService {
     }
   }
 
-  // ============================================================================
-  // RECENT SYNC
-  // ============================================================================
-
-  async syncRecentInvoices(days: number = 5): Promise<void> {
+  async syncRecentInvoices(days: number = 6): Promise<void> {
     const syncName = 'invoice_recent';
 
     try {
@@ -496,10 +488,6 @@ export class KiotVietInvoiceService {
       throw error;
     }
   }
-
-  // ============================================================================
-  // API METHODS - ENHANCED WITH BETTER TIMEOUT & RETRY LOGIC
-  // ============================================================================
 
   async fetchInvoicesListWithRetry(
     params: {
@@ -575,7 +563,6 @@ export class KiotVietInvoiceService {
     const todayDateStr = today.toISOString();
 
     const queryParams = new URLSearchParams({
-      // purchaseDate: fromDateStr,
       fromPurchaseDate: fromDateStr,
       toPurchaseDate: todayDateStr,
       currentItem: '0',

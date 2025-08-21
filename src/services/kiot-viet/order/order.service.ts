@@ -523,11 +523,12 @@ export class KiotVietOrderService {
   async fetchRecentOrders(fromDate: Date): Promise<any[]> {
     const headers = await this.authService.getRequestHeaders();
     const fromDateStr = fromDate.toISOString().split('T')[0];
-    const toDateStr = new Date().toISOString().split('T')[0];
+    const today = new Date();
+    const todayDateStr = today.toISOString().split('T')[0];
 
     const queryParams = new URLSearchParams({
       lastModifiedFrom: fromDateStr,
-      toDate: toDateStr,
+      toDate: todayDateStr,
       currentItem: '0',
       pageSize: '100',
       orderBy: 'createdDate',
