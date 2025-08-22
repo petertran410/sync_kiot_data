@@ -303,7 +303,6 @@ export class KiotVietProductService {
             continue;
           }
 
-          // Process products
           this.logger.log(
             `🔄 Processing ${newProducts.length} products from page ${currentPage}...`,
           );

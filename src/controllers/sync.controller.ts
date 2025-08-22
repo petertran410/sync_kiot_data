@@ -10,6 +10,8 @@ import { KiotVietReturnService } from 'src/services/kiot-viet/returns/return.ser
 import { KiotVietPriceBookService } from 'src/services/kiot-viet/pricebook/pricebook.service';
 import { LarkProductSyncService } from 'src/services/lark/product/lark-product-sync.service';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { KiotVietOrderSupplierService } from 'src/services/kiot-viet/order-supplier/order-supplier.service';
+import { LarkOrderSupplierSyncService } from 'src/services/lark/order-supplier/lark-order-supplier-sync.service';
 
 @Controller('sync')
 export class SyncController {
@@ -27,6 +29,8 @@ export class SyncController {
     private readonly priceBookService: KiotVietPriceBookService,
     private readonly larkProductSevice: LarkProductSyncService,
     private readonly prismaService: PrismaService,
+    private readonly orderSupplierService: KiotVietOrderSupplierService,
+    private readonly larkOrderSupplierService: LarkOrderSupplierSyncService,
   ) {}
 
   @Get('status')
@@ -391,6 +395,44 @@ export class SyncController {
       };
     } catch (error) {
       this.logger.error(`❌ Product sync failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
+
+  @Post('order-supplier')
+  async syncOrderSuppliers() {
+    try {
+      this.logger.log('Starting order-supplier sync...');
+
+      await this.orderSupplierService.enableHistoricalSync();
+
+      await this.orderSupplierService.syncHistoricalOrderSuppliers();
+
+      const orderSuppliersToSync =
+        await this.prismaService.orderSupplier.findMany({
+          where: {
+            OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+          },
+          take: 1000,
+        });
+
+      await this.larkOrderSupplierService.syncOrderSuppliersToLarkBase(
+        orderSuppliersToSync,
+      );
+
+      await this.larkOrderSupplierService.syncOrderSupplierDetailsToLarkBase();
+
+      return {
+        success: true,
+        message: 'Order Supplier sync completed successfully',
+        timestamp: new Date().toISOString,
+      };
+    } catch (error) {
+      this.logger.error(`❌ Order Supplier sync failed: ${error.message}`);
       return {
         success: false,
         error: error.message,

@@ -22,27 +22,18 @@ const LARK_PRODUCT_FIELDS = {
   BASE_PRICE: 'Bảng Giá Chung',
   DESCRIPTION: 'Mô Tả',
 
-  // ============================================================================
-  // COST PRICE FIELDS - SEPARATE FOR EACH BRANCH
-  // ============================================================================
-  COST_PRICE_CUA_HANG_DIEP_TRA: 'Giá Vốn (Cửa Hàng Diệp Trà)', // Branch ID: 1
-  COST_PRICE_KHO_HA_NOI: 'Giá Vốn (Kho Hà Nội)', // Branch ID: 2
-  COST_PRICE_KHO_SAI_GON: 'Giá Vốn (Kho Sài Gòn)', // Branch ID: 3
-  COST_PRICE_VAN_PHONG_HA_NOI: 'Giá Vốn (Văn Phòng Hà Nội)', // Branch ID: 4
-  COST_PRICE_KHO_BAN_HANG: 'Giá Vốn (Kho Bán Hàng)', // Branch ID: 5
+  COST_PRICE_CUA_HANG_DIEP_TRA: 'Giá Vốn (Cửa Hàng Diệp Trà)',
+  COST_PRICE_KHO_HA_NOI: 'Giá Vốn (Kho Hà Nội)',
+  COST_PRICE_KHO_SAI_GON: 'Giá Vốn (Kho Sài Gòn)',
+  COST_PRICE_VAN_PHONG_HA_NOI: 'Giá Vốn (Văn Phòng Hà Nội)',
+  COST_PRICE_KHO_BAN_HANG: 'Giá Vốn (Kho Bán Hàng)',
 
-  // ============================================================================
-  // INVENTORY QUANTITY FIELDS - SEPARATE FOR EACH BRANCH
-  // ============================================================================
-  TON_KHO_CUA_HANG_DIEP_TRA: 'Tồn Kho (Cửa Hàng Diệp Trà)', // Branch ID: 1
-  TON_KHO_KHO_HA_NOI: 'Tồn Kho (Kho Hà Nội)', // Branch ID: 2
-  TON_KHO_KHO_SAI_GON: 'Tồn Kho (Kho Sài Gòn)', // Branch ID: 3
-  TON_KHO_VAN_PHONG_HA_NOI: 'Tồn Kho (Văn Phòng Hà Nội)', // Branch ID: 4
-  TON_KHO_KHO_BAN_HANG: 'Tồn Kho (Kho Bán Hàng)', // Branch ID: 5
+  TON_KHO_CUA_HANG_DIEP_TRA: 'Tồn Kho (Cửa Hàng Diệp Trà)',
+  TON_KHO_KHO_HA_NOI: 'Tồn Kho (Kho Hà Nội)',
+  TON_KHO_KHO_SAI_GON: 'Tồn Kho (Kho Sài Gòn)',
+  TON_KHO_VAN_PHONG_HA_NOI: 'Tồn Kho (Văn Phòng Hà Nội)',
+  TON_KHO_KHO_BAN_HANG: 'Tồn Kho (Kho Bán Hàng)',
 
-  // ============================================================================
-  // PRICEBOOK FIELDS - EXISTING STRUCTURE
-  // ============================================================================
   PRICE_HOC_VIEN_CAFE: 'Bảng Giá Học Viện Cafe',
   PRICE_HOANG_QUAN_HN: 'Bảng Giá Hoàng Quân Hà Nội',
   PRICE_LE_HCM: 'Bảng Giá Lẻ HCM',
@@ -63,12 +54,9 @@ const LARK_PRODUCT_FIELDS = {
   PRICE_SUB_D: 'Bảng Giá SUB-D',
 } as const;
 
-// ============================================================================
-// OPTIONS MAPPING
-// ============================================================================
 const ALLOWS_SALE_OPTIONS = {
-  YES: 'Có', // optSDsIdAM
-  NO: 'Không', // optnZaq1cn
+  YES: 'Có',
+  NO: 'Không',
 } as const;
 
 const PRODUCT_TYPE_OPTIONS = {
@@ -81,46 +69,41 @@ const PRODUCT_BUSINESS_OPTIONS = {
   NO: 'Không',
 };
 
-// ============================================================================
-// REAL PRICEBOOK ID MAPPING - FROM USER'S ACTUAL DATA
-// ============================================================================
 const PRICEBOOK_FIELD_MAPPING: Record<number, string> = {
-  8: LARK_PRODUCT_FIELDS.PRICE_LE_HCM, // BẢNG GIÁ LẺ HCM
-  9: LARK_PRODUCT_FIELDS.PRICE_BUON_HCM, // BẢNG GIÁ BUÔN HCM
-  10: LARK_PRODUCT_FIELDS.PRICE_CHIEN_LUOC, // BẢNG GIÁ CHIẾN LƯỢC
-  11: LARK_PRODUCT_FIELDS.PRICE_LASIMI_SAI_GON, // BẢNG GIÁ LASIMI SÀI GÒN
-  12: LARK_PRODUCT_FIELDS.PRICE_BUON_HN, // BẢNG GIÁ BUÔN HN
-  1: LARK_PRODUCT_FIELDS.PRICE_EM_HOAI_ROYALTEA, // BẢNG GIÁ EM HOÀI ROYALTEA
-  2: LARK_PRODUCT_FIELDS.PRICE_DO_MINH_TAN, // BẢNG GIÁ ĐỖ MINH TÂN
-  3: LARK_PRODUCT_FIELDS.PRICE_DO_MINH_TAN_8, // BẢNG GIÁ ĐỖ MINH TÂN 8%
-  4: LARK_PRODUCT_FIELDS.PRICE_HOANG_QUAN_HN, // BẢNG GIÁ HOÀNG QUÂN HÀ NỘI
-  17: LARK_PRODUCT_FIELDS.PRICE_HOC_VIEN_CAFE, // BẢNG GIÁ HỌC VIỆN CAFE
-  18: LARK_PRODUCT_FIELDS.PRICE_CHUOI_LABOONG, // BẢNG GIÁ CHUỖI LABOONG
-  19: LARK_PRODUCT_FIELDS.PRICE_CONG_TAC_VIEN, // BẢNG GIÁ CỘNG TÁC VIÊN
-  20: LARK_PRODUCT_FIELDS.PRICE_SUB_D, // BẢNG GIÁ SUB -D
-  21: LARK_PRODUCT_FIELDS.PRICE_CHEESE_COFFEE, // BẢNG GIÁ CHEESE COFFEE
-  5: LARK_PRODUCT_FIELDS.PRICE_CHUOI_SHANCHA, // BẢNG GIÁ CHUỖI SHANCHA
-  6: LARK_PRODUCT_FIELDS.PRICE_SHOPEE, // BẢNG GIÁ SHOPEE
-  7: LARK_PRODUCT_FIELDS.PRICE_KAFFA, // BẢNG GIÁ KAFFA
-  22: LARK_PRODUCT_FIELDS.PRICE_CING_HU_TANG, // BẢNG GIÁ CING HU TANG
+  8: LARK_PRODUCT_FIELDS.PRICE_LE_HCM,
+  9: LARK_PRODUCT_FIELDS.PRICE_BUON_HCM,
+  10: LARK_PRODUCT_FIELDS.PRICE_CHIEN_LUOC,
+  11: LARK_PRODUCT_FIELDS.PRICE_LASIMI_SAI_GON,
+  12: LARK_PRODUCT_FIELDS.PRICE_BUON_HN,
+  1: LARK_PRODUCT_FIELDS.PRICE_EM_HOAI_ROYALTEA,
+  2: LARK_PRODUCT_FIELDS.PRICE_DO_MINH_TAN,
+  3: LARK_PRODUCT_FIELDS.PRICE_DO_MINH_TAN_8,
+  4: LARK_PRODUCT_FIELDS.PRICE_HOANG_QUAN_HN,
+  17: LARK_PRODUCT_FIELDS.PRICE_HOC_VIEN_CAFE,
+  18: LARK_PRODUCT_FIELDS.PRICE_CHUOI_LABOONG,
+  19: LARK_PRODUCT_FIELDS.PRICE_CONG_TAC_VIEN,
+  20: LARK_PRODUCT_FIELDS.PRICE_SUB_D,
+  21: LARK_PRODUCT_FIELDS.PRICE_CHEESE_COFFEE,
+  5: LARK_PRODUCT_FIELDS.PRICE_CHUOI_SHANCHA,
+  6: LARK_PRODUCT_FIELDS.PRICE_SHOPEE,
+  7: LARK_PRODUCT_FIELDS.PRICE_KAFFA,
+  22: LARK_PRODUCT_FIELDS.PRICE_CING_HU_TANG,
 } as const;
 
-// Cost Price Mapping - Database Internal IDs to LarkBase Fields
 const BRANCH_COST_MAPPING: Record<number, string> = {
-  1: LARK_PRODUCT_FIELDS.COST_PRICE_CUA_HANG_DIEP_TRA, // Cửa Hàng Diệp Trà
-  2: LARK_PRODUCT_FIELDS.COST_PRICE_KHO_HA_NOI, // Kho Hà Nội
-  3: LARK_PRODUCT_FIELDS.COST_PRICE_KHO_SAI_GON, // Kho Sài Gòn
-  4: LARK_PRODUCT_FIELDS.COST_PRICE_VAN_PHONG_HA_NOI, // Văn phòng Hà Nội
-  5: LARK_PRODUCT_FIELDS.COST_PRICE_KHO_BAN_HANG, // Kho bán hàng
+  1: LARK_PRODUCT_FIELDS.COST_PRICE_CUA_HANG_DIEP_TRA,
+  2: LARK_PRODUCT_FIELDS.COST_PRICE_KHO_HA_NOI,
+  3: LARK_PRODUCT_FIELDS.COST_PRICE_KHO_SAI_GON,
+  4: LARK_PRODUCT_FIELDS.COST_PRICE_VAN_PHONG_HA_NOI,
+  5: LARK_PRODUCT_FIELDS.COST_PRICE_KHO_BAN_HANG,
 } as const;
 
-// Inventory Quantity Mapping - Database Internal IDs to LarkBase Fields
 const BRANCH_INVENTORY_MAPPING: Record<number, string> = {
-  1: LARK_PRODUCT_FIELDS.TON_KHO_CUA_HANG_DIEP_TRA, // Cửa Hàng Diệp Trà
-  2: LARK_PRODUCT_FIELDS.TON_KHO_KHO_HA_NOI, // Kho Hà Nội
-  3: LARK_PRODUCT_FIELDS.TON_KHO_KHO_SAI_GON, // Kho Sài Gòn
-  4: LARK_PRODUCT_FIELDS.TON_KHO_VAN_PHONG_HA_NOI, // Văn phòng Hà Nội
-  5: LARK_PRODUCT_FIELDS.TON_KHO_KHO_BAN_HANG, // Kho bán hàng
+  1: LARK_PRODUCT_FIELDS.TON_KHO_CUA_HANG_DIEP_TRA,
+  2: LARK_PRODUCT_FIELDS.TON_KHO_KHO_HA_NOI,
+  3: LARK_PRODUCT_FIELDS.TON_KHO_KHO_SAI_GON,
+  4: LARK_PRODUCT_FIELDS.TON_KHO_VAN_PHONG_HA_NOI,
+  5: LARK_PRODUCT_FIELDS.TON_KHO_KHO_BAN_HANG,
 } as const;
 
 interface LarkBaseRecord {
@@ -551,10 +534,6 @@ export class LarkProductSyncService {
     );
   }
 
-  // ============================================================================
-  // BATCH CREATE PRODUCTS
-  // ============================================================================
-
   private async batchCreateProducts(products: any[]): Promise<BatchResult> {
     const records = products.map((product) => ({
       fields: this.mapProductToLarkBase(product),
@@ -634,10 +613,6 @@ export class LarkProductSyncService {
 
     return { successRecords: [], failedRecords: products };
   }
-
-  // ============================================================================
-  // UPDATE SINGLE PRODUCT
-  // ============================================================================
 
   private async updateSingleProduct(product: any): Promise<boolean> {
     let authRetries = 0;

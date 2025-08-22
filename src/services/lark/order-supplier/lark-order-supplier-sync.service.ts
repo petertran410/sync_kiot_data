@@ -100,14 +100,14 @@ interface BatchDetailResult {
 @Injectable()
 export class LarkOrderSupplierSyncService {
   private readonly logger = new Logger(LarkOrderSupplierSyncService.name);
-
   private readonly baseToken: string;
   private readonly tableId: string;
-
   private readonly baseTokenDetail: string;
   private readonly tableIdDetail: string;
-
   private readonly batchSize = 100;
+
+  private readonly MAX_AUTH_RETRIES = 3;
+  private readonly AUTH_ERROR_CODES = [99991663, 99991664, 99991665];
 
   private existingRecordsCache = new Map<number, string>();
   private orderSupplierCodeCache = new Map<string, string>();
@@ -122,8 +122,6 @@ export class LarkOrderSupplierSyncService {
   private lastDetailCacheLoadTime: Date | null = null;
 
   private readonly CACHE_VALIDITY_MINUTES = 30;
-  private readonly MAX_AUTH_RETRIES = 3;
-  private readonly AUTH_ERROR_CODES = [99991663, 99991664, 99991665];
 
   constructor(
     private readonly httpService: HttpService,
@@ -778,10 +776,6 @@ export class LarkOrderSupplierSyncService {
       if (failedRecords.length > 0) {
         await this.updateDatabaseStatus(failedRecords, 'FAILED');
       }
-
-      this.logger.log(
-        `📊 Batch ${i + 1}/${batches.length}: ${successRecords.length}/${batch.length} created`,
-      );
 
       if (i < batches.length - 1) {
         await new Promise((resolve) => setTimeout(resolve, 500));
