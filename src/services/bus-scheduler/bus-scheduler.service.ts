@@ -354,6 +354,10 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
+  @Cron('0 5 * * *', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+  })
+
   // @Cron('30 22 * * *', {
   //   name: 'daily_product_sync',
   //   timeZone: 'Asia/Ho_Chi_Minh',
@@ -452,7 +456,6 @@ export class BusSchedulerService implements OnModuleInit {
   //     this.startupAbortController = null;
   //   }
   // }
-
   private async forceStopMainCycleImmediately(): Promise<void> {
     this.logger.log('🚫 FORCE STOPPING all ongoing cycles IMMEDIATELY...');
 
@@ -1253,475 +1256,475 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
-  private async autoTriggerSupplierLarkSync(): Promise<void> {
-    try {
-      const historicalSync = await this.prismaService.syncControl.findFirst({
-        where: { name: 'supplier_historical' },
-      });
+  // private async autoTriggerSupplierLarkSync(): Promise<void> {
+  //   try {
+  //     const historicalSync = await this.prismaService.syncControl.findFirst({
+  //       where: { name: 'supplier_historical' },
+  //     });
 
-      const larkSync = await this.prismaService.syncControl.findFirst({
-        where: { name: 'supplier_lark_sync' },
-      });
+  //     const larkSync = await this.prismaService.syncControl.findFirst({
+  //       where: { name: 'supplier_lark_sync' },
+  //     });
 
-      if (
-        historicalSync?.status === 'completed' &&
-        !historicalSync.isRunning &&
-        (!larkSync?.isRunning || !larkSync)
-      ) {
-        await this.prismaService.syncControl.upsert({
-          where: { name: 'supplier_lark_sync' },
-          create: {
-            name: 'supplier_lark_sync',
-            entities: ['supplier'],
-            syncMode: 'lark_sync',
-            isRunning: true,
-            isEnabled: true,
-            status: 'running',
-            startedAt: new Date(),
-          },
-          update: {
-            isRunning: true,
-            status: 'running',
-            startedAt: new Date(),
-            error: null,
-          },
-        });
+  //     if (
+  //       historicalSync?.status === 'completed' &&
+  //       !historicalSync.isRunning &&
+  //       (!larkSync?.isRunning || !larkSync)
+  //     ) {
+  //       await this.prismaService.syncControl.upsert({
+  //         where: { name: 'supplier_lark_sync' },
+  //         create: {
+  //           name: 'supplier_lark_sync',
+  //           entities: ['supplier'],
+  //           syncMode: 'lark_sync',
+  //           isRunning: true,
+  //           isEnabled: true,
+  //           status: 'running',
+  //           startedAt: new Date(),
+  //         },
+  //         update: {
+  //           isRunning: true,
+  //           status: 'running',
+  //           startedAt: new Date(),
+  //           error: null,
+  //         },
+  //       });
 
-        const suppliersToSync = await this.prismaService.supplier.findMany({
-          where: {
-            OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
-          },
-          take: 1000,
-        });
+  //       const suppliersToSync = await this.prismaService.supplier.findMany({
+  //         where: {
+  //           OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+  //         },
+  //         take: 1000,
+  //       });
 
-        if (suppliersToSync.length > 0) {
-          try {
-            await this.larkSupplierSyncService.syncSuppliersToLarkBase(
-              suppliersToSync,
-            );
+  //       if (suppliersToSync.length > 0) {
+  //         try {
+  //           await this.larkSupplierSyncService.syncSuppliersToLarkBase(
+  //             suppliersToSync,
+  //           );
 
-            await this.prismaService.syncControl.update({
-              where: { name: 'supplier_lark_sync' },
-              data: {
-                isRunning: false,
-                status: 'completed',
-                completedAt: new Date(),
-              },
-            });
+  //           await this.prismaService.syncControl.update({
+  //             where: { name: 'supplier_lark_sync' },
+  //             data: {
+  //               isRunning: false,
+  //               status: 'completed',
+  //               completedAt: new Date(),
+  //             },
+  //           });
 
-            this.logger.log(
-              `✅ Auto-triggered supplier LarkBase sync: ${suppliersToSync.length} suppliers`,
-            );
-          } catch (syncError) {
-            await this.prismaService.syncControl.update({
-              where: { name: 'supplier_lark_sync' },
-              data: {
-                isRunning: false,
-                status: 'failed',
-                error: syncError.message,
-                completedAt: new Date(),
-              },
-            });
+  //           this.logger.log(
+  //             `✅ Auto-triggered supplier LarkBase sync: ${suppliersToSync.length} suppliers`,
+  //           );
+  //         } catch (syncError) {
+  //           await this.prismaService.syncControl.update({
+  //             where: { name: 'supplier_lark_sync' },
+  //             data: {
+  //               isRunning: false,
+  //               status: 'failed',
+  //               error: syncError.message,
+  //               completedAt: new Date(),
+  //             },
+  //           });
 
-            this.logger.error(
-              `❌ Auto supplier LarkBase sync failed: ${syncError.message}`,
-            );
-          }
-        }
-      } else {
-        await this.prismaService.syncControl.update({
-          where: { name: 'supplier_lark_sync' },
-          data: {
-            isRunning: false,
-            status: 'completed',
-            completedAt: new Date(),
-          },
-        });
+  //           this.logger.error(
+  //             `❌ Auto supplier LarkBase sync failed: ${syncError.message}`,
+  //           );
+  //         }
+  //       }
+  //     } else {
+  //       await this.prismaService.syncControl.update({
+  //         where: { name: 'supplier_lark_sync' },
+  //         data: {
+  //           isRunning: false,
+  //           status: 'completed',
+  //           completedAt: new Date(),
+  //         },
+  //       });
 
-        this.logger.log('📋 No suppliers need LarkBase sync');
-      }
-    } catch (error) {
-      this.logger.error(`❌ Auto supplier Lark sync failed: ${error.message}`);
-    }
-  }
+  //       this.logger.log('📋 No suppliers need LarkBase sync');
+  //     }
+  //   } catch (error) {
+  //     this.logger.error(`❌ Auto supplier Lark sync failed: ${error.message}`);
+  //   }
+  // }
 
-  private async autoTriggerOrderSupplierLarkSync(): Promise<void> {
-    try {
-      const historicalSync = await this.prismaService.syncControl.findFirst({
-        where: { name: 'order_supplier_historical' },
-      });
+  // private async autoTriggerOrderSupplierLarkSync(): Promise<void> {
+  //   try {
+  //     const historicalSync = await this.prismaService.syncControl.findFirst({
+  //       where: { name: 'order_supplier_historical' },
+  //     });
 
-      const larkSync = await this.prismaService.syncControl.findFirst({
-        where: { name: 'order_supplier_lark_sync' },
-      });
+  //     const larkSync = await this.prismaService.syncControl.findFirst({
+  //       where: { name: 'order_supplier_lark_sync' },
+  //     });
 
-      if (
-        historicalSync?.status === 'completed' &&
-        !historicalSync.isRunning &&
-        (!larkSync?.isRunning || !larkSync)
-      ) {
-        await this.prismaService.syncControl.upsert({
-          where: { name: 'order_supplier_lark_sync' },
-          create: {
-            name: 'order_supplier_lark_sync',
-            entities: ['order_supplier'],
-            syncMode: 'lark_sync',
-            isRunning: true,
-            isEnabled: true,
-            status: 'running',
-            startedAt: new Date(),
-          },
-          update: {
-            isRunning: true,
-            status: 'running',
-            startedAt: new Date(),
-            error: null,
-          },
-        });
+  //     if (
+  //       historicalSync?.status === 'completed' &&
+  //       !historicalSync.isRunning &&
+  //       (!larkSync?.isRunning || !larkSync)
+  //     ) {
+  //       await this.prismaService.syncControl.upsert({
+  //         where: { name: 'order_supplier_lark_sync' },
+  //         create: {
+  //           name: 'order_supplier_lark_sync',
+  //           entities: ['order_supplier'],
+  //           syncMode: 'lark_sync',
+  //           isRunning: true,
+  //           isEnabled: true,
+  //           status: 'running',
+  //           startedAt: new Date(),
+  //         },
+  //         update: {
+  //           isRunning: true,
+  //           status: 'running',
+  //           startedAt: new Date(),
+  //           error: null,
+  //         },
+  //       });
 
-        const orderSuppliersToSync =
-          await this.prismaService.orderSupplier.findMany({
-            where: {
-              OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
-            },
-            take: 1000,
-          });
+  //       const orderSuppliersToSync =
+  //         await this.prismaService.orderSupplier.findMany({
+  //           where: {
+  //             OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+  //           },
+  //           take: 1000,
+  //         });
 
-        if (orderSuppliersToSync.length > 0) {
-          try {
-            await this.larkOrderSupplierSyncService.syncOrderSuppliersToLarkBase(
-              orderSuppliersToSync,
-            );
+  //       if (orderSuppliersToSync.length > 0) {
+  //         try {
+  //           await this.larkOrderSupplierSyncService.syncOrderSuppliersToLarkBase(
+  //             orderSuppliersToSync,
+  //           );
 
-            await this.prismaService.syncControl.update({
-              where: { name: 'order_supplier_lark_sync' },
-              data: {
-                isRunning: false,
-                status: 'completed',
-                completedAt: new Date(),
-              },
-            });
+  //           await this.prismaService.syncControl.update({
+  //             where: { name: 'order_supplier_lark_sync' },
+  //             data: {
+  //               isRunning: false,
+  //               status: 'completed',
+  //               completedAt: new Date(),
+  //             },
+  //           });
 
-            this.logger.log(
-              `✅ Auto-triggered order_suppliers LarkBase sync: ${orderSuppliersToSync.length} order_suppliers`,
-            );
-          } catch (syncError) {
-            await this.prismaService.syncControl.update({
-              where: { name: 'order_supplier_lark_sync' },
-              data: {
-                isRunning: false,
-                status: 'failed',
-                error: syncError.message,
-                completedAt: new Date(),
-              },
-            });
+  //           this.logger.log(
+  //             `✅ Auto-triggered order_suppliers LarkBase sync: ${orderSuppliersToSync.length} order_suppliers`,
+  //           );
+  //         } catch (syncError) {
+  //           await this.prismaService.syncControl.update({
+  //             where: { name: 'order_supplier_lark_sync' },
+  //             data: {
+  //               isRunning: false,
+  //               status: 'failed',
+  //               error: syncError.message,
+  //               completedAt: new Date(),
+  //             },
+  //           });
 
-            this.logger.error(
-              `❌ Auto order_supplier LarkBase sync failed: ${syncError.message}`,
-            );
-          }
-        } else {
-          await this.prismaService.syncControl.update({
-            where: { name: 'order_supplier_lark_sync' },
-            data: {
-              isRunning: false,
-              status: 'completed',
-              completedAt: new Date(),
-            },
-          });
+  //           this.logger.error(
+  //             `❌ Auto order_supplier LarkBase sync failed: ${syncError.message}`,
+  //           );
+  //         }
+  //       } else {
+  //         await this.prismaService.syncControl.update({
+  //           where: { name: 'order_supplier_lark_sync' },
+  //           data: {
+  //             isRunning: false,
+  //             status: 'completed',
+  //             completedAt: new Date(),
+  //           },
+  //         });
 
-          this.logger.log('📋 No order_supplier need LarkBase sync');
-        }
-      }
-    } catch (error) {
-      this.logger.error(
-        `❌ Auto order_supplier Lark sync failed: ${error.message}`,
-      );
-    }
-  }
+  //         this.logger.log('📋 No order_supplier need LarkBase sync');
+  //       }
+  //     }
+  //   } catch (error) {
+  //     this.logger.error(
+  //       `❌ Auto order_supplier Lark sync failed: ${error.message}`,
+  //     );
+  //   }
+  // }
 
-  private async autoTriggerOrderSupplierDetailLarkSync(): Promise<void> {
-    try {
-      const historicalSync = await this.prismaService.syncControl.findFirst({
-        where: { name: 'order_supplier_detail_historical' },
-      });
+  // private async autoTriggerOrderSupplierDetailLarkSync(): Promise<void> {
+  //   try {
+  //     const historicalSync = await this.prismaService.syncControl.findFirst({
+  //       where: { name: 'order_supplier_detail_historical' },
+  //     });
 
-      const larkSync = await this.prismaService.syncControl.findFirst({
-        where: { name: 'order_supplier_detail_lark_sync' },
-      });
+  //     const larkSync = await this.prismaService.syncControl.findFirst({
+  //       where: { name: 'order_supplier_detail_lark_sync' },
+  //     });
 
-      if (
-        historicalSync?.status === 'completed' &&
-        !historicalSync.isRunning &&
-        (!larkSync?.isRunning || !larkSync)
-      ) {
-        await this.prismaService.syncControl.upsert({
-          where: { name: 'order_supplier_detail_lark_sync' },
-          create: {
-            name: 'order_supplier_detail_lark_sync',
-            entities: ['order_supplier_detail'],
-            syncMode: 'lark_sync',
-            isRunning: true,
-            isEnabled: true,
-            status: 'running',
-            startedAt: new Date(),
-          },
-          update: {
-            isRunning: true,
-            status: 'running',
-            startedAt: new Date(),
-            error: null,
-          },
-        });
+  //     if (
+  //       historicalSync?.status === 'completed' &&
+  //       !historicalSync.isRunning &&
+  //       (!larkSync?.isRunning || !larkSync)
+  //     ) {
+  //       await this.prismaService.syncControl.upsert({
+  //         where: { name: 'order_supplier_detail_lark_sync' },
+  //         create: {
+  //           name: 'order_supplier_detail_lark_sync',
+  //           entities: ['order_supplier_detail'],
+  //           syncMode: 'lark_sync',
+  //           isRunning: true,
+  //           isEnabled: true,
+  //           status: 'running',
+  //           startedAt: new Date(),
+  //         },
+  //         update: {
+  //           isRunning: true,
+  //           status: 'running',
+  //           startedAt: new Date(),
+  //           error: null,
+  //         },
+  //       });
 
-        const orderSuppliersDetailToSync =
-          await this.prismaService.orderSupplierDetail.findMany({
-            where: {
-              OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
-            },
-            take: 1000,
-          });
+  //       const orderSuppliersDetailToSync =
+  //         await this.prismaService.orderSupplierDetail.findMany({
+  //           where: {
+  //             OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+  //           },
+  //           take: 1000,
+  //         });
 
-        if (orderSuppliersDetailToSync.length > 0) {
-          try {
-            await this.larkOrderSupplierSyncService.syncOrderSupplierDetailsToLarkBase();
+  //       if (orderSuppliersDetailToSync.length > 0) {
+  //         try {
+  //           await this.larkOrderSupplierSyncService.syncOrderSupplierDetailsToLarkBase();
 
-            await this.prismaService.syncControl.update({
-              where: { name: 'order_supplier_detail_lark_sync' },
-              data: {
-                isRunning: false,
-                status: 'completed',
-                completedAt: new Date(),
-              },
-            });
+  //           await this.prismaService.syncControl.update({
+  //             where: { name: 'order_supplier_detail_lark_sync' },
+  //             data: {
+  //               isRunning: false,
+  //               status: 'completed',
+  //               completedAt: new Date(),
+  //             },
+  //           });
 
-            this.logger.log(
-              `✅ Auto-triggered order_suppliers_detail LarkBase sync: ${orderSuppliersDetailToSync.length} order_suppliers_detail`,
-            );
-          } catch (syncError) {
-            await this.prismaService.syncControl.update({
-              where: { name: 'order_supplier_detail_lark_sync' },
-              data: {
-                isRunning: false,
-                status: 'failed',
-                error: syncError.message,
-                completedAt: new Date(),
-              },
-            });
+  //           this.logger.log(
+  //             `✅ Auto-triggered order_suppliers_detail LarkBase sync: ${orderSuppliersDetailToSync.length} order_suppliers_detail`,
+  //           );
+  //         } catch (syncError) {
+  //           await this.prismaService.syncControl.update({
+  //             where: { name: 'order_supplier_detail_lark_sync' },
+  //             data: {
+  //               isRunning: false,
+  //               status: 'failed',
+  //               error: syncError.message,
+  //               completedAt: new Date(),
+  //             },
+  //           });
 
-            this.logger.error(
-              `❌ Auto order_supplier_detail LarkBase sync failed: ${syncError.message}`,
-            );
-          }
-        } else {
-          await this.prismaService.syncControl.update({
-            where: { name: 'order_supplier_detail_lark_sync' },
-            data: {
-              isRunning: false,
-              status: 'completed',
-              completedAt: new Date(),
-            },
-          });
+  //           this.logger.error(
+  //             `❌ Auto order_supplier_detail LarkBase sync failed: ${syncError.message}`,
+  //           );
+  //         }
+  //       } else {
+  //         await this.prismaService.syncControl.update({
+  //           where: { name: 'order_supplier_detail_lark_sync' },
+  //           data: {
+  //             isRunning: false,
+  //             status: 'completed',
+  //             completedAt: new Date(),
+  //           },
+  //         });
 
-          this.logger.log('📋 No order_supplier_detail need LarkBase sync');
-        }
-      }
-    } catch (error) {
-      this.logger.error(
-        `❌ Auto order_supplier Lark sync failed: ${error.message}`,
-      );
-    }
-  }
+  //         this.logger.log('📋 No order_supplier_detail need LarkBase sync');
+  //       }
+  //     }
+  //   } catch (error) {
+  //     this.logger.error(
+  //       `❌ Auto order_supplier Lark sync failed: ${error.message}`,
+  //     );
+  //   }
+  // }
 
-  private async autoTriggerPurchaseOrderLarkSync(): Promise<void> {
-    try {
-      const historicalSync = await this.prismaService.syncControl.findFirst({
-        where: { name: 'purchase_order_historical' },
-      });
+  // private async autoTriggerPurchaseOrderLarkSync(): Promise<void> {
+  //   try {
+  //     const historicalSync = await this.prismaService.syncControl.findFirst({
+  //       where: { name: 'purchase_order_historical' },
+  //     });
 
-      const larkSync = await this.prismaService.syncControl.findFirst({
-        where: { name: 'purchase_order_lark_sync' },
-      });
+  //     const larkSync = await this.prismaService.syncControl.findFirst({
+  //       where: { name: 'purchase_order_lark_sync' },
+  //     });
 
-      if (
-        historicalSync?.status === 'completed' &&
-        !historicalSync.isRunning &&
-        (!larkSync?.isRunning || !larkSync)
-      ) {
-        await this.prismaService.syncControl.upsert({
-          where: { name: 'purchase_order_lark_sync' },
-          create: {
-            name: 'purchase_order_lark_sync',
-            entities: ['purchase_order'],
-            syncMode: 'lark_sync',
-            isRunning: true,
-            isEnabled: true,
-            status: 'running',
-            startedAt: new Date(),
-          },
-          update: {
-            isRunning: true,
-            status: 'running',
-            startedAt: new Date(),
-            error: null,
-          },
-        });
+  //     if (
+  //       historicalSync?.status === 'completed' &&
+  //       !historicalSync.isRunning &&
+  //       (!larkSync?.isRunning || !larkSync)
+  //     ) {
+  //       await this.prismaService.syncControl.upsert({
+  //         where: { name: 'purchase_order_lark_sync' },
+  //         create: {
+  //           name: 'purchase_order_lark_sync',
+  //           entities: ['purchase_order'],
+  //           syncMode: 'lark_sync',
+  //           isRunning: true,
+  //           isEnabled: true,
+  //           status: 'running',
+  //           startedAt: new Date(),
+  //         },
+  //         update: {
+  //           isRunning: true,
+  //           status: 'running',
+  //           startedAt: new Date(),
+  //           error: null,
+  //         },
+  //       });
 
-        const purchaseOrdersToSync =
-          await this.prismaService.purchaseOrder.findMany({
-            where: {
-              OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
-            },
-            take: 1000,
-          });
+  //       const purchaseOrdersToSync =
+  //         await this.prismaService.purchaseOrder.findMany({
+  //           where: {
+  //             OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+  //           },
+  //           take: 1000,
+  //         });
 
-        if (purchaseOrdersToSync.length > 0) {
-          try {
-            await this.larkPurchaseOrderSyncService.syncPurchaseOrdersToLarkBase(
-              purchaseOrdersToSync,
-            );
+  //       if (purchaseOrdersToSync.length > 0) {
+  //         try {
+  //           await this.larkPurchaseOrderSyncService.syncPurchaseOrdersToLarkBase(
+  //             purchaseOrdersToSync,
+  //           );
 
-            await this.prismaService.syncControl.update({
-              where: { name: 'purchase_order_lark_sync' },
-              data: {
-                isRunning: false,
-                status: 'completed',
-                completedAt: new Date(),
-              },
-            });
+  //           await this.prismaService.syncControl.update({
+  //             where: { name: 'purchase_order_lark_sync' },
+  //             data: {
+  //               isRunning: false,
+  //               status: 'completed',
+  //               completedAt: new Date(),
+  //             },
+  //           });
 
-            this.logger.log(
-              `✅ Auto-triggered purchase_order LarkBase sync: ${purchaseOrdersToSync.length} purchase_orders`,
-            );
-          } catch (syncError) {
-            await this.prismaService.syncControl.update({
-              where: { name: 'purchase_order_lark_sync' },
-              data: {
-                isRunning: false,
-                status: 'failed',
-                error: syncError.message,
-                completedAt: new Date(),
-              },
-            });
+  //           this.logger.log(
+  //             `✅ Auto-triggered purchase_order LarkBase sync: ${purchaseOrdersToSync.length} purchase_orders`,
+  //           );
+  //         } catch (syncError) {
+  //           await this.prismaService.syncControl.update({
+  //             where: { name: 'purchase_order_lark_sync' },
+  //             data: {
+  //               isRunning: false,
+  //               status: 'failed',
+  //               error: syncError.message,
+  //               completedAt: new Date(),
+  //             },
+  //           });
 
-            this.logger.error(
-              `❌ Auto product LarkBase sync failed: ${syncError.message}`,
-            );
-          }
-        } else {
-          await this.prismaService.syncControl.update({
-            where: { name: 'purchase_order_lark_sync' },
-            data: {
-              isRunning: false,
-              status: 'completed',
-              completedAt: new Date(),
-            },
-          });
+  //           this.logger.error(
+  //             `❌ Auto product LarkBase sync failed: ${syncError.message}`,
+  //           );
+  //         }
+  //       } else {
+  //         await this.prismaService.syncControl.update({
+  //           where: { name: 'purchase_order_lark_sync' },
+  //           data: {
+  //             isRunning: false,
+  //             status: 'completed',
+  //             completedAt: new Date(),
+  //           },
+  //         });
 
-          this.logger.log('📋 No purchase_order need LarkBase sync');
-        }
-      }
-    } catch (error) {
-      this.logger.error(
-        `❌ Auto purchase_order Lark sync failed: ${error.message}`,
-      );
-    }
-  }
+  //         this.logger.log('📋 No purchase_order need LarkBase sync');
+  //       }
+  //     }
+  //   } catch (error) {
+  //     this.logger.error(
+  //       `❌ Auto purchase_order Lark sync failed: ${error.message}`,
+  //     );
+  //   }
+  // }
 
-  private async autoTriggerPurchaseOrderDetailLarkSync(): Promise<void> {
-    try {
-      const historicalSync = await this.prismaService.syncControl.findFirst({
-        where: { name: 'purchase_order_detail_historical' },
-      });
+  // private async autoTriggerPurchaseOrderDetailLarkSync(): Promise<void> {
+  //   try {
+  //     const historicalSync = await this.prismaService.syncControl.findFirst({
+  //       where: { name: 'purchase_order_detail_historical' },
+  //     });
 
-      const larkSync = await this.prismaService.syncControl.findFirst({
-        where: { name: 'purchase_order_detail_lark_sync' },
-      });
+  //     const larkSync = await this.prismaService.syncControl.findFirst({
+  //       where: { name: 'purchase_order_detail_lark_sync' },
+  //     });
 
-      if (
-        historicalSync?.status === 'completed' &&
-        !historicalSync.isRunning &&
-        (!larkSync?.isRunning || !larkSync)
-      ) {
-        await this.prismaService.syncControl.upsert({
-          where: { name: 'purchase_order_detail_lark_sync' },
-          create: {
-            name: 'purchase_order_detail_lark_sync',
-            entities: ['purchase_order_detail'],
-            syncMode: 'lark_sync',
-            isRunning: true,
-            isEnabled: true,
-            status: 'running',
-            startedAt: new Date(),
-          },
-          update: {
-            isRunning: true,
-            status: 'running',
-            startedAt: new Date(),
-            error: null,
-          },
-        });
+  //     if (
+  //       historicalSync?.status === 'completed' &&
+  //       !historicalSync.isRunning &&
+  //       (!larkSync?.isRunning || !larkSync)
+  //     ) {
+  //       await this.prismaService.syncControl.upsert({
+  //         where: { name: 'purchase_order_detail_lark_sync' },
+  //         create: {
+  //           name: 'purchase_order_detail_lark_sync',
+  //           entities: ['purchase_order_detail'],
+  //           syncMode: 'lark_sync',
+  //           isRunning: true,
+  //           isEnabled: true,
+  //           status: 'running',
+  //           startedAt: new Date(),
+  //         },
+  //         update: {
+  //           isRunning: true,
+  //           status: 'running',
+  //           startedAt: new Date(),
+  //           error: null,
+  //         },
+  //       });
 
-        const purchaseOrderDetailsToSync =
-          await this.prismaService.purchaseOrderDetail.findMany({
-            where: {
-              OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
-            },
-            take: 1000,
-          });
+  //       const purchaseOrderDetailsToSync =
+  //         await this.prismaService.purchaseOrderDetail.findMany({
+  //           where: {
+  //             OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+  //           },
+  //           take: 1000,
+  //         });
 
-        if (purchaseOrderDetailsToSync.length > 0) {
-          try {
-            await this.larkPurchaseOrderSyncService.syncPurchaseOrderDetailsToLarkBase(
-              purchaseOrderDetailsToSync,
-            );
+  //       if (purchaseOrderDetailsToSync.length > 0) {
+  //         try {
+  //           await this.larkPurchaseOrderSyncService.syncPurchaseOrderDetailsToLarkBase(
+  //             purchaseOrderDetailsToSync,
+  //           );
 
-            await this.prismaService.syncControl.update({
-              where: { name: 'purchase_order_detail_lark_sync' },
-              data: {
-                isRunning: false,
-                status: 'completed',
-                completedAt: new Date(),
-              },
-            });
+  //           await this.prismaService.syncControl.update({
+  //             where: { name: 'purchase_order_detail_lark_sync' },
+  //             data: {
+  //               isRunning: false,
+  //               status: 'completed',
+  //               completedAt: new Date(),
+  //             },
+  //           });
 
-            this.logger.log(
-              `✅ Auto-triggered purchase_order_detail LarkBase sync: ${purchaseOrderDetailsToSync.length} details`,
-            );
-          } catch (syncError) {
-            await this.prismaService.syncControl.update({
-              where: { name: 'purchase_order_detail_lark_sync' },
-              data: {
-                isRunning: false,
-                status: 'failed',
-                error: syncError.message,
-                completedAt: new Date(),
-              },
-            });
+  //           this.logger.log(
+  //             `✅ Auto-triggered purchase_order_detail LarkBase sync: ${purchaseOrderDetailsToSync.length} details`,
+  //           );
+  //         } catch (syncError) {
+  //           await this.prismaService.syncControl.update({
+  //             where: { name: 'purchase_order_detail_lark_sync' },
+  //             data: {
+  //               isRunning: false,
+  //               status: 'failed',
+  //               error: syncError.message,
+  //               completedAt: new Date(),
+  //             },
+  //           });
 
-            this.logger.error(
-              `❌ Auto purchase_order_detail LarkBase sync failed: ${syncError.message}`,
-            );
-          }
-        } else {
-          await this.prismaService.syncControl.update({
-            where: { name: 'purchase_order_detail_lark_sync' },
-            data: {
-              isRunning: false,
-              status: 'completed',
-              completedAt: new Date(),
-            },
-          });
+  //           this.logger.error(
+  //             `❌ Auto purchase_order_detail LarkBase sync failed: ${syncError.message}`,
+  //           );
+  //         }
+  //       } else {
+  //         await this.prismaService.syncControl.update({
+  //           where: { name: 'purchase_order_detail_lark_sync' },
+  //           data: {
+  //             isRunning: false,
+  //             status: 'completed',
+  //             completedAt: new Date(),
+  //           },
+  //         });
 
-          this.logger.log('📋 No purchase_order_detail need LarkBase sync');
-        }
-      }
-    } catch (error) {
-      this.logger.error(
-        `❌ Auto purchase_order_detail Lark sync failed: ${error.message}`,
-      );
-    }
-  }
+  //         this.logger.log('📋 No purchase_order_detail need LarkBase sync');
+  //       }
+  //     }
+  //   } catch (error) {
+  //     this.logger.error(
+  //       `❌ Auto purchase_order_detail Lark sync failed: ${error.message}`,
+  //     );
+  //   }
+  // }
 
   enableMainScheduler() {
     this.isMainSchedulerEnabled = true;
@@ -1886,273 +1889,273 @@ export class BusSchedulerService implements OnModuleInit {
   //   }
   // }
 
-  private async enableAndRunOrderSupplierSync(): Promise<void> {
-    try {
-      this.logger.log('📦 Enabling and running OrderSupplier sync...');
+  // private async enableAndRunOrderSupplierSync(): Promise<void> {
+  //   try {
+  //     this.logger.log('📦 Enabling and running OrderSupplier sync...');
 
-      await this.orderSupplierService.enableHistoricalSync();
+  //     await this.orderSupplierService.enableHistoricalSync();
 
-      await this.orderSupplierService.syncHistoricalOrderSuppliers();
+  //     await this.orderSupplierService.syncHistoricalOrderSuppliers();
 
-      this.logger.log('✅ OrderSupplier sync initiated successfully');
-    } catch (error) {
-      this.logger.error(`❌ OrderSupplier sync failed: ${error.message}`);
-      throw new Error(`OrderSupplier sync failed: ${error.message}`);
-    }
-  }
+  //     this.logger.log('✅ OrderSupplier sync initiated successfully');
+  //   } catch (error) {
+  //     this.logger.error(`❌ OrderSupplier sync failed: ${error.message}`);
+  //     throw new Error(`OrderSupplier sync failed: ${error.message}`);
+  //   }
+  // }
 
-  private async enableAndRunOrderSupplierDetailSync(): Promise<void> {
-    try {
-      this.logger.log('📦 Enabling and running OrderSupplierDetail sync...');
+  // private async enableAndRunOrderSupplierDetailSync(): Promise<void> {
+  //   try {
+  //     this.logger.log('📦 Enabling and running OrderSupplierDetail sync...');
 
-      const orderSupplierDetailSync =
-        await this.prismaService.syncControl.findFirst({
-          where: { name: 'order_supplier_detail_historical' },
-        });
+  //     const orderSupplierDetailSync =
+  //       await this.prismaService.syncControl.findFirst({
+  //         where: { name: 'order_supplier_detail_historical' },
+  //       });
 
-      if (
-        !orderSupplierDetailSync ||
-        orderSupplierDetailSync.status !== 'completed'
-      ) {
-        this.logger.warn(
-          '⚠️ OrderSupplierDetail sync not completed, skipping OrderSupplierDetail sync',
-        );
-        return;
-      }
+  //     if (
+  //       !orderSupplierDetailSync ||
+  //       orderSupplierDetailSync.status !== 'completed'
+  //     ) {
+  //       this.logger.warn(
+  //         '⚠️ OrderSupplierDetail sync not completed, skipping OrderSupplierDetail sync',
+  //       );
+  //       return;
+  //     }
 
-      await this.prismaService.syncControl.upsert({
-        where: { name: 'order_supplier_detail_historical' },
-        create: {
-          name: 'order_supplier_detail_historical',
-          entities: ['order_supplier_detail'],
-          syncMode: 'historical',
-          isEnabled: true,
-          isRunning: false,
-          status: 'idle',
-        },
-        update: {
-          isEnabled: true,
-          isRunning: false,
-          status: 'idle',
-          error: null,
-        },
-      });
-      await this.syncOrderSupplierDetailsFromDatabase();
+  //     await this.prismaService.syncControl.upsert({
+  //       where: { name: 'order_supplier_detail_historical' },
+  //       create: {
+  //         name: 'order_supplier_detail_historical',
+  //         entities: ['order_supplier_detail'],
+  //         syncMode: 'historical',
+  //         isEnabled: true,
+  //         isRunning: false,
+  //         status: 'idle',
+  //       },
+  //       update: {
+  //         isEnabled: true,
+  //         isRunning: false,
+  //         status: 'idle',
+  //         error: null,
+  //       },
+  //     });
+  //     await this.syncOrderSupplierDetailsFromDatabase();
 
-      this.logger.log('✅ OrderSupplierDetail sync initiated successfully');
-    } catch (error) {
-      this.logger.error(`❌ OrderSupplierDetail sync failed: ${error.message}`);
-      throw new Error(`OrderSupplierDetail sync failed: ${error.message}`);
-    }
-  }
+  //     this.logger.log('✅ OrderSupplierDetail sync initiated successfully');
+  //   } catch (error) {
+  //     this.logger.error(`❌ OrderSupplierDetail sync failed: ${error.message}`);
+  //     throw new Error(`OrderSupplierDetail sync failed: ${error.message}`);
+  //   }
+  // }
 
-  private async enableAndRunPurchaseOrderSync(): Promise<void> {
-    try {
-      this.logger.log('📦 Enabling and running Purchase Order sync...');
+  // private async enableAndRunPurchaseOrderSync(): Promise<void> {
+  //   try {
+  //     this.logger.log('📦 Enabling and running Purchase Order sync...');
 
-      await this.purchaseOrderService.enableHistoricalSync();
+  //     await this.purchaseOrderService.enableHistoricalSync();
 
-      await this.purchaseOrderService.syncHistoricalPurchaseOrder();
+  //     await this.purchaseOrderService.syncHistoricalPurchaseOrder();
 
-      this.logger.log('✅ PurchaseOrder sync initiated successfully');
-    } catch (error) {
-      this.logger.error(`❌ PurchaseOrder sync failed: ${error.message}`);
-      throw new Error(`PurchaseOrder sync failed: ${error.message}`);
-    }
-  }
+  //     this.logger.log('✅ PurchaseOrder sync initiated successfully');
+  //   } catch (error) {
+  //     this.logger.error(`❌ PurchaseOrder sync failed: ${error.message}`);
+  //     throw new Error(`PurchaseOrder sync failed: ${error.message}`);
+  //   }
+  // }
 
-  private async enableAndRunPurchaseOrderDetailSync(): Promise<void> {
-    try {
-      this.logger.log('📦 Enabling and running Purchase Order Detail sync...');
+  // private async enableAndRunPurchaseOrderDetailSync(): Promise<void> {
+  //   try {
+  //     this.logger.log('📦 Enabling and running Purchase Order Detail sync...');
 
-      const purchaseOrderSync = await this.prismaService.syncControl.findFirst({
-        where: { name: 'purchase_order_detail_historical' },
-      });
+  //     const purchaseOrderSync = await this.prismaService.syncControl.findFirst({
+  //       where: { name: 'purchase_order_detail_historical' },
+  //     });
 
-      if (!purchaseOrderSync || purchaseOrderSync.status !== 'completed') {
-        this.logger.warn(
-          '⚠️ PurchaseOrder sync not completed, skipping PurchaseOrderDetail sync',
-        );
-        return;
-      }
+  //     if (!purchaseOrderSync || purchaseOrderSync.status !== 'completed') {
+  //       this.logger.warn(
+  //         '⚠️ PurchaseOrder sync not completed, skipping PurchaseOrderDetail sync',
+  //       );
+  //       return;
+  //     }
 
-      await this.prismaService.syncControl.upsert({
-        where: { name: 'purchase_order_detail_historical' },
-        create: {
-          name: 'purchase_order_detail_historical',
-          entities: ['purchase_order_detail'],
-          syncMode: 'historical',
-          isEnabled: true,
-          isRunning: false,
-          status: 'idle',
-        },
-        update: {
-          isEnabled: true,
-          isRunning: false,
-          status: 'idle',
-          error: null,
-        },
-      });
-      await this.syncPurchaseOrderDetailsFromDatabase();
+  //     await this.prismaService.syncControl.upsert({
+  //       where: { name: 'purchase_order_detail_historical' },
+  //       create: {
+  //         name: 'purchase_order_detail_historical',
+  //         entities: ['purchase_order_detail'],
+  //         syncMode: 'historical',
+  //         isEnabled: true,
+  //         isRunning: false,
+  //         status: 'idle',
+  //       },
+  //       update: {
+  //         isEnabled: true,
+  //         isRunning: false,
+  //         status: 'idle',
+  //         error: null,
+  //       },
+  //     });
+  //     await this.syncPurchaseOrderDetailsFromDatabase();
 
-      this.logger.log('✅ PurchaseOrderDetail sync initiated successfully');
-    } catch (error) {
-      this.logger.error(`❌ PurchaseOrderDetail sync failed: ${error.message}`);
-      throw new Error(`PurchaseOrderDetail sync failed: ${error.message}`);
-    }
-  }
+  //     this.logger.log('✅ PurchaseOrderDetail sync initiated successfully');
+  //   } catch (error) {
+  //     this.logger.error(`❌ PurchaseOrderDetail sync failed: ${error.message}`);
+  //     throw new Error(`PurchaseOrderDetail sync failed: ${error.message}`);
+  //   }
+  // }
 
-  private async syncPurchaseOrderDetailsFromDatabase(): Promise<void> {
-    try {
-      await this.prismaService.syncControl.update({
-        where: { name: 'purchase_order_detail_historical' },
-        data: {
-          isRunning: true,
-          status: 'running',
-          startedAt: new Date(),
-        },
-      });
+  // private async syncPurchaseOrderDetailsFromDatabase(): Promise<void> {
+  //   try {
+  //     await this.prismaService.syncControl.update({
+  //       where: { name: 'purchase_order_detail_historical' },
+  //       data: {
+  //         isRunning: true,
+  //         status: 'running',
+  //         startedAt: new Date(),
+  //       },
+  //     });
 
-      this.logger.log('📊 Starting PurchaseOrderDetail sync from database...');
+  //     this.logger.log('📊 Starting PurchaseOrderDetail sync from database...');
 
-      const purchaseOrdersWithDetails =
-        await this.prismaService.purchaseOrder.findMany({
-          where: {
-            details: {
-              some: {
-                OR: [
-                  { larkSyncStatus: 'PENDING' },
-                  { larkSyncStatus: 'FAILED' },
-                ],
-              },
-            },
-          },
-          include: {
-            details: {
-              where: {
-                OR: [
-                  { larkSyncStatus: 'PENDING' },
-                  { larkSyncStatus: 'FAILED' },
-                ],
-              },
-            },
-          },
-          orderBy: { createdDate: 'asc' },
-        });
+  //     const purchaseOrdersWithDetails =
+  //       await this.prismaService.purchaseOrder.findMany({
+  //         where: {
+  //           details: {
+  //             some: {
+  //               OR: [
+  //                 { larkSyncStatus: 'PENDING' },
+  //                 { larkSyncStatus: 'FAILED' },
+  //               ],
+  //             },
+  //           },
+  //         },
+  //         include: {
+  //           details: {
+  //             where: {
+  //               OR: [
+  //                 { larkSyncStatus: 'PENDING' },
+  //                 { larkSyncStatus: 'FAILED' },
+  //               ],
+  //             },
+  //           },
+  //         },
+  //         orderBy: { createdDate: 'asc' },
+  //       });
 
-      if (purchaseOrdersWithDetails.length === 0) {
-        this.logger.log('📋 No PurchaseOrderDetails need sync');
+  //     if (purchaseOrdersWithDetails.length === 0) {
+  //       this.logger.log('📋 No PurchaseOrderDetails need sync');
 
-        await this.prismaService.syncControl.update({
-          where: { name: 'purchase_order_detail_historical' },
-          data: {
-            isRunning: false,
-            status: 'completed',
-            completedAt: new Date(),
-          },
-        });
-        return;
-      }
+  //       await this.prismaService.syncControl.update({
+  //         where: { name: 'purchase_order_detail_historical' },
+  //         data: {
+  //           isRunning: false,
+  //           status: 'completed',
+  //           completedAt: new Date(),
+  //         },
+  //       });
+  //       return;
+  //     }
 
-      const allDetailIds = purchaseOrdersWithDetails
-        .flatMap((po) => po.details)
-        .map((detail) => detail.id);
+  //     const allDetailIds = purchaseOrdersWithDetails
+  //       .flatMap((po) => po.details)
+  //       .map((detail) => detail.id);
 
-      await this.prismaService.purchaseOrderDetail.updateMany({
-        where: {
-          id: { in: allDetailIds },
-          OR: [{ larkSyncStatus: 'FAILED' }],
-        },
-        data: { larkSyncStatus: 'PENDING' },
-      });
+  //     await this.prismaService.purchaseOrderDetail.updateMany({
+  //       where: {
+  //         id: { in: allDetailIds },
+  //         OR: [{ larkSyncStatus: 'FAILED' }],
+  //       },
+  //       data: { larkSyncStatus: 'PENDING' },
+  //     });
 
-      this.logger.log(
-        `📊 Found ${purchaseOrdersWithDetails.length} PurchaseOrders with ${allDetailIds.length} details to sync`,
-      );
+  //     this.logger.log(
+  //       `📊 Found ${purchaseOrdersWithDetails.length} PurchaseOrders with ${allDetailIds.length} details to sync`,
+  //     );
 
-      await this.larkPurchaseOrderSyncService.syncPurchaseOrderDetailsToLarkBase(
-        purchaseOrdersWithDetails,
-      );
+  //     await this.larkPurchaseOrderSyncService.syncPurchaseOrderDetailsToLarkBase(
+  //       purchaseOrdersWithDetails,
+  //     );
 
-      await this.prismaService.syncControl.update({
-        where: { name: 'purchase_order_detail_historical' },
-        data: {
-          isRunning: false,
-          status: 'completed',
-          completedAt: new Date(),
-        },
-      });
+  //     await this.prismaService.syncControl.update({
+  //       where: { name: 'purchase_order_detail_historical' },
+  //       data: {
+  //         isRunning: false,
+  //         status: 'completed',
+  //         completedAt: new Date(),
+  //       },
+  //     });
 
-      this.logger.log('✅ PurchaseOrderDetail historical sync completed');
-    } catch (error) {
-      await this.prismaService.syncControl.update({
-        where: { name: 'purchase_order_detail_historical' },
-        data: {
-          isRunning: false,
-          status: 'failed',
-          error: error.message,
-          completedAt: new Date(),
-        },
-      });
+  //     this.logger.log('✅ PurchaseOrderDetail historical sync completed');
+  //   } catch (error) {
+  //     await this.prismaService.syncControl.update({
+  //       where: { name: 'purchase_order_detail_historical' },
+  //       data: {
+  //         isRunning: false,
+  //         status: 'failed',
+  //         error: error.message,
+  //         completedAt: new Date(),
+  //       },
+  //     });
 
-      this.logger.error(`❌ PurchaseOrderDetail sync failed: ${error.message}`);
-      throw error;
-    }
-  }
+  //     this.logger.error(`❌ PurchaseOrderDetail sync failed: ${error.message}`);
+  //     throw error;
+  //   }
+  // }
 
-  private async syncOrderSupplierDetailsFromDatabase(): Promise<void> {
-    try {
-      await this.prismaService.syncControl.update({
-        where: { name: 'order_supplier_detail_historical' },
-        data: {
-          isRunning: true,
-          status: 'running',
-          startedAt: new Date(),
-        },
-      });
+  // private async syncOrderSupplierDetailsFromDatabase(): Promise<void> {
+  //   try {
+  //     await this.prismaService.syncControl.update({
+  //       where: { name: 'order_supplier_detail_historical' },
+  //       data: {
+  //         isRunning: true,
+  //         status: 'running',
+  //         startedAt: new Date(),
+  //       },
+  //     });
 
-      const orderSupplierDetailsToSync =
-        await this.prismaService.orderSupplierDetail.findMany({
-          where: {
-            OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
-          },
-        });
+  //     const orderSupplierDetailsToSync =
+  //       await this.prismaService.orderSupplierDetail.findMany({
+  //         where: {
+  //           OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+  //         },
+  //       });
 
-      if (orderSupplierDetailsToSync.length === 0) {
-        this.logger.log('📋 No OrderSupplierDetails need sync');
-        await this.prismaService.syncControl.update({
-          where: { name: 'order_supplier_detail_historical' },
-          data: {
-            isRunning: false,
-            status: 'completed',
-            completedAt: new Date(),
-          },
-        });
-        return;
-      }
+  //     if (orderSupplierDetailsToSync.length === 0) {
+  //       this.logger.log('📋 No OrderSupplierDetails need sync');
+  //       await this.prismaService.syncControl.update({
+  //         where: { name: 'order_supplier_detail_historical' },
+  //         data: {
+  //           isRunning: false,
+  //           status: 'completed',
+  //           completedAt: new Date(),
+  //         },
+  //       });
+  //       return;
+  //     }
 
-      this.logger.log(
-        `🔄 Syncing ${orderSupplierDetailsToSync.length} OrderSupplierDetails...`,
-      );
+  //     this.logger.log(
+  //       `🔄 Syncing ${orderSupplierDetailsToSync.length} OrderSupplierDetails...`,
+  //     );
 
-      await this.larkOrderSupplierSyncService.syncOrderSupplierDetailsToLarkBase();
+  //     await this.larkOrderSupplierSyncService.syncOrderSupplierDetailsToLarkBase();
 
-      await this.prismaService.syncControl.update({
-        where: { name: 'order_supplier_detail_historical' },
-        data: {
-          isRunning: false,
-          status: 'completed',
-          completedAt: new Date(),
-        },
-      });
-    } catch (error) {
-      await this.prismaService.syncControl.update({
-        where: { name: 'order_supplier_detail_historical' },
-        data: { isRunning: false, status: 'failed', error: error.message },
-      });
-      throw error;
-    }
-  }
+  //     await this.prismaService.syncControl.update({
+  //       where: { name: 'order_supplier_detail_historical' },
+  //       data: {
+  //         isRunning: false,
+  //         status: 'completed',
+  //         completedAt: new Date(),
+  //       },
+  //     });
+  //   } catch (error) {
+  //     await this.prismaService.syncControl.update({
+  //       where: { name: 'order_supplier_detail_historical' },
+  //       data: { isRunning: false, status: 'failed', error: error.message },
+  //     });
+  //     throw error;
+  //   }
+  // }
 
   // private async waitForSyncCompletion(
   //   syncName: string,

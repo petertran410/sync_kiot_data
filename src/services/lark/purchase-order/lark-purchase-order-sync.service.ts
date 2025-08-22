@@ -63,14 +63,14 @@ interface BatchDetailResult {
 @Injectable()
 export class LarkPurchaseOrderSyncService {
   private readonly logger = new Logger(LarkPurchaseOrderSyncService.name);
-
   private readonly baseToken: string;
   private readonly tableId: string;
-
   private readonly baseTokenDetail: string;
   private readonly tableIdDetail: string;
-
   private readonly batchSize = 100;
+
+  private readonly MAX_AUTH_RETRIES = 3;
+  private readonly AUTH_ERROR_CODES = [99991663, 99991664, 99991665];
 
   private existingRecordsCache = new Map<number, string>();
   private purchaseOrderCodeCache = new Map<string, string>();
@@ -85,8 +85,6 @@ export class LarkPurchaseOrderSyncService {
   private lastDetailCacheLoadTime: Date | null = null;
 
   private readonly CACHE_VALIDITY_MINUTES = 30;
-  private readonly MAX_AUTH_RETRIES = 3;
-  private readonly AUTH_ERROR_CODES = [99991663, 99991664, 99991665];
 
   constructor(
     private readonly httpService: HttpService,
@@ -155,7 +153,7 @@ export class LarkPurchaseOrderSyncService {
 
       if (!cacheLoaded) {
         this.logger.warn(
-          '⚠️ PurchaseOrder cache loading failed - will use alternative duplicate detection',
+          '⚠️ Cache loading failed - will use alternative duplicate detection',
         );
       }
 
@@ -163,7 +161,7 @@ export class LarkPurchaseOrderSyncService {
         this.categorizePurchaseOrders(purchaseOrdersToSync);
 
       this.logger.log(
-        `📋 PurchaseOrder Categorization: ${newPurchaseOrders.length} new, ${updatePurchaseOrders.length} updates`,
+        `📋 Categorization: ${newPurchaseOrders.length} new, ${updatePurchaseOrders.length} updates`,
       );
 
       const BATCH_SIZE_FOR_SYNC = 50;
@@ -196,8 +194,6 @@ export class LarkPurchaseOrderSyncService {
         }
       }
 
-      await this.syncPurchaseOrderDetailsToLarkBase(purchaseOrdersToSync);
-
       await this.releaseSyncLock(lockKey);
       this.logger.log('🎉 LarkBase purchase_order and details sync completed!');
     } catch (error) {
@@ -210,17 +206,13 @@ export class LarkPurchaseOrderSyncService {
     }
   }
 
-  async syncPurchaseOrderDetailsToLarkBase(
-    purchase_orders_details: any[],
-  ): Promise<void> {
+  async syncPurchaseOrderDetailsToLarkBase(): Promise<void> {
     const lockKey = `lark_purchase_order_detail_sync_lock_${Date.now()}`;
 
     try {
       await this.acquireDetailSyncLock(lockKey);
 
-      this.logger.log(
-        `🚀 Starting LarkBase sync for ${purchase_orders_details.length} purchase_orders_details`,
-      );
+      this.logger.log(`🚀 Starting LarkBase sync for purchase_orders_details`);
 
       // const purchaseOrderDetailsToSync = purchase_orders_details.filter(
       //   (s) =>
@@ -931,23 +923,18 @@ export class LarkPurchaseOrderSyncService {
       await Promise.all(
         chunk.map(async (detail) => {
           try {
-            // ✅ FIX: sử dụng detail trực tiếp (giống orderSupplier)
             const updated = await this.updateSinglePurchaseOrderDetail(detail);
 
             if (updated) {
               successDetailCount++;
-              // ✅ FIX: sử dụng [detail] trực tiếp
               await this.updateDetailDatabaseStatus([detail], 'SYNCED');
             } else {
-              // ✅ FIX: sử dụng detail trực tiếp
               createFallbacks.push(detail);
             }
           } catch (error) {
-            // ✅ FIX: sử dụng detail.uniqueKey trực tiếp (giống orderSupplier dùng .code)
             this.logger.warn(
               `Update failed for detail ${detail.uniqueKey}: ${error.message}`,
             );
-            // ✅ FIX: sử dụng detail trực tiếp
             createFallbacks.push(detail);
           }
         }),
@@ -1058,7 +1045,7 @@ export class LarkPurchaseOrderSyncService {
     details: any[],
   ): Promise<BatchDetailResult> {
     const records = details.map((detail) => ({
-      fields: this.mapPurchaseOrderDetailToLarkBase(detail), // Pass detail directly
+      fields: this.mapPurchaseOrderDetailToLarkBase(detail),
     }));
 
     let authRetries = 0;
@@ -1083,7 +1070,6 @@ export class LarkPurchaseOrderSyncService {
           const successDetailsRecords = details.slice(0, successDetailCount);
           const failedDetailsRecords = details.slice(successDetailCount);
 
-          // Update cache with created records using uniqueKey
           for (
             let i = 0;
             i <
