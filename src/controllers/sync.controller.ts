@@ -462,21 +462,11 @@ export class SyncController {
           take: 1000,
         });
 
-      const purchaseOrdersDetailToSync =
-        await this.prismaService.purchaseOrderDetail.findMany({
-          where: {
-            OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
-          },
-          take: 1000,
-        });
-
       await this.larkPurchaseOrderSyncService.syncPurchaseOrdersToLarkBase(
         purchaseOrdersToSync,
       );
 
-      await this.larkPurchaseOrderSyncService.syncPurchaseOrderDetailsToLarkBase(
-        purchaseOrdersDetailToSync,
-      );
+      await this.larkPurchaseOrderSyncService.syncPurchaseOrderDetailsToLarkBase();
 
       return {
         success: true,
