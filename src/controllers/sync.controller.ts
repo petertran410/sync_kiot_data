@@ -1,3 +1,4 @@
+import { LarkPurchaseOrderSyncService } from './../services/lark/purchase-order/lark-purchase-order-sync.service';
 import { Controller, Get, Post, Query, Logger } from '@nestjs/common';
 import { BusSchedulerService } from '../services/bus-scheduler/bus-scheduler.service';
 import { KiotVietCustomerService } from '../services/kiot-viet/customer/customer.service';
@@ -12,6 +13,7 @@ import { LarkProductSyncService } from 'src/services/lark/product/lark-product-s
 import { PrismaService } from 'src/prisma/prisma.service';
 import { KiotVietOrderSupplierService } from 'src/services/kiot-viet/order-supplier/order-supplier.service';
 import { LarkOrderSupplierSyncService } from 'src/services/lark/order-supplier/lark-order-supplier-sync.service';
+import { KiotVietPurchaseOrderService } from 'src/services/kiot-viet/purchase-order/purchase-order.service';
 
 @Controller('sync')
 export class SyncController {
@@ -31,6 +33,8 @@ export class SyncController {
     private readonly prismaService: PrismaService,
     private readonly orderSupplierService: KiotVietOrderSupplierService,
     private readonly larkOrderSupplierService: LarkOrderSupplierSyncService,
+    private readonly purchaseOrderService: KiotVietPurchaseOrderService,
+    private readonly larkPurchaseOrderSyncService: LarkPurchaseOrderSyncService,
   ) {}
 
   @Get('status')
@@ -433,6 +437,54 @@ export class SyncController {
       };
     } catch (error) {
       this.logger.error(`❌ Order Supplier sync failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
+
+  @Post('purchase-order')
+  async syncPurchaseOrders() {
+    try {
+      this.logger.log('Starting purchase-order sync...');
+
+      await this.purchaseOrderService.enableHistoricalSync();
+
+      await this.purchaseOrderService.syncHistoricalPurchaseOrder();
+
+      const purchaseOrdersToSync =
+        await this.prismaService.purchaseOrder.findMany({
+          where: {
+            OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+          },
+          take: 1000,
+        });
+
+      const purchaseOrdersDetailToSync =
+        await this.prismaService.purchaseOrderDetail.findMany({
+          where: {
+            OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+          },
+          take: 1000,
+        });
+
+      await this.larkPurchaseOrderSyncService.syncPurchaseOrdersToLarkBase(
+        purchaseOrdersToSync,
+      );
+
+      await this.larkPurchaseOrderSyncService.syncPurchaseOrderDetailsToLarkBase(
+        purchaseOrdersDetailToSync,
+      );
+
+      return {
+        success: true,
+        message: 'Purchase Order sync completed successfully',
+        timestamp: new Date().toISOString,
+      };
+    } catch (error) {
+      this.logger.error(`❌ Purchase Order sync failed: ${error.message}`);
       return {
         success: false,
         error: error.message,

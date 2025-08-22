@@ -374,11 +374,6 @@ export class KiotVietOrderSupplierService {
       try {
         const headers = await this.authService.getRequestHeaders();
 
-        // const queryParams = new URLSearchParams({
-        //   includeTotal: 'true',
-        //   includeSupplierGroup: 'true',
-        // });
-
         const response = await firstValueFrom(
           this.httpService.get(
             `${this.baseUrl}/ordersuppliers/${order_supplier.id}`,
