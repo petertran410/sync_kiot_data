@@ -107,11 +107,12 @@ export class BusSchedulerService implements OnModuleInit {
     private readonly larkOrderSyncService: LarkOrderSyncService,
     private readonly productService: KiotVietProductService,
     private readonly larkProductSyncService: LarkProductSyncService,
+    private readonly larkProductSevice: LarkProductSyncService,
     private readonly priceBookService: KiotVietPriceBookService,
     private readonly supplierService: KiotVietSupplierService,
     private readonly larkSupplierSyncService: LarkSupplierSyncService,
     private readonly orderSupplierService: KiotVietOrderSupplierService,
-    private readonly larkOrderSupplierSyncService: LarkOrderSupplierSyncService,
+    private readonly larkOrderSupplierService: LarkOrderSupplierSyncService,
     private readonly purchaseOrderService: KiotVietPurchaseOrderService,
     private readonly larkPurchaseOrderSyncService: LarkPurchaseOrderSyncService,
   ) {}
@@ -354,9 +355,235 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
-  @Cron('0 5 * * *', {
+  @Cron('30 5 * * *', {
     timeZone: 'Asia/Ho_Chi_Minh',
   })
+  async syncProductsAM() {
+    try {
+      this.logger.log('Starting product sync...');
+
+      await this.productService.enableHistoricalSync();
+
+      await this.productService.syncHistoricalProducts();
+
+      const productsToSync = await this.prismaService.product.findMany({
+        where: {
+          OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+        },
+        take: 1000,
+      });
+
+      await this.larkProductSevice.syncProductsToLarkBase(productsToSync);
+
+      return {
+        success: true,
+        message: 'Product sync completed successfully',
+        timestamp: new Date().toISOString,
+      };
+    } catch (error) {
+      this.logger.error(`❌ Product sync failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
+
+  @Cron('30 17 * * *', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+  })
+  async syncProductsPM() {
+    try {
+      this.logger.log('Starting product sync...');
+
+      await this.productService.enableHistoricalSync();
+
+      await this.productService.syncHistoricalProducts();
+
+      const productsToSync = await this.prismaService.product.findMany({
+        where: {
+          OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+        },
+        take: 1000,
+      });
+
+      await this.larkProductSevice.syncProductsToLarkBase(productsToSync);
+
+      return {
+        success: true,
+        message: 'Product sync completed successfully',
+        timestamp: new Date().toISOString,
+      };
+    } catch (error) {
+      this.logger.error(`❌ Product sync failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
+
+  @Cron('0 6 * * *', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+  })
+  async syncOrderSuppliersAM() {
+    try {
+      this.logger.log('Starting order-supplier sync...');
+
+      await this.orderSupplierService.enableHistoricalSync();
+
+      await this.orderSupplierService.syncHistoricalOrderSuppliers();
+
+      const orderSuppliersToSync =
+        await this.prismaService.orderSupplier.findMany({
+          where: {
+            OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+          },
+          take: 1000,
+        });
+
+      await this.larkOrderSupplierService.syncOrderSuppliersToLarkBase(
+        orderSuppliersToSync,
+      );
+
+      await this.larkOrderSupplierService.syncOrderSupplierDetailsToLarkBase();
+
+      return {
+        success: true,
+        message: 'Order Supplier sync completed successfully',
+        timestamp: new Date().toISOString,
+      };
+    } catch (error) {
+      this.logger.error(`❌ Order Supplier sync failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
+
+  @Cron('0 18 * * *', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+  })
+  async syncOrderSuppliersPM() {
+    try {
+      this.logger.log('Starting order-supplier sync...');
+
+      await this.orderSupplierService.enableHistoricalSync();
+
+      await this.orderSupplierService.syncHistoricalOrderSuppliers();
+
+      const orderSuppliersToSync =
+        await this.prismaService.orderSupplier.findMany({
+          where: {
+            OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+          },
+          take: 1000,
+        });
+
+      await this.larkOrderSupplierService.syncOrderSuppliersToLarkBase(
+        orderSuppliersToSync,
+      );
+
+      await this.larkOrderSupplierService.syncOrderSupplierDetailsToLarkBase();
+
+      return {
+        success: true,
+        message: 'Order Supplier sync completed successfully',
+        timestamp: new Date().toISOString,
+      };
+    } catch (error) {
+      this.logger.error(`❌ Order Supplier sync failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
+
+  @Cron('30 6 * * *', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+  })
+  async syncPurchaseOrdersAM() {
+    try {
+      this.logger.log('Starting purchase-order sync...');
+
+      await this.purchaseOrderService.enableHistoricalSync();
+
+      await this.purchaseOrderService.syncHistoricalPurchaseOrder();
+
+      const purchaseOrdersToSync =
+        await this.prismaService.purchaseOrder.findMany({
+          where: {
+            OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+          },
+          take: 1000,
+        });
+
+      await this.larkPurchaseOrderSyncService.syncPurchaseOrdersToLarkBase(
+        purchaseOrdersToSync,
+      );
+
+      await this.larkPurchaseOrderSyncService.syncPurchaseOrderDetailsToLarkBase();
+
+      return {
+        success: true,
+        message: 'Purchase Order sync completed successfully',
+        timestamp: new Date().toISOString,
+      };
+    } catch (error) {
+      this.logger.error(`❌ Purchase Order sync failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
+
+  @Cron('30 18 * * *', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+  })
+  async syncPurchaseOrdersPM() {
+    try {
+      this.logger.log('Starting purchase-order sync...');
+
+      await this.purchaseOrderService.enableHistoricalSync();
+
+      await this.purchaseOrderService.syncHistoricalPurchaseOrder();
+
+      const purchaseOrdersToSync =
+        await this.prismaService.purchaseOrder.findMany({
+          where: {
+            OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+          },
+          take: 1000,
+        });
+
+      await this.larkPurchaseOrderSyncService.syncPurchaseOrdersToLarkBase(
+        purchaseOrdersToSync,
+      );
+
+      await this.larkPurchaseOrderSyncService.syncPurchaseOrderDetailsToLarkBase();
+
+      return {
+        success: true,
+        message: 'Purchase Order sync completed successfully',
+        timestamp: new Date().toISOString,
+      };
+    } catch (error) {
+      this.logger.error(`❌ Purchase Order sync failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
 
   // @Cron('30 22 * * *', {
   //   name: 'daily_product_sync',
