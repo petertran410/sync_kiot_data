@@ -374,10 +374,38 @@ export class SyncController {
     }
   }
 
+  @Post('pricebooks')
+  async syncPricebook() {
+    try {
+      this.logger.log('Starting pricebook sync...');
+
+      await this.priceBookService.enableHistoricalSync();
+
+      await this.priceBookService.syncHistoricalPriceBooks();
+
+      return {
+        success: true,
+        message: 'Product sync completed successfully',
+        timestamp: new Date().toISOString,
+      };
+    } catch (error) {
+      this.logger.error(`❌ Product sync failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
+
   @Post('products')
   async syncProducts() {
     try {
       this.logger.log('Starting product sync...');
+
+      // await this.priceBookService.enableHistoricalSync();
+
+      // await this.priceBookService.syncHistoricalPriceBooks();
 
       await this.productService.enableHistoricalSync();
 
