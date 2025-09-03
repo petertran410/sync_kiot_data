@@ -28,12 +28,14 @@ const LARK_PRODUCT_FIELDS = {
 
   COST_PRICE_CUA_HANG_DIEP_TRA: 'Giá Vốn (Cửa Hàng Diệp Trà)',
   COST_PRICE_KHO_HA_NOI: 'Giá Vốn (Kho Hà Nội)',
+  COST_PRICE_KHO_HA_NOI_2: 'Giá Vốn (Kho Hà Nội 2)',
   COST_PRICE_KHO_SAI_GON: 'Giá Vốn (Kho Sài Gòn)',
   COST_PRICE_VAN_PHONG_HA_NOI: 'Giá Vốn (Văn Phòng Hà Nội)',
   COST_PRICE_KHO_BAN_HANG: 'Giá Vốn (Kho Bán Hàng)',
 
   TON_KHO_CUA_HANG_DIEP_TRA: 'Tồn Kho (Cửa Hàng Diệp Trà)',
   TON_KHO_KHO_HA_NOI: 'Tồn Kho (Kho Hà Nội)',
+  TON_KHO_KHO_HA_NOI_2: 'Tồn Kho (Kho Hà Nội 2)',
   TON_KHO_KHO_SAI_GON: 'Tồn Kho (Kho Sài Gòn)',
   TON_KHO_VAN_PHONG_HA_NOI: 'Tồn Kho (Văn Phòng Hà Nội)',
   TON_KHO_KHO_BAN_HANG: 'Tồn Kho (Kho Bán Hàng)',
@@ -102,7 +104,8 @@ const BRANCH_COST_MAPPING: Record<number, string> = {
   635934: LARK_PRODUCT_FIELDS.COST_PRICE_CUA_HANG_DIEP_TRA,
   154833: LARK_PRODUCT_FIELDS.COST_PRICE_KHO_HA_NOI,
   402819: LARK_PRODUCT_FIELDS.COST_PRICE_KHO_SAI_GON,
-  631163: LARK_PRODUCT_FIELDS.COST_PRICE_VAN_PHONG_HA_NOI,
+  631164: LARK_PRODUCT_FIELDS.COST_PRICE_VAN_PHONG_HA_NOI,
+  631163: LARK_PRODUCT_FIELDS.COST_PRICE_KHO_HA_NOI_2,
   635935: LARK_PRODUCT_FIELDS.COST_PRICE_KHO_BAN_HANG,
 } as const;
 
@@ -110,7 +113,8 @@ const BRANCH_INVENTORY_MAPPING: Record<number, string> = {
   635934: LARK_PRODUCT_FIELDS.TON_KHO_CUA_HANG_DIEP_TRA,
   154833: LARK_PRODUCT_FIELDS.TON_KHO_KHO_HA_NOI,
   402819: LARK_PRODUCT_FIELDS.TON_KHO_KHO_SAI_GON,
-  631163: LARK_PRODUCT_FIELDS.TON_KHO_VAN_PHONG_HA_NOI,
+  631164: LARK_PRODUCT_FIELDS.TON_KHO_VAN_PHONG_HA_NOI,
+  631163: LARK_PRODUCT_FIELDS.TON_KHO_KHO_HA_NOI_2,
   635935: LARK_PRODUCT_FIELDS.TON_KHO_KHO_BAN_HANG,
 } as const;
 
@@ -630,10 +634,16 @@ export class LarkProductSyncService {
         const headers = await this.larkAuthService.getProductHeaders();
         const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/${product.larkRecordId}`;
 
+        // 🔍 ADD DEBUG LOGGING HERE - Log fields được gửi
+        const fieldsToUpdate = this.mapProductToLarkBase(product);
+        this.logger.log(
+          `🔍 Updating product ${product.code} with fields: ${JSON.stringify(Object.keys(fieldsToUpdate))}`,
+        );
+
         const response = await firstValueFrom(
           this.httpService.put(
             url,
-            { fields: this.mapProductToLarkBase(product) },
+            { fields: fieldsToUpdate },
             { headers, timeout: 15000 },
           ),
         );
@@ -652,7 +662,23 @@ export class LarkProductSyncService {
           continue;
         }
 
-        this.logger.warn(`Update failed: ${response.data.msg}`);
+        // 🔍 ADD DETAILED ERROR LOGGING HERE
+        this.logger.warn(`❌ Update failed for product ${product.code}:`);
+        this.logger.warn(`   Error: ${response.data.msg}`);
+        this.logger.warn(`   Error Code: ${response.data.code}`);
+        this.logger.warn(`   Record ID: ${product.larkRecordId}`);
+        this.logger.warn(
+          `   Fields count: ${Object.keys(fieldsToUpdate).length}`,
+        );
+
+        // Log từng field để debug
+        Object.keys(fieldsToUpdate).forEach((fieldName) => {
+          const value = fieldsToUpdate[fieldName];
+          this.logger.warn(
+            `   - "${fieldName}": ${typeof value} = ${JSON.stringify(value)}`,
+          );
+        });
+
         return false;
       } catch (error) {
         if (error.response?.status === 401 || error.response?.status === 403) {
@@ -667,6 +693,16 @@ export class LarkProductSyncService {
           return false;
         }
 
+        // 🔍 ADD HTTP ERROR LOGGING HERE
+        this.logger.error(
+          `❌ HTTP error for product ${product.code}: ${error.message}`,
+        );
+        if (error.response?.data) {
+          this.logger.error(
+            `   Response: ${JSON.stringify(error.response.data)}`,
+          );
+        }
+
         throw error;
       }
     }
@@ -677,75 +713,112 @@ export class LarkProductSyncService {
   private mapProductToLarkBase(product: any): Record<string, any> {
     const fields: Record<string, any> = {};
 
+    console.log(product);
+
+    const addField = (
+      fieldName: string | undefined,
+      value: any,
+      context: string,
+    ) => {
+      if (!fieldName || fieldName === 'undefined') {
+        this.logger.error(
+          `❌ UNDEFINED FIELD NAME in ${context} for product ${product.code}`,
+        );
+        this.logger.error(`   Value: ${value}`);
+        this.logger.error(`   Context: ${context}`);
+        return;
+      }
+      fields[fieldName] = value;
+    };
+
+    // Basic fields
     if (product.code) {
-      fields[LARK_PRODUCT_FIELDS.PRIMARY_CODE] = product.code;
+      addField(LARK_PRODUCT_FIELDS.PRIMARY_CODE, product.code, 'PRIMARY_CODE');
     }
 
     if (product.kiotVietId !== null && product.kiotVietId !== undefined) {
-      fields[LARK_PRODUCT_FIELDS.PRODUCT_ID] = this.safeBigIntToNumber(
-        product.kiotVietId,
+      addField(
+        LARK_PRODUCT_FIELDS.PRODUCT_ID,
+        this.safeBigIntToNumber(product.kiotVietId),
+        'PRODUCT_ID',
       );
     }
 
     if (product.description !== null && product.description !== undefined) {
-      fields[LARK_PRODUCT_FIELDS.DESCRIPTION] = product.description;
+      addField(
+        LARK_PRODUCT_FIELDS.DESCRIPTION,
+        product.description,
+        'DESCRIPTION',
+      );
     }
 
     if (product.createdDate) {
-      fields[LARK_PRODUCT_FIELDS.CREATED_DATE] = new Date(
-        product.createdDate,
-      ).getTime();
+      addField(
+        LARK_PRODUCT_FIELDS.CREATED_DATE,
+        new Date(product.createdDate).getTime(),
+        'CREATED_DATE',
+      );
     }
 
     if (product.modifiedDate) {
-      fields[LARK_PRODUCT_FIELDS.MODIFIED_DATE] = new Date(
-        product.modifiedDate,
-      ).getTime();
+      addField(
+        LARK_PRODUCT_FIELDS.MODIFIED_DATE,
+        new Date(product.modifiedDate).getTime(),
+        'MODIFIED_DATE',
+      );
     }
 
     if (product.tradeMarkName !== null && product.tradeMarkName !== undefined) {
-      fields[LARK_PRODUCT_FIELDS.TRADEMARK] = product.tradeMarkName;
+      addField(
+        LARK_PRODUCT_FIELDS.TRADEMARK,
+        product.tradeMarkName,
+        'TRADEMARK',
+      );
     }
 
     if (product.name) {
-      fields[LARK_PRODUCT_FIELDS.PRODUCT_NAME] = product.name;
+      addField(LARK_PRODUCT_FIELDS.PRODUCT_NAME, product.name, 'PRODUCT_NAME');
     }
 
     if (product.fullName) {
-      fields[LARK_PRODUCT_FIELDS.FULL_NAME] = product.fullName;
+      addField(LARK_PRODUCT_FIELDS.FULL_NAME, product.fullName, 'FULL_NAME');
     }
-
-    // CORRECTED: Category - using direct field from API response
-    // if (product.categoryName) {
-    //   fields[LARK_PRODUCT_FIELDS.TYPE] = product.categoryName;
-    // }
-    // // Fallback for database records with nested structure
-    // else if (product.category?.name) {
-    //   fields[LARK_PRODUCT_FIELDS.TYPE] = product.category.name;
-    // }
 
     // Allows Sale
     if (product.allowsSale !== null && product.allowsSale !== undefined) {
-      fields[LARK_PRODUCT_FIELDS.ALLOWS_SALE] = product.allowsSale
-        ? ALLOWS_SALE_OPTIONS.YES
-        : ALLOWS_SALE_OPTIONS.NO;
+      addField(
+        LARK_PRODUCT_FIELDS.ALLOWS_SALE,
+        product.allowsSale ? ALLOWS_SALE_OPTIONS.YES : ALLOWS_SALE_OPTIONS.NO,
+        'ALLOWS_SALE',
+      );
     }
 
     if (product.isActive !== null && product.isActive !== undefined) {
-      fields[LARK_PRODUCT_FIELDS.PRODUCT_BUSINESS] = product.isActive
-        ? PRODUCT_BUSINESS_OPTIONS.YES
-        : PRODUCT_BUSINESS_OPTIONS.NO;
+      addField(
+        LARK_PRODUCT_FIELDS.PRODUCT_BUSINESS,
+        product.isActive
+          ? PRODUCT_BUSINESS_OPTIONS.YES
+          : PRODUCT_BUSINESS_OPTIONS.NO,
+        'PRODUCT_BUSINESS',
+      );
     }
 
     if (product.type !== null && product.type !== undefined) {
       if (product.type === 2) {
-        fields[LARK_PRODUCT_FIELDS.TYPE] = PRODUCT_TYPE_OPTIONS.REGULAR;
+        addField(
+          LARK_PRODUCT_FIELDS.TYPE,
+          PRODUCT_TYPE_OPTIONS.REGULAR,
+          'TYPE',
+        );
       }
       if (product.type === 3) {
-        fields[LARK_PRODUCT_FIELDS.TYPE] = PRODUCT_TYPE_OPTIONS.SERVICE;
+        addField(
+          LARK_PRODUCT_FIELDS.TYPE,
+          PRODUCT_TYPE_OPTIONS.SERVICE,
+          'TYPE',
+        );
       }
     }
-    // console.log(product);
 
     if (product.priceBooks && product.priceBooks.length > 0) {
       for (const priceBook of product.priceBooks) {
@@ -753,53 +826,87 @@ export class LarkProductSyncService {
         const productId = priceBook.productId;
         const larkField = PRICEBOOK_FIELD_MAPPING[priceBookId];
 
-        console.log(`Id ${productId} thuộc giá vốn ${priceBookId}`);
-
-        fields[larkField] = Number(priceBook.price) || 0;
+        if (larkField && larkField !== 'undefined') {
+          console.log(`Id ${productId} thuộc giá vốn ${priceBookId}`);
+          addField(
+            larkField,
+            Number(priceBook.price) || 0,
+            `priceBookId=${priceBookId}`,
+          );
+        } else {
+          console.log(
+            `⚠️ Skipping deleted priceBookId=${priceBookId} for product ${product.code}`,
+          );
+        }
       }
     }
 
+    // Inventories with validation
     if (product.inventories && product.inventories.length > 0) {
       for (const inventory of product.inventories) {
         const branchId = inventory.branchId;
         const productId = inventory.productId;
 
         const costField = BRANCH_COST_MAPPING[branchId];
-
         console.log(`Id ${productId} thuộc giá bán ${costField}`);
-
-        fields[costField] = Number(inventory.cost) || 0;
+        addField(
+          costField,
+          Number(inventory.cost) || 0,
+          `branchId=${branchId} (cost)`,
+        );
 
         const inventoryField = BRANCH_INVENTORY_MAPPING[branchId];
-
         console.log(`Id ${productId} thuộc tồn kho ${inventoryField}`);
-
-        fields[inventoryField] = Number(inventory.onHand) || 0;
+        addField(
+          inventoryField,
+          Number(inventory.onHand) || 0,
+          `branchId=${branchId} (inventory)`,
+        );
       }
     }
 
     if (product.basePrice) {
-      fields[LARK_PRODUCT_FIELDS.BASE_PRICE] = Number(product.basePrice);
+      addField(
+        LARK_PRODUCT_FIELDS.BASE_PRICE,
+        Number(product.basePrice),
+        'BASE_PRICE',
+      );
     }
 
     if (product.weight) {
-      fields[LARK_PRODUCT_FIELDS.WEIGHT] = Number(product.weight) || null;
+      addField(
+        LARK_PRODUCT_FIELDS.WEIGHT,
+        Number(product.weight) || null,
+        'WEIGHT',
+      );
     }
 
     if (product.unit) {
-      fields[LARK_PRODUCT_FIELDS.UNIT] = product.unit || null;
+      addField(LARK_PRODUCT_FIELDS.UNIT, product.unit || null, 'UNIT');
     }
 
     if (product.parent_name) {
-      fields[LARK_PRODUCT_FIELDS.PRODUCTS_TYPE] = product.parent_name || null;
+      addField(
+        LARK_PRODUCT_FIELDS.PRODUCTS_TYPE,
+        product.parent_name || null,
+        'PRODUCTS_TYPE',
+      );
     }
 
     if (product.child_name) {
-      fields[LARK_PRODUCT_FIELDS.SOURCE] = product.child_name || null;
+      addField(
+        LARK_PRODUCT_FIELDS.SOURCE,
+        product.child_name || null,
+        'SOURCE',
+      );
     }
 
     if (product.branch_name) {
-      fields[LARK_PRODUCT_FIELDS.SUB_CATEGORY] = product.branch_name || null;
+      addField(
+        LARK_PRODUCT_FIELDS.SUB_CATEGORY,
+        product.branch_name || null,
+        'SUB_CATEGORY',
+      );
     }
 
     return fields;
