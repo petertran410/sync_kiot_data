@@ -22,6 +22,10 @@ const LARK_PRODUCT_FIELDS = {
   BASE_PRICE: 'Bảng Giá Chung',
   DESCRIPTION: 'Mô Tả',
 
+  SOURCE: 'Nguồn Gốc',
+  PRODUCTS_TYPE: 'Loại Hàng',
+  SUB_CATEGORY: 'Danh Mục',
+
   COST_PRICE_CUA_HANG_DIEP_TRA: 'Giá Vốn (Cửa Hàng Diệp Trà)',
   COST_PRICE_KHO_HA_NOI: 'Giá Vốn (Kho Hà Nội)',
   COST_PRICE_KHO_SAI_GON: 'Giá Vốn (Kho Sài Gòn)',
@@ -670,14 +674,9 @@ export class LarkProductSyncService {
     return false;
   }
 
-  // ============================================================================
-  // PRODUCT MAPPING TO LARKBASE FIELDS
-  // ============================================================================
-
   private mapProductToLarkBase(product: any): Record<string, any> {
     const fields: Record<string, any> = {};
 
-    // Primary field - Mã Hàng Hoá
     if (product.code) {
       fields[LARK_PRODUCT_FIELDS.PRIMARY_CODE] = product.code;
     }
@@ -692,7 +691,6 @@ export class LarkProductSyncService {
       fields[LARK_PRODUCT_FIELDS.DESCRIPTION] = product.description;
     }
 
-    // Created Date
     if (product.createdDate) {
       fields[LARK_PRODUCT_FIELDS.CREATED_DATE] = new Date(
         product.createdDate,
@@ -705,17 +703,14 @@ export class LarkProductSyncService {
       ).getTime();
     }
 
-    // CORRECTED: Trademark - using direct field from API response
     if (product.tradeMarkName !== null && product.tradeMarkName !== undefined) {
       fields[LARK_PRODUCT_FIELDS.TRADEMARK] = product.tradeMarkName;
     }
 
-    // Product Name
     if (product.name) {
       fields[LARK_PRODUCT_FIELDS.PRODUCT_NAME] = product.name;
     }
 
-    // Full Name
     if (product.fullName) {
       fields[LARK_PRODUCT_FIELDS.FULL_NAME] = product.fullName;
     }
@@ -742,7 +737,6 @@ export class LarkProductSyncService {
         : PRODUCT_BUSINESS_OPTIONS.NO;
     }
 
-    // Product Type
     if (product.type !== null && product.type !== undefined) {
       if (product.type === 2) {
         fields[LARK_PRODUCT_FIELDS.TYPE] = PRODUCT_TYPE_OPTIONS.REGULAR;
@@ -751,39 +745,39 @@ export class LarkProductSyncService {
         fields[LARK_PRODUCT_FIELDS.TYPE] = PRODUCT_TYPE_OPTIONS.SERVICE;
       }
     }
+    // console.log(product);
 
     if (product.priceBooks && product.priceBooks.length > 0) {
       for (const priceBook of product.priceBooks) {
         const priceBookId = priceBook.priceBookId;
+        const productId = priceBook.productId;
         const larkField = PRICEBOOK_FIELD_MAPPING[priceBookId];
 
-        if (larkField) {
-          fields[larkField] = Number(priceBook.price);
-        }
+        console.log(`Id ${productId} thuộc giá vốn ${priceBookId}`);
+
+        fields[larkField] = Number(priceBook.price) || 0;
       }
     }
 
     if (product.inventories && product.inventories.length > 0) {
       for (const inventory of product.inventories) {
         const branchId = inventory.branchId;
+        const productId = inventory.productId;
 
         const costField = BRANCH_COST_MAPPING[branchId];
-        if (costField && inventory.cost) {
-          fields[costField] = Number(inventory.cost) || 0;
-        }
+
+        console.log(`Id ${productId} thuộc giá bán ${costField}`);
+
+        fields[costField] = Number(inventory.cost) || 0;
 
         const inventoryField = BRANCH_INVENTORY_MAPPING[branchId];
-        if (
-          inventoryField &&
-          inventory.onHand !== null &&
-          inventory.onHand !== undefined
-        ) {
-          fields[inventoryField] = Number(inventory.onHand) || 0;
-        }
+
+        console.log(`Id ${productId} thuộc tồn kho ${inventoryField}`);
+
+        fields[inventoryField] = Number(inventory.onHand) || 0;
       }
     }
 
-    // Additional fields that may be present in API response
     if (product.basePrice) {
       fields[LARK_PRODUCT_FIELDS.BASE_PRICE] = Number(product.basePrice);
     }
@@ -796,12 +790,20 @@ export class LarkProductSyncService {
       fields[LARK_PRODUCT_FIELDS.UNIT] = product.unit || null;
     }
 
+    if (product.parent_name) {
+      fields[LARK_PRODUCT_FIELDS.PRODUCTS_TYPE] = product.parent_name || null;
+    }
+
+    if (product.child_name) {
+      fields[LARK_PRODUCT_FIELDS.SOURCE] = product.child_name || null;
+    }
+
+    if (product.branch_name) {
+      fields[LARK_PRODUCT_FIELDS.SUB_CATEGORY] = product.branch_name || null;
+    }
+
     return fields;
   }
-
-  // ============================================================================
-  // UTILITY METHODS
-  // ============================================================================
 
   private safeBigIntToNumber(value: any): number {
     if (typeof value === 'bigint') {

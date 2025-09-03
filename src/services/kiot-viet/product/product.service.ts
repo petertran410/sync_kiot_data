@@ -517,52 +517,19 @@ export class KiotVietProductService {
       try {
         const category = await this.prismaService.category.findFirst({
           where: { kiotVietId: productData.categoryId },
-          select: { id: true, name: true },
+          select: {
+            id: true,
+            name: true,
+            parent_name: true,
+            child_name: true,
+            branch_name: true,
+          },
         });
 
         const tradeMark = await this.prismaService.tradeMark.findFirst({
           where: { kiotVietId: productData.tradeMarkId },
           select: { id: true, name: true },
         });
-        // if (!productData.id || !productData.code || !productData.name) {
-        //   continue;
-        // }
-
-        // let categoryId: number | null = null;
-        // if (productData.categoryId && productData.categoryName) {
-        //   const category = await this.prismaService.category.upsert({
-        //     where: { kiotVietId: productData.categoryId },
-        //     update: {
-        //       name: productData.categoryName.trim(),
-        //       lastSyncedAt: new Date(),
-        //     },
-        //     create: {
-        //       kiotVietId: productData.categoryId,
-        //       name: productData.categoryName.trim(),
-        //       lastSyncedAt: new Date(),
-        //     },
-        //     select: { id: true },
-        //   });
-        //   categoryId = category.id;
-        // }
-
-        // let tradeMarkId: number | null = null;
-        // if (productData.tradeMarkId && productData.tradeMarkName) {
-        //   const tradeMark = await this.prismaService.tradeMark.upsert({
-        //     where: { kiotVietId: productData.tradeMarkId },
-        //     update: {
-        //       name: productData.tradeMarkName.trim(),
-        //       lastSyncedAt: new Date(),
-        //     },
-        //     create: {
-        //       kiotVietId: productData.tradeMarkId,
-        //       name: productData.tradeMarkName.trim(),
-        //       lastSyncedAt: new Date(),
-        //     },
-        //     select: { id: true },
-        //   });
-        //   tradeMarkId = tradeMark.id;
-        // }
 
         const product = await this.prismaService.product.upsert({
           where: { kiotVietId: BigInt(productData.id) },
@@ -570,10 +537,13 @@ export class KiotVietProductService {
             code: productData.code.trim(),
             name: productData.name.trim(),
             fullName: productData.fullName?.trim() || productData.name.trim(),
-            categoryId: productData.categoryId,
-            categoryName: productData.categoryName,
-            tradeMarkId: productData.tradeMarkId,
-            tradeMarkName: productData.tradeMarkName,
+            categoryId: category?.id,
+            categoryName: category?.name,
+            parent_name: category?.parent_name,
+            child_name: category?.child_name,
+            branch_name: category?.branch_name,
+            tradeMarkId: tradeMark?.id,
+            tradeMarkName: tradeMark?.name,
             allowsSale: productData.allowsSale ?? true,
             type: productData.type ?? 1,
             hasVariants: productData.hasVariants ?? false,
@@ -606,10 +576,13 @@ export class KiotVietProductService {
             code: productData.code.trim(),
             name: productData.name.trim(),
             fullName: productData.fullName?.trim() || productData.name.trim(),
-            categoryId: productData.categoryId,
-            categoryName: productData.categoryName,
-            tradeMarkId: productData.tradeMarkId,
-            tradeMarkName: productData.tradeMarkName,
+            categoryId: category?.id,
+            categoryName: category?.name,
+            parent_name: category?.parent_name,
+            child_name: category?.child_name,
+            branch_name: category?.branch_name,
+            tradeMarkId: tradeMark?.id,
+            tradeMarkName: tradeMark?.name,
             allowsSale: productData.allowsSale ?? true,
             type: productData.type ?? 1,
             hasVariants: productData.hasVariants ?? false,
@@ -745,10 +718,10 @@ export class KiotVietProductService {
         if (productData.priceBooks) {
           for (let i = 0; i < productData.priceBooks.length; i++) {
             const detail = productData.priceBooks[i];
-            const pricebook = await this.prismaService.priceBook.findFirst({
-              where: { kiotVietId: detail.priceBookId },
-              select: { id: true, name: true },
-            });
+            // const pricebook = await this.prismaService.priceBook.findFirst({
+            //   where: { kiotVietId: detail.priceBookId },
+            //   select: { id: true, name: true },
+            // });
 
             await this.prismaService.priceBookDetail.upsert({
               where: {
@@ -759,8 +732,8 @@ export class KiotVietProductService {
               },
               update: {
                 lineNumber: i + 1,
-                priceBookId: pricebook?.id,
-                priceBookName: pricebook?.name,
+                priceBookId: detail.priceBookId,
+                priceBookName: detail.priceBookName,
                 price: detail.price,
                 lastSyncedAt: new Date(),
                 productId: product.id,
@@ -768,8 +741,8 @@ export class KiotVietProductService {
               },
               create: {
                 lineNumber: i + 1,
-                priceBookId: pricebook?.id,
-                priceBookName: pricebook?.name,
+                priceBookId: detail.priceBookId,
+                priceBookName: detail.priceBookName,
                 price: detail.price,
                 lastSyncedAt: new Date(),
                 productId: product.id,
@@ -812,6 +785,7 @@ export class KiotVietProductService {
             await this.prismaService.productInventory.findMany({
               where: { productId: product.id },
               select: {
+                productId: true,
                 branchId: true,
                 onHand: true,
                 reserved: true,
@@ -823,6 +797,7 @@ export class KiotVietProductService {
           const priceBooks = await this.prismaService.priceBookDetail.findMany({
             where: { productId: product.id },
             select: {
+              productId: true,
               priceBookId: true,
               price: true,
             },
