@@ -718,10 +718,10 @@ export class KiotVietProductService {
         if (productData.priceBooks) {
           for (let i = 0; i < productData.priceBooks.length; i++) {
             const detail = productData.priceBooks[i];
-            // const pricebook = await this.prismaService.priceBook.findFirst({
-            //   where: { kiotVietId: detail.priceBookId },
-            //   select: { id: true, name: true },
-            // });
+            const pricebook = await this.prismaService.priceBook.findFirst({
+              where: { kiotVietId: detail.priceBookId },
+              select: { id: true, name: true },
+            });
 
             await this.prismaService.priceBookDetail.upsert({
               where: {
@@ -732,8 +732,8 @@ export class KiotVietProductService {
               },
               update: {
                 lineNumber: i + 1,
-                priceBookId: detail.priceBookId,
-                priceBookName: detail.priceBookName,
+                priceBookId: pricebook?.id,
+                priceBookName: pricebook?.name,
                 price: detail.price,
                 lastSyncedAt: new Date(),
                 productId: product.id,
@@ -741,8 +741,8 @@ export class KiotVietProductService {
               },
               create: {
                 lineNumber: i + 1,
-                priceBookId: detail.priceBookId,
-                priceBookName: detail.priceBookName,
+                priceBookId: pricebook?.id,
+                priceBookName: pricebook?.name,
                 price: detail.price,
                 lastSyncedAt: new Date(),
                 productId: product.id,

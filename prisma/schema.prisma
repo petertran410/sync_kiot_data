@@ -919,7 +919,7 @@ model PriceBook {
   lastSyncedAt   DateTime                 @default(now())
   branches       PriceBookBranch[]
   customerGroups PriceBookCustomerGroup[]
-  // details        PriceBookDetail[]
+  details        PriceBookDetail[]
   users          PriceBookUser[]
 
   @@index([kiotVietId])
@@ -934,7 +934,7 @@ model PriceBookDetail {
   lineNumber    Int?
   priceBookName String?
   productName   String?
-  // priceBook     PriceBook? @relation(fields: [priceBookId], references: [id])
+  priceBook     PriceBook? @relation(fields: [priceBookId], references: [id])
   product       Product    @relation(fields: [productId], references: [id])
 
   @@unique([productId, lineNumber])
