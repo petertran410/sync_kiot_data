@@ -14,6 +14,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { KiotVietOrderSupplierService } from 'src/services/kiot-viet/order-supplier/order-supplier.service';
 import { LarkOrderSupplierSyncService } from 'src/services/lark/order-supplier/lark-order-supplier-sync.service';
 import { KiotVietPurchaseOrderService } from 'src/services/kiot-viet/purchase-order/purchase-order.service';
+import { KiotVietTradeMarkService } from 'src/services/kiot-viet/trademark/trademark.service';
 
 @Controller('sync')
 export class SyncController {
@@ -35,6 +36,7 @@ export class SyncController {
     private readonly larkOrderSupplierService: LarkOrderSupplierSyncService,
     private readonly purchaseOrderService: KiotVietPurchaseOrderService,
     private readonly larkPurchaseOrderSyncService: LarkPurchaseOrderSyncService,
+    private readonly trademarkService: KiotVietTradeMarkService,
   ) {}
 
   @Get('status')
@@ -277,6 +279,30 @@ export class SyncController {
   //     };
   //   }
   // }
+
+  @Post('trademarks')
+  async syncTrademarks() {
+    try {
+      this.logger.log('🗂️ Starting trademark sync...');
+
+      await this.trademarkService.enableHistoricalSync();
+
+      await this.trademarkService.syncHistoricalTradeMarks();
+
+      return {
+        success: true,
+        message: 'Trademark sync completed successfully',
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error) {
+      this.logger.error(`❌ Trademark sync failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
 
   @Post('categories')
   async syncCategories() {

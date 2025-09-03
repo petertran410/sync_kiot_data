@@ -4,7 +4,8 @@ import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { KiotVietAuthService } from '../auth.service';
-import { firstValueFrom } from 'rxjs';
+import { async, firstValueFrom } from 'rxjs';
+import { response } from 'express';
 
 interface KiotVietTradeMark {
   tradeMarkId: number;
@@ -32,9 +33,35 @@ export class KiotVietTradeMarkService {
     this.baseUrl = baseUrl;
   }
 
-  // ============================================================================
-  // HISTORICAL SYNC
-  // ============================================================================
+  async checkAndRunAppropriateSync(): Promise<void> {
+    try {
+      const historicalSync = await this.prismaService.syncControl.findFirst({
+        where: { name: 'trademark_historical' },
+      });
+
+      if (historicalSync?.isEnabled && !historicalSync.isRunning) {
+        this.logger.log('Starting historical trademark sync...');
+        await this.syncHistoricalTradeMarks();
+        return;
+      }
+
+      this.logger.log('Running default historical trademark sync...');
+      await this.syncHistoricalTradeMarks();
+    } catch (error) {
+      this.logger.error(`Sync check failed: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async enableHistoricalSync(): Promise<void> {
+    await this.updateSyncControl('trademark_historical', {
+      isEnabled: true,
+      isRunning: false,
+      status: 'idle',
+    });
+
+    this.logger.log('✅ Historical product sync enabled');
+  }
 
   async syncHistoricalTradeMarks(): Promise<void> {
     const syncName = 'trademark_historical';
@@ -42,7 +69,10 @@ export class KiotVietTradeMarkService {
     let currentItem = 0;
     let processedCount = 0;
     let totalTradeMarks = 0;
-    let allTradeMarks: KiotVietTradeMark[] = [];
+    let consecutiveEmptyPages = 0;
+    let consecutiveErrorPages = 0;
+    let lastValidTotal = 0;
+    let processedTrademarkIds = new Set<number>();
 
     try {
       await this.updateSyncControl(syncName, {
@@ -56,78 +86,165 @@ export class KiotVietTradeMarkService {
         '🚀 Starting historical trademark sync with pagination...',
       );
 
-      // Pagination loop to get ALL trademarks
+      const MAX_CONSECUTIVE_EMPTY_PAGES = 5;
+      const MAX_CONSECUTIVE_ERROR_PAGES = 3;
+      const RETRY_DELAY_MS = 2000;
+      const MAX_TOTAL_RETRIES = 10;
+
+      let totalRetries = 0;
+
       while (true) {
         const currentPage = Math.floor(currentItem / this.PAGE_SIZE) + 1;
 
-        this.logger.log(
-          `📄 Fetching page ${currentPage} (items ${currentItem} - ${currentItem + this.PAGE_SIZE - 1})...`,
-        );
-
-        const response = await this.fetchTradeMarksWithRetry({
-          pageSize: this.PAGE_SIZE,
-          currentItem,
-          // Remove orderBy to avoid 500 error
-        });
-
-        const { data: tradeMarks, total } = response;
-
-        // Set total on first page
-        if (totalTradeMarks === 0 && total !== undefined) {
-          totalTradeMarks = total;
-          this.logger.log(`📊 Total trademarks detected: ${totalTradeMarks}`);
+        if (totalTradeMarks > 0) {
+          if (currentItem >= totalTradeMarks) {
+            this.logger.log(
+              `✅ Pagination complete. Processed ${processedCount}/${totalTradeMarks} trademarks`,
+            );
+            break;
+          }
         }
 
-        // Check if we have data
-        if (!tradeMarks || tradeMarks.length === 0) {
+        try {
           this.logger.log(
-            '✅ No more trademarks to fetch - pagination complete',
+            `📄 Fetching page ${currentPage} (items ${currentItem} - ${currentItem + this.PAGE_SIZE - 1})`,
           );
-          break;
+
+          const response = await this.fetchTradeMarksListWithRetry({
+            pageSize: this.PAGE_SIZE,
+            currentItem,
+          });
+
+          consecutiveErrorPages = 0;
+
+          const { data: trademarks, total } = response;
+
+          if (total !== undefined && total !== null) {
+            if (totalTradeMarks === 0) {
+              this.logger.log(
+                `📊 Total trademarks detected: ${total}. Starting processing...`,
+              );
+              totalTradeMarks = total;
+            } else if (total !== totalTradeMarks && total !== lastValidTotal) {
+              this.logger.warn(
+                `⚠️ Total count changed: ${totalTradeMarks} → ${total}. Using latest.`,
+              );
+              totalTradeMarks = total;
+            }
+            lastValidTotal = total;
+          }
+
+          if (!trademarks || trademarks.length === 0) {
+            this.logger.warn(
+              `⚠️ Empty page received at position ${currentItem}`,
+            );
+            consecutiveEmptyPages++;
+
+            if (totalTradeMarks > 0 && currentItem >= totalTradeMarks) {
+              this.logger.log('✅ Reached end of data (empty page past total)');
+              break;
+            }
+
+            if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
+              this.logger.log(
+                `🔚 Stopping after ${consecutiveEmptyPages} consecutive empty pages`,
+              );
+              break;
+            }
+
+            currentItem += this.PAGE_SIZE;
+            continue;
+          }
+
+          const newTrademarks = trademarks.filter((trademark) => {
+            if (processedTrademarkIds.has(trademark.tradeMarkId)) {
+              this.logger.debug(
+                `⚠️ Duplicate trademark ID detected: ${trademark.tradeMarkId} (${trademark.tradeMarkName})`,
+              );
+              return false;
+            }
+            processedTrademarkIds.add(trademark.tradeMarkId);
+            return true;
+          });
+
+          if (newTrademarks.length !== trademarks.length) {
+            this.logger.warn(
+              `🔄 Filtered out ${trademarks.length - newTrademarks.length} duplicate trademarks on page ${currentPage}`,
+            );
+          }
+
+          if (newTrademarks.length === 0) {
+            this.logger.log(
+              `⏭️ Skipping page ${currentPage} - all trademarks already processed`,
+            );
+            currentItem += this.PAGE_SIZE;
+            continue;
+          }
+
+          this.logger.log(
+            `🔄 Processing ${newTrademarks.length} trademarks from page ${currentPage}...`,
+          );
+
+          const trademakrsWithDetails =
+            await this.enrichTradeMarksWithDetails(newTrademarks);
+          const savedTradeMarks = await this.saveTradeMarksToDatabase(
+            trademakrsWithDetails,
+          );
+
+          processedCount += savedTradeMarks.length;
+          currentItem += this.PAGE_SIZE;
+
+          if (totalTradeMarks > 0) {
+            const completionPercentage =
+              (processedCount / totalTradeMarks) * 100;
+            this.logger.log(
+              `📈 Progress: ${processedCount}/${totalTradeMarks} (${completionPercentage.toFixed(1)}%)`,
+            );
+
+            if (processedCount >= totalTradeMarks) {
+              this.logger.log('🎉 All trademarks processed successfully!');
+              break;
+            }
+          }
+
+          consecutiveEmptyPages = 0;
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        } catch (error) {
+          consecutiveErrorPages++;
+          totalRetries++;
+
+          this.logger.error(
+            `❌ Page ${currentPage} failed (attempt ${consecutiveErrorPages}/${MAX_CONSECUTIVE_ERROR_PAGES}): ${error.message}`,
+          );
+
+          if (
+            consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES ||
+            totalRetries >= MAX_TOTAL_RETRIES
+          ) {
+            throw new Error(
+              `Too many consecutive errors (${consecutiveErrorPages}) or total retries (${totalRetries}). Last error: ${error.message}`,
+            );
+          }
+
+          await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
         }
-
-        // Add to all trademarks
-        allTradeMarks.push(...tradeMarks);
-        processedCount += tradeMarks.length;
-        currentItem += this.PAGE_SIZE;
-
-        this.logger.log(
-          `📈 Progress: ${processedCount}/${totalTradeMarks || 'unknown'} trademarks fetched`,
-        );
-
-        // Break if we've got all trademarks
-        if (totalTradeMarks > 0 && processedCount >= totalTradeMarks) {
-          this.logger.log('🎉 All trademarks fetched successfully!');
-          break;
-        }
-
-        // Break if this page was not full (last page)
-        if (tradeMarks.length < this.PAGE_SIZE) {
-          this.logger.log('✅ Last page reached (partial page)');
-          break;
-        }
-
-        // Rate limiting delay
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-
-      this.logger.log(`📊 Total fetched: ${allTradeMarks.length} trademarks`);
-
-      if (allTradeMarks.length > 0) {
-        const saved = await this.saveTradeMarksToDatabase(allTradeMarks);
-        this.logger.log(`✅ Saved ${saved.created + saved.updated} trademarks`);
       }
 
       await this.updateSyncControl(syncName, {
         isRunning: false,
-        isEnabled: false, // Auto-disable after completion
+        isEnabled: false,
         status: 'completed',
         completedAt: new Date(),
         lastRunAt: new Date(),
         progress: { processedCount, expectedTotal: totalTradeMarks },
       });
 
-      this.logger.log('✅ Historical trademark sync completed');
+      const completionRate =
+        totalTradeMarks > 0 ? (processedCount / totalTradeMarks) * 100 : 100;
+
+      this.logger.log(
+        `✅ Historical trademark sync completed: ${processedCount}/${totalTradeMarks} (${completionRate.toFixed(1)}% completion rate)`,
+      );
     } catch (error) {
       this.logger.error(
         `❌ Historical trademark sync failed: ${error.message}`,
@@ -144,12 +261,38 @@ export class KiotVietTradeMarkService {
     }
   }
 
-  async fetchTradeMarks(params: {
+  async fetchTradeMarksListWithRetry(
+    params: {
+      currentItem?: number;
+      pageSize?: number;
+      orderBy?: string;
+      orderDirection?: string;
+    },
+    maxRetries: number = 5,
+  ): Promise<any> {
+    let lastError: Error | undefined;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        return await this.fetchTradeMarksList(params);
+      } catch (error) {
+        lastError = error as Error;
+
+        if (attempt < maxRetries) {
+          const delay = 2000 * attempt;
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+      }
+    }
+
+    throw lastError;
+  }
+
+  async fetchTradeMarksList(params: {
     orderBy?: string;
     orderDirection?: string;
     pageSize?: number;
     currentItem?: number;
-    lastModifiedFrom?: string;
   }): Promise<any> {
     const headers = await this.authService.getRequestHeaders();
 
@@ -158,75 +301,69 @@ export class KiotVietTradeMarkService {
       currentItem: (params.currentItem || 0).toString(),
     });
 
-    // Only add orderBy if specified (avoid 500 error)
     if (params.orderBy) {
       queryParams.append('orderBy', params.orderBy);
       queryParams.append('orderDirection', params.orderDirection || 'ASC');
     }
 
-    if (params.lastModifiedFrom) {
-      queryParams.append('lastModifiedFrom', params.lastModifiedFrom);
-    }
-
     const response = await firstValueFrom(
       this.httpService.get(`${this.baseUrl}/trademark?${queryParams}`, {
         headers,
-        timeout: 30000,
+        timeout: 45000,
       }),
     );
 
     return response.data;
   }
 
-  // ============================================================================
-  // API METHODS
-  // ============================================================================
+  private async enrichTradeMarksWithDetails(
+    trademarks: KiotVietTradeMark[],
+  ): Promise<KiotVietTradeMark[]> {
+    this.logger.log(
+      `🔍 Enriching ${trademarks.length} trademarks with details...`,
+    );
 
-  async fetchTradeMarksWithRetry(
-    params: {
-      orderBy?: string;
-      orderDirection?: string;
-      pageSize?: number;
-      currentItem?: number;
-      lastModifiedFrom?: string;
-    },
-    maxRetries: number = 3,
-  ): Promise<any> {
-    let lastError: Error | undefined;
+    const enrichedTrademarks: KiotVietTradeMark[] = [];
 
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    for (const trademark of trademarks) {
       try {
-        return await this.fetchTradeMarks(params);
-      } catch (error) {
-        lastError = error as Error;
-        this.logger.warn(
-          `⚠️ API attempt ${attempt}/${maxRetries} failed: ${error.message}`,
+        const headers = await this.authService.getRequestHeaders();
+
+        const response = await firstValueFrom(
+          this.httpService.get(
+            `${this.baseUrl}/trademark/${trademark.tradeMarkId}`,
+            { headers, timeout: 30000 },
+          ),
         );
 
-        if (attempt < maxRetries) {
-          await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
+        if (response.data) {
+          enrichedTrademarks.push(response.data);
+        } else {
+          enrichedTrademarks.push(trademark);
         }
+
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      } catch (error) {
+        this.logger.warn(
+          `Failed to enrich trademark ${trademark.tradeMarkName}: ${error.message}`,
+        );
+        enrichedTrademarks.push(trademark);
       }
     }
 
-    throw lastError;
+    return enrichedTrademarks;
   }
-
-  // ============================================================================
-  // DATABASE SAVE
-  // ============================================================================
 
   private async saveTradeMarksToDatabase(
     tradeMarks: KiotVietTradeMark[],
-  ): Promise<{ created: number; updated: number }> {
+  ): Promise<any[]> {
     this.logger.log(`💾 Saving ${tradeMarks.length} trademarks to database...`);
 
-    let created = 0;
-    let updated = 0;
+    const savedTrademarks: any[] = [];
 
     for (const tradeMarkData of tradeMarks) {
       try {
-        const result = await this.prismaService.tradeMark.upsert({
+        const trademark = await this.prismaService.tradeMark.upsert({
           where: { kiotVietId: tradeMarkData.tradeMarkId },
           update: {
             name: tradeMarkData.tradeMarkName,
@@ -248,21 +385,7 @@ export class KiotVietTradeMarkService {
           },
         });
 
-        // Check if it was created or updated
-        const existingCount = await this.prismaService.tradeMark.count({
-          where: {
-            kiotVietId: tradeMarkData.tradeMarkId,
-            createdDate: {
-              lt: new Date(Date.now() - 1000), // Created more than 1 second ago
-            },
-          },
-        });
-
-        if (existingCount > 0) {
-          updated++;
-        } else {
-          created++;
-        }
+        savedTrademarks.push(trademark);
       } catch (error) {
         this.logger.error(
           `❌ Failed to save trademark ${tradeMarkData.tradeMarkName}: ${error.message}`,
@@ -271,23 +394,9 @@ export class KiotVietTradeMarkService {
     }
 
     this.logger.log(
-      `✅ Trademarks saved: ${created} created, ${updated} updated`,
+      `✅ Saved ${savedTrademarks.length} Trademarks successfully`,
     );
-    return { created, updated };
-  }
-
-  // ============================================================================
-  // SYNC CONTROL
-  // ============================================================================
-
-  async enableHistoricalSync(): Promise<void> {
-    await this.updateSyncControl('trademark_historical', {
-      isEnabled: true,
-      isRunning: false,
-      status: 'idle',
-    });
-
-    this.logger.log('✅ Historical trademark sync enabled');
+    return savedTrademarks;
   }
 
   private async updateSyncControl(name: string, data: any): Promise<void> {

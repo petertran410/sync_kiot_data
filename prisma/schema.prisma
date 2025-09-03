@@ -20,7 +20,7 @@ model Category {
   rank                    Int?
   parent                  Category?                 @relation("CategoryHierarchy", fields: [parentId], references: [id])
   children                Category[]                @relation("CategoryHierarchy")
-  products                Product[]
+  // products                Product[]
   VoucherCampaignCategory VoucherCampaignCategory[]
 
   @@index([kiotVietId])
@@ -31,7 +31,7 @@ model Category {
 model Product {
   id                   Int                      @id @default(autoincrement())
   kiotVietId           BigInt                   @unique
-  code                 String                   @unique
+  code                 String
   barCode              String?
   name                 String
   fullName             String
@@ -68,8 +68,8 @@ model Product {
   orderDetails         OrderDetail[]
   orderSupplierDetails OrderSupplierDetail[]
   priceBookDetails     PriceBookDetail[]
-  category             Category?                @relation(fields: [categoryId], references: [id])
-  tradeMark            TradeMark?               @relation(fields: [tradeMarkId], references: [id])
+  // category             Category?                @relation(fields: [categoryId], references: [id])
+  // tradeMark            TradeMark?               @relation(fields: [tradeMarkId], references: [id])
   attributes           ProductAttribute[]
   images               ProductImage[]
   inventories          ProductInventory[]
@@ -80,9 +80,6 @@ model Product {
 
   @@index([kiotVietId])
   @@index([code])
-  @@index([categoryId])
-  @@index([masterProductId])
-  @@index([lastSyncedAt])
 }
 
 model ProductAttribute {
@@ -994,7 +991,7 @@ model TradeMark {
   createdDate  DateTime  @default(now())
   modifiedDate DateTime  @updatedAt
   lastSyncedAt DateTime  @default(now())
-  products     Product[]
+  // products     Product[]
 
   @@index([kiotVietId])
 }

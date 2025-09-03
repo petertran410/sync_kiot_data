@@ -18,7 +18,7 @@ import { KiotVietSupplierService } from './supplier/supplier.service';
 import { KiotVietOrderSupplierService } from './order-supplier/order-supplier.service';
 import { KiotVietPurchaseOrderService } from './purchase-order/purchase-order.service';
 // import { KiotVietBranchService } from './branch/branch.service';
-// import { KiotVietTradeMarkService } from './trademark/trademark.service';
+import { KiotVietTradeMarkService } from './trademark/trademark.service';
 import { KiotVietCategoryService } from './category/category.service';
 import { KiotVietReturnService } from './returns/return.service';
 
@@ -37,7 +37,7 @@ import { KiotVietReturnService } from './returns/return.service';
     KiotVietCustomerService,
     // KiotVietBranchService,
     KiotVietCustomerGroupService,
-    // KiotVietTradeMarkService,
+    KiotVietTradeMarkService,
     KiotVietPriceBookService,
     KiotVietUserService,
     KiotVietSaleChannelService,
@@ -57,7 +57,7 @@ import { KiotVietReturnService } from './returns/return.service';
     KiotVietCustomerService,
     // KiotVietBranchService,
     KiotVietCustomerGroupService,
-    // KiotVietTradeMarkService,
+    KiotVietTradeMarkService,
     KiotVietPriceBookService,
     KiotVietUserService,
     KiotVietSaleChannelService,
