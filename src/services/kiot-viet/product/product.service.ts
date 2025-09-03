@@ -515,6 +515,55 @@ export class KiotVietProductService {
 
     for (const productData of products) {
       try {
+        const category = await this.prismaService.category.findFirst({
+          where: { kiotVietId: productData.categoryId },
+          select: { id: true, name: true },
+        });
+
+        const tradeMark = await this.prismaService.tradeMark.findFirst({
+          where: { kiotVietId: productData.tradeMarkId },
+          select: { id: true, name: true },
+        });
+        // if (!productData.id || !productData.code || !productData.name) {
+        //   continue;
+        // }
+
+        // let categoryId: number | null = null;
+        // if (productData.categoryId && productData.categoryName) {
+        //   const category = await this.prismaService.category.upsert({
+        //     where: { kiotVietId: productData.categoryId },
+        //     update: {
+        //       name: productData.categoryName.trim(),
+        //       lastSyncedAt: new Date(),
+        //     },
+        //     create: {
+        //       kiotVietId: productData.categoryId,
+        //       name: productData.categoryName.trim(),
+        //       lastSyncedAt: new Date(),
+        //     },
+        //     select: { id: true },
+        //   });
+        //   categoryId = category.id;
+        // }
+
+        // let tradeMarkId: number | null = null;
+        // if (productData.tradeMarkId && productData.tradeMarkName) {
+        //   const tradeMark = await this.prismaService.tradeMark.upsert({
+        //     where: { kiotVietId: productData.tradeMarkId },
+        //     update: {
+        //       name: productData.tradeMarkName.trim(),
+        //       lastSyncedAt: new Date(),
+        //     },
+        //     create: {
+        //       kiotVietId: productData.tradeMarkId,
+        //       name: productData.tradeMarkName.trim(),
+        //       lastSyncedAt: new Date(),
+        //     },
+        //     select: { id: true },
+        //   });
+        //   tradeMarkId = tradeMark.id;
+        // }
+
         const product = await this.prismaService.product.upsert({
           where: { kiotVietId: BigInt(productData.id) },
           update: {

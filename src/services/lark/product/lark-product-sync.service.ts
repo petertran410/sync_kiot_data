@@ -757,7 +757,7 @@ export class LarkProductSyncService {
         const priceBookId = priceBook.priceBookId;
         const larkField = PRICEBOOK_FIELD_MAPPING[priceBookId];
 
-        if (larkField && priceBook.price) {
+        if (larkField) {
           fields[larkField] = Number(priceBook.price);
         }
       }

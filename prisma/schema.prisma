@@ -18,10 +18,14 @@ model Category {
   lastSyncedAt            DateTime                  @default(now())
   hasChild                Boolean                   @default(false)
   rank                    Int?
+  parent_name             String?                   @db.VarChar(255)
+  child_name              String?                   @db.VarChar(255)
+  branch_name             String?                   @db.VarChar(255)
   parent                  Category?                 @relation("CategoryHierarchy", fields: [parentId], references: [id])
   children                Category[]                @relation("CategoryHierarchy")
-  // products                Product[]
   VoucherCampaignCategory VoucherCampaignCategory[]
+
+  products                Product[]
 
   @@index([kiotVietId])
   @@index([parentId])
@@ -37,6 +41,9 @@ model Product {
   fullName             String
   categoryId           Int?
   categoryName         String?
+  parent_name          String?
+  child_name           String?
+  branch_name          String?
   tradeMarkId          Int?
   type                 Int?
   description          String?
@@ -68,8 +75,6 @@ model Product {
   orderDetails         OrderDetail[]
   orderSupplierDetails OrderSupplierDetail[]
   priceBookDetails     PriceBookDetail[]
-  // category             Category?                @relation(fields: [categoryId], references: [id])
-  // tradeMark            TradeMark?               @relation(fields: [tradeMarkId], references: [id])
   attributes           ProductAttribute[]
   images               ProductImage[]
   inventories          ProductInventory[]
@@ -78,8 +83,12 @@ model Product {
   transferDetails      TransferDetail[]
   voucherCampaigns     VoucherCampaignProduct[]
 
+  category             Category?                @relation(fields: [categoryId], references: [id])
+  tradeMark            TradeMark?               @relation(fields: [tradeMarkId], references: [id])
+
   @@index([kiotVietId])
   @@index([code])
+  @@index([categoryId])
 }
 
 model ProductAttribute {
@@ -98,9 +107,9 @@ model ProductAttribute {
 model ProductImage {
   id           Int      @id @default(autoincrement())
   productId    Int
-  imageUrl     Json?
   lineNumber   Int
   lastSyncedAt DateTime @default(now())
+  imageUrl     Json?
   product      Product  @relation(fields: [productId], references: [id])
 
   @@unique([productId, lineNumber])
@@ -180,17 +189,17 @@ model Customer {
 }
 
 model CustomerGroup {
-  id                    Int                     @id @default(autoincrement())
-  kiotVietId            Int                     @unique
-  name                  String
-  description           String?
-  discount              Int?
-  retailerId            Int?
-  createdDate           DateTime
-  lastSyncedAt          DateTime                @default(now())
-  createdBy             Int?
-  CustomerGroupRelation CustomerGroupRelation[]
-  PriceBookCustomerGroup  PriceBookCustomerGroup[]
+  id                     Int                      @id @default(autoincrement())
+  kiotVietId             Int                      @unique
+  name                   String
+  description            String?
+  discount               Int?
+  retailerId             Int?
+  createdDate            DateTime
+  lastSyncedAt           DateTime                 @default(now())
+  createdBy              Int?
+  CustomerGroupRelation  CustomerGroupRelation[]
+  PriceBookCustomerGroup PriceBookCustomerGroup[]
 
   @@index([kiotVietId])
 }
@@ -863,7 +872,7 @@ model Return {
   customerName String?
   soldByName   String
   payments     Payment[]
-  branch       Branch?         @relation(fields: [branchId], references: [id])
+  branch       Branch?        @relation(fields: [branchId], references: [id])
   customer     Customer?      @relation(fields: [customerId], references: [id])
   details      ReturnDetail[]
 
@@ -917,16 +926,16 @@ model PriceBook {
 }
 
 model PriceBookDetail {
-  id          Int       @id @default(autoincrement())
-  priceBookId Int?
+  id            Int        @id @default(autoincrement())
+  priceBookId   Int?
+  productId     Int
+  price         Decimal    @db.Decimal(15, 2)
+  lastSyncedAt  DateTime   @default(now())
+  lineNumber    Int?
   priceBookName String?
-  productId   Int
-  productName String?
-  price       Decimal   @db.Decimal(15, 2)
-  lineNumber  Int?
-  priceBook   PriceBook? @relation(fields: [priceBookId], references: [id])
-  product     Product   @relation(fields: [productId], references: [id])
-  lastSyncedAt   DateTime                 @default(now())
+  productName   String?
+  priceBook     PriceBook? @relation(fields: [priceBookId], references: [id])
+  product       Product    @relation(fields: [productId], references: [id])
 
   @@unique([productId, lineNumber])
   @@index([priceBookId])
@@ -934,16 +943,16 @@ model PriceBookDetail {
 }
 
 model PriceBookBranch {
-  id          Int       @id @default(autoincrement())
-  kiotVietId  BigInt?
-  priceBookId Int
-  branchId    Int?
-  branchName  String?
-  retailerId  Int?
-  lineNumber  Int
-  lastSyncedAt  DateTime @default(now())
-  branch      Branch?    @relation(fields: [branchId], references: [id])
-  priceBook   PriceBook @relation(fields: [priceBookId], references: [id])
+  id           Int       @id @default(autoincrement())
+  kiotVietId   BigInt?
+  priceBookId  Int
+  branchId     Int?
+  branchName   String?
+  retailerId   Int?
+  lineNumber   Int
+  lastSyncedAt DateTime  @default(now())
+  branch       Branch?   @relation(fields: [branchId], references: [id])
+  priceBook    PriceBook @relation(fields: [priceBookId], references: [id])
 
   @@unique([priceBookId, lineNumber])
   @@index([priceBookId])
@@ -951,16 +960,16 @@ model PriceBookBranch {
 }
 
 model PriceBookCustomerGroup {
-  id              Int       @id @default(autoincrement())
-  kiotVietId      BigInt?
-  priceBookId     Int
-  retailerId      Int?
-  lineNumber      Int
-  customerGroupId Int?
+  id                Int            @id @default(autoincrement())
+  kiotVietId        BigInt?
+  priceBookId       Int
+  retailerId        Int?
+  lineNumber        Int
+  customerGroupId   Int?
   customerGroupName String?
-  lastSyncedAt  DateTime @default(now())
-  priceBook       PriceBook @relation(fields: [priceBookId], references: [id])
-  CustomerGroup CustomerGroup? @relation(fields: [customerGroupId], references: [id])
+  lastSyncedAt      DateTime       @default(now())
+  CustomerGroup     CustomerGroup? @relation(fields: [customerGroupId], references: [id])
+  priceBook         PriceBook      @relation(fields: [priceBookId], references: [id])
 
   @@unique([priceBookId, lineNumber])
   @@index([priceBookId])
@@ -968,15 +977,15 @@ model PriceBookCustomerGroup {
 }
 
 model PriceBookUser {
-  id          Int       @id @default(autoincrement())
-  kiotVietId  BigInt?
-  priceBookId Int
-  userId      BigInt?
-  userName    String?
-  lineNumber  Int
-  lastSyncedAt  DateTime @default(now())
-  priceBook   PriceBook @relation(fields: [priceBookId], references: [id])
-  user        User?      @relation(fields: [userId], references: [kiotVietId])
+  id           Int       @id @default(autoincrement())
+  kiotVietId   BigInt?
+  priceBookId  Int
+  userId       BigInt?
+  userName     String?
+  lineNumber   Int
+  lastSyncedAt DateTime  @default(now())
+  priceBook    PriceBook @relation(fields: [priceBookId], references: [id])
+  user         User?     @relation(fields: [userId], references: [kiotVietId])
 
   @@unique([priceBookId, lineNumber])
   @@index([priceBookId])
@@ -984,14 +993,15 @@ model PriceBookUser {
 }
 
 model TradeMark {
-  id           Int       @id @default(autoincrement())
-  kiotVietId   Int       @unique
+  id           Int      @id @default(autoincrement())
+  kiotVietId   Int      @unique
   name         String
   retailerId   Int?
-  createdDate  DateTime  @default(now())
-  modifiedDate DateTime  @updatedAt
-  lastSyncedAt DateTime  @default(now())
-  // products     Product[]
+  createdDate  DateTime @default(now())
+  modifiedDate DateTime @updatedAt
+  lastSyncedAt DateTime @default(now())
+
+  products     Product[]
 
   @@index([kiotVietId])
 }

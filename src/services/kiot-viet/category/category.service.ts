@@ -370,38 +370,33 @@ export class KiotVietCategoryService {
     categories: KiotVietCategory[],
   ): Promise<any[]> {
     this.logger.log(`💾 Saving ${categories.length} categories to database...`);
-
     const savedCategories: any[] = [];
-
     const processedCategories = this.flattenAndSortCategories(categories);
+
+    const categoryMap = new Map<number, KiotVietCategory>();
+    processedCategories.forEach((cat) => categoryMap.set(cat.categoryId, cat));
 
     for (const categoryData of processedCategories) {
       try {
-        if (
-          !categoryData.categoryId ||
-          !categoryData.categoryName ||
-          categoryData.categoryName.trim() === ''
-        ) {
+        if (!categoryData.categoryId || !categoryData.categoryName?.trim()) {
           this.logger.warn(
             `⚠️ Skipping invalid category: categoryId=${categoryData.categoryId}, categoryName='${categoryData.categoryName}'`,
           );
           continue;
         }
 
+        const hierarchyInfo = this.calculateCategoryHierarchy(
+          categoryData,
+          categoryMap,
+        );
+
         let parentDatabaseId: number | null = null;
         if (categoryData.parentId) {
           const parentCategory = await this.prismaService.category.findFirst({
             where: { kiotVietId: categoryData.parentId },
-            select: { id: true, name: true },
+            select: { id: true },
           });
-
-          if (parentCategory) {
-            parentDatabaseId = parentCategory.id;
-          } else {
-            this.logger.warn(
-              `⚠️ Parent category ${categoryData.parentId} not found for category ${categoryData.categoryId}`,
-            );
-          }
+          parentDatabaseId = parentCategory?.id || null;
         }
 
         const category = await this.prismaService.category.upsert({
@@ -412,6 +407,12 @@ export class KiotVietCategoryService {
             hasChild: categoryData.hasChild ?? false,
             retailerId: categoryData.retailerId || null,
             rank: categoryData.rank ?? 0,
+            parent_name: hierarchyInfo.parentName,
+            child_name: hierarchyInfo.childName,
+            branch_name: hierarchyInfo.branchName,
+            createdDate: categoryData.createdDate
+              ? new Date(categoryData.createdDate)
+              : new Date(),
             modifiedDate: categoryData.modifiedDate
               ? new Date(categoryData.modifiedDate)
               : new Date(),
@@ -424,6 +425,9 @@ export class KiotVietCategoryService {
             hasChild: categoryData.hasChild ?? false,
             retailerId: categoryData.retailerId || null,
             rank: categoryData.rank ?? 0,
+            parent_name: hierarchyInfo.parentName,
+            child_name: hierarchyInfo.childName,
+            branch_name: hierarchyInfo.branchName,
             createdDate: categoryData.createdDate
               ? new Date(categoryData.createdDate)
               : new Date(),
@@ -488,6 +492,43 @@ export class KiotVietCategoryService {
     );
 
     return flattened;
+  }
+
+  private calculateCategoryHierarchy(
+    category: KiotVietCategory,
+    categoryMap: Map<number, KiotVietCategory>,
+  ): {
+    parentName: string | null;
+    childName: string | null;
+    branchName: string | null;
+  } {
+    if (!category.parentId) {
+      return {
+        parentName: category.categoryName,
+        childName: null,
+        branchName: null,
+      };
+    }
+
+    const parentCategory = categoryMap.get(category.parentId);
+    if (!parentCategory) {
+      return { parentName: null, childName: null, branchName: null };
+    }
+
+    if (!parentCategory.parentId) {
+      return {
+        parentName: parentCategory.categoryName,
+        childName: category.categoryName,
+        branchName: null,
+      };
+    }
+
+    const grandParentCategory = categoryMap.get(parentCategory.parentId);
+    return {
+      parentName: grandParentCategory?.categoryName || null,
+      childName: parentCategory.categoryName,
+      branchName: category.categoryName,
+    };
   }
 
   async enableHistoricalSync(): Promise<void> {
