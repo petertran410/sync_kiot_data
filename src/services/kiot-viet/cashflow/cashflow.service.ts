@@ -208,7 +208,19 @@ export class KiotVietCashflowService {
             continue;
           }
 
+          const existingCashflowIds = new Set(
+            (
+              await this.prismaService.cashflow.findMany({
+                select: { kiotVietId: true },
+              })
+            ).map((c) => Number(c.kiotVietId)),
+          );
+
           const newCashflows = cashflows.filter((cashflow) => {
+            if (existingCashflowIds.has(cashflow.id)) {
+              return false;
+            }
+
             if (processedCashflowIds.has(cashflow.id)) {
               this.logger.debug(
                 `Duplicate cashflow ID detected: ${cashflow.id} (${cashflow.code})`,
@@ -217,7 +229,7 @@ export class KiotVietCashflowService {
             }
 
             processedCashflowIds.add(cashflow.id);
-            return false;
+            return true;
           });
 
           if (newCashflows.length !== cashflows.length) {
