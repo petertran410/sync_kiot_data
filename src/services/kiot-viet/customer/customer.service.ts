@@ -58,35 +58,60 @@ export class KiotVietCustomerService {
   }
 
   async checkAndRunAppropriateSync(): Promise<void> {
-    const historicalSync = await this.prismaService.syncControl.findFirst({
-      where: { name: 'customer_historical' },
-    });
+    try {
+      const runningCustomerSyncs =
+        await this.prismaService.syncControl.findMany({
+          where: {
+            OR: [
+              { name: 'customer_historical' },
+              { name: 'customer_recent' },
+              { name: 'customer_lark_sync' },
+            ],
+            isRunning: true,
+          },
+        });
 
-    const recentSync = await this.prismaService.syncControl.findFirst({
-      where: { name: 'customer_recent' },
-    });
+      if (runningCustomerSyncs.length > 0) {
+        this.logger.warn(
+          `Found ${runningCustomerSyncs.length} customer syncs still running: ${runningCustomerSyncs.map((s) => s.name).join(', ')}`,
+        );
+        this.logger.warn('⏸️ Skipping customer sync to avoid conflicts');
+        return;
+      }
 
-    if (historicalSync?.isEnabled && !historicalSync.isRunning) {
-      this.logger.log('Starting historical customer sync...');
-      await this.syncHistoricalCustomers();
-      return;
-    }
+      const historicalSync = await this.prismaService.syncControl.findFirst({
+        where: { name: 'customer_historical' },
+      });
 
-    if (historicalSync?.isRunning) {
-      this.logger.log(
-        '⏳ Historical sync is running, skipping recent sync to avoid conflict',
-      );
-      return;
-    }
+      const recentSync = await this.prismaService.syncControl.findFirst({
+        where: { name: 'customer_recent' },
+      });
 
-    if (recentSync?.isEnabled && !recentSync.isRunning) {
-      this.logger.log('Starting recent customer sync...');
+      if (historicalSync?.isEnabled && !historicalSync.isRunning) {
+        this.logger.log('Starting historical customer sync...');
+        await this.syncHistoricalCustomers();
+        return;
+      }
+
+      if (historicalSync?.isRunning) {
+        this.logger.log(
+          'Historical customer sync is running, skipping recent sync',
+        );
+        return;
+      }
+
+      if (recentSync?.isEnabled && !recentSync.isRunning) {
+        this.logger.log('Starting recent customer sync...');
+        await this.syncRecentCustomers();
+        return;
+      }
+
+      this.logger.log('Running default recent customer sync...');
       await this.syncRecentCustomers();
-      return;
+    } catch (error) {
+      this.logger.error(`Sync check failed: ${error.message}`);
+      throw error;
     }
-
-    this.logger.log('Running default recent customer sync...');
-    await this.syncRecentCustomers();
   }
 
   async enableHistoricalSync(): Promise<void> {

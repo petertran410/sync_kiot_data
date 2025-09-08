@@ -130,14 +130,12 @@ export class BusSchedulerService implements OnModuleInit {
   async handleMainSyncCycle() {
     if (this.isDailyCycleRunning || this.dailyCyclePriorityLevel > 0) {
       if (!this.mainSchedulerSuspendedForDaily) {
-        this.logger.log(
-          '🛑 SUSPENDING 2-minute cycle - Daily cycle has priority',
-        );
+        this.logger.log('SUSPENDING 2-minute cycle - Daily cycle has priority');
         this.mainSchedulerSuspendedForDaily = true;
 
         if (this.mainCycleAbortController) {
           this.mainCycleAbortController.abort();
-          this.logger.log('🚫 FORCE ABORTING ongoing 1-minute cycle');
+          this.logger.log('FORCE ABORTING ongoing 1-minute cycle');
         }
       }
 
@@ -165,11 +163,11 @@ export class BusSchedulerService implements OnModuleInit {
     const signal = this.mainCycleAbortController.signal;
 
     try {
-      this.logger.log('🚀 Starting 2-minute parallel sync cycle...');
+      this.logger.log('Starting 2-minute parallel sync cycle...');
       const startTime = Date.now();
 
       if (signal.aborted) {
-        this.logger.log('🚫 2-minute cycle aborted before starting');
+        this.logger.log('2-minute cycle aborted before starting');
         return;
       }
 
@@ -182,10 +180,16 @@ export class BusSchedulerService implements OnModuleInit {
         });
 
         if (runningTooLong) {
-          this.logger.warn(
-            '⚠️ Detected long-running syncs - triggering cleanup',
-          );
+          this.logger.warn('Detected long-running syncs - triggering cleanup');
           await this.cleanupStuckSyncs();
+
+          this.logger.log('Waiting 10s for processes to terminate...');
+          await new Promise((resolve) => setTimeout(resolve, 10000));
+
+          this.logger.log(
+            'Skipping this cycle after cleanup - will try next cycle',
+          );
+          return;
         } else {
           this.logger.log(
             `⏸️ Parallel sync skipped - running: ${runningSyncs.map((s) => s.name).join(', ')}`,
