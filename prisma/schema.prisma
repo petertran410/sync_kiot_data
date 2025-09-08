@@ -150,6 +150,8 @@ model Customer {
   gender                Boolean?
   birthDate             DateTime?
   contactNumber         String?
+  subNumber             String?
+  identificationNumber  String?
   address               String?
   locationName          String?
   wardName              String?

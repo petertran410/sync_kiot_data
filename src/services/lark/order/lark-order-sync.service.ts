@@ -111,11 +111,9 @@ export class LarkOrderSyncService {
     private readonly larkAuthService: LarkAuthService,
   ) {
     const baseToken = this.configService.get<string>(
-      'LARK_ORDER_TEST_SYNC_BASE_TOKEN',
+      'LARK_ORDER_SYNC_BASE_TOKEN',
     );
-    const tableId = this.configService.get<string>(
-      'LARK_ORDER_TEST_SYNC_TABLE_ID',
-    );
+    const tableId = this.configService.get<string>('LARK_ORDER_SYNC_TABLE_ID');
 
     if (!baseToken || !tableId) {
       throw new Error('LarkBase order configuration missing');
@@ -131,9 +129,7 @@ export class LarkOrderSyncService {
     try {
       await this.acquireSyncLock(lockKey);
 
-      this.logger.log(
-        `🚀 Starting LarkBase sync for ${orders.length} orders...`,
-      );
+      this.logger.log(`Starting LarkBase sync for ${orders.length} orders...`);
 
       const ordersToSync = orders.filter(
         (o) => o.larkSyncStatus === 'PENDING' || o.larkSyncStatus === 'FAILED',
@@ -145,7 +141,7 @@ export class LarkOrderSyncService {
         return;
       }
 
-      if (ordersToSync.length < 15) {
+      if (ordersToSync.length < 5) {
         this.logger.log(
           `🏃‍♂️ Small sync (${ordersToSync.length} orders) - using lightweight mode`,
         );
@@ -176,7 +172,8 @@ export class LarkOrderSyncService {
         return;
       }
 
-      const { newOrders, updateOrders } = this.categorizeOrders(ordersToSync);
+      const { newOrders, updateOrders } =
+        await this.categorizeOrders(ordersToSync);
 
       this.logger.log(
         `📋 Categorization: ${newOrders.length} new, ${updateOrders.length} updates`,
@@ -204,9 +201,9 @@ export class LarkOrderSyncService {
         }
       }
 
-      this.logger.log('🎉 LarkBase order sync completed!');
+      this.logger.log('LarkBase order sync completed!');
     } catch (error) {
-      this.logger.error(`💥 LarkBase order sync failed: ${error.message}`);
+      this.logger.error(`LarkBase order sync failed: ${error.message}`);
       throw error;
     } finally {
       await this.releaseSyncLock(lockKey);
@@ -215,13 +212,14 @@ export class LarkOrderSyncService {
 
   private async loadExistingRecordsWithRetry(): Promise<boolean> {
     const maxRetries = 3;
+
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         this.logger.log(
           `📥 Loading cache (attempt ${attempt}/${maxRetries})...`,
         );
 
-        if (this.isCacheValid() && this.existingRecordsCache.size > 3000) {
+        if (this.isCacheValid() && this.existingRecordsCache.size > 5000) {
           this.logger.log(
             `✅ Large cache available (${this.existingRecordsCache.size} records) - skipping reload`,
           );
@@ -255,6 +253,7 @@ export class LarkOrderSyncService {
         this.logger.warn(
           `❌ Cache loading attempt ${attempt} failed: ${error.message}`,
         );
+
         if (attempt < maxRetries) {
           const delay = attempt * 2000;
           this.logger.log(`⏳ Waiting ${delay / 1000}s before retry...`);
@@ -423,7 +422,7 @@ export class LarkOrderSyncService {
     this.existingRecordsCache = quickCache;
 
     try {
-      const { newOrders, updateOrders } = this.categorizeOrders(orders);
+      const { newOrders, updateOrders } = await this.categorizeOrders(orders);
 
       if (newOrders.length > 0) {
         await this.processNewOrders(newOrders);
@@ -930,10 +929,6 @@ export class LarkOrderSyncService {
       summary: `${synced}/${total} synced (${progress}%)`,
     };
   }
-
-  // ============================================================================
-  // UTILITY METHODS - COPY FROM INVOICE
-  // ============================================================================
 
   private async updateDatabaseStatus(
     orders: any[],

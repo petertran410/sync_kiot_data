@@ -31,6 +31,8 @@ const LARK_CUSTOMER_FIELDS = {
   CUSTOMER_GROUPS: 'Nhóm Khách Hàng',
   DATE_OF_BIRTH: 'Ngày Sinh',
   TYPE: 'Loại Khách Hàng',
+  SUB_PHONE: 'Số Điện Thoại Phụ',
+  IDENTIFICATION_NUMBER: 'CCCD Của Khách Hàng',
 } as const;
 
 const GENDER_OPTIONS = {
@@ -82,12 +84,12 @@ export class LarkCustomerSyncService {
   private readonly logger = new Logger(LarkCustomerSyncService.name);
   private readonly baseToken: string;
   private readonly tableId: string;
-  private readonly batchSize: number = 15;
+  private readonly batchSize: number = 100;
+  private readonly pendingCreation = new Set<number>();
 
   private readonly AUTH_ERROR_CODES = [99991663, 99991664, 99991665];
   private readonly MAX_AUTH_RETRIES = 3;
 
-  // Cache management
   private existingRecordsCache: Map<number, string> = new Map();
   private customerCodeCache: Map<string, string> = new Map();
   private cacheLoaded: boolean = false;
@@ -122,7 +124,7 @@ export class LarkCustomerSyncService {
       await this.acquireSyncLock(lockKey);
 
       this.logger.log(
-        `🚀 Starting LarkBase sync for ${customers.length} customers (IMPROVED MODE)...`,
+        `Starting LarkBase sync for ${customers.length} customers (IMPROVED MODE)...`,
       );
 
       const customersToSync = customers.filter(
@@ -135,7 +137,7 @@ export class LarkCustomerSyncService {
         return;
       }
 
-      if (customersToSync.length < 20) {
+      if (customersToSync.length < 5) {
         this.logger.log(
           `🏃‍♂️ Small sync (${customersToSync.length} customers) - using lightweight mode`,
         );
@@ -167,13 +169,13 @@ export class LarkCustomerSyncService {
       }
 
       const { newCustomers, updateCustomers } =
-        this.categorizeCustomers(customersToSync);
+        await this.categorizeCustomers(customersToSync);
 
       this.logger.log(
         `📋 Categorization: ${newCustomers.length} new, ${updateCustomers.length} updates`,
       );
 
-      const BATCH_SIZE_FOR_SYNC = 50;
+      const BATCH_SIZE_FOR_SYNC = 100;
 
       if (newCustomers.length > 0) {
         for (let i = 0; i < newCustomers.length; i += BATCH_SIZE_FOR_SYNC) {
@@ -195,9 +197,9 @@ export class LarkCustomerSyncService {
         }
       }
 
-      this.logger.log(`🎉 LarkBase sync completed successfully`);
+      this.logger.log(`LarkBase sync completed successfully`);
     } catch (error) {
-      this.logger.error(`❌ LarkBase sync failed: ${error.message}`);
+      this.logger.error(`LarkBase sync failed: ${error.message}`);
       await this.updateDatabaseStatus(customers, 'FAILED');
       throw error;
     } finally {
@@ -224,7 +226,7 @@ export class LarkCustomerSyncService {
         if (this.lastCacheLoadTime) {
           const cacheAgeMinutes =
             (Date.now() - this.lastCacheLoadTime.getTime()) / (1000 * 60);
-          if (cacheAgeMinutes < 60 && this.existingRecordsCache.size > 1000) {
+          if (cacheAgeMinutes < 45 && this.existingRecordsCache.size > 500) {
             this.logger.log(
               `✅ Recent cache (${cacheAgeMinutes.toFixed(1)}min old, ${this.existingRecordsCache.size} records) - skipping reload`,
             );
@@ -233,7 +235,7 @@ export class LarkCustomerSyncService {
         }
 
         this.clearCache();
-        await this.loadExistingRecordsCache();
+        await this.loadExistingRecords();
 
         if (this.existingRecordsCache.size > 0) {
           this.logger.log(
@@ -271,7 +273,7 @@ export class LarkCustomerSyncService {
     return cacheAge < maxAge && this.existingRecordsCache.size > 0;
   }
 
-  private async loadExistingRecordsCache(): Promise<void> {
+  private async loadExistingRecords(): Promise<void> {
     try {
       const headers = await this.larkAuthService.getCustomerHeaders();
       let pageToken = '';
@@ -327,7 +329,7 @@ export class LarkCustomerSyncService {
           totalLoaded += records.length;
           pageToken = response.data.data?.page_token || '';
 
-          if (totalLoaded % 2000 === 0 || !pageToken) {
+          if (totalLoaded % 1500 === 0 || !pageToken) {
             this.logger.log(
               `📊 Cache progress: ${cacheBuilt}/${totalLoaded} records (${loadTime}ms/page)`,
             );
@@ -374,7 +376,7 @@ export class LarkCustomerSyncService {
 
     try {
       const { newCustomers, updateCustomers } =
-        this.categorizeCustomers(customers);
+        await this.categorizeCustomers(customers);
 
       if (newCustomers.length > 0) {
         await this.processNewCustomers(newCustomers);
@@ -388,49 +390,52 @@ export class LarkCustomerSyncService {
     }
   }
 
-  private categorizeCustomers(customers: any[]): {
-    newCustomers: any[];
-    updateCustomers: any[];
-  } {
+  private categorizeCustomers(customers: any[]): Promise<any> {
     const newCustomers: any[] = [];
     const updateCustomers: any[] = [];
 
+    const duplicateDetected = customers.filter((customer) => {
+      const kiotVietId = this.safeBigIntToNumber(customer.kiotVietId);
+      return this.existingRecordsCache.has(kiotVietId);
+    });
+
+    if (duplicateDetected.length > 0) {
+      this.logger.warn(
+        `🚨 Detected ${duplicateDetected.length} customers already in cache: ${duplicateDetected
+          .map((o) => o.kiotVietId)
+          .slice(0, 5)
+          .join(', ')}`,
+      );
+    }
+
     for (const customer of customers) {
-      // Convert BigInt to number for comparison
       const kiotVietId = this.safeBigIntToNumber(customer.kiotVietId);
 
-      // Check by ID first
+      if (this.pendingCreation.has(kiotVietId)) {
+        this.logger.warn(
+          `⚠️ Customer ${kiotVietId} is pending creation, skipping`,
+        );
+        continue;
+      }
+
       let existingRecordId = this.existingRecordsCache.get(kiotVietId);
 
-      // Fallback to code lookup
       if (!existingRecordId && customer.code) {
         existingRecordId = this.customerCodeCache.get(
           String(customer.code).trim(),
         );
-
-        if (existingRecordId) {
-          this.logger.debug(
-            `Found record by code: ${customer.code} -> ${existingRecordId}`,
-          );
-        }
       }
 
       if (existingRecordId) {
-        updateCustomers.push({
-          ...customer,
-          larkRecordId: existingRecordId,
-        });
+        updateCustomers.push({ ...customer, larkRecordId: existingRecordId });
       } else {
+        this.pendingCreation.add(kiotVietId);
         newCustomers.push(customer);
       }
     }
 
     return { newCustomers, updateCustomers };
   }
-
-  // ============================================================================
-  // PROCESS NEW CUSTOMERS
-  // ============================================================================
 
   private async processNewCustomers(customers: any[]): Promise<void> {
     if (customers.length === 0) return;
@@ -443,12 +448,32 @@ export class LarkCustomerSyncService {
 
     for (let i = 0; i < batches.length; i++) {
       const batch = batches[i];
+
+      const verifiedBatch: any[] = [];
+      for (const customer of batch) {
+        const kiotVietId = this.safeBigIntToNumber(customer.kiotVietId);
+        if (!this.existingRecordsCache.has(kiotVietId)) {
+          verifiedBatch.push(customer);
+        } else {
+          this.logger.warn(
+            `⚠️ Skipping duplicate customer ${kiotVietId} in batch ${i + 1}`,
+          );
+        }
+      }
+
+      if (verifiedBatch.length === 0) {
+        this.logger.log(
+          `✅ Batch ${i + 1} skipped - all customers already exist`,
+        );
+        continue;
+      }
+
       this.logger.log(
-        `📊 Batch ${i + 1}/${batches.length}: Processing ${batch.length} customers`,
+        `Creating batch ${i + 1}/${batches.length} (${verifiedBatch.length} customers)...`,
       );
 
       const { successRecords, failedRecords } =
-        await this.batchCreateCustomers(batch);
+        await this.batchCreateCustomers(verifiedBatch);
 
       totalCreated += successRecords.length;
       totalFailed += failedRecords.length;
@@ -465,7 +490,6 @@ export class LarkCustomerSyncService {
         `📊 Batch ${i + 1}/${batches.length}: ${successRecords.length}/${batch.length} created`,
       );
 
-      // Small delay between batches to avoid rate limiting
       if (i < batches.length - 1) {
         await new Promise((resolve) => setTimeout(resolve, 500));
       }
@@ -476,10 +500,6 @@ export class LarkCustomerSyncService {
     );
   }
 
-  // ============================================================================
-  // PROCESS UPDATES
-  // ============================================================================
-
   private async processUpdateCustomers(customers: any[]): Promise<void> {
     if (customers.length === 0) return;
 
@@ -489,7 +509,6 @@ export class LarkCustomerSyncService {
     let failedCount = 0;
     const createFallbacks: any[] = [];
 
-    // Process updates in smaller chunks to avoid timeouts
     const UPDATE_CHUNK_SIZE = 5;
 
     for (let i = 0; i < customers.length; i += UPDATE_CHUNK_SIZE) {
@@ -515,28 +534,22 @@ export class LarkCustomerSyncService {
         }),
       );
 
-      // Small delay between chunks
       if (i + UPDATE_CHUNK_SIZE < customers.length) {
         await new Promise((resolve) => setTimeout(resolve, 300));
       }
     }
 
-    // Process fallbacks
     if (createFallbacks.length > 0) {
       this.logger.log(
-        `📝 Creating ${createFallbacks.length} customers that failed update...`,
+        `🔄 Processing ${createFallbacks.length} update fallbacks as new customers...`,
       );
       await this.processNewCustomers(createFallbacks);
     }
 
     this.logger.log(
-      `🎯 Update complete: ${successCount} success, ${failedCount} failed`,
+      `📝 Update complete: ${successCount} updated, ${createFallbacks.length} fallback to create`,
     );
   }
-
-  // ============================================================================
-  // BATCH CREATE WITH PROPER DATA CONVERSION
-  // ============================================================================
 
   private async batchCreateCustomers(customers: any[]): Promise<BatchResult> {
     const records = customers.map((customer) => ({
@@ -564,7 +577,6 @@ export class LarkCustomerSyncService {
           const successRecords = customers.slice(0, successCount);
           const failedRecords = customers.slice(successCount);
 
-          // Update cache with proper number conversion
           for (
             let i = 0;
             i < Math.min(successRecords.length, createdRecords.length);
@@ -581,6 +593,16 @@ export class LarkCustomerSyncService {
               );
             }
 
+            successRecords.forEach((customer) => {
+              const kiotVietId = this.safeBigIntToNumber(customer.kiotVietId);
+              this.pendingCreation.delete(kiotVietId);
+            });
+
+            failedRecords.forEach((customer) => {
+              const kiotVietId = this.safeBigIntToNumber(customer.kiotVietId);
+              this.pendingCreation.delete(kiotVietId);
+            });
+
             if (customer.code) {
               this.customerCodeCache.set(
                 String(customer.code).trim(),
@@ -594,7 +616,7 @@ export class LarkCustomerSyncService {
 
         if (this.AUTH_ERROR_CODES.includes(response.data.code)) {
           authRetries++;
-          await this.forceTokenRefresh();
+          await this.larkAuthService.forceRefreshCustomerToken();
           await new Promise((resolve) => setTimeout(resolve, 2000));
           continue;
         }
@@ -606,7 +628,7 @@ export class LarkCustomerSyncService {
       } catch (error) {
         if (error.response?.status === 401 || error.response?.status === 403) {
           authRetries++;
-          await this.forceTokenRefresh();
+          await this.larkAuthService.forceRefreshCustomerToken();
           await new Promise((resolve) => setTimeout(resolve, 2000));
           continue;
         }
@@ -618,10 +640,6 @@ export class LarkCustomerSyncService {
 
     return { successRecords: [], failedRecords: customers };
   }
-
-  // ============================================================================
-  // UPDATE SINGLE CUSTOMER
-  // ============================================================================
 
   private async updateSingleCustomer(customer: any): Promise<boolean> {
     let authRetries = 0;
@@ -648,7 +666,7 @@ export class LarkCustomerSyncService {
 
         if (this.AUTH_ERROR_CODES.includes(response.data.code)) {
           authRetries++;
-          await this.forceTokenRefresh();
+          await this.larkAuthService.forceRefreshCustomerToken();
           await new Promise((resolve) => setTimeout(resolve, 2000));
           continue;
         }
@@ -658,7 +676,7 @@ export class LarkCustomerSyncService {
       } catch (error) {
         if (error.response?.status === 401 || error.response?.status === 403) {
           authRetries++;
-          await this.forceTokenRefresh();
+          await this.larkAuthService.forceRefreshCustomerToken();
           await new Promise((resolve) => setTimeout(resolve, 2000));
           continue;
         }
@@ -674,10 +692,6 @@ export class LarkCustomerSyncService {
 
     return false;
   }
-
-  // ============================================================================
-  // HELPER METHODS
-  // ============================================================================
 
   private async testLarkBaseConnection(): Promise<void> {
     const maxRetries = 10;
@@ -1103,12 +1117,17 @@ export class LarkCustomerSyncService {
       );
     }
 
+    if (customer.subNumber) {
+      fields[LARK_CUSTOMER_FIELDS.SUB_PHONE] = customer.subNumber || '';
+    }
+
+    if (customer.identificationNumber) {
+      fields[LARK_CUSTOMER_FIELDS.IDENTIFICATION_NUMBER] =
+        customer.identificationNumber || '';
+    }
+
     return fields;
   }
-
-  // ============================================================================
-  // MONITORING & HEALTH CHECK METHODS (Fixed BigInt serialization)
-  // ============================================================================
 
   async getSyncProgress(): Promise<any> {
     const total = await this.prismaService.customer.count();
@@ -1526,7 +1545,6 @@ export class LarkCustomerSyncService {
       '🔍 Analyzing missing data between Database and LarkBase...',
     );
 
-    // Load cache để có data LarkBase
     await this.loadExistingRecordsWithRetry();
 
     // Get all database records

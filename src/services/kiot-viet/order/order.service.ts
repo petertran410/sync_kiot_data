@@ -396,10 +396,10 @@ export class KiotVietOrderService {
         totalOrders > 0 ? (processedCount / totalOrders) * 100 : 100;
 
       this.logger.log(
-        `✅ Historical order sync completed: ${processedCount}/${totalOrders} (${completionRate.toFixed(1)}% completion rate)`,
+        `Historical order sync completed: ${processedCount}/${totalOrders} (${completionRate.toFixed(1)}% completion rate)`,
       );
       this.logger.log(
-        `🔄 AUTO-TRANSITION: Historical sync disabled, Recent sync enabled for future cycles`,
+        `AUTO-TRANSITION: Historical sync disabled, Recent sync enabled for future cycles`,
       );
     } catch (error) {
       this.logger.error(`❌ Historical order sync failed: ${error.message}`);
@@ -669,7 +669,7 @@ export class KiotVietOrderService {
         totalOrders > 0 ? (processedCount / totalOrders) * 100 : 100;
 
       this.logger.log(
-        `✅ Historical order sync completed: ${processedCount}/${totalOrders} (${completionRate.toFixed(1)}% completion rate)`,
+        `Historical order sync completed: ${processedCount}/${totalOrders} (${completionRate.toFixed(1)}% completion rate)`,
       );
       this.logger.log(
         `🔄 AUTO-TRANSITION: Historical sync disabled, Recent sync enabled for future cycles`,
