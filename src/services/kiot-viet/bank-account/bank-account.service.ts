@@ -117,11 +117,7 @@ export class KiotVietBankAccountService {
             data: {
               bankName: bankAccountData.bankName,
               accountNumber: bankAccountData.accountNumber || null,
-              description: bankAccountData.description || null,
               retailerId: bankAccountData.retailerId || null,
-              modifiedDate: bankAccountData.modifiedDate
-                ? new Date(bankAccountData.modifiedDate)
-                : new Date(),
             },
           });
           updatedCount++;
@@ -131,13 +127,9 @@ export class KiotVietBankAccountService {
               kiotVietId: bankAccountData.id,
               bankName: bankAccountData.bankName,
               accountNumber: bankAccountData.accountNumber || null,
-              description: bankAccountData.description || null,
               retailerId: bankAccountData.retailerId || null,
               createdDate: bankAccountData.createdDate
                 ? new Date(bankAccountData.createdDate)
-                : new Date(),
-              modifiedDate: bankAccountData.modifiedDate
-                ? new Date(bankAccountData.modifiedDate)
                 : new Date(),
             },
           });

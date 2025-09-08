@@ -21,12 +21,13 @@ import { KiotVietPurchaseOrderService } from './purchase-order/purchase-order.se
 import { KiotVietTradeMarkService } from './trademark/trademark.service';
 import { KiotVietCategoryService } from './category/category.service';
 import { KiotVietReturnService } from './returns/return.service';
+import { KiotVietCashflowService } from './cashflow/cashflow.service';
 
 @Module({
   imports: [
     HttpModule.register({
       timeout: 60000,
-      maxRedirects: 10,
+      maxRedirects: 20,
     }),
     ConfigModule,
     PrismaModule,
@@ -51,6 +52,7 @@ import { KiotVietReturnService } from './returns/return.service';
     KiotVietOrderSupplierService,
     KiotVietPurchaseOrderService,
     KiotVietReturnService,
+    KiotVietCashflowService,
   ],
   exports: [
     KiotVietAuthService,
@@ -71,6 +73,7 @@ import { KiotVietReturnService } from './returns/return.service';
     KiotVietOrderSupplierService,
     KiotVietPurchaseOrderService,
     KiotVietReturnService,
+    KiotVietCashflowService,
   ],
 })
 export class KiotVietModule {}

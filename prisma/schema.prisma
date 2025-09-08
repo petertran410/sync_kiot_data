@@ -256,22 +256,17 @@ model User {
   kiotVietId       BigInt                @unique
   userName         String
   givenName        String
-  address          String?
   mobilePhone      String?
   email            String?
-  description      String?
-  birthDate        DateTime?
   retailerId       Int?
-  createdDate      DateTime              @default(now())
-  modifiedDate     DateTime              @updatedAt
-  lastSyncedAt     DateTime              @default(now())
-  isActive         Boolean?
+  createdDate      DateTime
   invoices         Invoice[]             @relation("InvoiceSoldBy")
   orders           Order[]               @relation("OrderSoldBy")
   priceBooks       PriceBookUser[]
   voucherCampaigns VoucherCampaignUser[]
 
   @@index([kiotVietId])
+  Cashflow Cashflow[]
 }
 
 model Order {
@@ -676,11 +671,8 @@ model BankAccount {
   kiotVietId    Int        @unique
   bankName      String
   accountNumber String?
-  description   String?
   retailerId    Int?
-  createdDate   DateTime   @default(now())
-  modifiedDate  DateTime   @updatedAt
-  lastSyncedAt  DateTime   @default(now())
+  createdDate   DateTime
   Cashflow      Cashflow[]
   payments      Payment[]
 
@@ -1207,35 +1199,39 @@ model Cashflow {
   id                        Int          @id @default(autoincrement())
   kiotVietId                BigInt       @unique
   code                      String       @unique
+  userId                    Int?
   address                   String?
-  branchId                  Int?
+  locationName              String?
   wardName                  String?
   contactNumber             String?
+  status                    Int?
   createdBy                 BigInt?
   usedForFinancialReporting Int?
-  cashFlowGroupId           Int?
-  method                    String
-  partnerType               String
-  partnerId                 BigInt?
-  status                    Int
-  statusValue               String?
-  transDate                 DateTime
-  amount                    Decimal      @db.Decimal(15, 2)
+  accountName               String?
+  branchName                String?
   partnerName               String?
   userName                  String?
   accountId                 Int?
+  origin                    String?
+  cashFlowGroupId           Int?
+  cashGroup                 String?
+  statusValue               String?
+  method                    String?
+  partnerType               String?
+  partnerId                 BigInt?
+  branchId                  Int?
+  retailerId                Int
+  transDate                 DateTime?
+  amount                    Decimal?      @db.Decimal(15, 2)
   description               String?
-  isReceipt                 Boolean
-  retailerId                Int?
-  createdDate               DateTime     @default(now())
   lastSyncedAt              DateTime     @default(now())
   bankAccount               BankAccount? @relation(fields: [accountId], references: [id])
   branch                    Branch?      @relation(fields: [branchId], references: [id])
+  user                      User? @relation(fields: [userId], references: [id])
 
   @@index([kiotVietId])
   @@index([branchId])
   @@index([partnerType])
-  @@index([isReceipt])
   @@index([transDate])
   @@index([accountId])
 }

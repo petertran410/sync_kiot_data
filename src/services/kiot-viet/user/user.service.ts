@@ -139,20 +139,12 @@ export class KiotVietUserService {
             data: {
               userName: userData.userName,
               givenName: userData.givenName,
-              address: userData.address || null,
               mobilePhone: userData.mobilePhone || null,
               email: userData.email || null,
-              description: userData.description || null,
-              birthDate: userData.birthDate
-                ? new Date(userData.birthDate)
-                : null,
               retailerId: userData.retailerId || null,
-              isActive:
-                userData.isActive !== undefined ? userData.isActive : true,
-              modifiedDate: userData.modifiedDate
-                ? new Date(userData.modifiedDate)
+              createdDate: userData.createdDate
+                ? new Date(userData.createdDate)
                 : new Date(),
-              lastSyncedAt: new Date(),
             },
           });
           updatedCount++;
@@ -162,23 +154,12 @@ export class KiotVietUserService {
               kiotVietId: BigInt(userData.id),
               userName: userData.userName,
               givenName: userData.givenName,
-              address: userData.address || null,
               mobilePhone: userData.mobilePhone || null,
               email: userData.email || null,
-              description: userData.description || null,
-              birthDate: userData.birthDate
-                ? new Date(userData.birthDate)
-                : null,
               retailerId: userData.retailerId || null,
-              isActive:
-                userData.isActive !== undefined ? userData.isActive : true,
               createdDate: userData.createdDate
                 ? new Date(userData.createdDate)
                 : new Date(),
-              modifiedDate: userData.modifiedDate
-                ? new Date(userData.modifiedDate)
-                : new Date(),
-              lastSyncedAt: new Date(),
             },
           });
           createdCount++;

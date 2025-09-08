@@ -1,4 +1,3 @@
-// src/services/kiot-viet/order/order.service.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
@@ -522,9 +521,9 @@ export class KiotVietOrderService {
 
   async fetchRecentOrders(fromDate: Date): Promise<any[]> {
     const headers = await this.authService.getRequestHeaders();
-    const fromDateStr = fromDate.toISOString();
+    const fromDateStr = fromDate.toISOString().split('T')[0];
     const today = new Date();
-    const todayDateStr = today.toISOString();
+    const todayDateStr = today.toISOString().split('T')[0];
 
     const queryParams = new URLSearchParams({
       lastModifiedFrom: fromDateStr,

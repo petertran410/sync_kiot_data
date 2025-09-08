@@ -15,6 +15,7 @@ import { KiotVietOrderSupplierService } from 'src/services/kiot-viet/order-suppl
 import { LarkOrderSupplierSyncService } from 'src/services/lark/order-supplier/lark-order-supplier-sync.service';
 import { KiotVietPurchaseOrderService } from 'src/services/kiot-viet/purchase-order/purchase-order.service';
 import { KiotVietTradeMarkService } from 'src/services/kiot-viet/trademark/trademark.service';
+import { KiotVietCashflowService } from 'src/services/kiot-viet/cashflow/cashflow.service';
 
 @Controller('sync')
 export class SyncController {
@@ -37,6 +38,7 @@ export class SyncController {
     private readonly purchaseOrderService: KiotVietPurchaseOrderService,
     private readonly larkPurchaseOrderSyncService: LarkPurchaseOrderSyncService,
     private readonly trademarkService: KiotVietTradeMarkService,
+    private readonly cashflowService: KiotVietCashflowService,
   ) {}
 
   @Get('status')
@@ -505,6 +507,30 @@ export class SyncController {
       };
     } catch (error) {
       this.logger.error(`❌ Purchase Order sync failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
+
+  @Post('cashflows')
+  async syncCashflows() {
+    try {
+      this.logger.log('Starting cashflow sync...');
+
+      await this.cashflowService.enableHistoricalSync();
+
+      await this.cashflowService.syncHistoricalCashflows();
+
+      return {
+        success: true,
+        message: 'Cashflow sync completed successfully',
+        timestamp: new Date().toISOString,
+      };
+    } catch (error) {
+      this.logger.error(`❌ Cashflow sync failed: ${error.message}`);
       return {
         success: false,
         error: error.message,
