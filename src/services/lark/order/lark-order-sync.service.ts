@@ -94,8 +94,8 @@ export class LarkOrderSyncService {
   private readonly baseToken: string;
   private readonly tableId: string;
   private readonly batchSize = 100;
+  private readonly pendingCreation = new Set<number>();
 
-  // Cache management - EXACT COPY FROM INVOICE
   private existingRecordsCache = new Map<number, string>();
   private orderCodeCache = new Map<string, string>();
   private cacheLoaded = false;
@@ -357,15 +357,33 @@ export class LarkOrderSyncService {
     }
   }
 
-  private categorizeOrders(orders: any[]): {
-    newOrders: any[];
-    updateOrders: any[];
-  } {
+  private async categorizeOrders(orders: any[]): Promise<any> {
     const newOrders: any[] = [];
     const updateOrders: any[] = [];
 
+    const duplicateDetected = orders.filter((order) => {
+      const kiotVietId = this.safeBigIntToNumber(order.kiotVietId);
+      return this.existingRecordsCache.has(kiotVietId);
+    });
+
+    if (duplicateDetected.length > 0) {
+      this.logger.warn(
+        `🚨 Detected ${duplicateDetected.length} orders already in cache: ${duplicateDetected
+          .map((o) => o.kiotVietId)
+          .slice(0, 5)
+          .join(', ')}`,
+      );
+    }
+
     for (const order of orders) {
       const kiotVietId = this.safeBigIntToNumber(order.kiotVietId);
+
+      if (this.pendingCreation.has(kiotVietId)) {
+        this.logger.warn(
+          `⚠️ Order ${kiotVietId} is pending creation, skipping`,
+        );
+        continue;
+      }
 
       let existingRecordId = this.existingRecordsCache.get(kiotVietId);
 
@@ -374,11 +392,9 @@ export class LarkOrderSyncService {
       }
 
       if (existingRecordId) {
-        updateOrders.push({
-          ...order,
-          larkRecordId: existingRecordId,
-        });
+        updateOrders.push({ ...order, larkRecordId: existingRecordId });
       } else {
+        this.pendingCreation.add(kiotVietId);
         newOrders.push(order);
       }
     }
@@ -432,12 +448,30 @@ export class LarkOrderSyncService {
 
     for (let i = 0; i < batches.length; i++) {
       const batch = batches[i];
+
+      const verifiedBatch: any[] = [];
+      for (const order of batch) {
+        const kiotVietId = this.safeBigIntToNumber(order.kiotVietId);
+        if (!this.existingRecordsCache.has(kiotVietId)) {
+          verifiedBatch.push(order);
+        } else {
+          this.logger.warn(
+            `⚠️ Skipping duplicate order ${kiotVietId} in batch ${i + 1}`,
+          );
+        }
+      }
+
+      if (verifiedBatch.length === 0) {
+        this.logger.log(`✅ Batch ${i + 1} skipped - all orders already exist`);
+        continue;
+      }
+
       this.logger.log(
-        `Creating batch ${i + 1}/${batches.length} (${batch.length} orders)...`,
+        `Creating batch ${i + 1}/${batches.length} (${verifiedBatch.length} orders)...`,
       );
 
       const { successRecords, failedRecords } =
-        await this.batchCreateOrders(batch);
+        await this.batchCreateOrders(verifiedBatch);
 
       totalCreated += successRecords.length;
       totalFailed += failedRecords.length;
@@ -542,7 +576,6 @@ export class LarkOrderSyncService {
           const successRecords = orders.slice(0, successCount);
           const failedRecords = orders.slice(successCount);
 
-          // Update cache
           for (
             let i = 0;
             i < Math.min(successRecords.length, createdRecords.length);
@@ -558,6 +591,16 @@ export class LarkOrderSyncService {
                 createdRecord.record_id,
               );
             }
+
+            successRecords.forEach((order) => {
+              const kiotVietId = this.safeBigIntToNumber(order.kiotVietId);
+              this.pendingCreation.delete(kiotVietId);
+            });
+
+            failedRecords.forEach((order) => {
+              const kiotVietId = this.safeBigIntToNumber(order.kiotVietId);
+              this.pendingCreation.delete(kiotVietId);
+            });
 
             if (order.code) {
               this.orderCodeCache.set(
