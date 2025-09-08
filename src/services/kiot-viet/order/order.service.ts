@@ -788,8 +788,7 @@ export class KiotVietOrderService {
     return response.data?.data;
   }
 
-  private async enrichOrdersWithDetails() // orders: KiotVietOrder[],
-  : Promise<KiotVietOrder[]> {
+  private async enrichOrdersWithDetails(): Promise<KiotVietOrder[]> {
     this.logger.log(`Enriching orders with details...`);
 
     const enrichedOrders: any[] = [];

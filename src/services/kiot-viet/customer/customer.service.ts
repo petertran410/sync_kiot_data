@@ -743,36 +743,30 @@ export class KiotVietCustomerService {
     return response.data?.data || [];
   }
 
-  async enrichCustomersWithDetails(
-    customers: KiotVietCustomer[],
-  ): Promise<KiotVietCustomer[]> {
-    this.logger.log(
-      `🔍 Enriching ${customers.length} customers with details...`,
-    );
+  async enrichCustomersWithDetails(): Promise<KiotVietCustomer[]> {
+    this.logger.log(`🔍 Enriching customers with details...`);
 
     const enrichedCustomers: any[] = [];
-    for (const customer of customers) {
-      try {
-        const headers = await this.authService.getRequestHeaders();
-        const response = await firstValueFrom(
-          this.httpService.get(`${this.baseUrl}/customers/${customer.id}`, {
-            headers,
-          }),
-        );
 
-        if (response.data) {
-          enrichedCustomers.push(response.data);
-        } else {
-          enrichedCustomers.push(customer);
-        }
+    try {
+      const headers = await this.authService.getRequestHeaders();
+      const response = await firstValueFrom(
+        this.httpService.get(`${this.baseUrl}/customers`, {
+          headers,
+        }),
+      );
 
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      } catch (error) {
-        this.logger.warn(
-          `⚠️ Failed to enrich customer ${customer.id}: ${error.message}`,
-        );
-        enrichedCustomers.push(customer);
+      if (response.data) {
+        enrichedCustomers.push(response.data);
+      } else {
+        // enrichedCustomers.push(customer);
+        console.log('No customer');
       }
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    } catch (error) {
+      this.logger.warn(`Failed to enrich customer: ${error.message}`);
+      // enrichedCustomers.push(customer);
     }
 
     return enrichedCustomers;
@@ -785,14 +779,10 @@ export class KiotVietCustomerService {
 
     for (const customerData of customers) {
       try {
-        let internalBranchId: number | null = null;
-
-        if (customerData.branchId) {
-          const branch = await this.prismaService.branch.findFirst({
-            where: { kiotVietId: customerData.branchId },
-          });
-          internalBranchId = branch?.id || null;
-        }
+        const branch = await this.prismaService.branch.findFirst({
+          where: { kiotVietId: customerData.branchId },
+          select: { id: true, name: true },
+        });
 
         const customer = await this.prismaService.customer.upsert({
           where: { kiotVietId: customerData.id },
@@ -830,7 +820,7 @@ export class KiotVietCustomerService {
               ? BigInt(customerData.psidFacebook)
               : null,
             retailerId: customerData.retailerId,
-            branchId: internalBranchId,
+            branchId: branch?.id,
             createdDate: customerData.createdDate
               ? new Date(customerData.createdDate)
               : new Date(),
@@ -875,7 +865,7 @@ export class KiotVietCustomerService {
               ? BigInt(customerData.psidFacebook)
               : null,
             retailerId: customerData.retailerId,
-            branchId: internalBranchId,
+            branchId: branch?.id,
             createdDate: customerData.createdDate
               ? new Date(customerData.createdDate)
               : new Date(),
