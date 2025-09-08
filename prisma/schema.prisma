@@ -266,7 +266,7 @@ model User {
   voucherCampaigns VoucherCampaignUser[]
 
   @@index([kiotVietId])
-  Cashflow Cashflow[]
+  // Cashflow Cashflow[]
 }
 
 model Order {
@@ -673,7 +673,7 @@ model BankAccount {
   accountNumber String?
   retailerId    Int?
   createdDate   DateTime
-  Cashflow      Cashflow[]
+  // Cashflow      Cashflow[]
   payments      Payment[]
 
   @@index([kiotVietId])
@@ -1207,7 +1207,7 @@ model Cashflow {
   status                    Int?
   createdBy                 BigInt?
   usedForFinancialReporting Int?
-  accountName               String?
+  // accountName               String?
   branchName                String?
   partnerName               String?
   userName                  String?
@@ -1225,9 +1225,9 @@ model Cashflow {
   amount                    Decimal?      @db.Decimal(15, 2)
   description               String?
   lastSyncedAt              DateTime     @default(now())
-  bankAccount               BankAccount? @relation(fields: [accountId], references: [id])
+  // bankAccount               BankAccount? @relation(fields: [accountId], references: [id])
   branch                    Branch?      @relation(fields: [branchId], references: [id])
-  user                      User? @relation(fields: [userId], references: [id])
+  // user                      User? @relation(fields: [userId], references: [id])
 
   @@index([kiotVietId])
   @@index([branchId])

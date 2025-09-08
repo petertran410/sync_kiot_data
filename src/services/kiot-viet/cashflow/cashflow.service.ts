@@ -18,7 +18,7 @@ interface KiotVietCashflow {
   usedForFinancialReporting?: number;
   account?: string;
   branch?: string;
-  userName?: string;
+  user?: string;
   accountId?: number;
   origin?: string;
   cashFlowGroupId?: number;
@@ -273,15 +273,15 @@ export class KiotVietCashflowService {
             }
           }
 
-          if (totalCashflows > 0) {
-            if (
-              currentItem >= totalCashflows &&
-              processedCount >= totalCashflows
-            ) {
-              this.logger.log('Sync completed - reached expected data range');
-            }
-            break;
-          }
+          // if (totalCashflows > 0) {
+          //   if (
+          //     currentItem >= totalCashflows &&
+          //     processedCount >= totalCashflows
+          //   ) {
+          //     this.logger.log('Sync completed - reached expected data range');
+          //   }
+          //   break;
+          // }
 
           await new Promise((resolve) => setTimeout(resolve, 100));
         } catch (error) {
@@ -516,13 +516,13 @@ export class KiotVietCashflowService {
 
     for (const cashflowData of cashflows) {
       try {
-        const user = await this.prismaService.user.findFirst({
-          where: { kiotVietId: cashflowData.userId },
-          select: {
-            id: true,
-            userName: true,
-          },
-        });
+        // const user = await this.prismaService.user.findFirst({
+        //   where: { kiotVietId: cashflowData.userId },
+        //   select: {
+        //     id: true,
+        //     userName: true,
+        //   },
+        // });
 
         const branch = await this.prismaService.branch.findFirst({
           where: { kiotVietId: cashflowData.branchId },
@@ -532,16 +532,16 @@ export class KiotVietCashflowService {
           },
         });
 
-        const bank = await this.prismaService.bankAccount.findFirst({
-          where: { kiotVietId: cashflowData.accountId },
-          select: { id: true, bankName: true },
-        });
+        // const bank = await this.prismaService.bankAccount.findFirst({
+        //   where: { kiotVietId: cashflowData.accountId },
+        //   select: { id: true, bankName: true },
+        // });
 
         const cashflow = await this.prismaService.cashflow.upsert({
           where: { kiotVietId: BigInt(cashflowData.id) },
           update: {
             code: cashflowData.code.trim(),
-            userId: user?.id,
+            userId: cashflowData.userId,
             address: cashflowData.address || '',
             locationName: cashflowData.locationName || '',
             wardName: cashflowData.wardName || '',
@@ -550,11 +550,10 @@ export class KiotVietCashflowService {
             createdBy: cashflowData.createdBy,
             usedForFinancialReporting:
               cashflowData.usedForFinancialReporting || null,
-            accountName: bank?.bankName,
             branchName: branch?.name,
             partnerName: cashflowData.partnerName,
-            userName: user?.userName,
-            accountId: bank?.id,
+            userName: cashflowData.user,
+            accountId: cashflowData.accountId,
             origin: cashflowData.origin || '',
             cashFlowGroupId: cashflowData.cashFlowGroupId || null,
             cashGroup: cashflowData.cashGroup || '',
@@ -574,7 +573,7 @@ export class KiotVietCashflowService {
           create: {
             kiotVietId: BigInt(cashflowData.id),
             code: cashflowData.code.trim(),
-            userId: user?.id,
+            userId: cashflowData.userId,
             address: cashflowData.address || '',
             locationName: cashflowData.locationName || '',
             wardName: cashflowData.wardName || '',
@@ -583,11 +582,10 @@ export class KiotVietCashflowService {
             createdBy: cashflowData.createdBy,
             usedForFinancialReporting:
               cashflowData.usedForFinancialReporting || null,
-            accountName: bank?.bankName,
             branchName: branch?.name,
             partnerName: cashflowData.partnerName,
-            userName: user?.userName,
-            accountId: bank?.id,
+            userName: cashflowData.user,
+            accountId: cashflowData.accountId,
             origin: cashflowData.origin || '',
             cashFlowGroupId: cashflowData.cashFlowGroupId || null,
             cashGroup: cashflowData.cashGroup || '',
