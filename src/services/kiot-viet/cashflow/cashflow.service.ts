@@ -143,6 +143,8 @@ export class KiotVietCashflowService {
           );
         }
 
+        const dateEnd = new Date().toISOString().split('T')[0];
+
         try {
           const response = await this.fetchCashflowsListWithRetry({
             currentItem,
@@ -150,6 +152,8 @@ export class KiotVietCashflowService {
             includeAccount: true,
             includeBranch: true,
             includeUser: true,
+            startDate: '2024-12-1',
+            endDate: dateEnd,
           });
 
           if (!response) {
@@ -395,6 +399,8 @@ export class KiotVietCashflowService {
       includeAccount?: boolean;
       includeBranch?: boolean;
       includeUser?: boolean;
+      startDate?: string;
+      endDate?: string;
     },
     maxRetries: number = 5,
   ): Promise<any> {
@@ -422,6 +428,8 @@ export class KiotVietCashflowService {
     includeAccount?: boolean;
     includeBranch?: boolean;
     includeUser?: boolean;
+    startDate?: string;
+    endDate?: string;
   }): Promise<any> {
     const headers = await this.authService.getRequestHeaders();
 
@@ -432,6 +440,13 @@ export class KiotVietCashflowService {
       includeBranch: (params.includeBranch || true).toString(),
       includeUser: (params.includeUser || true).toString(),
     });
+
+    if (params.startDate) {
+      queryParams.append('startDate', params.startDate);
+    }
+    if (params.endDate) {
+      queryParams.append('endDate', params.endDate);
+    }
 
     const response = await firstValueFrom(
       this.httpService.get(`${this.baseUrl}/cashflow?${queryParams}`, {
