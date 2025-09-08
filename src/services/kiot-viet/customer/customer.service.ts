@@ -228,44 +228,59 @@ export class KiotVietCustomerService {
           );
 
           const newCustomers = customers.filter((customer) => {
-            if (existingCustomerIds.has(customer.id)) {
-              return false;
+            if (
+              !existingCustomerIds.has(customer.id) &&
+              !processedCustomerIds.has(customer.id)
+            ) {
+              processedCustomerIds.add(customer.id);
+              return true;
             }
-
-            if (processedCustomerIds.has(customer.id)) {
-              this.logger.debug(
-                `Duplicate customer ID detected: ${customer.id} (${customer.code})`,
-              );
-              return false;
-            }
-            processedCustomerIds.add(customer.id);
-            return true;
+            return false;
           });
 
-          if (newCustomers.length !== customers.length) {
-            this.logger.warn(
-              `Filtered out ${customers.length - newCustomers.length} duplicate customers on page ${currentPage}`,
-            );
-          }
+          const existingCustomers = customers.filter((customer) => {
+            if (
+              existingCustomerIds.has(customer.id) &&
+              !processedCustomerIds.has(customer.id)
+            ) {
+              processedCustomerIds.add(customer.id);
+              return true;
+            }
+            return false;
+          });
 
-          if (newCustomers.length === 0) {
+          if (newCustomers.length === 0 && existingCustomers.length === 0) {
             this.logger.log(
-              `Skipping page ${currentPage} - all customers already processed`,
+              `Skipping page ${currentPage} - all customers already processed in this run`,
             );
             currentItem += this.PAGE_SIZE;
             continue;
           }
 
-          this.logger.log(
-            `🔄 Processing ${newCustomers.length} customers from page ${currentPage}...`,
-          );
+          let pageProcessedCount = 0;
+          let allSavedCustomers: any[] = [];
 
-          // const customersWithDetails =
-          //   await this.enrichCustomersWithDetails(newCustomers);
-          const savedCustomers =
-            await this.saveCustomersToDatabase(newCustomers);
+          if (newCustomers.length > 0) {
+            this.logger.log(
+              `🆕 Processing ${newCustomers.length} NEW customers from page ${currentPage}...`,
+            );
+            const savedCustomers =
+              await this.saveCustomersToDatabase(newCustomers);
+            pageProcessedCount += savedCustomers.length;
+            allSavedCustomers.push(...savedCustomers); // ← Collect customers
+          }
 
-          processedCount += savedCustomers.length;
+          if (existingCustomers.length > 0) {
+            this.logger.log(
+              `🔄 Processing ${existingCustomers.length} EXISTING customers from page ${currentPage}...`,
+            );
+            const savedCustomers =
+              await this.saveCustomersToDatabase(existingCustomers);
+            pageProcessedCount += savedCustomers.length;
+            allSavedCustomers.push(...savedCustomers);
+          }
+
+          processedCount += pageProcessedCount;
           currentItem += this.PAGE_SIZE;
 
           if (totalCustomers > 0) {
@@ -281,11 +296,12 @@ export class KiotVietCustomerService {
             }
           }
 
-          if (savedCustomers.length > 0) {
+          // LarkBase sync với tất cả customers đã process
+          if (allSavedCustomers.length > 0) {
             try {
-              await this.syncCustomersToLarkBase(savedCustomers);
+              await this.syncCustomersToLarkBase(allSavedCustomers);
               this.logger.log(
-                `Synced ${savedCustomers.length} customers to LarkBase`,
+                `Synced ${allSavedCustomers.length} customers to LarkBase`,
               );
             } catch (larkError) {
               this.logger.warn(
@@ -293,18 +309,6 @@ export class KiotVietCustomerService {
               );
             }
           }
-
-          // if (totalCustomers > 0) {
-          //   if (
-          //     currentItem >= totalCustomers &&
-          //     processedCount >= totalCustomers * 0.95
-          //   ) {
-          //     this.logger.log(
-          //       '✅ Sync completed - reached expected data range',
-          //     );
-          //     break;
-          //   }
-          // }
 
           await new Promise((resolve) => setTimeout(resolve, 100));
         } catch (error) {
