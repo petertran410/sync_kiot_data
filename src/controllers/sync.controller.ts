@@ -4,6 +4,7 @@ import { BusSchedulerService } from '../services/bus-scheduler/bus-scheduler.ser
 import { KiotVietCustomerService } from '../services/kiot-viet/customer/customer.service';
 import { KiotVietInvoiceService } from '../services/kiot-viet/invoice/invoice.service';
 import { KiotVietOrderService } from 'src/services/kiot-viet/order/order.service';
+import { LarkOrderSyncService } from './../services/lark/order/lark-order-sync.service';
 import { KiotVietProductService } from 'src/services/kiot-viet/product/product.service';
 import { KiotVietCategoryService } from '../services/kiot-viet/category/category.service';
 import { KiotVietCustomerGroupService } from 'src/services/kiot-viet/customer-group/customer-group.service';
@@ -26,6 +27,7 @@ export class SyncController {
     private readonly customerService: KiotVietCustomerService,
     private readonly invoiceService: KiotVietInvoiceService,
     private readonly orderService: KiotVietOrderService,
+    private readonly larkOrderSyncService: LarkOrderSyncService,
     private readonly productService: KiotVietProductService,
     private readonly categoryService: KiotVietCategoryService,
     private readonly customerGroupService: KiotVietCustomerGroupService,
@@ -213,11 +215,25 @@ export class SyncController {
   @Post('order/historical')
   async triggerHistoricalOrder() {
     try {
-      this.logger.log('🔧 Manual historical order sync triggered');
+      this.logger.log('Manual historical order sync triggered');
+
       await this.orderService.enableHistoricalSync();
+
+      await this.orderService.syncHistoricalOrders();
+
+      const ordersToSync = await this.prismaService.order.findMany({
+        where: {
+          OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+        },
+        take: 1000,
+      });
+
+      await this.larkOrderSyncService.syncOrdersToLarkBase(ordersToSync);
+
       return {
         success: true,
         message: 'Historical order sync enabled and started',
+        timestamp: new Date().toISOString(),
       };
     } catch (error) {
       this.logger.error(
@@ -226,29 +242,38 @@ export class SyncController {
       return {
         success: false,
         error: error.message,
+        timestamp: new Date().toISOString(),
       };
     }
   }
 
   @Post('order/recent')
-  async triggerRecentOrder(@Query('days') days?: string) {
+  async triggerRecentOrder() {
     try {
-      const syncDays = days ? parseInt(days, 10) : 7;
-      this.logger.log(
-        `🔧 Manual recent order sync triggered (${syncDays} days)`,
-      );
+      this.logger.log('Manual recent order sync triggered');
 
-      await this.orderService.syncRecentOrders(syncDays);
+      await this.orderService.syncRecentOrders();
+
+      const ordersToSync = await this.prismaService.order.findMany({
+        where: {
+          OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+        },
+        take: 1000,
+      });
+
+      await this.larkOrderSyncService.syncOrdersToLarkBase(ordersToSync);
 
       return {
         success: true,
-        message: `Recent order sync completed (${syncDays} days)`,
+        message: 'Recent order sync enabled and started',
+        timestamp: new Date().toISOString(),
       };
     } catch (error) {
       this.logger.error(`Manual recent order sync failed: ${error.message}`);
       return {
         success: false,
         error: error.message,
+        timestamp: new Date().toISOString(),
       };
     }
   }

@@ -124,12 +124,12 @@ export class KiotVietOrderService {
 
       if (recentSync?.isEnabled && !recentSync.isRunning) {
         this.logger.log('Starting recent order sync...');
-        await this.syncRecentOrders(6);
+        await this.syncRecentOrders();
         return;
       }
 
       this.logger.log('Running default recent order sync...');
-      await this.syncRecentOrders(6);
+      await this.syncRecentOrders();
     } catch (error) {
       this.logger.error(`Sync check failed: ${error.message}`);
       throw error;
@@ -143,7 +143,7 @@ export class KiotVietOrderService {
       status: 'idle',
     });
 
-    this.logger.log('✅ Historical order sync enabled');
+    this.logger.log('Historical order sync enabled');
   }
 
   async syncHistoricalOrders(): Promise<void> {
@@ -165,7 +165,7 @@ export class KiotVietOrderService {
         error: null,
       });
 
-      this.logger.log('🚀 Starting historical order sync...');
+      this.logger.log('Starting historical order sync...');
 
       const MAX_CONSECUTIVE_EMPTY_PAGES = 5;
       const MAX_CONSECUTIVE_ERROR_PAGES = 3;
@@ -180,20 +180,24 @@ export class KiotVietOrderService {
         if (totalOrders > 0) {
           if (currentItem >= totalOrders) {
             this.logger.log(
-              `✅ Pagination complete. Processed: ${processedCount}/${totalOrders} orders`,
+              `Pagination complete. Processed: ${processedCount}/${totalOrders} orders`,
             );
             break;
           }
 
           const progressPercentage = (currentItem / totalOrders) * 100;
           this.logger.log(
-            `📄 Fetching page ${currentPage} (${currentItem}/${totalOrders} - ${progressPercentage.toFixed(1)}%)`,
+            `Fetching page ${currentPage} (${currentItem}/${totalOrders} - ${progressPercentage.toFixed(1)}%)`,
           );
         } else {
           this.logger.log(
-            `📄 Fetching page ${currentPage} (currentItem: ${currentItem})`,
+            `Fetching page ${currentPage} (currentItem: ${currentItem})`,
           );
         }
+
+        const dateEnd = new Date();
+        dateEnd.setDate(dateEnd.getDate() + 1);
+        const dateEndStr = dateEnd.toISOString().split('T')[0];
 
         try {
           const orderListResponse = await this.fetchOrdersListWithRetry({
@@ -203,10 +207,12 @@ export class KiotVietOrderService {
             orderDirection: 'DESC',
             includePayment: true,
             includeOrderDelivery: true,
+            lastModifiedFrom: '2024-12-1',
+            toDate: dateEndStr,
           });
 
           if (!orderListResponse) {
-            this.logger.warn('⚠️ Received null response from KiotViet API');
+            this.logger.warn('Received null response from KiotViet API');
             consecutiveEmptyPages++;
 
             if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
@@ -227,11 +233,14 @@ export class KiotVietOrderService {
 
           if (total !== undefined && total !== null) {
             if (totalOrders === 0) {
+              this.logger.log(
+                `Total orders detected: ${total}. Starting processing...`,
+              );
+
               totalOrders = total;
-              this.logger.log(`📊 Total orders detected: ${totalOrders}`);
             } else if (total !== totalOrders) {
               this.logger.warn(
-                `⚠️ Total count changed: ${totalOrders} -> ${total}. Using latest.`,
+                `Total count changed: ${totalOrders} -> ${total}. Using latest.`,
               );
               totalOrders = total;
             }
@@ -239,13 +248,11 @@ export class KiotVietOrderService {
           }
 
           if (!orders || orders.length === 0) {
-            this.logger.warn(
-              `⚠️ Empty page received at position ${currentItem}`,
-            );
+            this.logger.warn(`Empty page received at position ${currentItem}`);
             consecutiveEmptyPages++;
 
             if (totalOrders > 0 && currentItem >= totalOrders) {
-              this.logger.log('✅ Reached end of data (empty page past total)');
+              this.logger.log('Reached end of data (empty page past total)');
               break;
             }
 
@@ -260,10 +267,22 @@ export class KiotVietOrderService {
             continue;
           }
 
+          const existingOrderIds = new Set(
+            (
+              await this.prismaService.order.findMany({
+                select: { kiotVietId: true },
+              })
+            ).map((c) => Number(c.kiotVietId)),
+          );
+
           const newOrders = orders.filter((order) => {
+            if (existingOrderIds.has(order.id)) {
+              return false;
+            }
+
             if (processedOrderIds.has(order.id)) {
               this.logger.debug(
-                `⚠️ Duplicate order ID detected: ${order.id} (${order.code})`,
+                `Duplicate order ID detected: ${order.id} (${order.code})`,
               );
               return false;
             }
@@ -273,26 +292,25 @@ export class KiotVietOrderService {
 
           if (newOrders.length !== orders.length) {
             this.logger.warn(
-              `🔄 Filtered out ${orders.length - newOrders.length} duplicate orders on page ${currentPage}`,
+              `Filtered out ${orders.length - newOrders.length} duplicate orders on page ${currentPage}`,
             );
           }
 
           if (newOrders.length === 0) {
             this.logger.log(
-              `⏭️ Skipping page ${currentPage} - all orders already processed`,
+              `Skipping page ${currentPage} - all orders already processed`,
             );
             currentItem += this.PAGE_SIZE;
             continue;
           }
 
           this.logger.log(
-            `🔄 Processing ${newOrders.length} orders from page ${currentPage}...`,
+            `Processing ${newOrders.length} orders from page ${currentPage}...`,
           );
 
-          const ordersWithDetails =
-            await this.enrichOrdersWithDetails(newOrders);
-          const savedOrders =
-            await this.saveOrdersToDatabase(ordersWithDetails);
+          // const ordersWithDetails =
+          //   await this.enrichOrdersWithDetails(newOrders);
+          const savedOrders = await this.saveOrdersToDatabase(newOrders);
 
           processedCount += savedOrders.length;
           currentItem += this.PAGE_SIZE;
@@ -300,11 +318,11 @@ export class KiotVietOrderService {
           if (totalOrders > 0) {
             const completionPercentage = (processedCount / totalOrders) * 100;
             this.logger.log(
-              `📈 Progress: ${processedCount}/${totalOrders} (${completionPercentage.toFixed(1)}%)`,
+              `Progress: ${processedCount}/${totalOrders} (${completionPercentage.toFixed(1)}%)`,
             );
 
             if (processedCount >= totalOrders) {
-              this.logger.log('🎉 All orders processed successfully!');
+              this.logger.log('All orders processed successfully!');
               break;
             }
           }
@@ -313,26 +331,26 @@ export class KiotVietOrderService {
             try {
               await this.syncOrdersToLarkBase(savedOrders);
               this.logger.log(
-                `🚀 Synced ${savedOrders.length} orders to LarkBase`,
+                `Synced ${savedOrders.length} orders to LarkBase`,
               );
             } catch (larkError) {
               this.logger.warn(
-                `⚠️ LarkBase sync failed for page ${currentPage}: ${larkError.message}`,
+                `LarkBase sync failed for page ${currentPage}: ${larkError.message}`,
               );
             }
           }
 
-          if (totalOrders > 0) {
-            if (
-              currentItem >= totalOrders &&
-              processedCount >= totalOrders * 0.95
-            ) {
-              this.logger.log(
-                '✅ Sync completed - reached expected data range',
-              );
-              break;
-            }
-          }
+          // if (totalOrders > 0) {
+          //   if (
+          //     currentItem >= totalOrders &&
+          //     processedCount >= totalOrders * 0.95
+          //   ) {
+          //     this.logger.log(
+          //       '✅ Sync completed - reached expected data range',
+          //     );
+          //     break;
+          //   }
+          // }
 
           await new Promise((resolve) => setTimeout(resolve, 100));
         } catch (error) {
@@ -340,7 +358,7 @@ export class KiotVietOrderService {
           totalRetries++;
 
           this.logger.error(
-            `❌ API error on page ${currentPage}: ${error.message}`,
+            `API error on page ${currentPage}: ${error.message}`,
           );
 
           if (consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES) {
@@ -397,8 +415,16 @@ export class KiotVietOrderService {
     }
   }
 
-  async syncRecentOrders(days: number = 6): Promise<void> {
+  async syncRecentOrders(): Promise<void> {
     const syncName = 'order_recent';
+
+    let currentItem = 0;
+    let processedCount = 0;
+    let totalOrders = 0;
+    let consecutiveEmptyPages = 0;
+    let consecutiveErrorPages = 0;
+    let lastValidTotal = 0;
+    let processedOrderIds = new Set<number>();
 
     try {
       await this.updateSyncControl(syncName, {
@@ -408,49 +434,254 @@ export class KiotVietOrderService {
         error: null,
       });
 
-      this.logger.log(`🔄 Starting recent order sync (${days} days)...`);
+      this.logger.log('Starting recent order sync...');
 
-      const fromDate = new Date();
-      fromDate.setDate(fromDate.getDate() - days);
+      const MAX_CONSECUTIVE_EMPTY_PAGES = 5;
+      const MAX_CONSECUTIVE_ERROR_PAGES = 3;
+      const RETRY_DELAY_MS = 2000;
+      const MAX_TOTAL_RETRIES = 10;
 
-      const recentOrders = await this.fetchRecentOrders(fromDate);
+      let totalRetries = 0;
 
-      if (recentOrders.length === 0) {
-        this.logger.log('📋 No recent orders updates found');
-        await this.updateSyncControl(syncName, {
-          isRunning: false,
-          status: 'completed',
-          completedAt: new Date(),
-          lastRunAt: new Date(),
-        });
-        return;
+      while (true) {
+        const currentPage = Math.floor(currentItem / this.PAGE_SIZE) + 1;
+
+        if (totalOrders > 0) {
+          if (currentItem >= totalOrders) {
+            this.logger.log(
+              `Pagination complete. Processed: ${processedCount}/${totalOrders} orders`,
+            );
+            break;
+          }
+
+          const progressPercentage = (currentItem / totalOrders) * 100;
+          this.logger.log(
+            `Fetching page ${currentPage} (${currentItem}/${totalOrders} - ${progressPercentage.toFixed(1)}%)`,
+          );
+        } else {
+          this.logger.log(
+            `Fetching page ${currentPage} (currentItem: ${currentItem})`,
+          );
+        }
+
+        const lastModifiedDate = new Date();
+        lastModifiedDate.setDate(lastModifiedDate.getDate() - 6);
+        const lastDate = lastModifiedDate.toISOString().split('T')[0];
+
+        const dateEnd = new Date();
+        dateEnd.setDate(dateEnd.getDate() + 1);
+        const dateEndStr = dateEnd.toISOString().split('T')[0];
+
+        try {
+          const orderListResponse = await this.fetchOrdersListWithRetry({
+            currentItem,
+            pageSize: this.PAGE_SIZE,
+            orderBy: 'createdDate',
+            orderDirection: 'DESC',
+            includePayment: true,
+            includeOrderDelivery: true,
+            lastModifiedFrom: lastDate,
+            toDate: dateEndStr,
+          });
+
+          if (!orderListResponse) {
+            this.logger.warn('Received null response from KiotViet API');
+            consecutiveEmptyPages++;
+
+            if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
+              this.logger.log(
+                `🔚 Reached end after ${consecutiveEmptyPages} empty pages`,
+              );
+              break;
+            }
+
+            await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+            continue;
+          }
+
+          consecutiveEmptyPages = 0;
+          consecutiveErrorPages = 0;
+
+          const { total, data: orders } = orderListResponse;
+
+          if (total !== undefined && total !== null) {
+            if (totalOrders === 0) {
+              this.logger.log(
+                `Total orders detected: ${total}. Starting processing...`,
+              );
+
+              totalOrders = total;
+            } else if (total !== totalOrders) {
+              this.logger.warn(
+                `Total count changed: ${totalOrders} -> ${total}. Using latest.`,
+              );
+              totalOrders = total;
+            }
+            lastValidTotal = total;
+          }
+
+          if (!orders || orders.length === 0) {
+            this.logger.warn(`Empty page received at position ${currentItem}`);
+            consecutiveEmptyPages++;
+
+            if (totalOrders > 0 && currentItem >= totalOrders) {
+              this.logger.log('Reached end of data (empty page past total)');
+              break;
+            }
+
+            if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
+              this.logger.log(
+                `🔚 Stopping after ${consecutiveEmptyPages} consecutive empty pages`,
+              );
+              break;
+            }
+
+            currentItem += this.PAGE_SIZE;
+            continue;
+          }
+
+          const existingOrderIds = new Set(
+            (
+              await this.prismaService.order.findMany({
+                select: { kiotVietId: true },
+              })
+            ).map((c) => Number(c.kiotVietId)),
+          );
+
+          const newOrders = orders.filter((order) => {
+            if (existingOrderIds.has(order.id)) {
+              return false;
+            }
+
+            if (processedOrderIds.has(order.id)) {
+              this.logger.debug(
+                `Duplicate order ID detected: ${order.id} (${order.code})`,
+              );
+              return false;
+            }
+            processedOrderIds.add(order.id);
+            return true;
+          });
+
+          if (newOrders.length !== orders.length) {
+            this.logger.warn(
+              `Filtered out ${orders.length - newOrders.length} duplicate orders on page ${currentPage}`,
+            );
+          }
+
+          if (newOrders.length === 0) {
+            this.logger.log(
+              `Skipping page ${currentPage} - all orders already processed`,
+            );
+            currentItem += this.PAGE_SIZE;
+            continue;
+          }
+
+          this.logger.log(
+            `Processing ${newOrders.length} orders from page ${currentPage}...`,
+          );
+
+          // const ordersWithDetails =
+          //   await this.enrichOrdersWithDetails(newOrders);
+          const savedOrders = await this.saveOrdersToDatabase(newOrders);
+
+          processedCount += savedOrders.length;
+          currentItem += this.PAGE_SIZE;
+
+          if (totalOrders > 0) {
+            const completionPercentage = (processedCount / totalOrders) * 100;
+            this.logger.log(
+              `Progress: ${processedCount}/${totalOrders} (${completionPercentage.toFixed(1)}%)`,
+            );
+
+            if (processedCount >= totalOrders) {
+              this.logger.log('All orders processed successfully!');
+              break;
+            }
+          }
+
+          if (savedOrders.length > 0) {
+            try {
+              await this.syncOrdersToLarkBase(savedOrders);
+              this.logger.log(
+                `Synced ${savedOrders.length} orders to LarkBase`,
+              );
+            } catch (larkError) {
+              this.logger.warn(
+                `LarkBase sync failed for page ${currentPage}: ${larkError.message}`,
+              );
+            }
+          }
+
+          // if (totalOrders > 0) {
+          //   if (
+          //     currentItem >= totalOrders &&
+          //     processedCount >= totalOrders * 0.95
+          //   ) {
+          //     this.logger.log(
+          //       '✅ Sync completed - reached expected data range',
+          //     );
+          //     break;
+          //   }
+          // }
+
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        } catch (error) {
+          consecutiveErrorPages++;
+          totalRetries++;
+
+          this.logger.error(
+            `API error on page ${currentPage}: ${error.message}`,
+          );
+
+          if (consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES) {
+            throw new Error(
+              `Multiple consecutive API failures: ${error.message}`,
+            );
+          }
+
+          if (totalRetries >= MAX_TOTAL_RETRIES) {
+            throw new Error(`Maximum total retries exceeded: ${error.message}`);
+          }
+
+          const delay = RETRY_DELAY_MS * Math.pow(2, consecutiveErrorPages - 1);
+          this.logger.log(`⏳ Retrying after ${delay}ms delay...`);
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
       }
-
-      this.logger.log(`📊 Processing ${recentOrders.length} recent orders`);
-
-      const ordersWithDetails =
-        await this.enrichOrdersWithDetails(recentOrders);
-      const savedOrders = await this.saveOrdersToDatabase(ordersWithDetails);
-      await this.syncOrdersToLarkBase(savedOrders);
 
       await this.updateSyncControl(syncName, {
         isRunning: false,
+        isEnabled: false,
         status: 'completed',
         completedAt: new Date(),
         lastRunAt: new Date(),
+        progress: { processedCount, expectedTotal: totalOrders },
       });
 
+      await this.updateSyncControl('order_recent', {
+        isEnabled: true,
+        isRunning: false,
+        status: 'idle',
+      });
+
+      const completionRate =
+        totalOrders > 0 ? (processedCount / totalOrders) * 100 : 100;
+
       this.logger.log(
-        `✅ Recent order sync completed: ${ordersWithDetails.length} orders processed`,
+        `✅ Historical order sync completed: ${processedCount}/${totalOrders} (${completionRate.toFixed(1)}% completion rate)`,
+      );
+      this.logger.log(
+        `🔄 AUTO-TRANSITION: Historical sync disabled, Recent sync enabled for future cycles`,
       );
     } catch (error) {
-      this.logger.error(`❌ Recent sync failed: ${error.message}`);
+      this.logger.error(`❌ Historical order sync failed: ${error.message}`);
 
       await this.updateSyncControl(syncName, {
         isRunning: false,
         status: 'failed',
         error: error.message,
-        progress: { errorDetails: error.message },
+        progress: { processedCount, expectedTotal: totalOrders },
       });
 
       throw error;
@@ -465,6 +696,8 @@ export class KiotVietOrderService {
       orderDirection?: string;
       includeOrderDelivery?: boolean;
       includePayment?: boolean;
+      lastModifiedFrom?: string;
+      toDate?: string;
     },
     maxRetries: number = 5,
   ): Promise<any> {
@@ -476,7 +709,7 @@ export class KiotVietOrderService {
       } catch (error) {
         lastError = error as Error;
         this.logger.warn(
-          `⚠️ API attempt ${attempt}/${maxRetries} failed: ${error.message}`,
+          `API attempt ${attempt}/${maxRetries} failed: ${error.message}`,
         );
 
         if (attempt < maxRetries) {
@@ -497,6 +730,8 @@ export class KiotVietOrderService {
     orderDirection?: string;
     includeOrderDelivery?: boolean;
     includePayment?: boolean;
+    lastModifiedFrom?: string;
+    toDate?: string;
   }): Promise<any> {
     const headers = await this.authService.getRequestHeaders();
 
@@ -508,6 +743,13 @@ export class KiotVietOrderService {
       includeOrderDelivery: (params.includeOrderDelivery || true).toString(),
       includePayment: (params.includePayment || true).toString(),
     });
+
+    if (params.lastModifiedFrom) {
+      queryParams.append('lastModifiedFrom', params.lastModifiedFrom);
+    }
+    if (params.toDate) {
+      queryParams.append('toDate', params.toDate);
+    }
 
     const response = await firstValueFrom(
       this.httpService.get(`${this.baseUrl}/orders?${queryParams}`, {
@@ -546,32 +788,29 @@ export class KiotVietOrderService {
     return response.data?.data;
   }
 
-  private async enrichOrdersWithDetails(
-    orders: KiotVietOrder[],
-  ): Promise<KiotVietOrder[]> {
-    this.logger.log(`🔍 Enriching ${orders.length} orders with details...`);
+  private async enrichOrdersWithDetails() // orders: KiotVietOrder[],
+  : Promise<KiotVietOrder[]> {
+    this.logger.log(`Enriching orders with details...`);
 
     const enrichedOrders: any[] = [];
-    for (const order of orders) {
-      try {
-        const headers = await this.authService.getRequestHeaders();
-        const response = await firstValueFrom(
-          this.httpService.get(`${this.baseUrl}/orders/${order.id}`, {
-            headers,
-          }),
-        );
-        if (response.data) {
-          enrichedOrders.push(response.data);
-        } else {
-          enrichedOrders.push(order);
-        }
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      } catch (error) {
-        this.logger.warn(
-          `⚠️ Failed to enrich order ${order.id}: ${error.message}`,
-        );
-        enrichedOrders.push(order);
+
+    try {
+      const headers = await this.authService.getRequestHeaders();
+      const response = await firstValueFrom(
+        this.httpService.get(`${this.baseUrl}/orders`, {
+          headers,
+        }),
+      );
+      if (response.data) {
+        enrichedOrders.push(response.data);
+      } else {
+        // enrichedOrders.push(order);
+        console.log('No order');
       }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    } catch (error) {
+      this.logger.warn(`Failed to enrich order: ${error.message}`);
+      // enrichedOrders.push(order);
     }
 
     return enrichedOrders;

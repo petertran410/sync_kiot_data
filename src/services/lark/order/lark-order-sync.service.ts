@@ -111,9 +111,11 @@ export class LarkOrderSyncService {
     private readonly larkAuthService: LarkAuthService,
   ) {
     const baseToken = this.configService.get<string>(
-      'LARK_ORDER_SYNC_BASE_TOKEN',
+      'LARK_ORDER_TEST_SYNC_BASE_TOKEN',
     );
-    const tableId = this.configService.get<string>('LARK_ORDER_SYNC_TABLE_ID');
+    const tableId = this.configService.get<string>(
+      'LARK_ORDER_TEST_SYNC_TABLE_ID',
+    );
 
     if (!baseToken || !tableId) {
       throw new Error('LarkBase order configuration missing');
@@ -180,7 +182,7 @@ export class LarkOrderSyncService {
         `📋 Categorization: ${newOrders.length} new, ${updateOrders.length} updates`,
       );
 
-      const BATCH_SIZE_FOR_SYNC = 50;
+      const BATCH_SIZE_FOR_SYNC = 100;
 
       if (newOrders.length > 0) {
         for (let i = 0; i < newOrders.length; i += BATCH_SIZE_FOR_SYNC) {

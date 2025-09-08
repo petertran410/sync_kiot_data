@@ -143,7 +143,9 @@ export class KiotVietCashflowService {
           );
         }
 
-        const dateEnd = new Date().toISOString().split('T')[0];
+        const dateEnd = new Date();
+        dateEnd.setDate(dateEnd.getDate() + 1);
+        const dateEndStr = dateEnd.toISOString().split('T')[0];
 
         try {
           const response = await this.fetchCashflowsListWithRetry({
@@ -153,11 +155,11 @@ export class KiotVietCashflowService {
             includeBranch: true,
             includeUser: true,
             startDate: '2024-12-1',
-            endDate: dateEnd,
+            endDate: dateEndStr,
           });
 
           if (!response) {
-            this.logger.warn('⚠️ Received null response from KiotViet API');
+            this.logger.warn('Received null response from KiotViet API');
             consecutiveEmptyPages++;
 
             if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
