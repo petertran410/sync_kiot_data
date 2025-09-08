@@ -390,7 +390,7 @@ export class LarkCustomerSyncService {
     }
   }
 
-  private categorizeCustomers(customers: any[]): Promise<any> {
+  private async categorizeCustomers(customers: any[]): Promise<any> {
     const newCustomers: any[] = [];
     const updateCustomers: any[] = [];
 
