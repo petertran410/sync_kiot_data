@@ -465,7 +465,7 @@ export class KiotVietOrderService {
         }
 
         const lastModifiedDate = new Date();
-        lastModifiedDate.setDate(lastModifiedDate.getDate() - 6);
+        lastModifiedDate.setDate(lastModifiedDate.getDate() - 4);
         const lastDate = lastModifiedDate.toISOString().split('T')[0];
 
         const dateEnd = new Date();
