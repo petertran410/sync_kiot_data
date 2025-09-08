@@ -1980,54 +1980,55 @@ export class BusSchedulerService implements OnModuleInit {
   }
 
   private async runStartupCheck() {
-    try {
-      this.logger.log('🔍 Running startup check...');
-
-      if (this.isDailyCycleRunning || this.dailyCyclePriorityLevel > 0) {
-        this.logger.log('⏸️ Skipping startup syncs - Daily cycle has priority');
-        return;
-      }
-
-      const stuckSyncs = await this.prismaService.syncControl.updateMany({
-        where: { isRunning: true },
-        data: { isRunning: false, status: 'interrupted' },
-      });
-
-      if (stuckSyncs.count > 0) {
-        this.logger.log(
-          `🔄 Reset ${stuckSyncs.count} stuck sync(s) from previous session`,
-        );
-      }
-
-      await this.cleanupOldSyncPatterns();
-
-      this.logger.log(
-        '📋 Running parallel startup sync checks (7-minute entities only)...',
-      );
-
-      this.startupAbortController = new AbortController();
-      const signal = this.startupAbortController.signal;
-
-      const startupPromises = [
-        this.executeAbortableStartupSync('customer', signal, () =>
-          this.customerService.checkAndRunAppropriateSync(),
-        ),
-        this.executeAbortableStartupSync('invoice', signal, () =>
-          this.invoiceService.checkAndRunAppropriateSync(),
-        ),
-        this.executeAbortableStartupSync('order', signal, () =>
-          this.orderService.checkAndRunAppropriateSync(),
-        ),
-      ];
-
-      await Promise.allSettled(startupPromises);
-
-      this.logger.log('✅ Startup check completed');
-    } catch (error) {
-      this.logger.error(`❌ Startup check failed: ${error.message}`);
-    } finally {
-      this.startupAbortController = null;
-    }
+    // try {
+    //   this.logger.log('🔍 Running startup check...');
+    //   if (this.isDailyCycleRunning || this.dailyCyclePriorityLevel > 0) {
+    //     this.logger.log('⏸️ Skipping startup syncs - Daily cycle has priority');
+    //     return;
+    //   }
+    //   const stuckSyncs = await this.prismaService.syncControl.updateMany({
+    //     where: { isRunning: true },
+    //     data: { isRunning: false, status: 'interrupted' },
+    //   });
+    //   if (stuckSyncs.count > 0) {
+    //     this.logger.log(
+    //       `Reset ${stuckSyncs.count} stuck sync(s) from previous session`,
+    //     );
+    //   }
+    //   await this.cleanupOldSyncPatterns();
+    //   const currentlyRunning = await this.prismaService.syncControl.findMany({
+    //     where: { isRunning: true },
+    //   });
+    //   if (currentlyRunning.length > 0) {
+    //     this.logger.log(
+    //       `Found ${currentlyRunning.length} syncs already running: ${currentlyRunning.map((s) => s.name).join(', ')}`,
+    //     );
+    //     this.logger.log('Skipping startup sync checks to avoid conflicts');
+    //     return;
+    //   }
+    //   this.logger.log(
+    //     '📋 Running parallel startup sync checks (7-minute entities only)...',
+    //   );
+    //   this.startupAbortController = new AbortController();
+    //   const signal = this.startupAbortController.signal;
+    //   const startupPromises = [
+    //     this.executeAbortableStartupSync('customer', signal, () =>
+    //       this.customerService.checkAndRunAppropriateSync(),
+    //     ),
+    //     this.executeAbortableStartupSync('invoice', signal, () =>
+    //       this.invoiceService.checkAndRunAppropriateSync(),
+    //     ),
+    //     this.executeAbortableStartupSync('order', signal, () =>
+    //       this.orderService.checkAndRunAppropriateSync(),
+    //     ),
+    //   ];
+    //   await Promise.allSettled(startupPromises);
+    //   this.logger.log('Startup check completed');
+    // } catch (error) {
+    //   this.logger.error(`Startup check failed: ${error.message}`);
+    // } finally {
+    //   this.startupAbortController = null;
+    // }
   }
 
   private async cleanupOldSyncPatterns(): Promise<number> {
