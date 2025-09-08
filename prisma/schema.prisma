@@ -144,7 +144,7 @@ model ProductInventory {
 model Customer {
   id                    Int                     @id @default(autoincrement())
   kiotVietId            BigInt?                 @unique
-  code                  String                  @unique
+  code                  String
   name                  String
   type                  Int?
   gender                Boolean?
