@@ -108,6 +108,25 @@ export class KiotVietOrderService {
 
   async checkAndRunAppropriateSync(): Promise<void> {
     try {
+      const runningOrderSyncs = await this.prismaService.syncControl.findMany({
+        where: {
+          OR: [
+            { name: 'order_historical' },
+            { name: 'order_recent' },
+            { name: 'order_lark_sync' },
+          ],
+          isRunning: true,
+        },
+      });
+
+      if (runningOrderSyncs.length > 0) {
+        this.logger.warn(
+          `Found ${runningOrderSyncs.length} Order syncs still running: ${runningOrderSyncs.map((s) => s.name).join(', ')}`,
+        );
+        this.logger.warn('⏸️ Skipping order sync to avoid conflicts');
+        return;
+      }
+
       const historicalSync = await this.prismaService.syncControl.findFirst({
         where: { name: 'order_historical' },
       });
@@ -119,6 +138,13 @@ export class KiotVietOrderService {
       if (historicalSync?.isEnabled && !historicalSync.isRunning) {
         this.logger.log('Starting historical order sync...');
         await this.syncHistoricalOrders();
+        return;
+      }
+
+      if (historicalSync?.isRunning) {
+        this.logger.log(
+          'Historical order sync is running, skipping recent sync',
+        );
         return;
       }
 
@@ -276,43 +302,59 @@ export class KiotVietOrderService {
           );
 
           const newOrders = orders.filter((order) => {
-            if (existingOrderIds.has(order.id)) {
-              return false;
+            if (
+              !existingOrderIds.has(order.id) &&
+              !processedOrderIds.has(order.id)
+            ) {
+              processedOrderIds.add(order.id);
+              return true;
             }
-
-            if (processedOrderIds.has(order.id)) {
-              this.logger.debug(
-                `Duplicate order ID detected: ${order.id} (${order.code})`,
-              );
-              return false;
-            }
-            processedOrderIds.add(order.id);
-            return true;
+            return false;
           });
 
-          if (newOrders.length !== orders.length) {
-            this.logger.warn(
-              `Filtered out ${orders.length - newOrders.length} duplicate orders on page ${currentPage}`,
-            );
-          }
+          const existingOrders = orders.filter((order) => {
+            if (
+              existingOrderIds.has(order.id) &&
+              !processedOrderIds.has(order.id)
+            ) {
+              processedOrderIds.add(order.id);
+              return true;
+            }
+            return false;
+          });
 
-          if (newOrders.length === 0) {
+          if (newOrders.length === 0 && existingOrders.length === 0) {
             this.logger.log(
-              `Skipping page ${currentPage} - all orders already processed`,
+              `Skipping page ${currentPage} - all orders already processed in this run`,
             );
             currentItem += this.PAGE_SIZE;
             continue;
           }
 
-          this.logger.log(
-            `Processing ${newOrders.length} orders from page ${currentPage}...`,
-          );
+          let pageProcessedCount = 0;
+          let allSavedOrders: any[] = [];
 
-          // const ordersWithDetails =
-          //   await this.enrichOrdersWithDetails(newOrders);
-          const savedOrders = await this.saveOrdersToDatabase(newOrders);
+          if (newOrders.length > 0) {
+            this.logger.log(
+              `Processing ${newOrders.length} NEW orders from page ${currentPage}...`,
+            );
 
-          processedCount += savedOrders.length;
+            const savedOrders = await this.saveOrdersToDatabase(newOrders);
+            pageProcessedCount += savedOrders.length;
+            allSavedOrders.push(...savedOrders);
+          }
+
+          if (existingOrders.length > 0) {
+            this.logger.log(
+              `Processing ${existingOrders.length} EXISTING orders from page ${currentPage}`,
+            );
+
+            const savedOrders = await this.saveOrdersToDatabase(existingOrders);
+            pageProcessedCount += savedOrders.length;
+            allSavedOrders.push(...savedOrders);
+          }
+
+          processedCount += pageProcessedCount;
           currentItem += this.PAGE_SIZE;
 
           if (totalOrders > 0) {
@@ -322,35 +364,23 @@ export class KiotVietOrderService {
             );
 
             if (processedCount >= totalOrders) {
-              this.logger.log('All orders processed successfully!');
+              this.logger.log('All orders procesed successfully!');
               break;
             }
           }
 
-          if (savedOrders.length > 0) {
+          if (allSavedOrders.length > 0) {
             try {
-              await this.syncOrdersToLarkBase(savedOrders);
+              await this.syncOrdersToLarkBase(allSavedOrders);
               this.logger.log(
-                `Synced ${savedOrders.length} orders to LarkBase`,
+                `Synced ${allSavedOrders.length} orders to LarkBase`,
               );
-            } catch (larkError) {
+            } catch (error) {
               this.logger.warn(
-                `LarkBase sync failed for page ${currentPage}: ${larkError.message}`,
+                `LarkBase sync failed for page ${currentPage}: ${error.message}`,
               );
             }
           }
-
-          // if (totalOrders > 0) {
-          //   if (
-          //     currentItem >= totalOrders &&
-          //     processedCount >= totalOrders * 0.95
-          //   ) {
-          //     this.logger.log(
-          //       '✅ Sync completed - reached expected data range',
-          //     );
-          //     break;
-          //   }
-          // }
 
           await new Promise((resolve) => setTimeout(resolve, 100));
         } catch (error) {
@@ -434,7 +464,7 @@ export class KiotVietOrderService {
         error: null,
       });
 
-      this.logger.log('Starting recent order sync...');
+      this.logger.log('Starting historical order sync...');
 
       const MAX_CONSECUTIVE_EMPTY_PAGES = 5;
       const MAX_CONSECUTIVE_ERROR_PAGES = 3;
@@ -464,9 +494,9 @@ export class KiotVietOrderService {
           );
         }
 
-        const lastModifiedDate = new Date();
-        lastModifiedDate.setDate(lastModifiedDate.getDate() - 4);
-        const lastDate = lastModifiedDate.toISOString().split('T')[0];
+        const dateStart = new Date();
+        dateStart.setDate(dateStart.getDate() - 6);
+        const dateStartStr = dateStart.toISOString().split('T')[0];
 
         const dateEnd = new Date();
         dateEnd.setDate(dateEnd.getDate() + 1);
@@ -480,7 +510,7 @@ export class KiotVietOrderService {
             orderDirection: 'DESC',
             includePayment: true,
             includeOrderDelivery: true,
-            lastModifiedFrom: lastDate,
+            lastModifiedFrom: dateStartStr,
             toDate: dateEndStr,
           });
 
@@ -549,43 +579,59 @@ export class KiotVietOrderService {
           );
 
           const newOrders = orders.filter((order) => {
-            if (existingOrderIds.has(order.id)) {
-              return false;
+            if (
+              !existingOrderIds.has(order.id) &&
+              !processedOrderIds.has(order.id)
+            ) {
+              processedOrderIds.add(order.id);
+              return true;
             }
-
-            if (processedOrderIds.has(order.id)) {
-              this.logger.debug(
-                `Duplicate order ID detected: ${order.id} (${order.code})`,
-              );
-              return false;
-            }
-            processedOrderIds.add(order.id);
-            return true;
+            return false;
           });
 
-          if (newOrders.length !== orders.length) {
-            this.logger.warn(
-              `Filtered out ${orders.length - newOrders.length} duplicate orders on page ${currentPage}`,
-            );
-          }
+          const existingOrders = orders.filter((order) => {
+            if (
+              existingOrderIds.has(order.id) &&
+              !processedOrderIds.has(order.id)
+            ) {
+              processedOrderIds.add(order.id);
+              return true;
+            }
+            return false;
+          });
 
-          if (newOrders.length === 0) {
+          if (newOrders.length === 0 && existingOrders.length === 0) {
             this.logger.log(
-              `Skipping page ${currentPage} - all orders already processed`,
+              `Skipping page ${currentPage} - all orders already processed in this run`,
             );
             currentItem += this.PAGE_SIZE;
             continue;
           }
 
-          this.logger.log(
-            `Processing ${newOrders.length} orders from page ${currentPage}...`,
-          );
+          let pageProcessedCount = 0;
+          let allSavedOrders: any[] = [];
 
-          // const ordersWithDetails =
-          //   await this.enrichOrdersWithDetails(newOrders);
-          const savedOrders = await this.saveOrdersToDatabase(newOrders);
+          if (newOrders.length > 0) {
+            this.logger.log(
+              `Processing ${newOrders.length} NEW orders from page ${currentPage}...`,
+            );
 
-          processedCount += savedOrders.length;
+            const savedOrders = await this.saveOrdersToDatabase(newOrders);
+            pageProcessedCount += savedOrders.length;
+            allSavedOrders.push(...savedOrders);
+          }
+
+          if (existingOrders.length > 0) {
+            this.logger.log(
+              `Processing ${existingOrders.length} EXISTING orders from page ${currentPage}`,
+            );
+
+            const savedOrders = await this.saveOrdersToDatabase(existingOrders);
+            pageProcessedCount += savedOrders.length;
+            allSavedOrders.push(...savedOrders);
+          }
+
+          processedCount += pageProcessedCount;
           currentItem += this.PAGE_SIZE;
 
           if (totalOrders > 0) {
@@ -595,35 +641,23 @@ export class KiotVietOrderService {
             );
 
             if (processedCount >= totalOrders) {
-              this.logger.log('All orders processed successfully!');
+              this.logger.log('All orders procesed successfully!');
               break;
             }
           }
 
-          if (savedOrders.length > 0) {
+          if (allSavedOrders.length > 0) {
             try {
-              await this.syncOrdersToLarkBase(savedOrders);
+              await this.syncOrdersToLarkBase(allSavedOrders);
               this.logger.log(
-                `Synced ${savedOrders.length} orders to LarkBase`,
+                `Synced ${allSavedOrders.length} orders to LarkBase`,
               );
-            } catch (larkError) {
+            } catch (error) {
               this.logger.warn(
-                `LarkBase sync failed for page ${currentPage}: ${larkError.message}`,
+                `LarkBase sync failed for page ${currentPage}: ${error.message}`,
               );
             }
           }
-
-          // if (totalOrders > 0) {
-          //   if (
-          //     currentItem >= totalOrders &&
-          //     processedCount >= totalOrders * 0.95
-          //   ) {
-          //     this.logger.log(
-          //       '✅ Sync completed - reached expected data range',
-          //     );
-          //     break;
-          //   }
-          // }
 
           await new Promise((resolve) => setTimeout(resolve, 100));
         } catch (error) {
@@ -645,7 +679,7 @@ export class KiotVietOrderService {
           }
 
           const delay = RETRY_DELAY_MS * Math.pow(2, consecutiveErrorPages - 1);
-          this.logger.log(`⏳ Retrying after ${delay}ms delay...`);
+          this.logger.log(`Retrying after ${delay}ms delay...`);
           await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }
@@ -669,13 +703,10 @@ export class KiotVietOrderService {
         totalOrders > 0 ? (processedCount / totalOrders) * 100 : 100;
 
       this.logger.log(
-        `Historical order sync completed: ${processedCount}/${totalOrders} (${completionRate.toFixed(1)}% completion rate)`,
-      );
-      this.logger.log(
-        `🔄 AUTO-TRANSITION: Historical sync disabled, Recent sync enabled for future cycles`,
+        `Recent order sync completed: ${processedCount}/${totalOrders} (${completionRate.toFixed(1)}% completion rate)`,
       );
     } catch (error) {
-      this.logger.error(`❌ Historical order sync failed: ${error.message}`);
+      this.logger.error(`Recent order sync failed: ${error.message}`);
 
       await this.updateSyncControl(syncName, {
         isRunning: false,
