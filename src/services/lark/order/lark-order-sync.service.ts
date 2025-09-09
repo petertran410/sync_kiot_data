@@ -136,7 +136,7 @@ export class LarkOrderSyncService {
       );
 
       if (ordersToSync.length === 0) {
-        this.logger.log('📋 No orders need LarkBase sync');
+        this.logger.log('No orders need LarkBase sync');
         await this.releaseSyncLock(lockKey);
         return;
       }
@@ -158,7 +158,7 @@ export class LarkOrderSyncService {
       ).length;
 
       this.logger.log(
-        `📊 Including: ${pendingCount} PENDING + ${failedCount} FAILED orders`,
+        `Including: ${pendingCount} PENDING + ${failedCount} FAILED orders`,
       );
 
       await this.testLarkBaseConnection();
@@ -166,7 +166,7 @@ export class LarkOrderSyncService {
       const cacheLoaded = await this.loadExistingRecordsWithRetry();
 
       if (!cacheLoaded) {
-        this.logger.warn('⚠️ Cache loading failed - using lightweight mode');
+        this.logger.warn('Cache loading failed - using lightweight mode');
         await this.syncWithoutCache(ordersToSync);
         await this.releaseSyncLock(lockKey);
         return;
@@ -176,7 +176,7 @@ export class LarkOrderSyncService {
         await this.categorizeOrders(ordersToSync);
 
       this.logger.log(
-        `📋 Categorization: ${newOrders.length} new, ${updateOrders.length} updates`,
+        `Categorization: ${newOrders.length} new, ${updateOrders.length} updates`,
       );
 
       const BATCH_SIZE_FOR_SYNC = 100;
@@ -215,13 +215,11 @@ export class LarkOrderSyncService {
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        this.logger.log(
-          `📥 Loading cache (attempt ${attempt}/${maxRetries})...`,
-        );
+        this.logger.log(`Loading cache (attempt ${attempt}/${maxRetries})...`);
 
         if (this.isCacheValid() && this.existingRecordsCache.size > 5000) {
           this.logger.log(
-            `✅ Large cache available (${this.existingRecordsCache.size} records) - skipping reload`,
+            `Large cache available (${this.existingRecordsCache.size} records) - skipping reload`,
           );
           return true;
         }
@@ -231,7 +229,7 @@ export class LarkOrderSyncService {
             (Date.now() - this.lastCacheLoadTime.getTime()) / (1000 * 60);
           if (cacheAgeMinutes < 45 && this.existingRecordsCache.size > 500) {
             this.logger.log(
-              `✅ Recent cache (${cacheAgeMinutes.toFixed(1)}min old, ${this.existingRecordsCache.size} records) - skipping reload`,
+              `Recent cache (${cacheAgeMinutes.toFixed(1)}min old, ${this.existingRecordsCache.size} records) - skipping reload`,
             );
             return true;
           }
@@ -242,21 +240,21 @@ export class LarkOrderSyncService {
 
         if (this.existingRecordsCache.size > 0) {
           this.logger.log(
-            `✅ Cache loaded successfully: ${this.existingRecordsCache.size} records`,
+            `Cache loaded successfully: ${this.existingRecordsCache.size} records`,
           );
           this.lastCacheLoadTime = new Date();
           return true;
         }
 
-        this.logger.warn(`⚠️ Cache empty on attempt ${attempt}`);
+        this.logger.warn(`Cache empty on attempt ${attempt}`);
       } catch (error) {
         this.logger.warn(
-          `❌ Cache loading attempt ${attempt} failed: ${error.message}`,
+          `Cache loading attempt ${attempt} failed: ${error.message}`,
         );
 
         if (attempt < maxRetries) {
           const delay = attempt * 2000;
-          this.logger.log(`⏳ Waiting ${delay / 1000}s before retry...`);
+          this.logger.log(`Waiting ${delay / 1000}s before retry...`);
           await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }
@@ -333,7 +331,7 @@ export class LarkOrderSyncService {
 
           if (totalLoaded % 1500 === 0 || !pageToken) {
             this.logger.log(
-              `📊 Cache progress: ${cacheBuilt}/${totalLoaded} records (${loadTime}ms/page)`,
+              `Cache progress: ${cacheBuilt}/${totalLoaded} records (${loadTime}ms/page)`,
             );
           }
         } else {
@@ -348,7 +346,7 @@ export class LarkOrderSyncService {
         totalLoaded > 0 ? Math.round((cacheBuilt / totalLoaded) * 100) : 0;
 
       this.logger.log(
-        `✅ Order cache loaded: ${this.existingRecordsCache.size} by ID, ${this.orderCodeCache.size} by code (${successRate}% success)`,
+        `Order cache loaded: ${this.existingRecordsCache.size} by ID, ${this.orderCodeCache.size} by code (${successRate}% success)`,
       );
     } catch (error) {
       this.logger.error(`❌ Order cache loading failed: ${error.message}`);
@@ -367,7 +365,7 @@ export class LarkOrderSyncService {
 
     if (duplicateDetected.length > 0) {
       this.logger.warn(
-        `🚨 Detected ${duplicateDetected.length} orders already in cache: ${duplicateDetected
+        `Detected ${duplicateDetected.length} orders already in cache: ${duplicateDetected
           .map((o) => o.kiotVietId)
           .slice(0, 5)
           .join(', ')}`,
@@ -378,9 +376,7 @@ export class LarkOrderSyncService {
       const kiotVietId = this.safeBigIntToNumber(order.kiotVietId);
 
       if (this.pendingCreation.has(kiotVietId)) {
-        this.logger.warn(
-          `⚠️ Order ${kiotVietId} is pending creation, skipping`,
-        );
+        this.logger.warn(`Order ${kiotVietId} is pending creation, skipping`);
         continue;
       }
 
@@ -439,7 +435,7 @@ export class LarkOrderSyncService {
   private async processNewOrders(orders: any[]): Promise<void> {
     if (orders.length === 0) return;
 
-    this.logger.log(`📝 Creating ${orders.length} new orders...`);
+    this.logger.log(`Creating ${orders.length} new orders...`);
 
     const batches = this.chunkArray(orders, this.batchSize);
     let totalCreated = 0;
@@ -455,7 +451,7 @@ export class LarkOrderSyncService {
           verifiedBatch.push(order);
         } else {
           this.logger.warn(
-            `⚠️ Skipping duplicate order ${kiotVietId} in batch ${i + 1}`,
+            `Skipping duplicate order ${kiotVietId} in batch ${i + 1}`,
           );
         }
       }
@@ -500,7 +496,7 @@ export class LarkOrderSyncService {
   private async processUpdateOrders(orders: any[]): Promise<void> {
     if (orders.length === 0) return;
 
-    this.logger.log(`📝 Updating ${orders.length} existing orders...`);
+    this.logger.log(`Updating ${orders.length} existing orders...`);
 
     let successCount = 0;
     let failedCount = 0;
@@ -536,16 +532,15 @@ export class LarkOrderSyncService {
       }
     }
 
-    // Process fallbacks as new orders
     if (createFallbacks.length > 0) {
       this.logger.log(
-        `🔄 Processing ${createFallbacks.length} update fallbacks as new orders...`,
+        `Processing ${createFallbacks.length} update fallbacks as new orders...`,
       );
       await this.processNewOrders(createFallbacks);
     }
 
     this.logger.log(
-      `📝 Update complete: ${successCount} updated, ${createFallbacks.length} fallback to create`,
+      `Update complete: ${successCount} updated, ${failedCount} failed, ${createFallbacks.length} fallback to create`,
     );
   }
 
@@ -620,7 +615,7 @@ export class LarkOrderSyncService {
         }
 
         this.logger.warn(
-          `⚠️ Batch create failed: ${response.data.msg} (Code: ${response.data.code})`,
+          `Batch create failed: ${response.data.msg} (Code: ${response.data.code})`,
         );
         return { successRecords: [], failedRecords: orders };
       } catch (error) {
@@ -657,7 +652,7 @@ export class LarkOrderSyncService {
 
         if (response.data.code === 0) {
           this.logger.debug(
-            `✅ Updated record ${order.larkRecordId} for order ${order.code}`,
+            `Updated record ${order.larkRecordId} for order ${order.code}`,
           );
           return true;
         }
@@ -1019,10 +1014,7 @@ export class LarkOrderSyncService {
     if (existingLock && existingLock.startedAt) {
       const lockAge = Date.now() - existingLock.startedAt.getTime();
 
-      // 🆕 ENHANCED: More aggressive stale lock cleanup
       if (lockAge < 10 * 60 * 1000) {
-        // Reduced from 30min to 10min
-        // 🆕 ADDED: Check if the process is actually active
         const isProcessActive = await this.isLockProcessActive(existingLock);
 
         if (isProcessActive) {

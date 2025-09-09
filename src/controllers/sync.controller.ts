@@ -4,6 +4,7 @@ import { BusSchedulerService } from '../services/bus-scheduler/bus-scheduler.ser
 import { KiotVietCustomerService } from '../services/kiot-viet/customer/customer.service';
 import { LarkCustomerSyncService } from 'src/services/lark/customer/lark-customer-sync.service';
 import { KiotVietInvoiceService } from '../services/kiot-viet/invoice/invoice.service';
+import { LarkInvoiceSyncService } from 'src/services/lark/invoice/lark-invoice-sync.service';
 import { KiotVietOrderService } from 'src/services/kiot-viet/order/order.service';
 import { LarkOrderSyncService } from './../services/lark/order/lark-order-sync.service';
 import { KiotVietProductService } from 'src/services/kiot-viet/product/product.service';
@@ -28,6 +29,7 @@ export class SyncController {
     private readonly customerService: KiotVietCustomerService,
     private readonly larkCustomerSyncService: LarkCustomerSyncService,
     private readonly invoiceService: KiotVietInvoiceService,
+    private readonly larkInvoiceSyncService: LarkInvoiceSyncService,
     private readonly orderService: KiotVietOrderService,
     private readonly larkOrderSyncService: LarkOrderSyncService,
     private readonly productService: KiotVietProductService,
@@ -180,11 +182,23 @@ export class SyncController {
   @Post('invoice/historical')
   async triggerHistoricalInvoice() {
     try {
-      this.logger.log('🔧 Manual historical invoice sync triggered');
+      this.logger.log('Manual historical invoice sync triggered');
+
       await this.invoiceService.enableHistoricalSync();
+
+      const invoicesToSync = await this.prismaService.invoice.findMany({
+        where: {
+          OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+        },
+        take: 1000,
+      });
+
+      await this.larkInvoiceSyncService.syncInvoicesToLarkBase(invoicesToSync);
+
       return {
         success: true,
         message: 'Historical invoice sync enabled and started',
+        timestamp: new Date().toISOString(),
       };
     } catch (error) {
       this.logger.error(
@@ -193,6 +207,7 @@ export class SyncController {
       return {
         success: false,
         error: error.message,
+        timestamp: new Date().toISOString(),
       };
     }
   }
@@ -248,7 +263,7 @@ export class SyncController {
 
       await this.orderService.enableHistoricalSync();
 
-      await this.orderService.syncHistoricalOrders();
+      // await this.orderService.syncHistoricalOrders();
 
       const ordersToSync = await this.prismaService.order.findMany({
         where: {

@@ -123,7 +123,7 @@ export class KiotVietOrderService {
         this.logger.warn(
           `Found ${runningOrderSyncs.length} Order syncs still running: ${runningOrderSyncs.map((s) => s.name).join(', ')}`,
         );
-        this.logger.warn('⏸️ Skipping order sync to avoid conflicts');
+        this.logger.warn('Skipping order sync to avoid conflicts');
         return;
       }
 
@@ -464,7 +464,7 @@ export class KiotVietOrderService {
         error: null,
       });
 
-      this.logger.log('Starting historical order sync...');
+      this.logger.log('Starting recent order sync...');
 
       const MAX_CONSECUTIVE_EMPTY_PAGES = 5;
       const MAX_CONSECUTIVE_ERROR_PAGES = 3;
@@ -745,7 +745,7 @@ export class KiotVietOrderService {
 
         if (attempt < maxRetries) {
           const delay = 2000 * attempt;
-          this.logger.log(`⏳ Retrying after ${delay / 1000}s delay...`);
+          this.logger.log(`Retrying after ${delay / 1000}s delay...`);
           await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }
@@ -847,7 +847,7 @@ export class KiotVietOrderService {
   }
 
   private async saveOrdersToDatabase(orders: any[]): Promise<any[]> {
-    this.logger.log(`💾 Saving ${orders.length} orders to database...`);
+    this.logger.log(`Saving ${orders.length} orders to database...`);
 
     const savedOrders: any[] = [];
 

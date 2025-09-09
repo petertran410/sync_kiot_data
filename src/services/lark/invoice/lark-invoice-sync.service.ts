@@ -5,7 +5,6 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { LarkAuthService } from '../auth/lark-auth.service';
 import { firstValueFrom } from 'rxjs';
 
-// ✅ EXACT field names from Hoá Đơn.rtf
 const LARK_INVOICE_FIELDS = {
   PRIMARY_CODE: 'Mã Hoá Đơn',
   ORDER_CODE: 'Mã Đơn Hàng',
@@ -25,7 +24,6 @@ const LARK_INVOICE_FIELDS = {
   APPLY_VOUCHER: 'Áp Mã Voucher',
   CREATED_DATE: 'Ngày Tạo',
   PURCHASE_DATE: 'Ngày Mua',
-  // MODIFIED_DATE: 'Ngày Cập Nhật',
 } as const;
 
 const BRANCH_OPTIONS = {
@@ -129,12 +127,12 @@ export class LarkInvoiceSyncService {
   private readonly logger = new Logger(LarkInvoiceSyncService.name);
   private readonly baseToken: string;
   private readonly tableId: string;
-  private readonly batchSize: number = 15;
+  private readonly batchSize = 100;
+  private readonly pendingCreation = new Set<number>();
 
   private readonly AUTH_ERROR_CODES = [99991663, 99991664, 99991665];
   private readonly MAX_AUTH_RETRIES = 3;
 
-  // Cache management
   private existingRecordsCache: Map<number, string> = new Map();
   private invoiceCodeCache: Map<string, string> = new Map();
   private cacheLoaded: boolean = false;
@@ -169,7 +167,7 @@ export class LarkInvoiceSyncService {
       await this.acquireSyncLock(lockKey);
 
       this.logger.log(
-        `🚀 Starting LarkBase sync for ${invoices.length} invoices...`,
+        `Starting LarkBase sync for ${invoices.length} invoices...`,
       );
 
       const invoicesToSync = invoices.filter(
@@ -177,12 +175,12 @@ export class LarkInvoiceSyncService {
       );
 
       if (invoicesToSync.length === 0) {
-        this.logger.log('📋 No invoices need LarkBase sync');
+        this.logger.log('No invoices need LarkBase sync');
         await this.releaseSyncLock(lockKey);
         return;
       }
 
-      if (invoicesToSync.length < 15) {
+      if (invoicesToSync.length < 5) {
         this.logger.log(
           `🏃‍♂️ Small sync (${invoicesToSync.length} invoices) - using lightweight mode`,
         );
@@ -199,7 +197,7 @@ export class LarkInvoiceSyncService {
       ).length;
 
       this.logger.log(
-        `📊 Including: ${pendingCount} PENDING + ${failedCount} FAILED invoices`,
+        `Including: ${pendingCount} PENDING + ${failedCount} FAILED invoices`,
       );
 
       await this.testLarkBaseConnection();
@@ -207,20 +205,20 @@ export class LarkInvoiceSyncService {
       const cacheLoaded = await this.loadExistingRecordsWithRetry();
 
       if (!cacheLoaded) {
-        this.logger.warn('⚠️ Cache loading failed - using lightweight mode');
+        this.logger.warn('Cache loading failed - using lightweight mode');
         await this.syncWithoutCache(invoicesToSync);
         await this.releaseSyncLock(lockKey);
         return;
       }
 
       const { newInvoices, updateInvoices } =
-        this.categorizeInvoices(invoicesToSync);
+        await this.categorizeInvoices(invoicesToSync);
 
       this.logger.log(
-        `📋 Categorization: ${newInvoices.length} new, ${updateInvoices.length} updates`,
+        `Categorization: ${newInvoices.length} new, ${updateInvoices.length} updates`,
       );
 
-      const BATCH_SIZE_FOR_SYNC = 50;
+      const BATCH_SIZE_FOR_SYNC = 100;
 
       if (newInvoices.length > 0) {
         for (let i = 0; i < newInvoices.length; i += BATCH_SIZE_FOR_SYNC) {
@@ -242,9 +240,9 @@ export class LarkInvoiceSyncService {
         }
       }
 
-      this.logger.log('✅ LarkBase invoice sync completed successfully');
+      this.logger.log('LarkBase invoice sync completed successfully');
     } catch (error) {
-      this.logger.error(`❌ LarkBase invoice sync failed: ${error.message}`);
+      this.logger.error(`LarkBase invoice sync failed: ${error.message}`);
       throw error;
     } finally {
       await this.releaseSyncLock(lockKey);
@@ -256,13 +254,11 @@ export class LarkInvoiceSyncService {
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        this.logger.log(
-          `📥 Loading cache (attempt ${attempt}/${maxRetries})...`,
-        );
+        this.logger.log(`Loading cache (attempt ${attempt}/${maxRetries})...`);
 
         if (this.isCacheValid() && this.existingRecordsCache.size > 3000) {
           this.logger.log(
-            `✅ Large cache available (${this.existingRecordsCache.size} records) - skipping reload`,
+            `Large cache available (${this.existingRecordsCache.size} records) - skipping reload`,
           );
           return true;
         }
@@ -272,7 +268,7 @@ export class LarkInvoiceSyncService {
             (Date.now() - this.lastCacheLoadTime.getTime()) / (1000 * 60);
           if (cacheAgeMinutes < 45 && this.existingRecordsCache.size > 500) {
             this.logger.log(
-              `✅ Recent cache (${cacheAgeMinutes.toFixed(1)}min old, ${this.existingRecordsCache.size} records) - skipping reload`,
+              `Recent cache (${cacheAgeMinutes.toFixed(1)}min old, ${this.existingRecordsCache.size} records) - skipping reload`,
             );
             return true;
           }
@@ -283,21 +279,21 @@ export class LarkInvoiceSyncService {
 
         if (this.existingRecordsCache.size > 0) {
           this.logger.log(
-            `✅ Cache loaded successfully: ${this.existingRecordsCache.size} records`,
+            `Cache loaded successfully: ${this.existingRecordsCache.size} records`,
           );
           this.lastCacheLoadTime = new Date();
           return true;
         }
 
-        this.logger.warn(`⚠️ Cache empty on attempt ${attempt}`);
+        this.logger.warn(`Cache empty on attempt ${attempt}`);
       } catch (error) {
         this.logger.error(
-          `❌ Cache loading attempt ${attempt} failed: ${error.message}`,
+          `Cache loading attempt ${attempt} failed: ${error.message}`,
         );
 
         if (attempt < maxRetries) {
           const delay = attempt * 2000;
-          this.logger.log(`⏳ Waiting ${delay / 1000}s before retry...`);
+          this.logger.log(`Waiting ${delay / 1000}s before retry...`);
           await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }
@@ -375,7 +371,7 @@ export class LarkInvoiceSyncService {
 
           if (totalLoaded % 1500 === 0 || !pageToken) {
             this.logger.log(
-              `📊 Cache progress: ${cacheBuilt}/${totalLoaded} records (${loadTime}ms/page)`,
+              `Cache progress: ${cacheBuilt}/${totalLoaded} records (${loadTime}ms/page)`,
             );
           }
         } else {
@@ -390,12 +386,59 @@ export class LarkInvoiceSyncService {
         totalLoaded > 0 ? Math.round((cacheBuilt / totalLoaded) * 100) : 0;
 
       this.logger.log(
-        `✅ Invoice cache loaded: ${this.existingRecordsCache.size} by ID, ${this.invoiceCodeCache.size} by code (${successRate}% success)`,
+        `Invoice cache loaded: ${this.existingRecordsCache.size} by ID, ${this.invoiceCodeCache.size} by code (${successRate}% success)`,
       );
     } catch (error) {
       this.logger.error(`❌ Invoice cache loading failed: ${error.message}`);
       throw error;
     }
+  }
+
+  private async categorizeInvoices(invoices: any[]): Promise<any> {
+    const newInvoices: any[] = [];
+    const updateInvoices: any[] = [];
+
+    const duplicateDetected = invoices.filter((invoice) => {
+      const kiotVietId = this.safeBigIntToNumber(invoice.kiotVietId);
+      return this.existingRecordsCache.has(kiotVietId);
+    });
+
+    if (duplicateDetected.length > 0) {
+      this.logger.warn(
+        `🚨 Detected ${duplicateDetected.length} invoices already in cache: ${duplicateDetected
+          .map((o) => o.kiotVietId)
+          .slice(0, 5)
+          .join(', ')}`,
+      );
+    }
+
+    for (const invoice of invoices) {
+      const kiotVietId = this.safeBigIntToNumber(invoice.kiotVietId);
+
+      if (this.pendingCreation.has(kiotVietId)) {
+        this.logger.warn(
+          `Invoices ${kiotVietId} is pending creation, skipping`,
+        );
+        continue;
+      }
+
+      let existingRecordId = this.existingRecordsCache.get(kiotVietId);
+
+      if (!existingRecordId && invoice.code) {
+        existingRecordId = this.invoiceCodeCache.get(
+          String(invoice.code).trim(),
+        );
+      }
+
+      if (existingRecordId) {
+        updateInvoices.push({ ...invoice, larkRecordId: existingRecordId });
+      } else {
+        this.pendingCreation.add(kiotVietId);
+        newInvoices.push(invoice);
+      }
+    }
+
+    return { newInvoices, updateInvoices };
   }
 
   private async syncWithoutCache(invoices: any[]): Promise<void> {
@@ -419,7 +462,8 @@ export class LarkInvoiceSyncService {
     this.existingRecordsCache = quickCache;
 
     try {
-      const { newInvoices, updateInvoices } = this.categorizeInvoices(invoices);
+      const { newInvoices, updateInvoices } =
+        await this.categorizeInvoices(invoices);
 
       if (newInvoices.length > 0) {
         await this.processNewInvoices(newInvoices);
@@ -433,45 +477,10 @@ export class LarkInvoiceSyncService {
     }
   }
 
-  private categorizeInvoices(invoices: any[]): {
-    newInvoices: any[];
-    updateInvoices: any[];
-  } {
-    const newInvoices: any[] = [];
-    const updateInvoices: any[] = [];
-
-    for (const invoice of invoices) {
-      const kiotVietId = this.safeBigIntToNumber(invoice.kiotVietId);
-
-      let existingRecordId = this.existingRecordsCache.get(kiotVietId);
-
-      if (!existingRecordId && invoice.code) {
-        existingRecordId = this.invoiceCodeCache.get(
-          String(invoice.code).trim(),
-        );
-      }
-
-      if (existingRecordId) {
-        updateInvoices.push({
-          ...invoice,
-          larkRecordId: existingRecordId,
-        });
-      } else {
-        newInvoices.push(invoice);
-      }
-    }
-
-    return { newInvoices, updateInvoices };
-  }
-
-  // ============================================================================
-  // PROCESS NEW INVOICES
-  // ============================================================================
-
   private async processNewInvoices(invoices: any[]): Promise<void> {
     if (invoices.length === 0) return;
 
-    this.logger.log(`📝 Creating ${invoices.length} new invoices...`);
+    this.logger.log(`Creating ${invoices.length} new invoices...`);
 
     const batches = this.chunkArray(invoices, this.batchSize);
     let totalCreated = 0;
@@ -479,12 +488,31 @@ export class LarkInvoiceSyncService {
 
     for (let i = 0; i < batches.length; i++) {
       const batch = batches[i];
+
+      const verifiedBatch: any[] = [];
+
+      for (const invoice of batch) {
+        const kiotVietId = this.safeBigIntToNumber(invoice.kiotVietId);
+        if (!this.existingRecordsCache.has(kiotVietId)) {
+          verifiedBatch.push(invoice);
+        } else {
+          this.logger.warn(
+            `Skipping duplicate invoice ${kiotVietId} in batch ${i + 1}`,
+          );
+        }
+      }
+
+      if (verifiedBatch.length === 0) {
+        this.logger.log(`Batch ${i + 1} skipped - all invoices already exist`);
+        continue;
+      }
+
       this.logger.log(
-        `📊 Batch ${i + 1}/${batches.length}: Processing ${batch.length} invoices`,
+        `Creating batch ${i + 1}/${batches.length} (${verifiedBatch.length} invoices)...`,
       );
 
       const { successRecords, failedRecords } =
-        await this.batchCreateInvoices(batch);
+        await this.batchCreateInvoices(verifiedBatch);
 
       totalCreated += successRecords.length;
       totalFailed += failedRecords.length;
@@ -511,14 +539,10 @@ export class LarkInvoiceSyncService {
     );
   }
 
-  // ============================================================================
-  // PROCESS UPDATES
-  // ============================================================================
-
   private async processUpdateInvoices(invoices: any[]): Promise<void> {
     if (invoices.length === 0) return;
 
-    this.logger.log(`📝 Updating ${invoices.length} existing invoices...`);
+    this.logger.log(`Updating ${invoices.length} existing invoices...`);
 
     let successCount = 0;
     let failedCount = 0;
@@ -556,19 +580,15 @@ export class LarkInvoiceSyncService {
 
     if (createFallbacks.length > 0) {
       this.logger.log(
-        `📝 Creating ${createFallbacks.length} invoices that failed update...`,
+        `Creating ${createFallbacks.length} invoices that failed update...`,
       );
       await this.processNewInvoices(createFallbacks);
     }
 
     this.logger.log(
-      `🎯 Update complete: ${successCount} success, ${failedCount} failed`,
+      `Update complete: ${successCount} success, ${failedCount} failed`,
     );
   }
-
-  // ============================================================================
-  // BATCH CREATE
-  // ============================================================================
 
   private async batchCreateInvoices(invoices: any[]): Promise<BatchResult> {
     const records = invoices.map((invoice) => ({
@@ -596,7 +616,6 @@ export class LarkInvoiceSyncService {
           const successRecords = invoices.slice(0, successCount);
           const failedRecords = invoices.slice(successCount);
 
-          // Update cache
           for (
             let i = 0;
             i < Math.min(successRecords.length, createdRecords.length);
@@ -612,6 +631,16 @@ export class LarkInvoiceSyncService {
                 createdRecord.record_id,
               );
             }
+
+            successRecords.forEach((invoice) => {
+              const kiotVietId = this.safeBigIntToNumber(invoice.kiotVietId);
+              this.pendingCreation.delete(kiotVietId);
+            });
+
+            failedRecords.forEach((invoice) => {
+              const kiotVietId = this.safeBigIntToNumber(invoice.kiotVietId);
+              this.pendingCreation.delete(kiotVietId);
+            });
 
             if (invoice.code) {
               this.invoiceCodeCache.set(
@@ -632,7 +661,7 @@ export class LarkInvoiceSyncService {
         }
 
         this.logger.warn(
-          `⚠️ Batch create failed: ${response.data.msg} (Code: ${response.data.code})`,
+          `Batch create failed: ${response.data.msg} (Code: ${response.data.code})`,
         );
         return { successRecords: [], failedRecords: invoices };
       } catch (error) {
@@ -650,10 +679,6 @@ export class LarkInvoiceSyncService {
 
     return { successRecords: [], failedRecords: invoices };
   }
-
-  // ============================================================================
-  // UPDATE SINGLE INVOICE
-  // ============================================================================
 
   private async updateSingleInvoice(invoice: any): Promise<boolean> {
     let authRetries = 0;
@@ -673,7 +698,7 @@ export class LarkInvoiceSyncService {
 
         if (response.data.code === 0) {
           this.logger.debug(
-            `✅ Updated record ${invoice.larkRecordId} for invoice ${invoice.code}`,
+            `Updated record ${invoice.larkRecordId} for invoice ${invoice.code}`,
           );
           return true;
         }
@@ -706,10 +731,6 @@ export class LarkInvoiceSyncService {
 
     return false;
   }
-
-  // ============================================================================
-  // DATA ANALYSIS METHODS
-  // ============================================================================
 
   async analyzeMissingData(): Promise<{
     missing: any[];
@@ -985,10 +1006,7 @@ export class LarkInvoiceSyncService {
     if (existingLock && existingLock.startedAt) {
       const lockAge = Date.now() - existingLock.startedAt.getTime();
 
-      // 🆕 ENHANCED: More aggressive stale lock cleanup
       if (lockAge < 10 * 60 * 1000) {
-        // Reduced from 30min to 10min
-        // 🆕 ADDED: Check if the process is actually active
         const isProcessActive = await this.isLockProcessActive(existingLock);
 
         if (isProcessActive) {
