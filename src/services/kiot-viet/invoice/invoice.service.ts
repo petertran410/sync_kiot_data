@@ -464,7 +464,7 @@ export class KiotVietInvoiceService {
     }
   }
 
-  async syncRecentInvoices(days: number = 6): Promise<void> {
+  async syncRecentInvoices(): Promise<void> {
     const syncName = 'invoice_recent';
 
     let currentItem = 0;

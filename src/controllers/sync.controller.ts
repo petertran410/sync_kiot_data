@@ -186,6 +186,8 @@ export class SyncController {
 
       await this.invoiceService.enableHistoricalSync();
 
+      await this.invoiceService.syncHistoricalInvoices();
+
       const invoicesToSync = await this.prismaService.invoice.findMany({
         where: {
           OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
@@ -213,45 +215,21 @@ export class SyncController {
   }
 
   @Post('invoice/recent')
-  async triggerRecentInvoice(@Query('days') days?: string) {
+  async triggerRecentInvoice() {
     try {
-      const syncDays = days ? parseInt(days, 10) : 7;
-      this.logger.log(
-        `🔧 Manual recent invoice sync triggered (${syncDays} days)`,
-      );
-
-      await this.invoiceService.syncRecentInvoices(syncDays);
+      await this.invoiceService.syncRecentInvoices();
 
       return {
         success: true,
-        message: `Recent invoice sync completed (${syncDays} days)`,
+        message: `Recent invoice sync completed)`,
+        timestamp: new Date().toISOString(),
       };
     } catch (error) {
       this.logger.error(`Manual recent invoice sync failed: ${error.message}`);
       return {
         success: false,
         error: error.message,
-      };
-    }
-  }
-
-  @Post('invoice/test-4days')
-  async testInvoiceSync4Days() {
-    try {
-      this.logger.log('🧪 Testing invoice sync with 4 days...');
-
-      await this.invoiceService.syncRecentInvoices(4);
-
-      return {
-        success: true,
-        message: 'Invoice sync test (4 days) completed successfully',
-        note: 'Check logs for detailed results',
-      };
-    } catch (error) {
-      this.logger.error(`Invoice 4-day test failed: ${error.message}`);
-      return {
-        success: false,
-        error: error.message,
+        timestamp: new Date().toISOString(),
       };
     }
   }
@@ -263,7 +241,7 @@ export class SyncController {
 
       await this.orderService.enableHistoricalSync();
 
-      // await this.orderService.syncHistoricalOrders();
+      await this.orderService.syncHistoricalOrders();
 
       const ordersToSync = await this.prismaService.order.findMany({
         where: {
