@@ -495,7 +495,7 @@ export class KiotVietOrderService {
         }
 
         const dateStart = new Date();
-        dateStart.setDate(dateStart.getDate() - 6);
+        dateStart.setDate(dateStart.getDate() - 3);
         const dateStartStr = dateStart.toISOString().split('T')[0];
 
         const dateEnd = new Date();
