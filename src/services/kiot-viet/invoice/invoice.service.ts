@@ -514,7 +514,7 @@ export class KiotVietInvoiceService {
         }
 
         const dateStart = new Date();
-        dateStart.setDate(dateStart.getDate() - 3);
+        dateStart.setDate(dateStart.getDate());
         const dateStartStr = dateStart.toISOString().split('T')[0];
 
         const dateEnd = new Date();
