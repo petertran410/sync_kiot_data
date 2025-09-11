@@ -619,14 +619,24 @@ export class LarkOrderSyncService {
         );
         return { successRecords: [], failedRecords: orders };
       } catch (error) {
-        if (error.response?.status === 401 || error.response?.status === 403) {
-          authRetries++;
-          await this.larkAuthService.forceRefreshOrderToken();
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-          continue;
+        this.logger.error('Batch create error details:', {
+          status: error.response?.status,
+          statusText: error.response?.statusText,
+          data: error.response?.data,
+          config: {
+            url: error.config?.url,
+            method: error.config?.method,
+            data: JSON.parse(error.config?.data || '{}'),
+          },
+        });
+
+        if (records && records.length > 0) {
+          this.logger.error(
+            'Sample record being sent:',
+            JSON.stringify(records[0], null, 2),
+          );
         }
 
-        this.logger.error(`❌ Batch create error: ${error.message}`);
         return { successRecords: [], failedRecords: orders };
       }
     }
