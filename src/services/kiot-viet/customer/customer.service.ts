@@ -523,7 +523,7 @@ export class KiotVietCustomerService {
         }
 
         const lastModifiedDate = new Date();
-        lastModifiedDate.setDate(lastModifiedDate.getDate() - 4);
+        lastModifiedDate.setDate(lastModifiedDate.getDate());
         const lastDate = lastModifiedDate.toISOString().split('T')[0];
 
         const dateEnd = new Date();
