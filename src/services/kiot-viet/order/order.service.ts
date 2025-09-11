@@ -872,12 +872,19 @@ export class KiotVietOrderService {
             })
           : null;
 
-        const saleChannel = orderData.SaleChannelId
+        let saleChannel = orderData.SaleChannelId
           ? await this.prismaService.saleChannel.findFirst({
               where: { kiotVietId: orderData.SaleChannelId },
               select: { id: true, name: true },
             })
           : null;
+
+        if (!saleChannel) {
+          saleChannel = await this.prismaService.saleChannel.findFirst({
+            where: { id: 1 },
+            select: { id: true, name: true },
+          });
+        }
 
         const order = await this.prismaService.order.upsert({
           where: { kiotVietId: BigInt(orderData.id) },
@@ -889,12 +896,13 @@ export class KiotVietOrderService {
             customerId: customer?.id ?? null,
             customerCode: orderData.customerCode || null,
             customerName: orderData.customerName || null,
-            saleChannelId: saleChannel?.id ?? null,
+            saleChannelId: saleChannel?.id ?? 1,
             saleChannelName: saleChannel?.name,
             status: orderData.status,
             statusValue: orderData.statusValue || null,
             total: new Prisma.Decimal(orderData.total || 0),
             totalPayment: new Prisma.Decimal(orderData.totalPayment || 0),
+            retailerId: 310831,
             description: orderData.description || null,
             usingCod: orderData.usingCod || false,
             discount: orderData.discoun || null,
@@ -918,12 +926,13 @@ export class KiotVietOrderService {
             customerId: customer?.id ?? null,
             customerCode: orderData.customerCode || null,
             customerName: orderData.customerName || null,
-            saleChannelId: saleChannel?.id ?? null,
+            saleChannelId: saleChannel?.id ?? 1,
             saleChannelName: saleChannel?.name,
             status: orderData.status,
             statusValue: orderData.statusValue || null,
             total: new Prisma.Decimal(orderData.total || 0),
             totalPayment: new Prisma.Decimal(orderData.totalPayment || 0),
+            retailerId: 310831,
             description: orderData.description || null,
             usingCod: orderData.usingCod || false,
             discount: orderData.discoun || null,
