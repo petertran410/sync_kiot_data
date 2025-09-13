@@ -4,8 +4,10 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { KiotVietAuthService } from '../auth.service';
 import { LarkProductSyncService } from '../../lark/product/lark-product-sync.service';
-import { firstValueFrom } from 'rxjs';
+import { async, firstValueFrom } from 'rxjs';
 import { Prisma } from '@prisma/client';
+import { resolve } from 'dns';
+import { error } from 'console';
 
 interface KiotVietProduct {
   id: number;
@@ -149,6 +151,23 @@ export class KiotVietProductService {
 
   async checkAndRunAppropriateSync(): Promise<void> {
     try {
+      const runningProductSyncs = await this.prismaService.syncControl.findMany(
+        {
+          where: {
+            OR: [{ name: 'product_historical' }, { name: 'product_lark_sync' }],
+            isRunning: true,
+          },
+        },
+      );
+
+      if (runningProductSyncs.length > 0) {
+        this.logger.warn(
+          `Found ${runningProductSyncs.length} Prodcut syncs still running: ${runningProductSyncs.map((s) => s.name).join(', ')}`,
+        );
+        this.logger.warn('Skipping product sync to avoid conficts');
+        return;
+      }
+
       const historicalSync = await this.prismaService.syncControl.findFirst({
         where: { name: 'product_historical' },
       });
@@ -156,6 +175,11 @@ export class KiotVietProductService {
       if (historicalSync?.isEnabled && !historicalSync.isRunning) {
         this.logger.log('Starting historical product sync...');
         await this.syncHistoricalProducts();
+        return;
+      }
+
+      if (historicalSync?.isRunning) {
+        this.logger.log('Historical product sync is running');
         return;
       }
 
@@ -174,7 +198,7 @@ export class KiotVietProductService {
       status: 'idle',
     });
 
-    this.logger.log('✅ Historical product sync enabled');
+    this.logger.log('Historical product sync enabled');
   }
 
   async syncHistoricalProducts(): Promise<void> {
@@ -196,7 +220,7 @@ export class KiotVietProductService {
         error: null,
       });
 
-      this.logger.log('🚀 Starting historical product sync...');
+      this.logger.log('Starting historical product sync...');
 
       const MAX_CONSECUTIVE_EMPTY_PAGES = 5;
       const MAX_CONSECUTIVE_ERROR_PAGES = 3;
@@ -211,17 +235,22 @@ export class KiotVietProductService {
         if (totalProducts > 0) {
           if (currentItem >= totalProducts) {
             this.logger.log(
-              `✅ Pagination complete. Processed ${processedCount}/${totalProducts} products`,
+              `Pagination complete. Processed ${processedCount}/${totalProducts} products`,
             );
             break;
           }
+
+          const progressPercentage = (currentItem / totalProducts) * 100;
+          this.logger.log(
+            `Fetching page ${currentPage} (${currentItem}/${totalProducts} - ${progressPercentage.toFixed(1)}%)`,
+          );
+        } else {
+          this.logger.log(
+            `Fetching page ${currentPage} (currentItem: ${currentItem})`,
+          );
         }
 
         try {
-          this.logger.log(
-            `📄 Fetching page ${currentPage} (items ${currentItem} - ${currentItem + this.PAGE_SIZE - 1})`,
-          );
-
           const response = await this.fetchProductsListWithRetry({
             currentItem,
             pageSize: this.PAGE_SIZE,
@@ -237,6 +266,23 @@ export class KiotVietProductService {
             includeCombo: true,
           });
 
+          if (!response) {
+            this.logger.warn('Received null response from KiotViet API');
+
+            consecutiveEmptyPages++;
+
+            if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
+              this.logger.log(
+                `🔚 Reached end after ${consecutiveEmptyPages} empty pages`,
+              );
+              break;
+            }
+
+            await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+            continue;
+          }
+
+          consecutiveEmptyPages = 0;
           consecutiveErrorPages = 0;
 
           const { data: products, total } = response;
@@ -244,12 +290,13 @@ export class KiotVietProductService {
           if (total !== undefined && total !== null) {
             if (totalProducts === 0) {
               this.logger.log(
-                `📊 Total products detected: ${total}. Starting processing...`,
+                `Total products detected: ${total}. Starting processing...`,
               );
+
               totalProducts = total;
-            } else if (total !== totalProducts && total !== lastValidTotal) {
+            } else if (total !== totalProducts) {
               this.logger.warn(
-                `⚠️ Total count changed: ${totalProducts} → ${total}. Using latest.`,
+                `Total count changed: ${totalProducts} → ${total}. Using latest.`,
               );
               totalProducts = total;
             }
@@ -257,13 +304,11 @@ export class KiotVietProductService {
           }
 
           if (!products || products.length === 0) {
-            this.logger.warn(
-              `⚠️ Empty page received at position ${currentItem}`,
-            );
+            this.logger.warn(`Empty page received at position ${currentItem}`);
             consecutiveEmptyPages++;
 
             if (totalProducts > 0 && currentItem >= totalProducts) {
-              this.logger.log('✅ Reached end of data (empty page past total)');
+              this.logger.log('Reached end of data (empty page past total)');
               break;
             }
 
@@ -278,76 +323,119 @@ export class KiotVietProductService {
             continue;
           }
 
+          const existingProductIds = new Set(
+            (
+              await this.prismaService.product.findMany({
+                select: { kiotVietId: true },
+              })
+            ).map((c) => Number(c.kiotVietId)),
+          );
+
           const newProducts = products.filter((product) => {
-            if (processedProductIds.has(product.id)) {
-              this.logger.debug(
-                `⚠️ Duplicate product ID detected: ${product.id} (${product.code})`,
-              );
-              return false;
+            if (
+              !existingProductIds.has(product.id) &&
+              !processedProductIds.has(product.id)
+            ) {
+              processedProductIds.add(product.id);
+              return true;
             }
-            processedProductIds.add(product.id);
-            return true;
+            return false;
           });
 
-          if (newProducts.length !== products.length) {
-            this.logger.warn(
-              `🔄 Filtered out ${products.length - newProducts.length} duplicate products on page ${currentPage}`,
-            );
-          }
+          const existingProducts = products.filter((product) => {
+            if (
+              existingProductIds.has(product.id) &&
+              !processedProductIds.has(product.id)
+            ) {
+              processedProductIds.add(product.id);
+              return true;
+            }
+            return false;
+          });
 
-          if (newProducts.length === 0) {
+          if (newProducts.length === 0 && existingProducts.length === 0) {
             this.logger.log(
-              `⏭️ Skipping page ${currentPage} - all products already processed`,
+              `Skipping page ${currentPage} - all products already processed in this run`,
             );
             currentItem += this.PAGE_SIZE;
             continue;
           }
 
-          this.logger.log(
-            `🔄 Processing ${newProducts.length} products from page ${currentPage}...`,
-          );
+          let pageProcessedCount = 0;
+          let allSavedProducts: any[] = [];
 
-          const productsWithDetails =
-            await this.enrichProductsWithDetails(newProducts);
-          const savedProducts =
-            await this.saveProductsToDatabase(productsWithDetails);
-          await this.syncProductsToLarkBase(savedProducts);
+          if (newProducts.length > 0) {
+            this.logger.log(
+              `Processing ${newProducts.length} NEW products from page ${currentPage}...`,
+            );
 
-          processedCount += savedProducts.length;
+            const savedProducts =
+              await this.saveProductsToDatabase(newProducts);
+            pageProcessedCount += savedProducts.length;
+            allSavedProducts.push(...savedProducts);
+          }
+
+          if (existingProducts.length > 0) {
+            this.logger.log(
+              `Processing ${existingProducts.length} EXISTING products from page ${currentPage}...`,
+            );
+
+            const savedProducts =
+              await this.saveProductsToDatabase(existingProducts);
+            pageProcessedCount += savedProducts.length;
+            allSavedProducts.push(...savedProducts);
+          }
+
+          processedCount += pageProcessedCount;
           currentItem += this.PAGE_SIZE;
 
           if (totalProducts > 0) {
             const completionPercentage = (processedCount / totalProducts) * 100;
             this.logger.log(
-              `📈 Progress: ${processedCount}/${totalProducts} (${completionPercentage.toFixed(1)}%)`,
+              `Progree: ${processedCount}/${totalProducts} (${completionPercentage.toFixed(1)}%)`,
             );
 
             if (processedCount >= totalProducts) {
-              this.logger.log('🎉 All products processed successfully!');
+              this.logger.log('All products processed successfully');
               break;
             }
           }
 
-          consecutiveEmptyPages = 0;
+          if (allSavedProducts.length > 0) {
+            try {
+              await this.syncProductsToLarkBase(allSavedProducts);
+              this.logger.log(
+                `Synced ${allSavedProducts.length} products to LarkBase`,
+              );
+            } catch (error) {
+              this.logger.warn(
+                `LarkBase sync failed for page${currentPage}: ${error.message}`,
+              );
+            }
+          }
+
           await new Promise((resolve) => setTimeout(resolve, 100));
         } catch (error) {
           consecutiveErrorPages++;
           totalRetries++;
 
           this.logger.error(
-            `❌ Page ${currentPage} failed (attempt ${consecutiveErrorPages}/${MAX_CONSECUTIVE_ERROR_PAGES}): ${error.message}`,
+            `API error on page ${currentPage}: ${error.message}`,
           );
 
-          if (
-            consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES ||
-            totalRetries >= MAX_TOTAL_RETRIES
-          ) {
+          if (consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES) {
             throw new Error(
-              `Too many consecutive errors (${consecutiveErrorPages}) or total retries (${totalRetries}). Last error: ${error.message}`,
+              `Multiple consecutive API failures: ${error.message}`,
             );
           }
 
-          await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+          if (totalRetries >= MAX_TOTAL_RETRIES) {
+            throw new Error(`Maximum total retries exceeded: ${error.message}`);
+          }
+
+          const delay = RETRY_DELAY_MS * Math.pow(2, consecutiveErrorPages - 1);
+          this.logger.log(`Retrying after ${delay}ms delay...`);
+          await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }
 
@@ -364,7 +452,7 @@ export class KiotVietProductService {
         totalProducts > 0 ? (processedCount / totalProducts) * 100 : 100;
 
       this.logger.log(
-        `✅ Historical product sync completed: ${processedCount}/${totalProducts} (${completionRate.toFixed(1)}% completion rate)`,
+        `Historical product sync completed: ${processedCount}/${totalProducts} (${completionRate.toFixed(1)}% completion rate)`,
       );
     } catch (error) {
       this.logger.error(`❌ Historical product sync failed: ${error.message}`);
@@ -405,9 +493,13 @@ export class KiotVietProductService {
         return await this.fetchProductsList(params);
       } catch (error) {
         lastError = error as Error;
+        this.logger.warn(
+          `API attempt ${attempt}/${maxRetries} failed: ${error.message}`,
+        );
 
         if (attempt < maxRetries) {
           const delay = 2000 * attempt;
+          this.logger.log(`Retrying after ${delay / 1000}s delay...`);
           await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }
@@ -509,7 +601,7 @@ export class KiotVietProductService {
   private async saveProductsToDatabase(
     products: KiotVietProduct[],
   ): Promise<any[]> {
-    this.logger.log(`💾 Saving ${products.length} products to database...`);
+    this.logger.log(`Saving ${products.length} products to database...`);
 
     const savedProducts: any[] = [];
 
@@ -760,14 +852,14 @@ export class KiotVietProductService {
       }
     }
 
-    this.logger.log(`✅ Saved ${savedProducts.length} products successfully`);
+    this.logger.log(`Saved ${savedProducts.length} products successfully`);
     return savedProducts;
   }
 
   async syncProductsToLarkBase(products: any[]): Promise<void> {
     try {
       this.logger.log(
-        `🚀 Starting LarkBase sync for ${products.length} products...`,
+        `Starting LarkBase sync for ${products.length} products...`,
       );
 
       const productsToSync = products.filter(
@@ -775,68 +867,56 @@ export class KiotVietProductService {
       );
 
       if (productsToSync.length === 0) {
-        this.logger.log('📋 No products need LarkBase sync');
+        this.logger.log('No products need LarkBase sync');
         return;
       }
 
-      const enrichedProducts = await Promise.all(
-        productsToSync.map(async (product) => {
-          const inventories =
-            await this.prismaService.productInventory.findMany({
-              where: { productId: product.id },
-              select: {
-                productId: true,
-                branchId: true,
-                onHand: true,
-                reserved: true,
-                onOrder: true,
-                cost: true,
-              },
-            });
+      // const enrichedProducts = await Promise.all(
+      //   productsToSync.map(async (product) => {
+      //     const inventories =
+      //       await this.prismaService.productInventory.findMany({
+      //         where: { productId: product.id },
+      //         select: {
+      //           productId: true,
+      //           branchId: true,
+      //           onHand: true,
+      //           reserved: true,
+      //           onOrder: true,
+      //           cost: true,
+      //         },
+      //       });
 
-          const priceBooks = await this.prismaService.priceBookDetail.findMany({
-            where: { productId: product.id },
-            select: {
-              productId: true,
-              priceBookId: true,
-              price: true,
-            },
-          });
+      //     const priceBooks = await this.prismaService.priceBookDetail.findMany({
+      //       where: { productId: product.id },
+      //       select: {
+      //         productId: true,
+      //         priceBookId: true,
+      //         price: true,
+      //       },
+      //     });
 
-          return {
-            ...product,
-            inventories: inventories || [],
-            priceBooks: priceBooks || [],
-          };
-        }),
-      );
+      //     return {
+      //       ...product,
+      //       inventories: inventories || [],
+      //       priceBooks: priceBooks || [],
+      //     };
+      //   }),
+      // );
 
-      await this.larkProductSyncService.syncProductsToLarkBase(
-        enrichedProducts,
-      );
+      await this.larkProductSyncService.syncProductsToLarkBase(productsToSync);
       this.logger.log('✅ LarkBase product sync completed');
     } catch (error) {
-      this.logger.error(`❌ LarkBase product sync failed: ${error.message}`);
+      this.logger.error(`LarkBase sync FAILED: ${error.message}`);
+      this.logger.error(`STOPPING sync to prevent data duplication`);
 
-      try {
-        const productIds = products
-          .map((p) => p.id)
-          .filter((id) => id !== undefined);
-
-        if (productIds.length > 0) {
-          await this.prismaService.product.updateMany({
-            where: { id: { in: productIds } },
-            data: {
-              larkSyncStatus: 'FAILED',
-              larkSyncedAt: new Date(),
-            },
-          });
-        }
-      } catch (updateError) {
-        this.logger.error(
-          `Failed to update product status: ${updateError.message}`,
-        );
-      }
+      const productIds = products.map((c) => c.id);
+      await this.prismaService.product.updateMany({
+        where: { id: { in: productIds } },
+        data: {
+          larkSyncStatus: 'FAILED',
+          larkSyncedAt: new Date(),
+        },
+      });
 
       throw new Error(`LarkBase sync failed: ${error.message}`);
     }

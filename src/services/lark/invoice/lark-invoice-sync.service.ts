@@ -137,7 +137,7 @@ export class LarkInvoiceSyncService {
   private invoiceCodeCache: Map<string, string> = new Map();
   private cacheLoaded: boolean = false;
   private lastCacheLoadTime: Date | null = null;
-  private readonly CACHE_VALIDITY_MINUTES = 180;
+  private readonly CACHE_VALIDITY_MINUTES = 600;
 
   constructor(
     private readonly httpService: HttpService,

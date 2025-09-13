@@ -402,7 +402,7 @@ export class KiotVietOrderService {
           }
 
           const delay = RETRY_DELAY_MS * Math.pow(2, consecutiveErrorPages - 1);
-          this.logger.log(`⏳ Retrying after ${delay}ms delay...`);
+          this.logger.log(`Retrying after ${delay}ms delay...`);
           await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }
@@ -1132,9 +1132,7 @@ export class KiotVietOrderService {
 
   private async syncOrdersToLarkBase(orders: any[]): Promise<void> {
     try {
-      this.logger.log(
-        `🚀 Starting LarkBase sync for ${orders.length} orders...`,
-      );
+      this.logger.log(`Starting LarkBase sync for ${orders.length} orders...`);
 
       const ordersToSync = orders.filter(
         (c) => c.larkSyncStatus === 'PENDING' || c.larkSyncStatus === 'FAILED',
@@ -1148,12 +1146,12 @@ export class KiotVietOrderService {
       await this.larkOrderSyncService.syncOrdersToLarkBase(ordersToSync);
       this.logger.log(`✅ LarkBase sync completed successfully`);
     } catch (error) {
-      this.logger.error(`❌ LarkBase sync FAILED: ${error.message}`);
-      this.logger.error(`🛑 STOPPING sync to prevent data duplication`);
+      this.logger.error(`LarkBase sync FAILED: ${error.message}`);
+      this.logger.error(`STOPPING sync to prevent data duplication`);
 
-      const invoiceIds = orders.map((c) => c.id);
-      await this.prismaService.invoice.updateMany({
-        where: { id: { in: invoiceIds } },
+      const orderIds = orders.map((c) => c.id);
+      await this.prismaService.order.updateMany({
+        where: { id: { in: orderIds } },
         data: {
           larkSyncStatus: 'FAILED',
           larkSyncedAt: new Date(),

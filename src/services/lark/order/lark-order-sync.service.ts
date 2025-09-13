@@ -100,7 +100,7 @@ export class LarkOrderSyncService {
   private orderCodeCache = new Map<string, string>();
   private cacheLoaded = false;
   private lastCacheLoadTime: Date | null = null;
-  private readonly CACHE_VALIDITY_MINUTES = 180;
+  private readonly CACHE_VALIDITY_MINUTES = 600;
   private readonly MAX_AUTH_RETRIES = 3;
   private readonly AUTH_ERROR_CODES = [99991663, 99991664, 99991665];
 
@@ -143,7 +143,7 @@ export class LarkOrderSyncService {
 
       if (ordersToSync.length < 5) {
         this.logger.log(
-          `🏃‍♂️ Small sync (${ordersToSync.length} orders) - using lightweight mode`,
+          `Small sync (${ordersToSync.length} orders) - using lightweight mode`,
         );
         await this.syncWithoutCache(ordersToSync);
         await this.releaseSyncLock(lockKey);
@@ -398,7 +398,7 @@ export class LarkOrderSyncService {
   }
 
   private async syncWithoutCache(orders: any[]): Promise<void> {
-    this.logger.log(`🏃‍♂️ Running lightweight sync without full cache...`);
+    this.logger.log(`Running lightweight sync without full cache...`);
 
     const existingOrders = await this.prismaService.order.findMany({
       where: {
@@ -457,7 +457,7 @@ export class LarkOrderSyncService {
       }
 
       if (verifiedBatch.length === 0) {
-        this.logger.log(`✅ Batch ${i + 1} skipped - all orders already exist`);
+        this.logger.log(`Batch ${i + 1} skipped - all orders already exist`);
         continue;
       }
 
@@ -480,7 +480,7 @@ export class LarkOrderSyncService {
       }
 
       this.logger.log(
-        `📊 Batch ${i + 1}/${batches.length}: ${successRecords.length}/${batch.length} created`,
+        `Batch ${i + 1}/${batches.length}: ${successRecords.length}/${batch.length} created`,
       );
 
       if (i < batches.length - 1) {
@@ -489,7 +489,7 @@ export class LarkOrderSyncService {
     }
 
     this.logger.log(
-      `🎯 Create complete: ${totalCreated} success, ${totalFailed} failed`,
+      `Create complete: ${totalCreated} success, ${totalFailed} failed`,
     );
   }
 
@@ -810,7 +810,6 @@ export class LarkOrderSyncService {
       fields[LARK_ORDER_FIELDS.BRANCH] = branchMapping[order.branchId] || '';
     }
 
-    // Seller mapping
     if (order.soldById !== null && order.soldById !== undefined) {
       const sellerMapping = {
         1015579: SALE_NAME.ADMIN,

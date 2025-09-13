@@ -151,6 +151,7 @@ export class LarkProductSyncService {
   private readonly baseToken: string;
   private readonly tableId: string;
   private readonly batchSize: number = 100;
+  private readonly pendingCreation = new Set<number>();
 
   private readonly AUTH_ERROR_CODES = [99991663, 99991664, 99991665];
   private readonly MAX_AUTH_RETRIES = 3;
@@ -189,15 +190,24 @@ export class LarkProductSyncService {
       await this.acquireSyncLock(lockKey);
 
       this.logger.log(
-        `🚀 Starting LarkBase sync for ${products.length} products...`,
+        `Starting LarkBase sync for ${products.length} products...`,
       );
 
-      const productToSync = products.filter(
+      const productsToSync = products.filter(
         (o) => o.larkSyncStatus === 'PENDING' || o.larkSyncStatus === 'FAILED',
       );
 
-      if (productToSync.length === 0) {
-        this.logger.log('📋 No product need LarkBase sync');
+      if (productsToSync.length === 0) {
+        this.logger.log('No product need LarkBase sync');
+        await this.releaseSyncLock(lockKey);
+        return;
+      }
+
+      if (productsToSync.length < 5) {
+        this.logger.log(
+          `Small sync (${productsToSync.length} products) - using lightweight mode`,
+        );
+        await this.syncWithoutCache(productsToSync);
         await this.releaseSyncLock(lockKey);
         return;
       }
@@ -210,7 +220,7 @@ export class LarkProductSyncService {
       ).length;
 
       this.logger.log(
-        `📊 Including: ${pendingCount} PENDING + ${failedCount} FAILED products`,
+        `Including: ${pendingCount} PENDING + ${failedCount} FAILED products`,
       );
 
       await this.testLarkBaseConnection();
@@ -219,18 +229,21 @@ export class LarkProductSyncService {
 
       if (!cacheLoaded) {
         this.logger.warn(
-          '⚠️ Cache loading failed - will use alternative duplicate detection',
+          'Cache loading failed - will use alternative duplicate detection',
         );
+        await this.syncWithoutCache(productsToSync);
+        await this.releaseSyncLock(lockKey);
+        return;
       }
 
       const { newProducts, updateProducts } =
-        this.categorizeProducts(productToSync);
+        await this.categorizeProducts(productsToSync);
 
       this.logger.log(
-        `📋 Categorization: ${newProducts.length} new, ${updateProducts.length} updates`,
+        `Categorization: ${newProducts.length} new, ${updateProducts.length} updates`,
       );
 
-      const BATCH_SIZE_FOR_SYNC = 20;
+      const BATCH_SIZE_FOR_SYNC = 100;
 
       if (newProducts.length > 0) {
         for (let i = 0; i < newProducts.length; i += BATCH_SIZE_FOR_SYNC) {
@@ -252,47 +265,56 @@ export class LarkProductSyncService {
         }
       }
 
-      await this.releaseSyncLock(lockKey);
-      this.logger.log('🎉 LarkBase product sync completed!');
+      this.logger.log('LarkBase product sync completed!');
     } catch (error) {
-      this.logger.error(`💥 LarkBase product sync failed: ${error.message}`);
-      await this.releaseSyncLock(lockKey);
+      this.logger.error(`LarkBase product sync failed: ${error.message}`);
       throw error;
+    } finally {
+      await this.releaseSyncLock(lockKey);
     }
   }
 
   private async loadExistingRecordsWithRetry(): Promise<boolean> {
     const maxRetries = 3;
+
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        this.logger.log(
-          `📥 Loading cache (attempt ${attempt}/${maxRetries})...`,
-        );
+        this.logger.log(`Loading cache (attempt ${attempt}/${maxRetries})...`);
 
         if (this.isCacheValid()) {
-          this.logger.log('✅ Using existing valid cache');
+          this.logger.log('Using existing valid cache');
           return true;
         }
 
-        this.clearCache();
+        if (this.lastCacheLoadTime) {
+          const cacheAgeMinutes =
+            (Date.now() - this.lastCacheLoadTime.getTime()) / (1000 * 60);
+          if (cacheAgeMinutes < 45 && this.existingRecordsCache.size > 500) {
+            this.logger.log(
+              `Recent cache (${cacheAgeMinutes.toFixed(1)}min old, ${this.existingRecordsCache.size} records) - skipping reload`,
+            );
+            return true;
+          }
+        }
 
+        this.clearCache();
         await this.loadExistingRecords();
 
         if (this.existingRecordsCache.size > 0) {
           this.logger.log(
-            `✅ Cache loaded successfully: ${this.existingRecordsCache.size} records`,
+            `Cache loaded successfully: ${this.existingRecordsCache.size} records`,
           );
           this.lastCacheLoadTime = new Date();
           return true;
         }
 
-        this.logger.warn(`⚠️ Cache empty on attempt ${attempt}`);
+        this.logger.warn(`Cache empty on attempt ${attempt}`);
       } catch (error) {
         this.logger.warn(
-          `❌ Cache loading attempt ${attempt} failed: ${error.message}`,
+          `Cache loading attempt ${attempt} failed: ${error.message}`,
         );
         if (attempt < maxRetries) {
-          const delay = attempt * 3000;
+          const delay = attempt * 2000;
           this.logger.log(`⏳ Waiting ${delay / 1000}s before retry...`);
           await new Promise((resolve) => setTimeout(resolve, delay));
         }
@@ -315,101 +337,96 @@ export class LarkProductSyncService {
   private async loadExistingRecords(): Promise<void> {
     try {
       const headers = await this.larkAuthService.getProductHeaders();
-      let page_token = '';
+      let pageToken = '';
       let totalLoaded = 0;
       let cacheBuilt = 0;
-      let stringConversions = 0;
-      const pageSize = 50;
+      const pageSize = 100;
 
       do {
         const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records`;
-        const params = new URLSearchParams({
-          page_size: pageSize.toString(),
-          ...(page_token && { page_token }),
-        });
+
+        const params: any = {
+          page_size: pageSize,
+          ...(pageToken && { page_token: pageToken }),
+        };
 
         const startTime = Date.now();
 
-        try {
-          const response = await firstValueFrom(
-            this.httpService.get<LarkBatchResponse>(`${url}?${params}`, {
-              headers,
-              timeout: 60000,
-            }),
-          );
+        const response = await firstValueFrom(
+          this.httpService.get(url, {
+            headers,
+            params,
+            timeout: 15000,
+          }),
+        );
 
-          const loadTime = Date.now() - startTime;
+        const loadTime = Date.now() - startTime;
 
-          if (response.data.code === 0) {
+        if (response.data.code === 0) {
+          const records = response.data.data?.items || [];
+
+          for (const record of records) {
             const records = response.data.data?.items || [];
 
             for (const record of records) {
-              const kiotVietIdRaw =
+              const kiotVietIdField =
                 record.fields[LARK_PRODUCT_FIELDS.PRODUCT_ID];
 
-              let kiotVietId = 0;
-
-              if (kiotVietIdRaw !== null && kiotVietIdRaw !== undefined) {
-                if (typeof kiotVietIdRaw === 'string') {
-                  const trimmed = kiotVietIdRaw.trim();
-                  if (trimmed !== '') {
-                    const parsed = parseInt(trimmed, 10);
-                    if (!isNaN(parsed) && parsed > 0) {
-                      kiotVietId = parsed;
-                      stringConversions++;
-                    }
-                  }
-                } else if (typeof kiotVietIdRaw === 'number') {
-                  kiotVietId = Math.floor(kiotVietIdRaw);
+              if (kiotVietIdField) {
+                const kiotVietId = this.safeBigIntToNumber(kiotVietIdField);
+                if (kiotVietId > 0) {
+                  this.existingRecordsCache.set(kiotVietId, record.record_id);
+                  cacheBuilt++;
                 }
               }
-
-              if (kiotVietId > 0) {
-                this.existingRecordsCache.set(kiotVietId, record.record_id);
-                cacheBuilt++;
-              }
-
-              const productCode =
-                record.fields[LARK_PRODUCT_FIELDS.PRIMARY_CODE];
-              if (productCode) {
-                this.productCodeCache.set(
-                  String(productCode).trim(),
-                  record.record_id,
-                );
-              }
             }
 
-            totalLoaded += records.length;
-            page_token = response.data.data?.page_token || '';
+            // let kiotVietId = 0;
 
-            this.logger.debug(
-              `📥 Loaded ${records.length} records in ${loadTime}ms (total: ${totalLoaded}, cached: ${cacheBuilt})`,
-            );
+            // if (kiotVietIdRaw !== null && kiotVietIdRaw !== undefined) {
+            //   if (typeof kiotVietIdRaw === 'string') {
+            //     const trimmed = kiotVietIdRaw.trim();
+            //     if (trimmed !== '') {
+            //       const parsed = parseInt(trimmed, 10);
+            //       if (!isNaN(parsed) && parsed > 0) {
+            //         kiotVietId = parsed;
+            //         cacheBuilt++;
+            //       }
+            //     }
+            //   } else if (typeof kiotVietIdRaw === 'number') {
+            //     kiotVietId = Math.floor(kiotVietIdRaw);
+            //   }
+            // }
 
-            if (totalLoaded % 1000 === 0 || !page_token) {
-              this.logger.log(
-                `📊 Cache progress: ${cacheBuilt}/${totalLoaded} records processed (${stringConversions} string conversions)`,
+            // if (kiotVietId > 0) {
+            //   this.existingRecordsCache.set(kiotVietId, record.record_id);
+            //   cacheBuilt++;
+            // }
+
+            const productCodeField =
+              record.fields[LARK_PRODUCT_FIELDS.PRIMARY_CODE];
+            if (productCodeField) {
+              this.productCodeCache.set(
+                String(productCodeField).trim(),
+                record.record_id,
               );
             }
-          } else {
-            throw new Error(
-              `LarkBase API error: ${response.data.msg} (code: ${response.data.code})`,
+          }
+
+          totalLoaded += records.length;
+          pageToken = response.data.data?.page_token || '';
+
+          if (totalLoaded % 1500 === 0 || !pageToken) {
+            this.logger.log(
+              `Cache progress: ${cacheBuilt}/${totalLoaded} records (${loadTime}ms/page)`,
             );
           }
-        } catch (error) {
-          if (error.code === 'ECONNABORTED') {
-            throw new Error(
-              'Request timeout - LarkBase took too long to respond',
-            );
-          }
-          if (error.response?.status === 400) {
-            throw new Error(
-              'Bad request - check table permissions and field names',
-            );
-          }
-          throw error;
+        } else {
+          throw new Error(
+            `LarkBase API error: ${response.data.msg} (code: ${response.data.code})`,
+          );
         }
-      } while (page_token);
+      } while (pageToken);
 
       this.cacheLoaded = true;
 
@@ -417,7 +434,7 @@ export class LarkProductSyncService {
         totalLoaded > 0 ? Math.round((cacheBuilt / totalLoaded) * 100) : 0;
 
       this.logger.log(
-        `✅ Cache loaded: ${this.existingRecordsCache.size} by ID, ${this.productCodeCache.size} by code (${successRate}% success)`,
+        `Cache loaded: ${this.existingRecordsCache.size} by ID, ${this.productCodeCache.size} by code (${successRate}% success)`,
       );
     } catch (error) {
       this.logger.error(`❌ Cache loading failed: ${error.message}`);
@@ -425,15 +442,31 @@ export class LarkProductSyncService {
     }
   }
 
-  private categorizeProducts(products: any[]): {
-    newProducts: any[];
-    updateProducts: any[];
-  } {
+  private async categorizeProducts(products: any[]): Promise<any> {
     const newProducts: any[] = [];
     const updateProducts: any[] = [];
 
+    const duplicateDetected = products.filter((product) => {
+      const kiotVietId = this.safeBigIntToNumber(product.kiotVietId);
+      return this.existingRecordsCache.has(kiotVietId);
+    });
+
+    if (duplicateDetected.length > 0) {
+      this.logger.warn(
+        `Detected ${duplicateDetected.length} products already in cache: ${duplicateDetected
+          .map((o) => o.kiotVietId)
+          .slice(0, 5)
+          .join(', ')}`,
+      );
+    }
+
     for (const product of products) {
       const kiotVietId = this.safeBigIntToNumber(product.kiotVietId);
+
+      if (this.pendingCreation.has(kiotVietId)) {
+        this.logger.warn(`Product ${kiotVietId} is pending creation, skipping`);
+        continue;
+      }
 
       let existingRecordId = this.existingRecordsCache.get(kiotVietId);
 
@@ -449,6 +482,7 @@ export class LarkProductSyncService {
           larkRecordId: existingRecordId,
         });
       } else {
+        this.pendingCreation.add(kiotVietId);
         newProducts.push(product);
       }
     }
@@ -456,10 +490,46 @@ export class LarkProductSyncService {
     return { newProducts, updateProducts };
   }
 
+  private async syncWithoutCache(products: any[]): Promise<void> {
+    this.logger.log(`Running lightweight sync without full cache...`);
+
+    const existingProducts = await this.prismaService.product.findMany({
+      where: {
+        kiotVietId: { in: products.map((p) => p.kiotVietId) },
+      },
+      select: { kiotVietId: true, larkRecordId: true },
+    });
+
+    const quickCache = new Map<number, string>();
+    existingProducts.forEach((p) => {
+      if (p.larkRecordId) {
+        quickCache.set(Number(p.kiotVietId), p.larkRecordId);
+      }
+    });
+
+    const originalCache = this.existingRecordsCache;
+    this.existingRecordsCache = quickCache;
+
+    try {
+      const { newProducts, updateProducts } =
+        await this.categorizeProducts(products);
+
+      if (newProducts.length > 0) {
+        await this.processNewProducts(newProducts);
+      }
+
+      if (updateProducts.length > 0) {
+        await this.processUpdateProducts(updateProducts);
+      }
+    } finally {
+      this.existingRecordsCache = originalCache;
+    }
+  }
+
   private async processNewProducts(products: any[]): Promise<void> {
     if (products.length === 0) return;
 
-    this.logger.log(`📝 Creating ${products.length} new products...`);
+    this.logger.log(`Creating ${products.length} new products...`);
 
     const batches = this.chunkArray(products, this.batchSize);
     let totalCreated = 0;
@@ -467,8 +537,26 @@ export class LarkProductSyncService {
 
     for (let i = 0; i < batches.length; i++) {
       const batch = batches[i];
+
+      const verifiedBatch: any[] = [];
+      for (const product of batch) {
+        const kiotVietId = this.safeBigIntToNumber(product.kiotVietId);
+        if (!this.existingRecordsCache.has(kiotVietId)) {
+          verifiedBatch.push(product);
+        } else {
+          this.logger.warn(
+            `Skipping duplicate product ${kiotVietId} in batch ${i + 1}`,
+          );
+        }
+      }
+
+      if (verifiedBatch.length === 0) {
+        this.logger.log(`Batch ${i + 1} skipped - all products already exist`);
+        continue;
+      }
+
       this.logger.log(
-        `Creating batch ${i + 1}/${batches.length} (${batch.length} products)...`,
+        `Creating batch ${i + 1}/${batch.length} (${verifiedBatch.length} products)...`,
       );
 
       const { successRecords, failedRecords } =
@@ -485,20 +573,24 @@ export class LarkProductSyncService {
         await this.updateDatabaseStatus(failedRecords, 'FAILED');
       }
 
+      this.logger.log(
+        `Batch ${i + 1}/${batches.length}: ${successRecords.length}/${batch.length} created`,
+      );
+
       if (i < batches.length - 1) {
         await new Promise((resolve) => setTimeout(resolve, 500));
       }
     }
 
     this.logger.log(
-      `🎯 Create complete: ${totalCreated} success, ${totalFailed} failed`,
+      `Create complete: ${totalCreated} success, ${totalFailed} failed`,
     );
   }
 
   private async processUpdateProducts(products: any[]): Promise<void> {
     if (products.length === 0) return;
 
-    this.logger.log(`📝 Updating ${products.length} existing products...`);
+    this.logger.log(`Updating ${products.length} existing products...`);
 
     let successCount = 0;
     let failedCount = 0;
@@ -536,13 +628,13 @@ export class LarkProductSyncService {
 
     if (createFallbacks.length > 0) {
       this.logger.log(
-        `📝 Creating ${createFallbacks.length} products that failed update...`,
+        `Creating ${createFallbacks.length} products that failed update...`,
       );
       await this.processNewProducts(createFallbacks);
     }
 
     this.logger.log(
-      `🎯 Update complete: ${successCount} success, ${failedCount} failed`,
+      `Update complete: ${successCount} success, ${failedCount} failed`,
     );
   }
 
@@ -588,6 +680,16 @@ export class LarkProductSyncService {
               );
             }
 
+            successRecords.forEach((product) => {
+              const kiotVietId = this.safeBigIntToNumber(product.kiotVietId);
+              this.pendingCreation.delete(kiotVietId);
+            });
+
+            failedRecords.forEach((product) => {
+              const kiotVietId = this.safeBigIntToNumber(product.kiotVietId);
+              this.pendingCreation.delete(kiotVietId);
+            });
+
             if (product.code) {
               this.productCodeCache.set(
                 String(product.code).trim(),
@@ -607,18 +709,28 @@ export class LarkProductSyncService {
         }
 
         this.logger.warn(
-          `⚠️ Batch create failed: ${response.data.msg} (Code: ${response.data.code})`,
+          `Batch create failed: ${response.data.msg} (Code: ${response.data.code})`,
         );
         return { successRecords: [], failedRecords: products };
       } catch (error) {
-        if (error.response?.status === 401 || error.response?.status === 403) {
-          authRetries++;
-          await this.forceTokenRefresh();
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-          continue;
+        this.logger.error('Batch create error details:', {
+          status: error.response?.status,
+          statusText: error.response?.statusText,
+          data: error.response?.data,
+          config: {
+            url: error.config?.url,
+            method: error.config?.method,
+            data: JSON.parse(error.config?.data || '{}'),
+          },
+        });
+
+        if (records && records.length > 0) {
+          this.logger.error(
+            'Sample record being sent:',
+            JSON.stringify(records[0], null, 2),
+          );
         }
 
-        this.logger.error(`❌ Batch create error: ${error.message}`);
         return { successRecords: [], failedRecords: products };
       }
     }
@@ -634,51 +746,29 @@ export class LarkProductSyncService {
         const headers = await this.larkAuthService.getProductHeaders();
         const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/${product.larkRecordId}`;
 
-        // 🔍 ADD DEBUG LOGGING HERE - Log fields được gửi
-        const fieldsToUpdate = this.mapProductToLarkBase(product);
-        this.logger.log(
-          `🔍 Updating product ${product.code} with fields: ${JSON.stringify(Object.keys(fieldsToUpdate))}`,
-        );
-
         const response = await firstValueFrom(
           this.httpService.put(
             url,
-            { fields: fieldsToUpdate },
+            { fields: this.mapProductToLarkBase(product) },
             { headers, timeout: 15000 },
           ),
         );
 
         if (response.data.code === 0) {
           this.logger.debug(
-            `✅ Updated record ${product.larkRecordId} for product ${product.code}`,
+            `Updated record ${product.larkRecordId} for product ${product.code}`,
           );
           return true;
         }
 
         if (this.AUTH_ERROR_CODES.includes(response.data.code)) {
           authRetries++;
-          await this.forceTokenRefresh();
+          await this.larkAuthService.forceRefreshProductToken();
           await new Promise((resolve) => setTimeout(resolve, 2000));
           continue;
         }
 
-        // 🔍 ADD DETAILED ERROR LOGGING HERE
-        this.logger.warn(`❌ Update failed for product ${product.code}:`);
-        this.logger.warn(`   Error: ${response.data.msg}`);
-        this.logger.warn(`   Error Code: ${response.data.code}`);
-        this.logger.warn(`   Record ID: ${product.larkRecordId}`);
-        this.logger.warn(
-          `   Fields count: ${Object.keys(fieldsToUpdate).length}`,
-        );
-
-        // Log từng field để debug
-        Object.keys(fieldsToUpdate).forEach((fieldName) => {
-          const value = fieldsToUpdate[fieldName];
-          this.logger.warn(
-            `   - "${fieldName}": ${typeof value} = ${JSON.stringify(value)}`,
-          );
-        });
-
+        this.logger.warn(`Update failed: ${response.data.msg}`);
         return false;
       } catch (error) {
         if (error.response?.status === 401 || error.response?.status === 403) {
@@ -693,16 +783,6 @@ export class LarkProductSyncService {
           return false;
         }
 
-        // 🔍 ADD HTTP ERROR LOGGING HERE
-        this.logger.error(
-          `❌ HTTP error for product ${product.code}: ${error.message}`,
-        );
-        if (error.response?.data) {
-          this.logger.error(
-            `   Response: ${JSON.stringify(error.response.data)}`,
-          );
-        }
-
         throw error;
       }
     }
@@ -715,109 +795,76 @@ export class LarkProductSyncService {
 
     console.log(product);
 
-    const addField = (
-      fieldName: string | undefined,
-      value: any,
-      context: string,
-    ) => {
-      if (!fieldName || fieldName === 'undefined') {
-        this.logger.error(
-          `❌ UNDEFINED FIELD NAME in ${context} for product ${product.code}`,
-        );
-        this.logger.error(`   Value: ${value}`);
-        this.logger.error(`   Context: ${context}`);
-        return;
-      }
-      fields[fieldName] = value;
-    };
+    // const addField = (
+    //   fieldName: string | undefined,
+    //   value: any,
+    //   context: string,
+    // ) => {
+    //   if (!fieldName || fieldName === 'undefined') {
+    //     this.logger.error(
+    //       `❌ UNDEFINED FIELD NAME in ${context} for product ${product.code}`,
+    //     );
+    //     this.logger.error(`   Value: ${value}`);
+    //     this.logger.error(`   Context: ${context}`);
+    //     return;
+    //   }
+    //   fields[fieldName] = value;
+    // };
 
-    // Basic fields
     if (product.code) {
-      addField(LARK_PRODUCT_FIELDS.PRIMARY_CODE, product.code, 'PRIMARY_CODE');
+      fields[LARK_PRODUCT_FIELDS.PRIMARY_CODE] = product.code;
     }
 
     if (product.kiotVietId !== null && product.kiotVietId !== undefined) {
-      addField(
-        LARK_PRODUCT_FIELDS.PRODUCT_ID,
-        this.safeBigIntToNumber(product.kiotVietId),
-        'PRODUCT_ID',
-      );
+      fields[LARK_PRODUCT_FIELDS.PRODUCT_ID] = product.kiotVietId;
     }
 
     if (product.description !== null && product.description !== undefined) {
-      addField(
-        LARK_PRODUCT_FIELDS.DESCRIPTION,
-        product.description,
-        'DESCRIPTION',
-      );
+      fields[LARK_PRODUCT_FIELDS.DESCRIPTION] = product.description;
     }
 
     if (product.createdDate) {
-      addField(
-        LARK_PRODUCT_FIELDS.CREATED_DATE,
-        new Date(product.createdDate).getTime(),
-        'CREATED_DATE',
-      );
+      fields[LARK_PRODUCT_FIELDS.CREATED_DATE] = new Date(
+        product.createdDate,
+      ).getTime();
     }
 
     if (product.modifiedDate) {
-      addField(
-        LARK_PRODUCT_FIELDS.MODIFIED_DATE,
-        new Date(product.modifiedDate).getTime(),
-        'MODIFIED_DATE',
-      );
+      fields[LARK_PRODUCT_FIELDS.MODIFIED_DATE] = new Date(
+        product.modifiedDate,
+      ).getTime();
     }
 
     if (product.tradeMarkName !== null && product.tradeMarkName !== undefined) {
-      addField(
-        LARK_PRODUCT_FIELDS.TRADEMARK,
-        product.tradeMarkName,
-        'TRADEMARK',
-      );
+      fields[LARK_PRODUCT_FIELDS.TRADEMARK] = product.tradeMarkName;
     }
 
     if (product.name) {
-      addField(LARK_PRODUCT_FIELDS.PRODUCT_NAME, product.name, 'PRODUCT_NAME');
+      fields[LARK_PRODUCT_FIELDS.PRODUCT_NAME] = product.name;
     }
 
     if (product.fullName) {
-      addField(LARK_PRODUCT_FIELDS.FULL_NAME, product.fullName, 'FULL_NAME');
+      fields[LARK_PRODUCT_FIELDS.FULL_NAME] = product.fullName;
     }
 
-    // Allows Sale
     if (product.allowsSale !== null && product.allowsSale !== undefined) {
-      addField(
-        LARK_PRODUCT_FIELDS.ALLOWS_SALE,
-        product.allowsSale ? ALLOWS_SALE_OPTIONS.YES : ALLOWS_SALE_OPTIONS.NO,
-        'ALLOWS_SALE',
-      );
+      fields[LARK_PRODUCT_FIELDS.ALLOWS_SALE] = product.allowsSale;
     }
 
     if (product.isActive !== null && product.isActive !== undefined) {
-      addField(
-        LARK_PRODUCT_FIELDS.PRODUCT_BUSINESS,
-        product.isActive
-          ? PRODUCT_BUSINESS_OPTIONS.YES
-          : PRODUCT_BUSINESS_OPTIONS.NO,
-        'PRODUCT_BUSINESS',
-      );
+      fields[
+        LARK_PRODUCT_FIELDS.PRODUCT_BUSINESS] = product.isActive
     }
 
     if (product.type !== null && product.type !== undefined) {
-      if (product.type === 2) {
-        addField(
-          LARK_PRODUCT_FIELDS.TYPE,
-          PRODUCT_TYPE_OPTIONS.REGULAR,
-          'TYPE',
-        );
+      const typeMapping = {
+        2: PRODUCT_TYPE_OPTIONS.REGULAR,
+        3: PRODUCT_TYPE_OPTIONS.SERVICE
       }
-      if (product.type === 3) {
-        addField(
-          LARK_PRODUCT_FIELDS.TYPE,
-          PRODUCT_TYPE_OPTIONS.SERVICE,
-          'TYPE',
-        );
-      }
+
+        fields
+          [LARK_PRODUCT_FIELDS.TYPE] = typeMapping[product.type] || null
+        
     }
 
     if (product.priceBooks && product.priceBooks.length > 0) {
@@ -827,21 +874,12 @@ export class LarkProductSyncService {
         const larkField = PRICEBOOK_FIELD_MAPPING[priceBookId];
 
         if (larkField && larkField !== 'undefined') {
-          console.log(`Id ${productId} thuộc giá vốn ${priceBookId}`);
-          addField(
-            larkField,
-            Number(priceBook.price) || 0,
-            `priceBookId=${priceBookId}`,
-          );
-        } else {
-          console.log(
-            `⚠️ Skipping deleted priceBookId=${priceBookId} for product ${product.code}`,
-          );
+          fields[larkField] = Number(priceBook.price) || 0,
+          
         }
       }
     }
 
-    // Inventories with validation
     if (product.inventories && product.inventories.length > 0) {
       for (const inventory of product.inventories) {
         const branchId = inventory.branchId;
@@ -849,7 +887,7 @@ export class LarkProductSyncService {
 
         const costField = BRANCH_COST_MAPPING[branchId];
         console.log(`Id ${productId} thuộc giá bán ${costField}`);
-        addField(
+        fields
           costField,
           Number(inventory.cost) || 0,
           `branchId=${branchId} (cost)`,
@@ -857,7 +895,7 @@ export class LarkProductSyncService {
 
         const inventoryField = BRANCH_INVENTORY_MAPPING[branchId];
         console.log(`Id ${productId} thuộc tồn kho ${inventoryField}`);
-        addField(
+        fields
           inventoryField,
           Number(inventory.onHand) || 0,
           `branchId=${branchId} (inventory)`,
@@ -866,7 +904,7 @@ export class LarkProductSyncService {
     }
 
     if (product.basePrice) {
-      addField(
+      fields
         LARK_PRODUCT_FIELDS.BASE_PRICE,
         Number(product.basePrice),
         'BASE_PRICE',
@@ -874,7 +912,7 @@ export class LarkProductSyncService {
     }
 
     if (product.weight) {
-      addField(
+      fields
         LARK_PRODUCT_FIELDS.WEIGHT,
         Number(product.weight) || null,
         'WEIGHT',
@@ -882,11 +920,11 @@ export class LarkProductSyncService {
     }
 
     if (product.unit) {
-      addField(LARK_PRODUCT_FIELDS.UNIT, product.unit || null, 'UNIT');
+      fieldsLARK_PRODUCT_FIELDS.UNIT, product.unit || null, 'UNIT');
     }
 
     if (product.parent_name) {
-      addField(
+      fields
         LARK_PRODUCT_FIELDS.PRODUCTS_TYPE,
         product.parent_name || null,
         'PRODUCTS_TYPE',
@@ -894,7 +932,7 @@ export class LarkProductSyncService {
     }
 
     if (product.child_name) {
-      addField(
+      fields
         LARK_PRODUCT_FIELDS.SOURCE,
         product.child_name || null,
         'SOURCE',
@@ -902,7 +940,7 @@ export class LarkProductSyncService {
     }
 
     if (product.branch_name) {
-      addField(
+      fields
         LARK_PRODUCT_FIELDS.SUB_CATEGORY,
         product.branch_name || null,
         'SUB_CATEGORY',
@@ -926,19 +964,6 @@ export class LarkProductSyncService {
     return 0;
   }
 
-  private extractNumber(value: any): number | null {
-    if (typeof value === 'number' && !isNaN(value)) {
-      return value;
-    }
-
-    if (typeof value === 'string') {
-      const parsed = parseInt(value, 10);
-      return isNaN(parsed) ? null : parsed;
-    }
-
-    return null;
-  }
-
   private chunkArray<T>(array: T[], chunkSize: number): T[][] {
     const chunks: T[][] = [];
     for (let i = 0; i < array.length; i += chunkSize) {
@@ -949,32 +974,23 @@ export class LarkProductSyncService {
 
   private async updateDatabaseStatus(
     products: any[],
-    status: LarkSyncStatus,
+    status: 'SYNCED' | 'FAILED',
   ): Promise<void> {
     if (products.length === 0) return;
 
-    try {
-      const productIds = products
-        .map((p) => p.id)
-        .filter((id) => id !== undefined);
+    const productIds = products.map((p) => p.id);
+    const updateData = {
+      larkSyncStatus: status,
+      larkSyncedAt: new Date(),
+      ...(status === 'FAILED' && { larkSyncRetries: { increment: 1 } }),
+      ...(status === 'SYNCED' && { larkSyncRetries: 0 }),
+    };
 
-      if (productIds.length > 0) {
-        await this.prismaService.product.updateMany({
-          where: { id: { in: productIds } },
-          data: {
-            larkSyncStatus: status,
-            larkSyncedAt: new Date(),
-          },
-        });
-      }
-    } catch (error) {
-      this.logger.error(`Failed to update database status: ${error.message}`);
-    }
+    await this.prismaService.product.updateMany({
+      where: { id: { in: productIds } },
+      data: updateData,
+    });
   }
-
-  // ============================================================================
-  // CONNECTION TEST & LOCK MANAGEMENT
-  // ============================================================================
 
   private async testLarkBaseConnection(): Promise<void> {
     const maxRetries = 10;
