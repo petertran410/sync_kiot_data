@@ -60,6 +60,8 @@ const LARK_PRODUCT_FIELDS = {
   PRICE_SUB_D: 'Bảng Giá SUB-D',
   PRICE_DO_DO: 'Bảng giá chuỗi Đô Đô',
   PRICE_SUNDAY_BASIC: 'Bảng giá chuỗi Sunday Basic',
+  PRICE_HADILAO: "Bảng Giá Hadilao Việt Nam",
+  PRICE_TRA_NON: "Chuỗi Lá Trà Non"
 } as const;
 
 const ALLOWS_SALE_OPTIONS = {
