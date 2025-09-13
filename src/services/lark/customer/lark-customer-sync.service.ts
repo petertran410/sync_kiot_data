@@ -987,7 +987,6 @@ export class LarkCustomerSyncService {
   private mapCustomerToLarkBase(customer: any): Record<string, any> {
     const fields: Record<string, any> = {};
 
-    // CRITICAL: Convert BigInt to number for kiotVietId
     fields[LARK_CUSTOMER_FIELDS.KIOTVIET_ID] = this.safeBigIntToNumber(
       customer.kiotVietId,
     );

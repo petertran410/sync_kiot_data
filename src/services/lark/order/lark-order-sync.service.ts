@@ -781,8 +781,8 @@ export class LarkOrderSyncService {
     this.logger.log(`- Duplicates found: ${summary.duplicatesFound}`);
 
     return {
-      missing: missing.slice(0, 100), // First 100 for readability
-      exists: exists.slice(0, 20), // Sample of existing
+      missing: missing.slice(0, 100),
+      exists: exists.slice(0, 20),
       duplicates: duplicatesList,
       summary,
     };
@@ -847,7 +847,6 @@ export class LarkOrderSyncService {
       fields[LARK_ORDER_FIELDS.CUSTOMER_NAME] = order.customerName;
     }
 
-    // Financial fields
     if (order.total !== null && order.total !== undefined) {
       fields[LARK_ORDER_FIELDS.CUSTOMER_NEED_PAY] = Number(order.total || 0);
     }
@@ -866,7 +865,6 @@ export class LarkOrderSyncService {
       );
     }
 
-    // Status mapping
     if (order.status) {
       const statusMapping = {
         1: STATUS_OPTIONS.PHIEU_TAM,
@@ -880,12 +878,10 @@ export class LarkOrderSyncService {
         statusMapping[order.status] || STATUS_OPTIONS.PHIEU_TAM;
     }
 
-    // Comment
     if (order.description !== null && order.description !== undefined) {
       fields[LARK_ORDER_FIELDS.COMMENT] = order.description || '';
     }
 
-    // Date fields
     if (order.purchaseDate) {
       fields[LARK_ORDER_FIELDS.ORDER_DATE] = new Date(
         order.purchaseDate,

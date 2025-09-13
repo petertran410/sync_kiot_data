@@ -1329,7 +1329,6 @@ export class LarkInvoiceSyncService {
       }
     }
 
-    // Sale channel - need custom mapping
     if (invoice.saleChannelId) {
       if (invoice.saleChannelId === 1) {
         fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] = SALE_CHANNEL_OPTIONS.DIRECT;
@@ -1408,7 +1407,6 @@ export class LarkInvoiceSyncService {
       }
     }
 
-    // Voucher
     fields[LARK_INVOICE_FIELDS.APPLY_VOUCHER] = invoice.isApplyVoucher
       ? VOUCHER_OPTIONS.YES
       : VOUCHER_OPTIONS.NO;

@@ -100,6 +100,8 @@ const PRICEBOOK_FIELD_MAPPING: Record<number, string> = {
   18: LARK_PRODUCT_FIELDS.PRICE_CING_HU_TANG,
   19: LARK_PRODUCT_FIELDS.PRICE_DO_DO,
   20: LARK_PRODUCT_FIELDS.PRICE_SUNDAY_BASIC,
+  21: LARK_PRODUCT_FIELDS.PRICE_HADILAO,
+  22: LARK_PRODUCT_FIELDS.PRICE_TRA_NON,
 } as const;
 
 const BRANCH_COST_MAPPING: Record<number, string> = {
@@ -795,13 +797,14 @@ export class LarkProductSyncService {
   private mapProductToLarkBase(product: any): Record<string, any> {
     const fields: Record<string, any> = {};
 
-    // Basic product info
     if (product.code) {
       fields[LARK_PRODUCT_FIELDS.PRIMARY_CODE] = product.code;
     }
 
     if (product.kiotVietId !== null && product.kiotVietId !== undefined) {
-      fields[LARK_PRODUCT_FIELDS.PRODUCT_ID] = product.kiotVietId;
+      fields[LARK_PRODUCT_FIELDS.PRODUCT_ID] = this.safeBigIntToNumber(
+        product.kiotVietId,
+      );
     }
 
     if (product.description !== null && product.description !== undefined) {
@@ -833,11 +836,15 @@ export class LarkProductSyncService {
     }
 
     if (product.allowsSale !== null && product.allowsSale !== undefined) {
-      fields[LARK_PRODUCT_FIELDS.ALLOWS_SALE] = product.allowsSale;
+      fields[LARK_PRODUCT_FIELDS.ALLOWS_SALE] = product.allowsSale
+        ? ALLOWS_SALE_OPTIONS.YES
+        : ALLOWS_SALE_OPTIONS.NO;
     }
 
     if (product.isActive !== null && product.isActive !== undefined) {
-      fields[LARK_PRODUCT_FIELDS.PRODUCT_BUSINESS] = product.isActive;
+      fields[LARK_PRODUCT_FIELDS.PRODUCT_BUSINESS] = product.isActive
+        ? PRODUCT_BUSINESS_OPTIONS.YES
+        : PRODUCT_BUSINESS_OPTIONS.NO;
     }
 
     if (product.type !== null && product.type !== undefined) {
