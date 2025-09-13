@@ -250,6 +250,10 @@ export class KiotVietProductService {
           );
         }
 
+        const dateEnd = new Date();
+        dateEnd.setDate(dateEnd.getDate() + 1);
+        const dateEndStr = dateEnd.toISOString().split('T')[0];
+
         try {
           const response = await this.fetchProductsListWithRetry({
             currentItem,
@@ -264,6 +268,8 @@ export class KiotVietProductService {
             includeQuantity: true,
             includeMaterial: true,
             includeCombo: true,
+            lastModifiedFrom: '2024-12-1',
+            toDate: dateEndStr,
           });
 
           if (!response) {
@@ -483,6 +489,8 @@ export class KiotVietProductService {
       includeQuantity?: boolean;
       includeMaterial?: boolean;
       includeCombo?: boolean;
+      lastModifiedFrom?: string;
+      toDate?: string;
     },
     maxRetries: number = 5,
   ): Promise<any> {
@@ -522,6 +530,8 @@ export class KiotVietProductService {
     includeQuantity?: boolean;
     includeMaterial?: boolean;
     includeCombo?: boolean;
+    lastModifiedFrom?: string;
+    toDate?: string;
   }): Promise<any> {
     const headers = await this.authService.getRequestHeaders();
 
@@ -540,6 +550,13 @@ export class KiotVietProductService {
       includeMaterial: (params.includeMaterial || true).toString(),
       includeCombo: (params.includeCombo || true).toString(),
     });
+
+    if (params.lastModifiedFrom) {
+      queryParams.append('lastModifiedFrom', params.lastModifiedFrom);
+    }
+    if (params.toDate) {
+      queryParams.append('toDate', params.toDate);
+    }
 
     const response = await firstValueFrom(
       this.httpService.get(`${this.baseUrl}/products?${queryParams}`, {
