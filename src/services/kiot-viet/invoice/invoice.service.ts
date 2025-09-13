@@ -929,10 +929,8 @@ export class KiotVietInvoiceService {
             orderCode: invoiceData.orderCode || null,
             total: new Prisma.Decimal(invoiceData.total || 0),
             totalPayment: new Prisma.Decimal(invoiceData.totalPayment || 0),
-            discount: invoiceData.discount
-              ? new Prisma.Decimal(invoiceData.discount)
-              : null,
-            discountRatio: invoiceData.discountRatio || null,
+            discount: invoiceData.discount ?? 0,
+            discountRatio: invoiceData.discountRatio || 0,
             status: invoiceData.status,
             statusValue: invoiceData.statusValue || null,
             description: invoiceData.description || null,
@@ -963,10 +961,8 @@ export class KiotVietInvoiceService {
             orderCode: invoiceData.orderCode || null,
             total: new Prisma.Decimal(invoiceData.total || 0),
             totalPayment: new Prisma.Decimal(invoiceData.totalPayment || 0),
-            discount: invoiceData.discount
-              ? new Prisma.Decimal(invoiceData.discount)
-              : null,
-            discountRatio: invoiceData.discountRatio || null,
+            discount: invoiceData.discount ?? 0,
+            discountRatio: invoiceData.discountRatio || 0,
             status: invoiceData.status,
             statusValue: invoiceData.statusValue || null,
             description: invoiceData.description || null,

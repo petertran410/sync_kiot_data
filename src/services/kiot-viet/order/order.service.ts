@@ -893,6 +893,7 @@ export class KiotVietOrderService {
             purchaseDate: new Date(orderData.purchaseDate),
             branchId: branch?.id ?? null,
             soldById: soldBy?.kiotVietId || null,
+            cashierId: soldBy?.kiotVietId || null,
             customerId: customer?.id ?? null,
             customerCode: orderData.customerCode || null,
             customerName: orderData.customerName || null,
@@ -905,8 +906,8 @@ export class KiotVietOrderService {
             retailerId: 310831,
             description: orderData.description || null,
             usingCod: orderData.usingCod || false,
-            discount: orderData.discoun || null,
-            discountRatio: orderData.discountRatio || null,
+            discount: orderData.discount ?? 0,
+            discountRatio: orderData.discountRatio ?? 0,
             createdDate: orderData.createdDate
               ? new Date(orderData.createdDate)
               : new Date(),
@@ -923,6 +924,7 @@ export class KiotVietOrderService {
             purchaseDate: new Date(orderData.purchaseDate),
             branchId: branch?.id ?? null,
             soldById: soldBy?.kiotVietId || null,
+            cashierId: soldBy?.kiotVietId || null,
             customerId: customer?.id ?? null,
             customerCode: orderData.customerCode || null,
             customerName: orderData.customerName || null,
@@ -935,8 +937,8 @@ export class KiotVietOrderService {
             retailerId: 310831,
             description: orderData.description || null,
             usingCod: orderData.usingCod || false,
-            discount: orderData.discoun || null,
-            discountRatio: orderData.discountRatio || null,
+            discount: orderData.discount ?? 0,
+            discountRatio: orderData.discountRatio ?? 0,
             createdDate: orderData.createdDate
               ? new Date(orderData.createdDate)
               : new Date(),
