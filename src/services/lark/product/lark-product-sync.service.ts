@@ -60,8 +60,8 @@ const LARK_PRODUCT_FIELDS = {
   PRICE_SUB_D: 'Bảng Giá SUB-D',
   PRICE_DO_DO: 'Bảng giá chuỗi Đô Đô',
   PRICE_SUNDAY_BASIC: 'Bảng giá chuỗi Sunday Basic',
-  PRICE_HADILAO: "Bảng Giá Hadilao Việt Nam",
-  PRICE_TRA_NON: "Chuỗi Lá Trà Non"
+  PRICE_HADILAO: 'Bảng Giá Hadilao Việt Nam',
+  PRICE_TRA_NON: 'Chuỗi Lá Trà Non',
 } as const;
 
 const ALLOWS_SALE_OPTIONS = {
@@ -795,24 +795,7 @@ export class LarkProductSyncService {
   private mapProductToLarkBase(product: any): Record<string, any> {
     const fields: Record<string, any> = {};
 
-    console.log(product);
-
-    // const addField = (
-    //   fieldName: string | undefined,
-    //   value: any,
-    //   context: string,
-    // ) => {
-    //   if (!fieldName || fieldName === 'undefined') {
-    //     this.logger.error(
-    //       `❌ UNDEFINED FIELD NAME in ${context} for product ${product.code}`,
-    //     );
-    //     this.logger.error(`   Value: ${value}`);
-    //     this.logger.error(`   Context: ${context}`);
-    //     return;
-    //   }
-    //   fields[fieldName] = value;
-    // };
-
+    // Basic product info
     if (product.code) {
       fields[LARK_PRODUCT_FIELDS.PRIMARY_CODE] = product.code;
     }
@@ -854,30 +837,49 @@ export class LarkProductSyncService {
     }
 
     if (product.isActive !== null && product.isActive !== undefined) {
-      fields[
-        LARK_PRODUCT_FIELDS.PRODUCT_BUSINESS] = product.isActive
+      fields[LARK_PRODUCT_FIELDS.PRODUCT_BUSINESS] = product.isActive;
     }
 
     if (product.type !== null && product.type !== undefined) {
       const typeMapping = {
         2: PRODUCT_TYPE_OPTIONS.REGULAR,
-        3: PRODUCT_TYPE_OPTIONS.SERVICE
-      }
-
-        fields
-          [LARK_PRODUCT_FIELDS.TYPE] = typeMapping[product.type] || null
-        
+        3: PRODUCT_TYPE_OPTIONS.SERVICE,
+      };
+      fields[LARK_PRODUCT_FIELDS.TYPE] = typeMapping[product.type] || null;
     }
 
     if (product.priceBooks && product.priceBooks.length > 0) {
       for (const priceBook of product.priceBooks) {
         const priceBookId = priceBook.priceBookId;
-        const productId = priceBook.productId;
-        const larkField = PRICEBOOK_FIELD_MAPPING[priceBookId];
 
+        const priceBookMapping = {
+          1: LARK_PRODUCT_FIELDS.PRICE_LE_HCM,
+          2: LARK_PRODUCT_FIELDS.PRICE_BUON_HCM,
+          3: LARK_PRODUCT_FIELDS.PRICE_CHIEN_LUOC,
+          4: LARK_PRODUCT_FIELDS.PRICE_LASIMI_SAI_GON,
+          5: LARK_PRODUCT_FIELDS.PRICE_BUON_HN,
+          6: LARK_PRODUCT_FIELDS.PRICE_EM_HOAI_ROYALTEA,
+          7: LARK_PRODUCT_FIELDS.PRICE_DO_MINH_TAN,
+          8: LARK_PRODUCT_FIELDS.PRICE_DO_MINH_TAN_8,
+          9: LARK_PRODUCT_FIELDS.PRICE_HOANG_QUAN_HN,
+          10: LARK_PRODUCT_FIELDS.PRICE_HOC_VIEN_CAFE,
+          11: LARK_PRODUCT_FIELDS.PRICE_CHUOI_LABOONG,
+          12: LARK_PRODUCT_FIELDS.PRICE_CONG_TAC_VIEN,
+          13: LARK_PRODUCT_FIELDS.PRICE_SUB_D,
+          14: LARK_PRODUCT_FIELDS.PRICE_CHEESE_COFFEE,
+          15: LARK_PRODUCT_FIELDS.PRICE_CHUOI_SHANCHA,
+          16: LARK_PRODUCT_FIELDS.PRICE_SHOPEE,
+          17: LARK_PRODUCT_FIELDS.PRICE_KAFFA,
+          18: LARK_PRODUCT_FIELDS.PRICE_CING_HU_TANG,
+          19: LARK_PRODUCT_FIELDS.PRICE_DO_DO,
+          20: LARK_PRODUCT_FIELDS.PRICE_SUNDAY_BASIC,
+          21: LARK_PRODUCT_FIELDS.PRICE_HADILAO,
+          22: LARK_PRODUCT_FIELDS.PRICE_TRA_NON,
+        };
+
+        const larkField = priceBookMapping[priceBookId];
         if (larkField && larkField !== 'undefined') {
-          fields[larkField] = Number(priceBook.price) || 0,
-          
+          fields[larkField] = Number(priceBook.price) || 0;
         }
       }
     }
@@ -885,68 +887,59 @@ export class LarkProductSyncService {
     if (product.inventories && product.inventories.length > 0) {
       for (const inventory of product.inventories) {
         const branchId = inventory.branchId;
-        const productId = inventory.productId;
 
-        const costField = BRANCH_COST_MAPPING[branchId];
-        console.log(`Id ${productId} thuộc giá bán ${costField}`);
-        fields
-          costField,
-          Number(inventory.cost) || 0,
-          `branchId=${branchId} (cost)`,
-        );
+        const branchCostMapping = {
+          635934: LARK_PRODUCT_FIELDS.COST_PRICE_CUA_HANG_DIEP_TRA,
+          154833: LARK_PRODUCT_FIELDS.COST_PRICE_KHO_HA_NOI,
+          402819: LARK_PRODUCT_FIELDS.COST_PRICE_KHO_SAI_GON,
+          631164: LARK_PRODUCT_FIELDS.COST_PRICE_VAN_PHONG_HA_NOI,
+          631163: LARK_PRODUCT_FIELDS.COST_PRICE_KHO_HA_NOI_2,
+          635935: LARK_PRODUCT_FIELDS.COST_PRICE_KHO_BAN_HANG,
+        };
 
-        const inventoryField = BRANCH_INVENTORY_MAPPING[branchId];
-        console.log(`Id ${productId} thuộc tồn kho ${inventoryField}`);
-        fields
-          inventoryField,
-          Number(inventory.onHand) || 0,
-          `branchId=${branchId} (inventory)`,
-        );
+        const branchInventoryMapping = {
+          635934: LARK_PRODUCT_FIELDS.TON_KHO_CUA_HANG_DIEP_TRA,
+          154833: LARK_PRODUCT_FIELDS.TON_KHO_KHO_HA_NOI,
+          402819: LARK_PRODUCT_FIELDS.TON_KHO_KHO_SAI_GON,
+          631164: LARK_PRODUCT_FIELDS.TON_KHO_VAN_PHONG_HA_NOI,
+          631163: LARK_PRODUCT_FIELDS.TON_KHO_KHO_HA_NOI_2,
+          635935: LARK_PRODUCT_FIELDS.TON_KHO_KHO_BAN_HANG,
+        };
+
+        const costField = branchCostMapping[branchId];
+        if (costField) {
+          fields[costField] = Number(inventory.cost) || 0;
+        }
+
+        const inventoryField = branchInventoryMapping[branchId];
+        if (inventoryField) {
+          fields[inventoryField] = Number(inventory.onHand) || 0;
+        }
       }
     }
 
     if (product.basePrice) {
-      fields
-        LARK_PRODUCT_FIELDS.BASE_PRICE,
-        Number(product.basePrice),
-        'BASE_PRICE',
-      );
+      fields[LARK_PRODUCT_FIELDS.BASE_PRICE] = Number(product.basePrice);
     }
 
     if (product.weight) {
-      fields
-        LARK_PRODUCT_FIELDS.WEIGHT,
-        Number(product.weight) || null,
-        'WEIGHT',
-      );
+      fields[LARK_PRODUCT_FIELDS.WEIGHT] = Number(product.weight) || null;
     }
 
     if (product.unit) {
-      fieldsLARK_PRODUCT_FIELDS.UNIT, product.unit || null, 'UNIT');
+      fields[LARK_PRODUCT_FIELDS.UNIT] = product.unit || null;
     }
 
     if (product.parent_name) {
-      fields
-        LARK_PRODUCT_FIELDS.PRODUCTS_TYPE,
-        product.parent_name || null,
-        'PRODUCTS_TYPE',
-      );
+      fields[LARK_PRODUCT_FIELDS.PRODUCTS_TYPE] = product.parent_name || null;
     }
 
     if (product.child_name) {
-      fields
-        LARK_PRODUCT_FIELDS.SOURCE,
-        product.child_name || null,
-        'SOURCE',
-      );
+      fields[LARK_PRODUCT_FIELDS.SOURCE] = product.child_name || null;
     }
 
     if (product.branch_name) {
-      fields
-        LARK_PRODUCT_FIELDS.SUB_CATEGORY,
-        product.branch_name || null,
-        'SUB_CATEGORY',
-      );
+      fields[LARK_PRODUCT_FIELDS.SUB_CATEGORY] = product.branch_name || null;
     }
 
     return fields;
