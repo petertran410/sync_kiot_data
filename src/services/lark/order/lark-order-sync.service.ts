@@ -773,13 +773,6 @@ export class LarkOrderSyncService {
       },
     };
 
-    this.logger.log('📊 Analysis Summary:');
-    this.logger.log(`- Total in Database: ${summary.totalDatabase}`);
-    this.logger.log(`- Total in LarkBase: ${summary.totalLarkBase}`);
-    this.logger.log(`- Exists in both: ${summary.existsInBoth}`);
-    this.logger.log(`- Missing in LarkBase: ${summary.missingInLarkBase}`);
-    this.logger.log(`- Duplicates found: ${summary.duplicatesFound}`);
-
     return {
       missing: missing.slice(0, 100),
       exists: exists.slice(0, 20),

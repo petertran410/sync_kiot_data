@@ -4,7 +4,6 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { LarkAuthService } from '../auth/lark-auth.service';
 import { async, firstValueFrom } from 'rxjs';
-import { LarkSyncStatus } from '@prisma/client';
 
 const LARK_PRODUCT_FIELDS = {
   PRIMARY_CODE: 'Mã Hàng Hoá',

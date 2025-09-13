@@ -27,6 +27,7 @@ interface KiotVietInvoice {
   modifiedDate?: string;
   usingCod?: boolean;
   description?: string;
+  retailerId: number;
   invoiceOrderSurcharges?: Array<{
     id?: number;
     invoiceId: number;
@@ -888,7 +889,6 @@ export class KiotVietInvoiceService {
             })
           : null;
 
-        // Branch lookup - SAFE
         const branch = await this.prismaService.branch.findFirst({
           where: { kiotVietId: invoiceData.branchId },
           select: { id: true },
@@ -901,7 +901,6 @@ export class KiotVietInvoiceService {
             })
           : null;
 
-        // SaleChannel lookup - SAFE
         const saleChannel = invoiceData.saleChannelId
           ? await this.prismaService.saleChannel.findFirst({
               where: { kiotVietId: invoiceData.saleChannelId },
@@ -909,7 +908,6 @@ export class KiotVietInvoiceService {
             })
           : null;
 
-        // Order lookup - SAFE
         const order = invoiceData.orderId
           ? await this.prismaService.order.findFirst({
               where: { kiotVietId: BigInt(invoiceData.orderId) },
@@ -939,15 +937,15 @@ export class KiotVietInvoiceService {
             statusValue: invoiceData.statusValue || null,
             description: invoiceData.description || null,
             usingCod: invoiceData.usingCod || false,
-            saleChannelId: saleChannel?.id ?? null,
+            saleChannelId: saleChannel?.id ? saleChannel?.id : 1,
             isApplyVoucher: invoiceData.isApplyVoucher || false,
-            retailerId: invoiceData.retailerId || null,
             createdDate: invoiceData.createdDate
               ? new Date(invoiceData.createdDate)
               : new Date(),
             modifiedDate: invoiceData.modifiedDate
               ? new Date(invoiceData.modifiedDate)
               : new Date(),
+            retailerId: 310831,
             lastSyncedAt: new Date(),
             larkRecordId: null,
             larkSyncStatus: 'PENDING' as const,
@@ -973,23 +971,20 @@ export class KiotVietInvoiceService {
             statusValue: invoiceData.statusValue || null,
             description: invoiceData.description || null,
             usingCod: invoiceData.usingCod || false,
-            saleChannelId: saleChannel?.id ?? null,
+            saleChannelId: saleChannel?.id ? saleChannel?.id : 1,
             isApplyVoucher: invoiceData.isApplyVoucher || false,
-            retailerId: invoiceData.retailerId || null,
             createdDate: invoiceData.createdDate
               ? new Date(invoiceData.createdDate)
               : new Date(),
             modifiedDate: invoiceData.modifiedDate
               ? new Date(invoiceData.modifiedDate)
               : new Date(),
+            retailerId: 310831,
             lastSyncedAt: new Date(),
             larkSyncStatus: 'PENDING',
           },
         });
 
-        // ============================================================================
-        // SAVE INVOICE DETAILS
-        // ============================================================================
         if (
           invoiceData.invoiceDetails &&
           invoiceData.invoiceDetails.length > 0
