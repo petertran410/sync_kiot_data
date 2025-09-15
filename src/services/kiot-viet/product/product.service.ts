@@ -6,8 +6,6 @@ import { KiotVietAuthService } from '../auth.service';
 import { LarkProductSyncService } from '../../lark/product/lark-product-sync.service';
 import { async, firstValueFrom } from 'rxjs';
 import { Prisma } from '@prisma/client';
-import { resolve } from 'dns';
-import { error } from 'console';
 
 interface KiotVietProduct {
   id: number;
@@ -162,7 +160,7 @@ export class KiotVietProductService {
 
       if (runningProductSyncs.length > 0) {
         this.logger.warn(
-          `Found ${runningProductSyncs.length} Prodcut syncs still running: ${runningProductSyncs.map((s) => s.name).join(', ')}`,
+          `Found ${runningProductSyncs.length} Product syncs still running: ${runningProductSyncs.map((s) => s.name).join(', ')}`,
         );
         this.logger.warn('Skipping product sync to avoid conficts');
         return;
@@ -398,7 +396,7 @@ export class KiotVietProductService {
           if (totalProducts > 0) {
             const completionPercentage = (processedCount / totalProducts) * 100;
             this.logger.log(
-              `Progree: ${processedCount}/${totalProducts} (${completionPercentage.toFixed(1)}%)`,
+              `Progress: ${processedCount}/${totalProducts} (${completionPercentage.toFixed(1)}%)`,
             );
 
             if (processedCount >= totalProducts) {
@@ -644,8 +642,8 @@ export class KiotVietProductService {
           where: { kiotVietId: BigInt(productData.id) },
           update: {
             code: productData.code.trim(),
-            name: productData.name.trim(),
-            fullName: productData.fullName?.trim() || productData.name.trim(),
+            name: productData.name,
+            fullName: productData.fullName ?? productData.name,
             categoryId: category?.id,
             categoryName: category?.name,
             parent_name: category?.parent_name,
@@ -658,11 +656,11 @@ export class KiotVietProductService {
             hasVariants: productData.hasVariants ?? false,
             basePrice: productData.basePrice
               ? new Prisma.Decimal(productData.basePrice)
-              : null,
-            weight: productData.weight ?? null,
-            unit: productData.unit?.trim() || null,
+              : 0,
+            weight: productData.weight ?? 0,
+            unit: productData.unit ?? '',
             conversionValue: productData.conversionValue ?? 1,
-            description: productData.description?.trim() || null,
+            description: productData.description ?? '',
             isLotSerialControl: productData.isLotSerialControl ?? false,
             isBatchExpireControl: productData.isBatchExpireControl ?? false,
             orderTemplate: productData.orderTemplate?.trim() || null,
@@ -672,19 +670,25 @@ export class KiotVietProductService {
             isActive: productData.isActive ?? true,
             retailerId: productData.retailerId ?? null,
             createdDate: productData.createdDate
-              ? new Date(productData.createdDate)
-              : new Date(),
+              ? new Date(
+                  new Date(productData.createdDate).getTime() +
+                    7 * 60 * 60 * 1000,
+                )
+              : new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
             modifiedDate: productData.modifiedDate
-              ? new Date(productData.modifiedDate)
-              : new Date(),
-            lastSyncedAt: new Date(),
+              ? new Date(
+                  new Date(productData.modifiedDate).getTime() +
+                    7 * 60 * 60 * 1000,
+                )
+              : new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
+            lastSyncedAt: new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
             larkSyncStatus: 'PENDING',
           },
           create: {
             kiotVietId: BigInt(productData.id),
             code: productData.code.trim(),
-            name: productData.name.trim(),
-            fullName: productData.fullName?.trim() || productData.name.trim(),
+            name: productData.name,
+            fullName: productData.fullName ?? productData.name,
             categoryId: category?.id,
             categoryName: category?.name,
             parent_name: category?.parent_name,
@@ -697,11 +701,11 @@ export class KiotVietProductService {
             hasVariants: productData.hasVariants ?? false,
             basePrice: productData.basePrice
               ? new Prisma.Decimal(productData.basePrice)
-              : null,
-            weight: productData.weight ?? null,
-            unit: productData.unit?.trim() || null,
+              : 0,
+            weight: productData.weight ?? 0,
+            unit: productData.unit ?? '',
             conversionValue: productData.conversionValue ?? 1,
-            description: productData.description?.trim() || null,
+            description: productData.description ?? '',
             isLotSerialControl: productData.isLotSerialControl ?? false,
             isBatchExpireControl: productData.isBatchExpireControl ?? false,
             orderTemplate: productData.orderTemplate?.trim() || null,
@@ -711,12 +715,18 @@ export class KiotVietProductService {
             isActive: productData.isActive ?? true,
             retailerId: productData.retailerId ?? null,
             createdDate: productData.createdDate
-              ? new Date(productData.createdDate)
-              : new Date(),
+              ? new Date(
+                  new Date(productData.createdDate).getTime() +
+                    7 * 60 * 60 * 1000,
+                )
+              : new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
             modifiedDate: productData.modifiedDate
-              ? new Date(productData.modifiedDate)
-              : new Date(),
-            lastSyncedAt: new Date(),
+              ? new Date(
+                  new Date(productData.modifiedDate).getTime() +
+                    7 * 60 * 60 * 1000,
+                )
+              : new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
+            lastSyncedAt: new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
             larkSyncStatus: 'PENDING',
           },
         });
@@ -735,7 +745,7 @@ export class KiotVietProductService {
                 productCode: product.code,
                 productName: product.name,
                 branchId: detail.branchId ?? null,
-                branchName: detail.branchName ?? null,
+                branchName: detail.branchName ?? '',
                 cost: detail.cost ?? 0,
                 onHand: detail.onHand ?? 0,
                 reserved: detail.reserved ?? 0,
@@ -745,7 +755,9 @@ export class KiotVietProductService {
                 maxQuantity: detail.maxQuantity ?? 0,
                 isActive: detail.isActive,
                 onOrder: detail.onOrder ?? 0,
-                lastSyncedAt: new Date(),
+                lastSyncedAt: new Date(
+                  new Date().getTime() + 7 * 60 * 60 * 1000,
+                ),
               },
               create: {
                 productId: product.id,
@@ -762,7 +774,9 @@ export class KiotVietProductService {
                 maxQuantity: detail.maxQuantity ?? 0,
                 isActive: detail.isActive,
                 onOrder: detail.onOrder ?? 0,
-                lastSyncedAt: new Date(),
+                lastSyncedAt: new Date(
+                  new Date().getTime() + 7 * 60 * 60 * 1000,
+                ),
               },
             });
           }
@@ -784,14 +798,18 @@ export class KiotVietProductService {
                 attributeName: detail.attributeName,
                 attributeValue: detail.attributeValue,
                 lineNumber: i + 1,
-                lastSyncedAt: new Date(),
+                lastSyncedAt: new Date(
+                  new Date().getTime() + 7 * 60 * 60 * 1000,
+                ),
               },
               create: {
                 productId: product.id,
                 attributeName: detail.attributeName,
                 attributeValue: detail.attributeValue,
                 lineNumber: i + 1,
-                lastSyncedAt: new Date(),
+                lastSyncedAt: new Date(
+                  new Date().getTime() + 7 * 60 * 60 * 1000,
+                ),
               },
             });
           }
@@ -810,13 +828,17 @@ export class KiotVietProductService {
                 productId: product.id,
                 imageUrl: productData.images,
                 lineNumber: i + 1,
-                lastSyncedAt: new Date(),
+                lastSyncedAt: new Date(
+                  new Date().getTime() + 7 * 60 * 60 * 1000,
+                ),
               },
               create: {
                 productId: product.id,
                 imageUrl: productData.images,
                 lineNumber: i + 1,
-                lastSyncedAt: new Date(),
+                lastSyncedAt: new Date(
+                  new Date().getTime() + 7 * 60 * 60 * 1000,
+                ),
               },
             });
           }
@@ -844,7 +866,9 @@ export class KiotVietProductService {
                 priceBookId: pricebook?.id ?? null,
                 priceBookName: pricebook?.name,
                 price: detail.price ?? 0,
-                lastSyncedAt: new Date(),
+                lastSyncedAt: new Date(
+                  new Date().getTime() + 7 * 60 * 60 * 1000,
+                ),
                 productId: product.id,
                 productName: product.name,
               },
@@ -853,7 +877,9 @@ export class KiotVietProductService {
                 priceBookId: pricebook?.id ?? null,
                 priceBookName: pricebook?.name,
                 price: detail.price ?? 0,
-                lastSyncedAt: new Date(),
+                lastSyncedAt: new Date(
+                  new Date().getTime() + 7 * 60 * 60 * 1000,
+                ),
                 productId: product.id,
                 productName: product.name,
               },

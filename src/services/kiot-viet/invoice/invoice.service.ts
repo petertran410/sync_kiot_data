@@ -210,7 +210,7 @@ export class KiotVietInvoiceService {
         error: null,
       });
 
-      this.logger.log('🚀 Starting historical invoice sync...');
+      this.logger.log('Starting historical invoice sync...');
 
       const MAX_CONSECUTIVE_EMPTY_PAGES = 5;
       const MAX_CONSECUTIVE_ERROR_PAGES = 3;
@@ -938,15 +938,20 @@ export class KiotVietInvoiceService {
             saleChannelId: saleChannel?.id ? saleChannel?.id : 1,
             isApplyVoucher: invoiceData.isApplyVoucher || false,
             createdDate: invoiceData.createdDate
-              ? new Date(invoiceData.createdDate)
-              : new Date(),
+              ? new Date(
+                  new Date(invoiceData.createdDate).getTime() +
+                    7 * 60 * 60 * 1000,
+                )
+              : new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
             modifiedDate: invoiceData.modifiedDate
-              ? new Date(invoiceData.modifiedDate)
-              : new Date(),
+              ? new Date(
+                  new Date(invoiceData.modifiedDate).getTime() +
+                    7 * 60 * 60 * 1000,
+                )
+              : new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
             retailerId: 310831,
-            lastSyncedAt: new Date(),
+            lastSyncedAt: new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
             larkRecordId: null,
-            larkSyncStatus: 'PENDING' as const,
           },
           create: {
             kiotVietId: BigInt(invoiceData.id),
@@ -970,13 +975,19 @@ export class KiotVietInvoiceService {
             saleChannelId: saleChannel?.id ? saleChannel?.id : 1,
             isApplyVoucher: invoiceData.isApplyVoucher || false,
             createdDate: invoiceData.createdDate
-              ? new Date(invoiceData.createdDate)
-              : new Date(),
+              ? new Date(
+                  new Date(invoiceData.createdDate).getTime() +
+                    7 * 60 * 60 * 1000,
+                )
+              : new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
             modifiedDate: invoiceData.modifiedDate
-              ? new Date(invoiceData.modifiedDate)
-              : new Date(),
+              ? new Date(
+                  new Date(invoiceData.modifiedDate).getTime() +
+                    7 * 60 * 60 * 1000,
+                )
+              : new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
             retailerId: 310831,
-            lastSyncedAt: new Date(),
+            lastSyncedAt: new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
             larkSyncStatus: 'PENDING',
           },
         });
@@ -1036,9 +1047,6 @@ export class KiotVietInvoiceService {
           }
         }
 
-        // ============================================================================
-        // SAVE INVOICE DELIVERY
-        // ============================================================================
         if (invoiceData.invoiceDelivery) {
           const detail = invoiceData.invoiceDelivery;
           await this.prismaService.invoiceDelivery.upsert({
@@ -1105,7 +1113,9 @@ export class KiotVietInvoiceService {
                 amount: new Prisma.Decimal(payment.amount),
                 method: payment.method,
                 status: payment.status,
-                transDate: new Date(payment.transDate),
+                transDate: new Date(
+                  new Date(payment.transDate).getTime() + 7 * 60 * 60 * 1000,
+                ),
                 accountId: bankAccount?.id ?? null,
                 description: payment.description,
                 invoiceId: invoice.id,
@@ -1117,7 +1127,9 @@ export class KiotVietInvoiceService {
                 amount: new Prisma.Decimal(payment.amount),
                 method: payment.method,
                 status: payment.status,
-                transDate: new Date(payment.transDate),
+                transDate: new Date(
+                  new Date(payment.transDate).getTime() + 7 * 60 * 60 * 1000,
+                ),
                 accountId: bankAccount?.id ?? null,
                 description: payment.description,
               },

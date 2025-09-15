@@ -15,7 +15,7 @@ import { LarkPurchaseOrderSyncService } from './purchase-order/lark-purchase-ord
   imports: [
     HttpModule.register({
       timeout: 30000,
-      maxRedirects: 3,
+      maxRedirects: 20,
     }),
     ConfigModule,
     PrismaModule,

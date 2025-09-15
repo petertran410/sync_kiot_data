@@ -890,62 +890,78 @@ export class KiotVietOrderService {
           where: { kiotVietId: BigInt(orderData.id) },
           update: {
             code: orderData.code,
-            purchaseDate: new Date(orderData.purchaseDate),
+            purchaseDate: new Date(
+              new Date(orderData.purchaseDate).getTime() + 7 * 60 * 60 * 1000,
+            ),
             branchId: branch?.id ?? null,
             soldById: soldBy?.kiotVietId || null,
             cashierId: soldBy?.kiotVietId || null,
             customerId: customer?.id ?? null,
-            customerCode: orderData.customerCode || null,
-            customerName: orderData.customerName || null,
+            customerCode: orderData.customerCode || '',
+            customerName: orderData.customerName || '',
             saleChannelId: saleChannel?.id ?? 1,
             saleChannelName: saleChannel?.name,
             status: orderData.status,
             statusValue: orderData.statusValue || null,
-            total: new Prisma.Decimal(orderData.total || 0),
-            totalPayment: new Prisma.Decimal(orderData.totalPayment || 0),
+            total: new Prisma.Decimal(orderData.total) ?? 0,
+            totalPayment: new Prisma.Decimal(orderData.totalPayment) ?? 0,
             retailerId: 310831,
-            description: orderData.description || null,
-            usingCod: orderData.usingCod || false,
+            description: orderData.description ?? '',
+            usingCod: orderData.usingCod ?? false,
             discount: orderData.discount ?? 0,
             discountRatio: orderData.discountRatio ?? 0,
             createdDate: orderData.createdDate
-              ? new Date(orderData.createdDate)
-              : new Date(),
+              ? new Date(
+                  new Date(orderData.createdDate).getTime() +
+                    7 * 60 * 60 * 1000,
+                )
+              : new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
             modifiedDate: orderData.modifiedDate
-              ? new Date(orderData.modifiedDate)
-              : new Date(),
-            lastSyncedAt: new Date(),
+              ? new Date(
+                  new Date(orderData.modifiedDate).getTime() +
+                    7 * 60 * 60 * 1000,
+                )
+              : new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
+            lastSyncedAt: new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
             larkRecordId: null,
             larkSyncStatus: 'PENDING' as const,
           },
           create: {
             kiotVietId: BigInt(orderData.id),
             code: orderData.code,
-            purchaseDate: new Date(orderData.purchaseDate),
+            purchaseDate: new Date(
+              new Date(orderData.purchaseDate).getTime() + 7 * 60 * 60 * 1000,
+            ),
             branchId: branch?.id ?? null,
             soldById: soldBy?.kiotVietId || null,
             cashierId: soldBy?.kiotVietId || null,
             customerId: customer?.id ?? null,
-            customerCode: orderData.customerCode || null,
-            customerName: orderData.customerName || null,
+            customerCode: orderData.customerCode || '',
+            customerName: orderData.customerName || '',
             saleChannelId: saleChannel?.id ?? 1,
             saleChannelName: saleChannel?.name,
             status: orderData.status,
             statusValue: orderData.statusValue || null,
-            total: new Prisma.Decimal(orderData.total || 0),
-            totalPayment: new Prisma.Decimal(orderData.totalPayment || 0),
+            total: new Prisma.Decimal(orderData.total) ?? 0,
+            totalPayment: new Prisma.Decimal(orderData.totalPayment) ?? 0,
             retailerId: 310831,
-            description: orderData.description || null,
-            usingCod: orderData.usingCod || false,
+            description: orderData.description ?? '',
+            usingCod: orderData.usingCod ?? false,
             discount: orderData.discount ?? 0,
             discountRatio: orderData.discountRatio ?? 0,
             createdDate: orderData.createdDate
-              ? new Date(orderData.createdDate)
-              : new Date(),
+              ? new Date(
+                  new Date(orderData.createdDate).getTime() +
+                    7 * 60 * 60 * 1000,
+                )
+              : new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
             modifiedDate: orderData.modifiedDate
-              ? new Date(orderData.modifiedDate)
-              : new Date(),
-            lastSyncedAt: new Date(),
+              ? new Date(
+                  new Date(orderData.modifiedDate).getTime() +
+                    7 * 60 * 60 * 1000,
+                )
+              : new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
+            lastSyncedAt: new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
             larkRecordId: null,
             larkSyncStatus: 'PENDING' as const,
           } satisfies Prisma.OrderUncheckedCreateInput,
@@ -973,12 +989,10 @@ export class KiotVietOrderService {
                   productCode: product.code,
                   quantity: detail.quantity,
                   lineNumber: i + 1,
-                  price: new Prisma.Decimal(detail.price),
-                  discount: detail.discount
-                    ? new Prisma.Decimal(detail.discount)
-                    : null,
-                  discountRatio: detail.discountRatio,
-                  note: detail.note,
+                  price: new Prisma.Decimal(detail.price) ?? 0,
+                  discount: Prisma.Decimal(detail.discount) ?? 0,
+                  discountRatio: detail.discountRatio ?? 0,
+                  note: detail.note ?? '',
                   isMaster: detail.isMaster ?? true,
                 },
                 create: {
@@ -988,12 +1002,10 @@ export class KiotVietOrderService {
                   productCode: product.code,
                   quantity: detail.quantity,
                   lineNumber: i + 1,
-                  price: new Prisma.Decimal(detail.price),
-                  discount: detail.discount
-                    ? new Prisma.Decimal(detail.discount)
-                    : null,
-                  discountRatio: detail.discountRatio,
-                  note: detail.note,
+                  price: new Prisma.Decimal(detail.price) ?? 0,
+                  discount: Prisma.Decimal(detail.discount) ?? 0,
+                  discountRatio: detail.discountRatio ?? 0,
+                  note: detail.note ?? '',
                   isMaster: detail.isMaster ?? true,
                 },
               });
@@ -1008,7 +1020,7 @@ export class KiotVietOrderService {
             update: {
               deliveryCode: detail.deliveryCode,
               type: detail.type,
-              price: detail.price ? new Prisma.Decimal(detail.price) : null,
+              price: new Prisma.Decimal(detail.price) ?? 0,
               receiver: detail.receiver,
               contactNumber: detail.contactNumber,
               address: detail.address,
@@ -1024,7 +1036,7 @@ export class KiotVietOrderService {
               orderId: order.id,
               deliveryCode: detail.deliveryCode,
               type: detail.type,
-              price: detail.price ? new Prisma.Decimal(detail.price) : null,
+              price: new Prisma.Decimal(detail.price) ?? 0,
               receiver: detail.receiver,
               contactNumber: detail.contactNumber,
               address: detail.address,
@@ -1054,24 +1066,28 @@ export class KiotVietOrderService {
               },
               update: {
                 code: payment.code,
-                amount: new Prisma.Decimal(payment.amount),
+                amount: new Prisma.Decimal(payment.amount) ?? 0,
                 method: payment.method,
                 status: payment.status,
-                transDate: new Date(payment.transDate),
+                transDate: new Date(
+                  new Date(payment.transDate).getTime() + 7 * 60 * 60 * 1000,
+                ),
                 accountId: bankAccount?.id ?? null,
-                description: payment.description,
+                description: payment.description ?? '',
                 orderId: order.id,
               },
               create: {
                 kiotVietId: payment.id ? BigInt(payment.id) : null,
-                orderId: order.id,
                 code: payment.code,
-                amount: new Prisma.Decimal(payment.amount),
+                amount: new Prisma.Decimal(payment.amount) ?? 0,
                 method: payment.method,
                 status: payment.status,
-                transDate: new Date(payment.transDate),
+                transDate: new Date(
+                  new Date(payment.transDate).getTime() + 7 * 60 * 60 * 1000,
+                ),
                 accountId: bankAccount?.id ?? null,
-                description: payment.description,
+                description: payment.description ?? '',
+                orderId: order.id,
               },
             });
           }
@@ -1082,7 +1098,6 @@ export class KiotVietOrderService {
           orderData.invoiceOrderSurcharges.length > 0
         ) {
           for (const surcharge of orderData.invoiceOrderSurcharges) {
-            // Lookup surcharge by ID
             const surchargeRecord = surcharge.surchargeId
               ? await this.prismaService.surcharge.findFirst({
                   where: { kiotVietId: surcharge.surchargeId },
@@ -1095,26 +1110,25 @@ export class KiotVietOrderService {
                 kiotVietId: surcharge.id ? BigInt(surcharge.id) : BigInt(0),
               },
               update: {
+                orderId: order.id,
+                surchargeId: surchargeRecord?.id ?? null,
                 surchargeName: surcharge.surchargeName,
-                surValue: surcharge.surValue
-                  ? new Prisma.Decimal(surcharge.surValue)
-                  : null,
-                price: surcharge.price
-                  ? new Prisma.Decimal(surcharge.price)
-                  : null,
+                surValue: new Prisma.Decimal(surcharge.surValue) ?? 0,
+                price: new Prisma.Decimal(surcharge.price) ?? 0,
+                createdDate: new Date(
+                  new Date().getTime() + 7 * 60 * 60 * 1000,
+                ),
               },
               create: {
                 kiotVietId: surcharge.id ? BigInt(surcharge.id) : null,
                 orderId: order.id,
                 surchargeId: surchargeRecord?.id ?? null,
                 surchargeName: surcharge.surchargeName,
-                surValue: surcharge.surValue
-                  ? new Prisma.Decimal(surcharge.surValue)
-                  : null,
-                price: surcharge.price
-                  ? new Prisma.Decimal(surcharge.price)
-                  : null,
-                createdDate: new Date(),
+                surValue: new Prisma.Decimal(surcharge.surValue) ?? 0,
+                price: new Prisma.Decimal(surcharge.price) ?? 0,
+                createdDate: new Date(
+                  new Date().getTime() + 7 * 60 * 60 * 1000,
+                ),
               },
             });
           }

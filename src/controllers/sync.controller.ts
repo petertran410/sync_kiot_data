@@ -19,6 +19,7 @@ import { LarkOrderSupplierSyncService } from 'src/services/lark/order-supplier/l
 import { KiotVietPurchaseOrderService } from 'src/services/kiot-viet/purchase-order/purchase-order.service';
 import { KiotVietTradeMarkService } from 'src/services/kiot-viet/trademark/trademark.service';
 import { KiotVietCashflowService } from 'src/services/kiot-viet/cashflow/cashflow.service';
+import { KiotVietTransferService } from 'src/services/kiot-viet/transfer/transfer.service';
 
 @Controller('sync')
 export class SyncController {
@@ -45,6 +46,7 @@ export class SyncController {
     private readonly larkPurchaseOrderSyncService: LarkPurchaseOrderSyncService,
     private readonly trademarkService: KiotVietTradeMarkService,
     private readonly cashflowService: KiotVietCashflowService,
+    private readonly transferService: KiotVietTransferService,
   ) {}
 
   @Get('status')
@@ -582,6 +584,30 @@ export class SyncController {
         success: false,
         error: error.message,
         timestamp: new Date().toISOString(),
+      };
+    }
+  }
+
+  @Post('transfers')
+  async syncTransfers() {
+    try {
+      this.logger.log('Starting transfer sync...');
+
+      await this.transferService.enableHistoricalSync();
+
+      await this.transferService.syncHistoricalTransfers();
+
+      return {
+        success: true,
+        message: 'Transfer sync completed successfully',
+        timestamp: new Date('+07:00').toISOString,
+      };
+    } catch (error) {
+      this.logger.error(`❌ Transfer sync failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date('+07:00').toISOString(),
       };
     }
   }

@@ -85,10 +85,6 @@ model Product {
 
   category             Category?                @relation(fields: [categoryId], references: [id])
   tradeMark            TradeMark?               @relation(fields: [tradeMarkId], references: [id])
-
-  @@index([kiotVietId])
-  @@index([code])
-  @@index([categoryId])
 }
 
 model ProductAttribute {
@@ -806,21 +802,18 @@ model PurchaseOrderSurcharge {
 model Transfer {
   id                Int              @id @default(autoincrement())
   kiotVietId        BigInt           @unique
-  code              String           @unique
-  status            Int
-  transferredDate   DateTime?
+  code              String
+  description       String?
+  dispatchedDate    DateTime?
+  fromBranchId      Int?
+  isActive          Boolean?
   receivedDate      DateTime?
-  createdById       BigInt?
-  fromBranchId      Int
-  toBranchId        Int
-  noteBySource      String?
-  noteByDestination String?
   retailerId        Int?
-  createdDate       DateTime         @default(now())
-  modifiedDate      DateTime         @updatedAt
-  lastSyncedAt      DateTime         @default(now())
-  fromBranch        Branch           @relation("SourceBranch", fields: [fromBranchId], references: [id])
-  toBranch          Branch           @relation("DestinationBranch", fields: [toBranchId], references: [id])
+  status            Int?
+  toBranchId        Int?
+  lastSyncedAt      DateTime?
+  fromBranch        Branch?           @relation("SourceBranch", fields: [fromBranchId], references: [id])
+  toBranch          Branch?           @relation("DestinationBranch", fields: [toBranchId], references: [id])
   details           TransferDetail[]
 
   @@index([kiotVietId])
@@ -831,17 +824,20 @@ model Transfer {
 
 model TransferDetail {
   id                  Int      @id @default(autoincrement())
-  kiotVietId          BigInt?  @unique
+  productId           Int?
+  productCode         String?
+  productName         String?
+  sendQuantity        Int?
+  receivedQuantity    Int?
+  sendPrice           Int?
+  receivePrice        Int?
+  price               Int?
   transferId          Int
-  productId           Int
-  transferredQuantity Float
-  receivedQuantity    Float?
-  price               Decimal  @db.Decimal(15, 2)
-  sendPrice           Decimal? @db.Decimal(15, 2)
-  receivePrice        Decimal? @db.Decimal(15, 2)
-  product             Product  @relation(fields: [productId], references: [id])
+  lineNumber          Int?
+  product             Product?  @relation(fields: [productId], references: [id])
   transfer            Transfer @relation(fields: [transferId], references: [id])
 
+  @@unique([transferId, lineNumber])
   @@index([transferId])
   @@index([productId])
 }

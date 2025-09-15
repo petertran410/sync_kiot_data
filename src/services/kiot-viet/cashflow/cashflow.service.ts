@@ -4,7 +4,6 @@ import { ConfigService } from '@nestjs/config';
 import { async, first, firstValueFrom } from 'rxjs';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { KiotVietAuthService } from '../auth.service';
-import { response } from 'express';
 
 interface KiotVietCashflow {
   id: number;
@@ -57,12 +56,24 @@ export class KiotVietCashflowService {
 
   async checkAndRunAppropriateSync(): Promise<void> {
     try {
+      const runningCashflowSyncs =
+        await this.prismaService.syncControl.findMany({
+          where: {
+            OR: [{ name: 'cashflow_historical' }],
+            isRunning: true,
+          },
+        });
+
+      if (runningCashflowSyncs.length > 0) {
+        this.logger.warn(
+          `Found ${runningCashflowSyncs.length} Cashflow syncs still running: ${runningCashflowSyncs.map((s) => s.name).join(', ')}`,
+        );
+        this.logger.warn('Skipping cahsflow sync to avoid conficts');
+        return;
+      }
+
       const historicalSync = await this.prismaService.syncControl.findFirst({
         where: { name: 'cashflow_historical' },
-      });
-
-      const recentSync = await this.prismaService.syncControl.findFirst({
-        where: { name: 'cashflow_recent' },
       });
 
       if (historicalSync?.isEnabled && !historicalSync.isRunning) {
@@ -71,14 +82,13 @@ export class KiotVietCashflowService {
         return;
       }
 
-      if (recentSync?.isEnabled && !recentSync.isRunning) {
-        this.logger.log('Starting recent cashflows sync...');
-        await this.syncRecentCashflows(4);
+      if (historicalSync?.isRunning) {
+        this.logger.log('Historical cashflow sync is running');
         return;
       }
 
-      this.logger.log('Running default recent cashflows sync...');
-      await this.syncRecentCashflows(4);
+      this.logger.log('Running default historical cashflows sync...');
+      await this.syncHistoricalCashflows();
     } catch (error) {
       this.logger.error(`Sync check failed: ${error.message}`);
       throw error;
@@ -110,7 +120,7 @@ export class KiotVietCashflowService {
       await this.updateSyncControl(syncName, {
         isRunning: true,
         status: 'running',
-        startedAt: new Date(),
+        startedAt: new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
         error: null,
       });
 
@@ -223,43 +233,61 @@ export class KiotVietCashflowService {
           );
 
           const newCashflows = cashflows.filter((cashflow) => {
-            if (existingCashflowIds.has(cashflow.id)) {
-              return false;
+            if (
+              !existingCashflowIds.has(cashflow.id) &&
+              !processedCashflowIds.has(cashflow.id)
+            ) {
+              processedCashflowIds.add(cashflow.id);
+              return true;
             }
-
-            if (processedCashflowIds.has(cashflow.id)) {
-              this.logger.debug(
-                `Duplicate cashflow ID detected: ${cashflow.id} (${cashflow.code})`,
-              );
-              return false;
-            }
-
-            processedCashflowIds.add(cashflow.id);
-            return true;
+            return false;
           });
 
-          if (newCashflows.length !== cashflows.length) {
-            this.logger.warn(
-              `Filtered out ${cashflows.length - newCashflows.length} duplicate cashflows on page ${currentPage}`,
-            );
-          }
+          const existingCashflows = cashflows.filter((cashflow) => {
+            if (
+              existingCashflowIds.has(cashflow.id) &&
+              !processedCashflowIds.has(cashflow.id)
+            ) {
+              processedCashflowIds.add(cashflow.id);
+              return true;
+            }
+            return false;
+          });
 
-          if (newCashflows.length === 0) {
+          if (newCashflows.length === 0 && existingCashflows.length === 0) {
             this.logger.log(
-              `Skipping page ${currentPage} - all cashflows already processed`,
+              `Skipping page ${currentPage} - all cashflows already processed in this run`,
             );
             currentItem += this.PAGE_SIZE;
             continue;
           }
 
-          this.logger.log(
-            `Processing ${newCashflows.length} cashflows from page ${currentPage}`,
-          );
+          let pageProcessedCount = 0;
+          let allSavedCashflows: any[] = [];
 
-          const savedCashflows =
-            await this.saveCashflowsToDatabase(newCashflows);
+          if (newCashflows.length > 0) {
+            this.logger.log(
+              `Processing ${newCashflows.length} NEW cashflows from page ${currentPage}`,
+            );
 
-          processedCount += savedCashflows.length;
+            const savedCashflows =
+              await this.saveCashflowsToDatabase(newCashflows);
+            pageProcessedCount += savedCashflows.length;
+            allSavedCashflows.push(...savedCashflows);
+          }
+
+          if (existingCashflows.length > 0) {
+            this.logger.log(
+              `Processing ${existingCashflows.length} EXISTING cashflows from page ${currentPage}`,
+            );
+
+            const savedCashflows =
+              await this.saveCashflowsToDatabase(existingCashflows);
+            pageProcessedCount += savedCashflows.length;
+            allSavedCashflows.push(...savedCashflows);
+          }
+
+          processedCount += pageProcessedCount;
           currentItem += this.PAGE_SIZE;
 
           if (totalCashflows > 0) {
@@ -274,36 +302,28 @@ export class KiotVietCashflowService {
               break;
             }
           }
-
-          // if (totalCashflows > 0) {
-          //   if (
-          //     currentItem >= totalCashflows &&
-          //     processedCount >= totalCashflows
-          //   ) {
-          //     this.logger.log('Sync completed - reached expected data range');
-          //   }
-          //   break;
-          // }
-
           await new Promise((resolve) => setTimeout(resolve, 100));
         } catch (error) {
           consecutiveErrorPages++;
           totalRetries++;
 
           this.logger.error(
-            `Page ${currentPage} failed (attempt ${consecutiveErrorPages}/${MAX_CONSECUTIVE_ERROR_PAGES}): ${error.message}`,
+            `API error on page ${currentPage}: ${error.message}`,
           );
 
-          if (
-            consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES ||
-            totalRetries >= MAX_TOTAL_RETRIES
-          ) {
+          if (consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES) {
             throw new Error(
-              `Too many consecutive errors (${consecutiveErrorPages}) or total retries (${totalRetries}). Last error: ${error.message}`,
+              `Multiple consecutive API failures: ${error.message}`,
             );
           }
 
-          await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+          if (totalRetries >= MAX_TOTAL_RETRIES) {
+            throw new Error(`Maximum total retries exceeded: ${error.message}`);
+          }
+
+          const delay = RETRY_DELAY_MS * Math.pow(2, consecutiveErrorPages - 1);
+          this.logger.log(`⏳ Retrying after ${delay}ms delay...`);
+          await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }
 
@@ -330,64 +350,6 @@ export class KiotVietCashflowService {
         status: 'failed',
         error: error.message,
         progress: { processedCount, expectedTotal: totalCashflows },
-      });
-
-      throw error;
-    }
-  }
-
-  async syncRecentCashflows(days: number = 4): Promise<void> {
-    const syncName = 'cashflow_recent';
-
-    try {
-      await this.updateSyncControl(syncName, {
-        isRunning: true,
-        status: 'running',
-        startedAt: new Date(),
-        error: null,
-      });
-
-      this.logger.log(`Starting recent cashflow sync (${days} days)...`);
-
-      const fromDate = new Date();
-      fromDate.setDate(fromDate.getDate() - days);
-
-      const recentCashflows = await this.fetchRecentCashflows(fromDate);
-
-      if (recentCashflows.length === 0) {
-        this.logger.log('No recent cashflows updates found');
-        await this.updateSyncControl(syncName, {
-          isRunning: false,
-          status: 'completed',
-          completedAt: new Date(),
-          lastRunAt: new Date(),
-        });
-        return;
-      }
-
-      this.logger.log(`Processing ${recentCashflows.length} recent cashflows`);
-
-      const cashflowsWithDetails = await this.enrichCashflowsWithDetails();
-      await this.saveCashflowsToDatabase(cashflowsWithDetails);
-
-      await this.updateSyncControl(syncName, {
-        isRunning: false,
-        status: 'completed',
-        completedAt: new Date(),
-        lastRunAt: new Date(),
-      });
-
-      this.logger.log(
-        `Recent cashflow sync completed: ${cashflowsWithDetails.length} cashflows progressed`,
-      );
-    } catch (error) {
-      this.logger.error(`Recent sync failed: ${error.message}`);
-
-      await this.updateSyncControl(syncName, {
-        isRunning: false,
-        status: 'failed',
-        error: error.message,
-        progress: { errorDetails: error.message },
       });
 
       throw error;
@@ -460,33 +422,6 @@ export class KiotVietCashflowService {
     return response.data;
   }
 
-  async fetchRecentCashflows(fromDate: Date): Promise<any[]> {
-    const headers = await this.authService.getRequestHeaders();
-
-    const fromDateStr = fromDate.toISOString().split('T')[0];
-    const today = new Date();
-    const todayDateStr = today.toISOString().split('T')[0];
-
-    const queryParams = new URLSearchParams({
-      currentItem: '0',
-      pageSize: '100',
-      includeAccount: 'true',
-      includeBranch: 'true',
-      includeUser: 'true',
-      startDate: fromDateStr,
-      endDate: todayDateStr,
-    });
-
-    const response = await firstValueFrom(
-      this.httpService.get(`${this.baseUrl}/cashflow?${queryParams}`, {
-        headers,
-        timeout: 60000,
-      }),
-    );
-
-    return response.data?.data;
-  }
-
   private async enrichCashflowsWithDetails(): Promise<KiotVietCashflow[]> {
     this.logger.log(`Enrich cashflows with details`);
 
@@ -544,65 +479,71 @@ export class KiotVietCashflowService {
           update: {
             code: cashflowData.code.trim(),
             userId: cashflowData.userId,
-            address: cashflowData.address || '',
-            locationName: cashflowData.locationName || '',
-            wardName: cashflowData.wardName || '',
-            contactNumber: cashflowData.contactNumber || '',
-            status: cashflowData.status || null,
-            createdBy: cashflowData.createdBy,
+            address: cashflowData.address ?? '',
+            locationName: cashflowData.locationName ?? '',
+            wardName: cashflowData.wardName ?? '',
+            contactNumber: cashflowData.contactNumber ?? '',
+            status: cashflowData.status ?? null,
+            createdBy: cashflowData.createdBy ?? null,
             usedForFinancialReporting:
-              cashflowData.usedForFinancialReporting || null,
+              cashflowData.usedForFinancialReporting ?? null,
             branchName: branch?.name,
-            partnerName: cashflowData.partnerName,
-            userName: cashflowData.user,
-            accountId: cashflowData.accountId,
-            origin: cashflowData.origin || '',
-            cashFlowGroupId: cashflowData.cashFlowGroupId || null,
-            cashGroup: cashflowData.cashGroup || '',
-            statusValue: cashflowData.statusValue || '',
-            method: cashflowData.method || '',
-            partnerType: cashflowData.partnerType || '',
-            partnerId: cashflowData.partnerId || null,
-            branchId: branch?.id,
-            retailerId: cashflowData.retailerId,
+            partnerName: cashflowData.partnerName ?? '',
+            userName: cashflowData.user ?? '',
+            accountId: cashflowData.accountId ?? null,
+            origin: cashflowData.origin ?? '',
+            cashFlowGroupId: cashflowData.cashFlowGroupId ?? null,
+            cashGroup: cashflowData.cashGroup ?? '',
+            statusValue: cashflowData.statusValue ?? '',
+            method: cashflowData.method ?? '',
+            partnerType: cashflowData.partnerType ?? '',
+            partnerId: cashflowData.partnerId ?? null,
+            branchId: branch?.id ?? null,
+            retailerId: cashflowData.retailerId ?? 310831,
             transDate: cashflowData.transDate
-              ? new Date(cashflowData.transDate)
-              : new Date(),
-            amount: Number(cashflowData.amount) || 0,
-            description: cashflowData.description || '',
-            lastSyncedAt: new Date(),
+              ? new Date(
+                  new Date(cashflowData.transDate).getTime() +
+                    7 * 60 * 60 * 1000,
+                )
+              : new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
+            amount: Number(cashflowData.amount) ?? 0,
+            description: cashflowData.description ?? '',
+            lastSyncedAt: new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
           },
           create: {
             kiotVietId: BigInt(cashflowData.id),
             code: cashflowData.code.trim(),
             userId: cashflowData.userId,
-            address: cashflowData.address || '',
-            locationName: cashflowData.locationName || '',
-            wardName: cashflowData.wardName || '',
-            contactNumber: cashflowData.contactNumber || '',
-            status: cashflowData.status || null,
-            createdBy: cashflowData.createdBy,
+            address: cashflowData.address ?? '',
+            locationName: cashflowData.locationName ?? '',
+            wardName: cashflowData.wardName ?? '',
+            contactNumber: cashflowData.contactNumber ?? '',
+            status: cashflowData.status ?? null,
+            createdBy: cashflowData.createdBy ?? null,
             usedForFinancialReporting:
-              cashflowData.usedForFinancialReporting || null,
+              cashflowData.usedForFinancialReporting ?? null,
             branchName: branch?.name,
-            partnerName: cashflowData.partnerName,
-            userName: cashflowData.user,
-            accountId: cashflowData.accountId,
-            origin: cashflowData.origin || '',
-            cashFlowGroupId: cashflowData.cashFlowGroupId || null,
-            cashGroup: cashflowData.cashGroup || '',
-            statusValue: cashflowData.statusValue || '',
-            method: cashflowData.method || '',
-            partnerType: cashflowData.partnerType || '',
-            partnerId: cashflowData.partnerId || null,
-            branchId: branch?.id,
-            retailerId: cashflowData.retailerId,
+            partnerName: cashflowData.partnerName ?? '',
+            userName: cashflowData.user ?? '',
+            accountId: cashflowData.accountId ?? null,
+            origin: cashflowData.origin ?? '',
+            cashFlowGroupId: cashflowData.cashFlowGroupId ?? null,
+            cashGroup: cashflowData.cashGroup ?? '',
+            statusValue: cashflowData.statusValue ?? '',
+            method: cashflowData.method ?? '',
+            partnerType: cashflowData.partnerType ?? '',
+            partnerId: cashflowData.partnerId ?? null,
+            branchId: branch?.id ?? null,
+            retailerId: cashflowData.retailerId ?? 310831,
             transDate: cashflowData.transDate
-              ? new Date(cashflowData.transDate)
-              : new Date(),
-            amount: Number(cashflowData.amount) || 0,
-            description: cashflowData.description || '',
-            lastSyncedAt: new Date(),
+              ? new Date(
+                  new Date(cashflowData.transDate).getTime() +
+                    7 * 60 * 60 * 1000,
+                )
+              : new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
+            amount: Number(cashflowData.amount) ?? 0,
+            description: cashflowData.description ?? '',
+            lastSyncedAt: new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
           },
         });
 

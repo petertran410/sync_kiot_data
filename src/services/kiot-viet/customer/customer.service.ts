@@ -803,7 +803,7 @@ export class KiotVietCustomerService {
   }
 
   async saveCustomersToDatabase(customers: KiotVietCustomer[]): Promise<any[]> {
-    this.logger.log(`💾 Saving ${customers.length} customers to database...`);
+    this.logger.log(`Saving ${customers.length} customers to database...`);
 
     const savedCustomers: any[] = [];
 
@@ -822,19 +822,22 @@ export class KiotVietCustomerService {
             type: customerData.type,
             gender: customerData.gender,
             birthDate: customerData.birthDate
-              ? new Date(customerData.birthDate)
+              ? new Date(
+                  new Date(customerData.birthDate).getTime() +
+                    7 * 60 * 60 * 1000,
+                )
               : null,
-            contactNumber: customerData.contactNumber,
-            subNumber: customerData.subNumber,
-            identificationNumber: customerData.identificationNumber,
-            address: customerData.address,
-            locationName: customerData.locationName,
-            wardName: customerData.wardName,
-            email: customerData.email,
-            organization: customerData.organization,
-            comments: customerData.comments,
-            taxCode: customerData.taxCode,
-            groups: customerData.groups || null,
+            contactNumber: customerData.contactNumber ?? '',
+            subNumber: customerData.subNumber ?? '',
+            identificationNumber: customerData.identificationNumber ?? '',
+            address: customerData.address ?? '',
+            locationName: customerData.locationName ?? '',
+            wardName: customerData.wardName ?? '',
+            email: customerData.email ?? '',
+            organization: customerData.organization ?? '',
+            comments: customerData.comments ?? '',
+            taxCode: customerData.taxCode ?? '',
+            groups: customerData.groups ?? '',
             debt: customerData.debt ? new Prisma.Decimal(customerData.debt) : 0,
             totalInvoiced: customerData.totalInvoiced
               ? new Prisma.Decimal(customerData.totalInvoiced)
@@ -852,12 +855,18 @@ export class KiotVietCustomerService {
             retailerId: customerData.retailerId,
             branchId: branch?.id,
             createdDate: customerData.createdDate
-              ? new Date(customerData.createdDate)
-              : new Date(),
+              ? new Date(
+                  new Date(customerData.createdDate).getTime() +
+                    7 * 60 * 60 * 1000,
+                )
+              : new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
             modifiedDate: customerData.modifiedDate
-              ? new Date(customerData.modifiedDate)
-              : new Date(),
-            lastSyncedAt: new Date(),
+              ? new Date(
+                  new Date(customerData.modifiedDate).getTime() +
+                    7 * 60 * 60 * 1000,
+                )
+              : new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
+            lastSyncedAt: new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
             larkSyncStatus: 'PENDING',
           },
           create: {
@@ -867,19 +876,22 @@ export class KiotVietCustomerService {
             type: customerData.type,
             gender: customerData.gender,
             birthDate: customerData.birthDate
-              ? new Date(customerData.birthDate)
+              ? new Date(
+                  new Date(customerData.birthDate).getTime() +
+                    7 * 60 * 60 * 1000,
+                )
               : null,
-            contactNumber: customerData.contactNumber,
-            subNumber: customerData.subNumber,
-            identificationNumber: customerData.identificationNumber,
-            address: customerData.address,
-            locationName: customerData.locationName,
-            wardName: customerData.wardName,
-            email: customerData.email,
-            organization: customerData.organization,
-            comments: customerData.comments,
-            taxCode: customerData.taxCode,
-            groups: customerData.groups || null,
+            contactNumber: customerData.contactNumber ?? '',
+            subNumber: customerData.subNumber ?? '',
+            identificationNumber: customerData.identificationNumber ?? '',
+            address: customerData.address ?? '',
+            locationName: customerData.locationName ?? '',
+            wardName: customerData.wardName ?? '',
+            email: customerData.email ?? '',
+            organization: customerData.organization ?? '',
+            comments: customerData.comments ?? '',
+            taxCode: customerData.taxCode ?? '',
+            groups: customerData.groups ?? '',
             debt: customerData.debt ? new Prisma.Decimal(customerData.debt) : 0,
             totalInvoiced: customerData.totalInvoiced
               ? new Prisma.Decimal(customerData.totalInvoiced)
@@ -897,12 +909,18 @@ export class KiotVietCustomerService {
             retailerId: customerData.retailerId,
             branchId: branch?.id,
             createdDate: customerData.createdDate
-              ? new Date(customerData.createdDate)
-              : new Date(),
+              ? new Date(
+                  new Date(customerData.createdDate).getTime() +
+                    7 * 60 * 60 * 1000,
+                )
+              : new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
             modifiedDate: customerData.modifiedDate
-              ? new Date(customerData.modifiedDate)
-              : new Date(),
-            lastSyncedAt: new Date(),
+              ? new Date(
+                  new Date(customerData.modifiedDate).getTime() +
+                    7 * 60 * 60 * 1000,
+                )
+              : new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
+            lastSyncedAt: new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
             larkSyncStatus: 'PENDING',
           },
         });
@@ -915,7 +933,7 @@ export class KiotVietCustomerService {
       }
     }
 
-    this.logger.log(`💾 Saved ${savedCustomers.length} customers to database`);
+    this.logger.log(`Saved ${savedCustomers.length} customers to database`);
     return savedCustomers;
   }
 
