@@ -289,13 +289,15 @@ export class LarkDemandSyncService {
     fields: Record<string, any>,
     isUpdate: boolean = false,
   ): any {
-    // Extract fields directly from LarkBase
     const customerCode = this.extractFieldValue(fields.fldB6qMDJE);
     const productCode = this.extractFieldValue(fields.fldObSVczc);
     const quantity = parseFloat(fields.fldt6xdslC) || 0;
     const conversionRate =
       parseFloat(this.extractFieldValue(fields.fldedJZ9nw)) || 1;
-    const month = this.extractSelectValue(fields.fldiwjX0x4);
+
+    const monthFromLark = this.extractSelectValue(fields.fldiwjX0x4);
+    const month = monthFromLark || `Tháng ${new Date().getMonth() + 1}`;
+
     const year = parseInt(fields.fld9xrXbOL) || new Date().getFullYear();
     const unitType = this.extractSelectValue(fields.fld8UBa1eD);
 
@@ -322,7 +324,6 @@ export class LarkDemandSyncService {
       larkSyncedAt: new Date(),
     };
 
-    // Handle created date for new records
     if (!isUpdate) {
       const createdDate = this.extractDateValue(fields.fldNLbZqnV);
       if (createdDate) {
