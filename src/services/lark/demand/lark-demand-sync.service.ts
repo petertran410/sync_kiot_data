@@ -84,8 +84,7 @@ export class LarkDemandSyncService {
 
       this.logger.log('🚀 Starting sync from LarkBase to Database...');
 
-      // Load caches
-      await this.loadCustomerProductCaches();
+      // Load existing demands cache only
       await this.loadExistingDemandsCache();
 
       // Fetch all records from LarkBase
@@ -155,9 +154,8 @@ export class LarkDemandSyncService {
     try {
       this.logger.log(`🔄 Syncing single record: ${recordId}`);
 
-      // Load caches if not loaded
+      // Load cache if not loaded
       if (!this.cacheLoaded) {
-        await this.loadCustomerProductCaches();
         await this.loadExistingDemandsCache();
       }
 
@@ -291,19 +289,9 @@ export class LarkDemandSyncService {
     fields: Record<string, any>,
     isUpdate: boolean = false,
   ): any {
-    // Extract customer code
+    // Extract fields directly from LarkBase
     const customerCode = this.extractFieldValue(fields.fldB6qMDJE);
-    const customerId = customerCode
-      ? this.customerCodeCache.get(customerCode)
-      : null;
-
-    // Extract product code
     const productCode = this.extractFieldValue(fields.fldObSVczc);
-    const productId = productCode
-      ? this.productCodeCache.get(productCode)
-      : null;
-
-    // Extract other fields
     const quantity = parseFloat(fields.fldt6xdslC) || 0;
     const conversionRate =
       parseFloat(this.extractFieldValue(fields.fldedJZ9nw)) || 1;
@@ -317,8 +305,6 @@ export class LarkDemandSyncService {
 
     const demandData: any = {
       larkRecordId: recordId,
-      customerId,
-      productId,
       customerCode,
       customerName: this.extractFieldValue(fields.fldi50vNFY),
       productCode,

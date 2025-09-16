@@ -20,6 +20,7 @@ import { KiotVietPurchaseOrderService } from 'src/services/kiot-viet/purchase-or
 import { KiotVietTradeMarkService } from 'src/services/kiot-viet/trademark/trademark.service';
 import { KiotVietCashflowService } from 'src/services/kiot-viet/cashflow/cashflow.service';
 import { KiotVietTransferService } from 'src/services/kiot-viet/transfer/transfer.service';
+import { LarkDemandSyncService } from 'src/services/lark/demand/lark-demand-sync.service';
 
 @Controller('sync')
 export class SyncController {
@@ -47,6 +48,7 @@ export class SyncController {
     private readonly trademarkService: KiotVietTradeMarkService,
     private readonly cashflowService: KiotVietCashflowService,
     private readonly transferService: KiotVietTransferService,
+    private readonly larkDemandSyncService: LarkDemandSyncService,
   ) {}
 
   @Get('status')
@@ -609,6 +611,22 @@ export class SyncController {
         error: error.message,
         timestamp: new Date('+07:00').toISOString(),
       };
+    }
+  }
+
+  @Get('demand/from-lark')
+  async syncDemandFromLark() {
+    try {
+      this.logger.log('🚀 Starting demand sync from LarkBase...');
+      const result = await this.larkDemandSyncService.syncDemandsFromLarkBase();
+      return {
+        success: true,
+        message: 'Demand sync from LarkBase completed',
+        data: result,
+      };
+    } catch (error) {
+      this.logger.error(`❌ Demand sync failed: ${error.message}`);
+      throw error;
     }
   }
 }
