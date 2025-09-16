@@ -15,7 +15,6 @@ interface TenantAccessTokenResponse {
 export class LarkAuthService {
   private readonly logger = new Logger(LarkAuthService.name);
 
-  // Separate tokens for different services
   private customerAccessToken: string | null = null;
   private customerTokenExpiry: Date | null = null;
 
@@ -43,6 +42,9 @@ export class LarkAuthService {
   private purchaseOrderDetailAccessToken: string | null = null;
   private purchaseOrderDetailTokenExpiry: Date | null = null;
 
+  private demandAccessToken: string | null = null;
+  private demandTokenExpiry: Date | null = null;
+
   constructor(
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
@@ -62,7 +64,8 @@ export class LarkAuthService {
       | 'orderSupplier'
       | 'orderSupplierDetail'
       | 'purchaseOrder'
-      | 'purchaseOrderDetail',
+      | 'purchaseOrderDetail'
+      | 'demand',
   ): Promise<string> {
     switch (service) {
       case 'customer':
@@ -83,6 +86,8 @@ export class LarkAuthService {
         return await this.getPurchaseOrderAccessToken();
       case 'purchaseOrderDetail':
         return await this.getPurchaseOrderDetailAccessToken();
+      case 'demand':
+        return await this.getDemandAccessToken();
       default:
         throw new Error(`Unknown service: ${service}`);
     }
@@ -898,5 +903,90 @@ export class LarkAuthService {
     this.purchaseOrderDetailAccessToken = null;
     this.purchaseOrderDetailTokenExpiry = null;
     await this.forceRefreshPurchaseOrderDetailToken();
+  }
+
+  // ============================================================================
+  // DEMAND TOKEN MANAGEMENT
+  // ============================================================================
+
+  async getDemandHeaders(): Promise<Record<string, string>> {
+    const token = await this.getDemandAccessToken();
+    return {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    };
+  }
+
+  private async getDemandAccessToken(): Promise<string> {
+    if (
+      this.demandAccessToken &&
+      this.demandTokenExpiry &&
+      this.demandTokenExpiry > new Date(Date.now() + 5 * 60 * 1000)
+    ) {
+      return this.demandAccessToken;
+    }
+
+    return await this.refreshDemandToken();
+  }
+
+  private async refreshDemandToken(): Promise<string> {
+    try {
+      this.logger.log('🔄 Refreshing LarkBase demand access token...');
+
+      const appId = this.configService.get<string>('LARK_DEMAND_SYNC_APP_ID');
+      const appSecret = this.configService.get<string>(
+        'LARK_DEMAND_SYNC_APP_SECRET',
+      );
+
+      if (!appId || !appSecret) {
+        throw new Error('LarkBase demand credentials not configured');
+      }
+
+      const url =
+        'https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal';
+
+      const response = await firstValueFrom(
+        this.httpService.post<TenantAccessTokenResponse>(
+          url,
+          {
+            app_id: appId,
+            app_secret: appSecret,
+          },
+          {
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            timeout: 10000,
+          },
+        ),
+      );
+
+      if (response.data.code !== 0) {
+        throw new Error(
+          `LarkBase auth failed: ${response.data.msg} (code: ${response.data.code})`,
+        );
+      }
+
+      this.demandAccessToken = response.data.tenant_access_token;
+      this.demandTokenExpiry = new Date(
+        Date.now() + response.data.expire * 1000,
+      );
+
+      this.logger.log('✅ LarkBase demand token refreshed successfully');
+      return this.demandAccessToken;
+    } catch (error) {
+      this.logger.error(`❌ Failed to refresh demand token: ${error.message}`);
+
+      this.demandAccessToken = null;
+      this.demandTokenExpiry = null;
+
+      throw new Error(`Token refresh failed: ${error.message}`);
+    }
+  }
+
+  async forceRefreshDemandToken(): Promise<void> {
+    this.demandAccessToken = null;
+    this.demandTokenExpiry = null;
+    await this.forceRefreshDemandToken();
   }
 }

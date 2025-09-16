@@ -85,6 +85,8 @@ model Product {
 
   category             Category?                @relation(fields: [categoryId], references: [id])
   tradeMark            TradeMark?               @relation(fields: [tradeMarkId], references: [id])
+
+  Demand Demand[]
 }
 
 model ProductAttribute {
@@ -184,6 +186,7 @@ model Customer {
   @@index([larkSyncStatus])
   @@index([branchId])
   @@index([groups])
+  Demand Demand[]
 }
 
 model CustomerGroup {
@@ -1027,6 +1030,36 @@ model Supplier {
 
   @@index([kiotVietId])
   @@index([code])
+}
+
+model Demand {
+  id                    Int       @id @default(autoincrement())
+  larkRecordId          String?   @unique
+  customerId            Int?
+  productId             Int?
+  customerCode          String?   // Mã khách
+  customerName          String?   // Tên khách hàng
+  productCode           String?   // Mã hàng
+  productName           String?   // Tên Hàng Hóa
+  quantity              Float     // Số lượng
+  unit                  String?   // ĐVT
+  unitType              String?   // Đơn Vị Đặt (Thùng/Đơn vị)
+  conversionRate        Float?    // Định Lượng Quy Đổi
+  month                 String    // Tháng
+  year                  Int       // Năm
+  notes                 String?   // Ghi Chú
+  createdBy             String?   // Người Tạo
+  createdDate           DateTime  @default(now())
+  updatedDate           DateTime  @updatedAt
+  larkSyncStatus        LarkSyncStatus @default(SYNCED)
+  larkSyncedAt          DateTime?
+
+  customer              Customer? @relation(fields: [customerId], references: [id])
+  product               Product?  @relation(fields: [productId], references: [id])
+
+  @@index([larkRecordId])
+  @@index([customerId])
+  @@index([productId])
 }
 
 model Location {
