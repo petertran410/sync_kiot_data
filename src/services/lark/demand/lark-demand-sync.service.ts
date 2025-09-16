@@ -351,7 +351,7 @@ export class LarkDemandSyncService {
   // FIELD EXTRACTION HELPERS
   // ============================================================================
 
-  private extractFieldValue(field: any): string | null {
+  private extractFieldValue(field: any) {
     if (!field) return null;
 
     if (typeof field === 'string') return field;
