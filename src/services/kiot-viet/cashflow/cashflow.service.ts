@@ -120,7 +120,7 @@ export class KiotVietCashflowService {
       await this.updateSyncControl(syncName, {
         isRunning: true,
         status: 'running',
-        startedAt: new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
+        startedAt: new Date(),
         error: null,
       });
 
@@ -505,10 +505,10 @@ export class KiotVietCashflowService {
                   new Date(cashflowData.transDate).getTime() +
                     7 * 60 * 60 * 1000,
                 )
-              : new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
+              : new Date(),
             amount: Number(cashflowData.amount) ?? 0,
             description: cashflowData.description ?? '',
-            lastSyncedAt: new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
+            lastSyncedAt: new Date(),
           },
           create: {
             kiotVietId: BigInt(cashflowData.id),
@@ -540,10 +540,10 @@ export class KiotVietCashflowService {
                   new Date(cashflowData.transDate).getTime() +
                     7 * 60 * 60 * 1000,
                 )
-              : new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
+              : new Date(),
             amount: Number(cashflowData.amount) ?? 0,
             description: cashflowData.description ?? '',
-            lastSyncedAt: new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
+            lastSyncedAt: new Date(),
           },
         });
 

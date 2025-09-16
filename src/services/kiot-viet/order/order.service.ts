@@ -890,9 +890,7 @@ export class KiotVietOrderService {
           where: { kiotVietId: BigInt(orderData.id) },
           update: {
             code: orderData.code,
-            purchaseDate: new Date(
-              new Date(orderData.purchaseDate).getTime() + 7 * 60 * 60 * 1000,
-            ),
+            purchaseDate: new Date(orderData.purchaseDate),
             branchId: branch?.id ?? null,
             soldById: soldBy?.kiotVietId ?? null,
             cashierId: soldBy?.kiotVietId ?? null,
@@ -915,21 +913,19 @@ export class KiotVietOrderService {
                   new Date(orderData.createdDate).getTime() +
                     7 * 60 * 60 * 1000,
                 )
-              : new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
+              : new Date(),
             modifiedDate: orderData.modifiedDate
               ? new Date(
                   new Date(orderData.modifiedDate).getTime() +
                     7 * 60 * 60 * 1000,
                 )
-              : new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
-            lastSyncedAt: new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
+              : new Date(),
+            lastSyncedAt: new Date(),
           },
           create: {
             kiotVietId: BigInt(orderData.id),
             code: orderData.code,
-            purchaseDate: new Date(
-              new Date(orderData.purchaseDate).getTime() + 7 * 60 * 60 * 1000,
-            ),
+            purchaseDate: new Date(orderData.purchaseDate),
             branchId: branch?.id ?? null,
             soldById: soldBy?.kiotVietId ?? null,
             cashierId: soldBy?.kiotVietId ?? null,
@@ -952,14 +948,14 @@ export class KiotVietOrderService {
                   new Date(orderData.createdDate).getTime() +
                     7 * 60 * 60 * 1000,
                 )
-              : new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
+              : new Date(),
             modifiedDate: orderData.modifiedDate
               ? new Date(
                   new Date(orderData.modifiedDate).getTime() +
                     7 * 60 * 60 * 1000,
                 )
-              : new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
-            lastSyncedAt: new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
+              : new Date(),
+            lastSyncedAt: new Date(),
           },
         });
 
@@ -1069,9 +1065,7 @@ export class KiotVietOrderService {
                 amount: payment.amount ? new Prisma.Decimal(payment.amount) : 0,
                 method: payment.method,
                 status: payment.status,
-                transDate: new Date(
-                  new Date(payment.transDate).getTime() + 7 * 60 * 60 * 1000,
-                ),
+                transDate: new Date(payment.transDate),
                 accountId: bankAccount?.id ?? null,
                 description: payment.description,
                 orderId: order.id,
@@ -1083,9 +1077,7 @@ export class KiotVietOrderService {
                 amount: new Prisma.Decimal(payment.amount),
                 method: payment.method,
                 status: payment.status,
-                transDate: new Date(
-                  new Date(payment.transDate).getTime() + 7 * 60 * 60 * 1000,
-                ),
+                transDate: new Date(payment.transDate),
                 accountId: bankAccount?.id ?? null,
                 description: payment.description,
               },
@@ -1129,9 +1121,7 @@ export class KiotVietOrderService {
                 price: surcharge.price
                   ? new Prisma.Decimal(surcharge.price)
                   : null,
-                createdDate: new Date(
-                  new Date().getTime() + 7 * 60 * 60 * 1000,
-                ),
+                createdDate: new Date(),
               },
             });
           }

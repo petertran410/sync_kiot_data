@@ -457,7 +457,7 @@ export class KiotVietTransferService {
                   new Date(transferData.dispatchedDate).getTime() +
                     7 * 60 * 60 * 1000,
                 )
-              : new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
+              : new Date(),
             fromBranchId: branch?.id ?? null,
             isActive: transferData.isActive ?? false,
             receivedDate: transferData.receivedDate
@@ -465,11 +465,11 @@ export class KiotVietTransferService {
                   new Date(transferData.receivedDate).getTime() +
                     7 * 60 * 60 * 1000,
                 )
-              : new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
+              : new Date(),
             retailerId: transferData.retailerId ?? null,
             status: transferData.status ?? null,
             toBranchId: branch?.id ?? null,
-            lastSyncedAt: new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
+            lastSyncedAt: new Date(),
           },
           create: {
             kiotVietId: BigInt(transferData.id),
@@ -480,7 +480,7 @@ export class KiotVietTransferService {
                   new Date(transferData.dispatchedDate).getTime() +
                     7 * 60 * 60 * 1000,
                 )
-              : new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
+              : new Date(),
             fromBranchId: branch?.id ?? null,
             isActive: transferData.isActive ?? false,
             receivedDate: transferData.receivedDate
@@ -488,11 +488,11 @@ export class KiotVietTransferService {
                   new Date(transferData.receivedDate).getTime() +
                     7 * 60 * 60 * 1000,
                 )
-              : new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
+              : new Date(),
             retailerId: transferData.retailerId ?? null,
             status: transferData.status ?? null,
             toBranchId: branch?.id ?? null,
-            lastSyncedAt: new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
+            lastSyncedAt: new Date(),
           },
         });
 

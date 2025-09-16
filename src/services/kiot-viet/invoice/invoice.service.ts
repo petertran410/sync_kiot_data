@@ -938,20 +938,14 @@ export class KiotVietInvoiceService {
             saleChannelId: saleChannel?.id ? saleChannel?.id : 1,
             isApplyVoucher: invoiceData.isApplyVoucher || false,
             createdDate: invoiceData.createdDate
-              ? new Date(
-                  new Date(invoiceData.createdDate).getTime() +
-                    7 * 60 * 60 * 1000,
-                )
-              : new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
+              ? new Date(invoiceData.createdDate)
+              : new Date(),
             modifiedDate: invoiceData.modifiedDate
-              ? new Date(
-                  new Date(invoiceData.modifiedDate).getTime() +
-                    7 * 60 * 60 * 1000,
-                )
-              : new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
+              ? new Date(invoiceData.modifiedDate)
+              : new Date(),
             retailerId: 310831,
-            lastSyncedAt: new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
-            larkRecordId: null,
+            lastSyncedAt: new Date(),
+            larkSyncStatus: 'PENDING',
           },
           create: {
             kiotVietId: BigInt(invoiceData.id),
@@ -975,19 +969,13 @@ export class KiotVietInvoiceService {
             saleChannelId: saleChannel?.id ? saleChannel?.id : 1,
             isApplyVoucher: invoiceData.isApplyVoucher || false,
             createdDate: invoiceData.createdDate
-              ? new Date(
-                  new Date(invoiceData.createdDate).getTime() +
-                    7 * 60 * 60 * 1000,
-                )
-              : new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
+              ? new Date(invoiceData.createdDate)
+              : new Date(),
             modifiedDate: invoiceData.modifiedDate
-              ? new Date(
-                  new Date(invoiceData.modifiedDate).getTime() +
-                    7 * 60 * 60 * 1000,
-                )
-              : new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
+              ? new Date(invoiceData.modifiedDate)
+              : new Date(),
             retailerId: 310831,
-            lastSyncedAt: new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
+            lastSyncedAt: new Date(),
             larkSyncStatus: 'PENDING',
           },
         });
@@ -1109,16 +1097,14 @@ export class KiotVietInvoiceService {
                 kiotVietId: payment.id ? BigInt(payment.id) : BigInt(0),
               },
               update: {
+                invoiceId: invoice.id,
                 code: payment.code,
                 amount: new Prisma.Decimal(payment.amount),
                 method: payment.method,
                 status: payment.status,
-                transDate: new Date(
-                  new Date(payment.transDate).getTime() + 7 * 60 * 60 * 1000,
-                ),
+                transDate: new Date(payment.transDate),
                 accountId: bankAccount?.id ?? null,
                 description: payment.description,
-                invoiceId: invoice.id,
               },
               create: {
                 kiotVietId: payment.id ? BigInt(payment.id) : null,
@@ -1127,9 +1113,7 @@ export class KiotVietInvoiceService {
                 amount: new Prisma.Decimal(payment.amount),
                 method: payment.method,
                 status: payment.status,
-                transDate: new Date(
-                  new Date(payment.transDate).getTime() + 7 * 60 * 60 * 1000,
-                ),
+                transDate: new Date(payment.transDate),
                 accountId: bankAccount?.id ?? null,
                 description: payment.description,
               },

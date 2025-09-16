@@ -859,14 +859,14 @@ export class KiotVietCustomerService {
                   new Date(customerData.createdDate).getTime() +
                     7 * 60 * 60 * 1000,
                 )
-              : new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
+              : new Date(),
             modifiedDate: customerData.modifiedDate
               ? new Date(
                   new Date(customerData.modifiedDate).getTime() +
                     7 * 60 * 60 * 1000,
                 )
-              : new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
-            lastSyncedAt: new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
+              : new Date(),
+            lastSyncedAt: new Date(),
             larkSyncStatus: 'PENDING',
           },
           create: {
@@ -913,14 +913,14 @@ export class KiotVietCustomerService {
                   new Date(customerData.createdDate).getTime() +
                     7 * 60 * 60 * 1000,
                 )
-              : new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
+              : new Date(),
             modifiedDate: customerData.modifiedDate
               ? new Date(
                   new Date(customerData.modifiedDate).getTime() +
                     7 * 60 * 60 * 1000,
                 )
-              : new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
-            lastSyncedAt: new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
+              : new Date(),
+            lastSyncedAt: new Date(),
             larkSyncStatus: 'PENDING',
           },
         });

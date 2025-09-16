@@ -674,14 +674,14 @@ export class KiotVietProductService {
                   new Date(productData.createdDate).getTime() +
                     7 * 60 * 60 * 1000,
                 )
-              : new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
+              : new Date(),
             modifiedDate: productData.modifiedDate
               ? new Date(
                   new Date(productData.modifiedDate).getTime() +
                     7 * 60 * 60 * 1000,
                 )
-              : new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
-            lastSyncedAt: new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
+              : new Date(),
+            lastSyncedAt: new Date(),
             larkSyncStatus: 'PENDING',
           },
           create: {
@@ -719,14 +719,14 @@ export class KiotVietProductService {
                   new Date(productData.createdDate).getTime() +
                     7 * 60 * 60 * 1000,
                 )
-              : new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
+              : new Date(),
             modifiedDate: productData.modifiedDate
               ? new Date(
                   new Date(productData.modifiedDate).getTime() +
                     7 * 60 * 60 * 1000,
                 )
-              : new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
-            lastSyncedAt: new Date(new Date().getTime() + 7 * 60 * 60 * 1000),
+              : new Date(),
+            lastSyncedAt: new Date(),
             larkSyncStatus: 'PENDING',
           },
         });
@@ -745,7 +745,7 @@ export class KiotVietProductService {
                 productCode: product.code,
                 productName: product.name,
                 branchId: detail.branchId ?? null,
-                branchName: detail.branchName ?? '',
+                branchName: detail.branchName ?? null,
                 cost: detail.cost ?? 0,
                 onHand: detail.onHand ?? 0,
                 reserved: detail.reserved ?? 0,
@@ -755,9 +755,7 @@ export class KiotVietProductService {
                 maxQuantity: detail.maxQuantity ?? 0,
                 isActive: detail.isActive,
                 onOrder: detail.onOrder ?? 0,
-                lastSyncedAt: new Date(
-                  new Date().getTime() + 7 * 60 * 60 * 1000,
-                ),
+                lastSyncedAt: new Date(),
               },
               create: {
                 productId: product.id,
@@ -774,9 +772,7 @@ export class KiotVietProductService {
                 maxQuantity: detail.maxQuantity ?? 0,
                 isActive: detail.isActive,
                 onOrder: detail.onOrder ?? 0,
-                lastSyncedAt: new Date(
-                  new Date().getTime() + 7 * 60 * 60 * 1000,
-                ),
+                lastSyncedAt: new Date(),
               },
             });
           }
@@ -798,18 +794,14 @@ export class KiotVietProductService {
                 attributeName: detail.attributeName,
                 attributeValue: detail.attributeValue,
                 lineNumber: i + 1,
-                lastSyncedAt: new Date(
-                  new Date().getTime() + 7 * 60 * 60 * 1000,
-                ),
+                lastSyncedAt: new Date(),
               },
               create: {
                 productId: product.id,
                 attributeName: detail.attributeName,
                 attributeValue: detail.attributeValue,
                 lineNumber: i + 1,
-                lastSyncedAt: new Date(
-                  new Date().getTime() + 7 * 60 * 60 * 1000,
-                ),
+                lastSyncedAt: new Date(),
               },
             });
           }
@@ -828,17 +820,13 @@ export class KiotVietProductService {
                 productId: product.id,
                 imageUrl: productData.images,
                 lineNumber: i + 1,
-                lastSyncedAt: new Date(
-                  new Date().getTime() + 7 * 60 * 60 * 1000,
-                ),
+                lastSyncedAt: new Date(),
               },
               create: {
                 productId: product.id,
                 imageUrl: productData.images,
                 lineNumber: i + 1,
-                lastSyncedAt: new Date(
-                  new Date().getTime() + 7 * 60 * 60 * 1000,
-                ),
+                lastSyncedAt: new Date(),
               },
             });
           }
@@ -866,9 +854,7 @@ export class KiotVietProductService {
                 priceBookId: pricebook?.id ?? null,
                 priceBookName: pricebook?.name,
                 price: detail.price ?? 0,
-                lastSyncedAt: new Date(
-                  new Date().getTime() + 7 * 60 * 60 * 1000,
-                ),
+                lastSyncedAt: new Date(),
                 productId: product.id,
                 productName: product.name,
               },
@@ -877,9 +863,7 @@ export class KiotVietProductService {
                 priceBookId: pricebook?.id ?? null,
                 priceBookName: pricebook?.name,
                 price: detail.price ?? 0,
-                lastSyncedAt: new Date(
-                  new Date().getTime() + 7 * 60 * 60 * 1000,
-                ),
+                lastSyncedAt: new Date(),
                 productId: product.id,
                 productName: product.name,
               },
