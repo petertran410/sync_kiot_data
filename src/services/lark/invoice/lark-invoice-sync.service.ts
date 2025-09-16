@@ -405,7 +405,7 @@ export class LarkInvoiceSyncService {
 
     if (duplicateDetected.length > 0) {
       this.logger.warn(
-        `🚨 Detected ${duplicateDetected.length} invoices already in cache: ${duplicateDetected
+        `Detected ${duplicateDetected.length} invoices already in cache: ${duplicateDetected
           .map((o) => o.kiotVietId)
           .slice(0, 5)
           .join(', ')}`,
@@ -526,7 +526,7 @@ export class LarkInvoiceSyncService {
       }
 
       this.logger.log(
-        `📊 Batch ${i + 1}/${batches.length}: ${successRecords.length}/${batch.length} created`,
+        `Batch ${i + 1}/${batches.length}: ${successRecords.length}/${batch.length} created`,
       );
 
       if (i < batches.length - 1) {
@@ -535,7 +535,7 @@ export class LarkInvoiceSyncService {
     }
 
     this.logger.log(
-      `🎯 Create complete: ${totalCreated} success, ${totalFailed} failed`,
+      `Create complete: ${totalCreated} success, ${totalFailed} failed`,
     );
   }
 

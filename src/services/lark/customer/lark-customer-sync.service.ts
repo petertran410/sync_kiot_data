@@ -132,7 +132,7 @@ export class LarkCustomerSyncService {
       );
 
       if (customersToSync.length === 0) {
-        this.logger.log('📋 No customers need LarkBase sync');
+        this.logger.log('No customers need LarkBase sync');
         await this.releaseSyncLock(lockKey);
         return;
       }
@@ -154,7 +154,7 @@ export class LarkCustomerSyncService {
       ).length;
 
       this.logger.log(
-        `📊 Including: ${pendingCount} PENDING + ${failedCount} FAILED customers`,
+        `Including: ${pendingCount} PENDING + ${failedCount} FAILED customers`,
       );
 
       await this.testLarkBaseConnection();
@@ -172,7 +172,7 @@ export class LarkCustomerSyncService {
         await this.categorizeCustomers(customersToSync);
 
       this.logger.log(
-        `📋 Categorization: ${newCustomers.length} new, ${updateCustomers.length} updates`,
+        `Categorization: ${newCustomers.length} new, ${updateCustomers.length} updates`,
       );
 
       const BATCH_SIZE_FOR_SYNC = 100;
@@ -212,13 +212,11 @@ export class LarkCustomerSyncService {
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        this.logger.log(
-          `📥 Loading cache (attempt ${attempt}/${maxRetries})...`,
-        );
+        this.logger.log(`Loading cache (attempt ${attempt}/${maxRetries})...`);
 
         if (this.isCacheValid() && this.existingRecordsCache.size > 5000) {
           this.logger.log(
-            `✅ Large cache available (${this.existingRecordsCache.size} records) - skipping reload`,
+            `Large cache available (${this.existingRecordsCache.size} records) - skipping reload`,
           );
           return true;
         }
@@ -228,7 +226,7 @@ export class LarkCustomerSyncService {
             (Date.now() - this.lastCacheLoadTime.getTime()) / (1000 * 60);
           if (cacheAgeMinutes < 45 && this.existingRecordsCache.size > 500) {
             this.logger.log(
-              `✅ Recent cache (${cacheAgeMinutes.toFixed(1)}min old, ${this.existingRecordsCache.size} records) - skipping reload`,
+              `Recent cache (${cacheAgeMinutes.toFixed(1)}min old, ${this.existingRecordsCache.size} records) - skipping reload`,
             );
             return true;
           }
@@ -239,7 +237,7 @@ export class LarkCustomerSyncService {
 
         if (this.existingRecordsCache.size > 0) {
           this.logger.log(
-            `✅ Cache loaded successfully: ${this.existingRecordsCache.size} records`,
+            `Cache loaded successfully: ${this.existingRecordsCache.size} records`,
           );
           this.lastCacheLoadTime = new Date();
           return true;
@@ -253,7 +251,7 @@ export class LarkCustomerSyncService {
 
         if (attempt < maxRetries) {
           const delay = attempt * 2000;
-          this.logger.log(`⏳ Waiting ${delay / 1000}s before retry...`);
+          this.logger.log(`Waiting ${delay / 1000}s before retry...`);
           await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }
@@ -331,7 +329,7 @@ export class LarkCustomerSyncService {
 
           if (totalLoaded % 1500 === 0 || !pageToken) {
             this.logger.log(
-              `📊 Cache progress: ${cacheBuilt}/${totalLoaded} records (${loadTime}ms/page)`,
+              `Cache progress: ${cacheBuilt}/${totalLoaded} records (${loadTime}ms/page)`,
             );
           }
         } else {
@@ -346,7 +344,7 @@ export class LarkCustomerSyncService {
         totalLoaded > 0 ? Math.round((cacheBuilt / totalLoaded) * 100) : 0;
 
       this.logger.log(
-        `✅ Customer cache loaded: ${this.existingRecordsCache.size} by ID, ${this.customerCodeCache.size} by code (${successRate}% success)`,
+        `Customer cache loaded: ${this.existingRecordsCache.size} by ID, ${this.customerCodeCache.size} by code (${successRate}% success)`,
       );
     } catch (error) {
       this.logger.error(`❌ Customer cache loading failed: ${error.message}`);
@@ -440,7 +438,7 @@ export class LarkCustomerSyncService {
   private async processNewCustomers(customers: any[]): Promise<void> {
     if (customers.length === 0) return;
 
-    this.logger.log(`📝 Creating ${customers.length} new customers...`);
+    this.logger.log(`Creating ${customers.length} new customers...`);
 
     const batches = this.chunkArray(customers, this.batchSize);
     let totalCreated = 0;
@@ -462,9 +460,7 @@ export class LarkCustomerSyncService {
       }
 
       if (verifiedBatch.length === 0) {
-        this.logger.log(
-          `✅ Batch ${i + 1} skipped - all customers already exist`,
-        );
+        this.logger.log(`Batch ${i + 1} skipped - all customers already exist`);
         continue;
       }
 
@@ -487,7 +483,7 @@ export class LarkCustomerSyncService {
       }
 
       this.logger.log(
-        `📊 Batch ${i + 1}/${batches.length}: ${successRecords.length}/${batch.length} created`,
+        `Batch ${i + 1}/${batches.length}: ${successRecords.length}/${batch.length} created`,
       );
 
       if (i < batches.length - 1) {
@@ -496,14 +492,14 @@ export class LarkCustomerSyncService {
     }
 
     this.logger.log(
-      `🎯 Create complete: ${totalCreated} success, ${totalFailed} failed`,
+      `Create complete: ${totalCreated} success, ${totalFailed} failed`,
     );
   }
 
   private async processUpdateCustomers(customers: any[]): Promise<void> {
     if (customers.length === 0) return;
 
-    this.logger.log(`📝 Updating ${customers.length} existing customers...`);
+    this.logger.log(`Updating ${customers.length} existing customers...`);
 
     let successCount = 0;
     let failedCount = 0;
@@ -541,13 +537,13 @@ export class LarkCustomerSyncService {
 
     if (createFallbacks.length > 0) {
       this.logger.log(
-        `🔄 Processing ${createFallbacks.length} update fallbacks as new customers...`,
+        `Processing ${createFallbacks.length} update fallbacks as new customers...`,
       );
       await this.processNewCustomers(createFallbacks);
     }
 
     this.logger.log(
-      `📝 Update complete: ${successCount} updated, ${createFallbacks.length} fallback to create`,
+      `Update complete: ${successCount} updated, ${createFallbacks.length} fallback to create`,
     );
   }
 

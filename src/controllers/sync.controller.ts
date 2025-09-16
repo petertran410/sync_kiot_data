@@ -617,7 +617,7 @@ export class SyncController {
   @Get('demand/from-lark')
   async syncDemandFromLark() {
     try {
-      this.logger.log('🚀 Starting demand sync from LarkBase...');
+      this.logger.log('Starting demand sync from LarkBase...');
       const result = await this.larkDemandSyncService.syncDemandsFromLarkBase();
       return {
         success: true,

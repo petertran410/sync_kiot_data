@@ -356,7 +356,7 @@ export class KiotVietCustomerService {
           }
 
           const delay = RETRY_DELAY_MS * Math.pow(2, consecutiveErrorPages - 1);
-          this.logger.log(`⏳ Retrying after ${delay}ms delay...`);
+          this.logger.log(`Retrying after ${delay}ms delay...`);
           await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }
@@ -922,7 +922,7 @@ export class KiotVietCustomerService {
   async syncCustomersToLarkBase(customers: any[]): Promise<void> {
     try {
       this.logger.log(
-        `🚀 Starting LarkBase sync for ${customers.length} customers...`,
+        `Starting LarkBase sync for ${customers.length} customers...`,
       );
 
       const customersToSync = customers.filter(

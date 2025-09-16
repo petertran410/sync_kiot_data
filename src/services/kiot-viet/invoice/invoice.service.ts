@@ -1171,7 +1171,7 @@ export class KiotVietInvoiceService {
       }
     }
 
-    this.logger.log(`💾 Saved ${savedInvoices.length} invoices to database`);
+    this.logger.log(`Saved ${savedInvoices.length} invoices to database`);
     return savedInvoices;
   }
 
@@ -1191,7 +1191,7 @@ export class KiotVietInvoiceService {
       }
 
       await this.larkInvoiceSyncService.syncInvoicesToLarkBase(invoicesToSync);
-      this.logger.log(`✅ LarkBase sync completed successfully`);
+      this.logger.log(`LarkBase sync completed successfully`);
     } catch (error) {
       this.logger.error(`LarkBase sync FAILED: ${error.message}`);
       this.logger.error(`STOPPING sync to prevent data duplication`);

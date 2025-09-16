@@ -702,9 +702,7 @@ export class LarkOrderSyncService {
     duplicates: any[];
     summary: any;
   }> {
-    this.logger.log(
-      '🔍 Analyzing missing data between Database and LarkBase...',
-    );
+    this.logger.log('Analyzing missing data between Database and LarkBase...');
 
     // Load cache để có data LarkBase
     await this.loadExistingRecordsWithRetry();
@@ -957,7 +955,7 @@ export class LarkOrderSyncService {
     for (let retryCount = 0; retryCount <= maxRetries; retryCount++) {
       try {
         this.logger.log(
-          `🔍 Testing LarkBase connection (attempt ${retryCount + 1}/${maxRetries + 1})...`,
+          `Testing LarkBase connection (attempt ${retryCount + 1}/${maxRetries + 1})...`,
         );
 
         const headers = await this.larkAuthService.getOrderHeaders();
@@ -1270,7 +1268,7 @@ export class LarkOrderSyncService {
       const totalBatches = Math.ceil(ordersToSync.length / BATCH_SIZE);
 
       this.logger.log(
-        `🔄 Processing batch ${batchNumber}/${totalBatches} (${batch.length} orders)`,
+        `Processing batch ${batchNumber}/${totalBatches} (${batch.length} orders)`,
       );
 
       try {
@@ -1311,11 +1309,6 @@ export class LarkOrderSyncService {
         });
       }
     }
-
-    this.logger.log('🎯 Missing data sync completed:');
-    this.logger.log(`- Attempted: ${ordersToSync.length}`);
-    this.logger.log(`- Success: ${totalSuccess}`);
-    this.logger.log(`- Failed: ${totalFailed}`);
 
     return {
       attempted: ordersToSync.length,
