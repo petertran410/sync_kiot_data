@@ -289,47 +289,79 @@ export class LarkDemandSyncService {
     fields: Record<string, any>,
     isUpdate: boolean = false,
   ): any {
-    const customerCode = this.extractFieldValue(fields.fldB6qMDJE);
-    const productCode = this.extractFieldValue(fields.fldObSVczc);
-    const quantity = parseFloat(fields.fldt6xdslC) || 0;
-    const conversionRate =
-      parseFloat(this.extractFieldValue(fields.fldedJZ9nw)) || 1;
+    // Debug: Log all fields để xem structure
+    this.logger.debug(`Mapping fields for ${recordId}:`, Object.keys(fields));
 
-    const monthFromLark = this.extractSelectValue(fields.fldiwjX0x4);
-    const month = monthFromLark || `Tháng ${new Date().getMonth() + 1}`;
+    // Extract all fields with proper methods
+    const customerCode = this.extractFieldValue(fields.fldB6qMDJE); // Mã khách (type 19)
+    const customerName = this.extractLinkRecordValue(fields.fldi50vNFY); // Tên Khách Hàng (type 18)
+    const productCode = this.extractFieldValue(fields.fldObSVczc); // Mã hàng (type 19)
+    const productName = this.extractFieldValue(fields.fldJU22ujn); // Tên Hàng Hóa (type 19)
+    const productCodeAndName = this.extractLinkRecordValue(fields.fldKg9qR3d); // Mã và Tên Hàng (type 18)
 
-    const year = parseInt(fields.fld9xrXbOL) || new Date().getFullYear();
-    const unitType = this.extractSelectValue(fields.fld8UBa1eD);
+    const quantity = this.extractNumberValue(fields.fldt6xdslC) || 0; // Số lượng (type 2)
+    const conversionRate = this.extractNumberValue(fields.fldedJZ9nw) || 1; // Định Lượng Quy Đổi (type 19)
+    const convertedQuantity = this.extractNumberValue(fields.fldzBhibXP) || 0; // Số lượng quy đổi (type 20 - formula)
 
-    // Calculate converted quantity
-    const convertedQuantity =
-      unitType === 'Thùng' ? quantity * conversionRate : quantity;
+    const unit = this.extractFieldValue(fields.fldBtNjnkb); // ĐVT (type 19)
+    const unitType = this.extractSelectValue(fields.fld8UBa1eD); // Đơn Vị Đặt (type 3)
+    const month = this.extractSelectValue(fields.fldiwjX0x4); // Tháng (type 4)
+    const year =
+      this.extractNumberValue(fields.fld9xrXbOL) || new Date().getFullYear(); // Năm (type 20 - formula)
+
+    const notes = fields.fldl4Z68kd || ''; // Ghi Chú (type 1)
+    const createdBy = this.extractFieldValue(fields.fldYucgmBG); // Người Tạo (type 1003)
+    const countValue = this.extractNumberValue(fields.fldQFQjewB); // Đếm (type 20 - formula)
+    const content = this.extractFieldValue(fields.fldsukxySQ); // Nội dung (type 20 - formula, primary)
+
+    // Handle dates
+    const createdDateField = this.extractDateValue(fields.fldNLbZqnV); // Ngày Tạo (type 1001)
+    const updatedDateField = this.extractDateValue(fields.fldXbL4IrK); // Ngày Cập Nhật (type 1002)
+
+    // Ensure month is not null (required field)
+    const finalMonth = month || `Tháng ${new Date().getMonth() + 1}`;
 
     const demandData: any = {
       larkRecordId: recordId,
       customerCode,
-      customerName: this.extractFieldValue(fields.fldi50vNFY),
+      customerName,
       productCode,
-      productName: this.extractFieldValue(fields.fldJU22ujn),
+      productName,
       quantity,
-      convertedQuantity,
-      unit: this.extractFieldValue(fields.fldBtNjnkb),
+      convertedQuantity:
+        convertedQuantity ||
+        (unitType === 'Thùng' ? quantity * conversionRate : quantity),
+      unit,
       unitType,
       conversionRate,
-      month,
+      month: finalMonth,
       year,
-      notes: fields.fldl4Z68kd || '',
-      createdBy: this.extractFieldValue(fields.fldYucgmBG),
+      notes,
+      createdBy,
       larkSyncStatus: 'SYNCED',
       larkSyncedAt: new Date(),
     };
 
-    if (!isUpdate) {
-      const createdDate = this.extractDateValue(fields.fldNLbZqnV);
-      if (createdDate) {
-        demandData.createdDate = createdDate;
-      }
+    // Handle created date for new records
+    if (!isUpdate && createdDateField) {
+      demandData.createdDate = createdDateField;
     }
+
+    // Log extracted values for debugging
+    this.logger.debug(`Extracted values for ${recordId}:`, {
+      customerCode,
+      customerName,
+      productCode,
+      productName,
+      quantity,
+      convertedQuantity: demandData.convertedQuantity,
+      unit,
+      unitType,
+      month: finalMonth,
+      year,
+      notes: notes ? notes.substring(0, 50) + '...' : 'empty',
+      createdBy,
+    });
 
     return demandData;
   }
@@ -338,12 +370,36 @@ export class LarkDemandSyncService {
   // FIELD EXTRACTION HELPERS
   // ============================================================================
 
-  private extractFieldValue(field: any) {
+  private extractFieldValue(field: any): string | null {
     if (!field) return null;
 
+    // Handle different field types
     if (typeof field === 'string') return field;
+    if (typeof field === 'number') return field.toString();
+
+    // Handle array fields (type 18 - link to record, type 19 - reference)
     if (Array.isArray(field) && field.length > 0) {
-      return field[0]?.text || field[0] || null;
+      const firstItem = field[0];
+
+      // For reference fields that have text property
+      if (typeof firstItem === 'object' && firstItem?.text) {
+        return firstItem.text;
+      }
+
+      // For link fields that might have record_id
+      if (typeof firstItem === 'object' && firstItem?.record_id) {
+        return firstItem.record_id;
+      }
+
+      // Fallback to string representation
+      return firstItem?.toString() || null;
+    }
+
+    // Handle object fields
+    if (typeof field === 'object') {
+      if (field?.text) return field.text;
+      if (field?.record_id) return field.record_id;
+      if (field?.value) return field.value?.toString();
     }
 
     return null;
@@ -352,22 +408,92 @@ export class LarkDemandSyncService {
   private extractSelectValue(field: any): string | null {
     if (!field) return null;
 
+    // Single select field (type 3, 4)
     if (Array.isArray(field) && field.length > 0) {
-      return field[0]?.text || field[0] || null;
+      const firstItem = field[0];
+      if (typeof firstItem === 'object' && firstItem?.text) {
+        return firstItem.text;
+      }
+      if (typeof firstItem === 'string') {
+        return firstItem;
+      }
     }
 
-    return field?.text || field || null;
+    // Direct object
+    if (typeof field === 'object' && field?.text) {
+      return field.text;
+    }
+
+    if (typeof field === 'string') {
+      return field;
+    }
+
+    return null;
+  }
+
+  private extractNumberValue(field: any): number | null {
+    if (!field) return null;
+
+    if (typeof field === 'number') return field;
+
+    if (typeof field === 'string') {
+      const parsed = parseFloat(field);
+      return isNaN(parsed) ? null : parsed;
+    }
+
+    // For formula fields that might be in object format
+    if (typeof field === 'object' && field?.value !== undefined) {
+      return typeof field.value === 'number'
+        ? field.value
+        : parseFloat(field.value);
+    }
+
+    return null;
   }
 
   private extractDateValue(field: any): Date | null {
     if (!field) return null;
 
     try {
-      const timestamp = typeof field === 'number' ? field : parseInt(field);
-      return new Date(timestamp);
+      // LarkBase datetime fields are usually timestamps in milliseconds
+      if (typeof field === 'number') {
+        return new Date(field);
+      }
+
+      if (typeof field === 'string') {
+        const timestamp = parseInt(field);
+        if (!isNaN(timestamp)) {
+          return new Date(timestamp);
+        }
+      }
+
+      // Handle object format
+      if (typeof field === 'object' && field?.value) {
+        return new Date(field.value);
+      }
+
+      return null;
     } catch {
       return null;
     }
+  }
+
+  private extractLinkRecordValue(field: any): string | null {
+    if (!field) return null;
+
+    // Type 18 - Link to record (multiple)
+    if (Array.isArray(field) && field.length > 0) {
+      const firstItem = field[0];
+
+      // Extract text or record_id from linked record
+      if (typeof firstItem === 'object') {
+        return firstItem?.text || firstItem?.record_id || null;
+      }
+
+      return firstItem?.toString() || null;
+    }
+
+    return null;
   }
 
   // ============================================================================

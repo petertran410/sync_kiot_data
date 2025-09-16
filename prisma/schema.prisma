@@ -1030,23 +1030,24 @@ model Supplier {
   @@index([code])
 }
 
-// prisma/schema.prisma
 model Demand {
   id                    Int            @id @default(autoincrement())
   larkRecordId          String?        @unique
-  customerCode          String?        // Mã khách - from LarkBase
-  customerName          String?        // Tên khách hàng - from LarkBase  
-  productCode           String?        // Mã hàng - from LarkBase
-  productName           String?        // Tên Hàng Hóa - from LarkBase
-  quantity              Float          // Số lượng
-  convertedQuantity     Float?         // Số lượng quy đổi
-  unit                  String?        // ĐVT
-  unitType              String?        // Đơn Vị Đặt (Thùng/Đơn vị)
-  conversionRate        Float?         // Định Lượng Quy Đổi
-  month                 String         // Tháng
-  year                  Int            // Năm
-  notes                 String?        // Ghi Chú
-  createdBy             String?        // Người Tạo
+  customerCode          String?
+  customerName          String?
+  productCode           String?
+  productName           String?
+  quantity              Float
+  convertedQuantity     Float?
+  unit                  String?
+  unitType              String?
+  conversionRate        Float?
+  month                 String
+  year                  Int
+  notes                 String?
+  createdBy             String?
+  content               String?        // ADD: Nội dung field
+  countValue            Int?           // ADD: Đếm field
   createdDate           DateTime       @default(now())
   updatedDate           DateTime       @updatedAt
   larkSyncStatus        LarkSyncStatus @default(SYNCED)
