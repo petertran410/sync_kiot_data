@@ -501,10 +501,7 @@ export class KiotVietCashflowService {
             branchId: branch?.id ?? null,
             retailerId: cashflowData.retailerId ?? 310831,
             transDate: cashflowData.transDate
-              ? new Date(
-                  new Date(cashflowData.transDate).getTime() +
-                    7 * 60 * 60 * 1000,
-                )
+              ? new Date(cashflowData.transDate)
               : new Date(),
             amount: Number(cashflowData.amount) ?? 0,
             description: cashflowData.description ?? '',
@@ -536,10 +533,7 @@ export class KiotVietCashflowService {
             branchId: branch?.id ?? null,
             retailerId: cashflowData.retailerId ?? 310831,
             transDate: cashflowData.transDate
-              ? new Date(
-                  new Date(cashflowData.transDate).getTime() +
-                    7 * 60 * 60 * 1000,
-                )
+              ? new Date(cashflowData.transDate)
               : new Date(),
             amount: Number(cashflowData.amount) ?? 0,
             description: cashflowData.description ?? '',

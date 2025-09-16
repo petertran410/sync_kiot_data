@@ -365,7 +365,7 @@ export class KiotVietInvoiceService {
 
           if (existingInvoices.length > 0) {
             this.logger.log(
-              `Processin ${existingInvoices.length} EXISTING invoices from page ${currentPage}`,
+              `Processing ${existingInvoices.length} EXISTING invoices from page ${currentPage}`,
             );
 
             const savedInvoices =
@@ -422,7 +422,7 @@ export class KiotVietInvoiceService {
           }
 
           const delay = RETRY_DELAY_MS * Math.pow(2, consecutiveErrorPages - 1);
-          this.logger.log(`⏳ Retrying after ${delay}ms delay...`);
+          this.logger.log(`Retrying after ${delay}ms delay...`);
           await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }
@@ -1178,7 +1178,7 @@ export class KiotVietInvoiceService {
   private async syncInvoicesToLarkBase(invoices: any[]): Promise<void> {
     try {
       this.logger.log(
-        `🚀 Starting LarkBase sync for ${invoices.length} invoices...`,
+        `Starting LarkBase sync for ${invoices.length} invoices...`,
       );
 
       const invoicesToSync = invoices.filter(
@@ -1193,8 +1193,8 @@ export class KiotVietInvoiceService {
       await this.larkInvoiceSyncService.syncInvoicesToLarkBase(invoicesToSync);
       this.logger.log(`✅ LarkBase sync completed successfully`);
     } catch (error) {
-      this.logger.error(`❌ LarkBase sync FAILED: ${error.message}`);
-      this.logger.error(`🛑 STOPPING sync to prevent data duplication`);
+      this.logger.error(`LarkBase sync FAILED: ${error.message}`);
+      this.logger.error(`STOPPING sync to prevent data duplication`);
 
       const invoiceIds = invoices.map((c) => c.id);
       await this.prismaService.invoice.updateMany({

@@ -822,10 +822,7 @@ export class KiotVietCustomerService {
             type: customerData.type,
             gender: customerData.gender,
             birthDate: customerData.birthDate
-              ? new Date(
-                  new Date(customerData.birthDate).getTime() +
-                    7 * 60 * 60 * 1000,
-                )
+              ? new Date(customerData.birthDate)
               : null,
             contactNumber: customerData.contactNumber ?? '',
             subNumber: customerData.subNumber ?? '',
@@ -855,16 +852,10 @@ export class KiotVietCustomerService {
             retailerId: customerData.retailerId,
             branchId: branch?.id,
             createdDate: customerData.createdDate
-              ? new Date(
-                  new Date(customerData.createdDate).getTime() +
-                    7 * 60 * 60 * 1000,
-                )
+              ? new Date(customerData.createdDate)
               : new Date(),
             modifiedDate: customerData.modifiedDate
-              ? new Date(
-                  new Date(customerData.modifiedDate).getTime() +
-                    7 * 60 * 60 * 1000,
-                )
+              ? new Date(customerData.modifiedDate)
               : new Date(),
             lastSyncedAt: new Date(),
             larkSyncStatus: 'PENDING',
@@ -876,10 +867,7 @@ export class KiotVietCustomerService {
             type: customerData.type,
             gender: customerData.gender,
             birthDate: customerData.birthDate
-              ? new Date(
-                  new Date(customerData.birthDate).getTime() +
-                    7 * 60 * 60 * 1000,
-                )
+              ? new Date(customerData.birthDate)
               : null,
             contactNumber: customerData.contactNumber ?? '',
             subNumber: customerData.subNumber ?? '',
@@ -909,16 +897,10 @@ export class KiotVietCustomerService {
             retailerId: customerData.retailerId,
             branchId: branch?.id,
             createdDate: customerData.createdDate
-              ? new Date(
-                  new Date(customerData.createdDate).getTime() +
-                    7 * 60 * 60 * 1000,
-                )
+              ? new Date(customerData.createdDate)
               : new Date(),
             modifiedDate: customerData.modifiedDate
-              ? new Date(
-                  new Date(customerData.modifiedDate).getTime() +
-                    7 * 60 * 60 * 1000,
-                )
+              ? new Date(customerData.modifiedDate)
               : new Date(),
             lastSyncedAt: new Date(),
             larkSyncStatus: 'PENDING',

@@ -909,18 +909,13 @@ export class KiotVietOrderService {
             discount: orderData.discount ?? 0,
             discountRatio: orderData.discountRatio ?? 0,
             createdDate: orderData.createdDate
-              ? new Date(
-                  new Date(orderData.createdDate).getTime() +
-                    7 * 60 * 60 * 1000,
-                )
+              ? new Date(orderData.createdDate)
               : new Date(),
             modifiedDate: orderData.modifiedDate
-              ? new Date(
-                  new Date(orderData.modifiedDate).getTime() +
-                    7 * 60 * 60 * 1000,
-                )
+              ? new Date(orderData.modifiedDate)
               : new Date(),
             lastSyncedAt: new Date(),
+            larkSyncStatus: 'PENDING',
           },
           create: {
             kiotVietId: BigInt(orderData.id),
@@ -944,18 +939,13 @@ export class KiotVietOrderService {
             discount: orderData.discount ?? 0,
             discountRatio: orderData.discountRatio ?? 0,
             createdDate: orderData.createdDate
-              ? new Date(
-                  new Date(orderData.createdDate).getTime() +
-                    7 * 60 * 60 * 1000,
-                )
+              ? new Date(orderData.createdDate)
               : new Date(),
             modifiedDate: orderData.modifiedDate
-              ? new Date(
-                  new Date(orderData.modifiedDate).getTime() +
-                    7 * 60 * 60 * 1000,
-                )
+              ? new Date(orderData.modifiedDate)
               : new Date(),
             lastSyncedAt: new Date(),
+            larkSyncStatus: 'PENDING',
           },
         });
 

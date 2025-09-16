@@ -453,18 +453,12 @@ export class KiotVietTransferService {
             code: transferData.code.trim(),
             description: transferData.description ?? '',
             dispatchedDate: transferData.dispatchedDate
-              ? new Date(
-                  new Date(transferData.dispatchedDate).getTime() +
-                    7 * 60 * 60 * 1000,
-                )
+              ? new Date(transferData.dispatchedDate)
               : new Date(),
             fromBranchId: branch?.id ?? null,
             isActive: transferData.isActive ?? false,
             receivedDate: transferData.receivedDate
-              ? new Date(
-                  new Date(transferData.receivedDate).getTime() +
-                    7 * 60 * 60 * 1000,
-                )
+              ? new Date(transferData.receivedDate)
               : new Date(),
             retailerId: transferData.retailerId ?? null,
             status: transferData.status ?? null,
@@ -476,18 +470,12 @@ export class KiotVietTransferService {
             code: transferData.code.trim(),
             description: transferData.description ?? '',
             dispatchedDate: transferData.dispatchedDate
-              ? new Date(
-                  new Date(transferData.dispatchedDate).getTime() +
-                    7 * 60 * 60 * 1000,
-                )
+              ? new Date(transferData.dispatchedDate)
               : new Date(),
             fromBranchId: branch?.id ?? null,
             isActive: transferData.isActive ?? false,
             receivedDate: transferData.receivedDate
-              ? new Date(
-                  new Date(transferData.receivedDate).getTime() +
-                    7 * 60 * 60 * 1000,
-                )
+              ? new Date(transferData.receivedDate)
               : new Date(),
             retailerId: transferData.retailerId ?? null,
             status: transferData.status ?? null,

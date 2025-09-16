@@ -670,16 +670,10 @@ export class KiotVietProductService {
             isActive: productData.isActive ?? true,
             retailerId: productData.retailerId ?? null,
             createdDate: productData.createdDate
-              ? new Date(
-                  new Date(productData.createdDate).getTime() +
-                    7 * 60 * 60 * 1000,
-                )
+              ? new Date(productData.createdDate)
               : new Date(),
             modifiedDate: productData.modifiedDate
-              ? new Date(
-                  new Date(productData.modifiedDate).getTime() +
-                    7 * 60 * 60 * 1000,
-                )
+              ? new Date(productData.modifiedDate)
               : new Date(),
             lastSyncedAt: new Date(),
             larkSyncStatus: 'PENDING',
@@ -715,16 +709,10 @@ export class KiotVietProductService {
             isActive: productData.isActive ?? true,
             retailerId: productData.retailerId ?? null,
             createdDate: productData.createdDate
-              ? new Date(
-                  new Date(productData.createdDate).getTime() +
-                    7 * 60 * 60 * 1000,
-                )
+              ? new Date(productData.createdDate)
               : new Date(),
             modifiedDate: productData.modifiedDate
-              ? new Date(
-                  new Date(productData.modifiedDate).getTime() +
-                    7 * 60 * 60 * 1000,
-                )
+              ? new Date(productData.modifiedDate)
               : new Date(),
             lastSyncedAt: new Date(),
             larkSyncStatus: 'PENDING',
