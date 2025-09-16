@@ -6,6 +6,28 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { LarkAuthService } from '../auth/lark-auth.service';
 import { firstValueFrom } from 'rxjs';
 
+const LARK_DEMAND_FIELDS = {
+  CUSTOMER_CODE: 'Mã khách',
+  CUSTOMER_NAME: 'Tên Khách Hàng',
+  PRODUCT_CODE: 'Mã hàng',
+  PRODUCT_NAME: 'Tên Hàng Hóa',
+  PRODUCT_CODE_AND_NAME: 'Mã và Tên Hàng',
+  QUANTITY: 'Số lượng',
+  CONVERTED_QUANTITY: 'Số lượng quy đổi',
+  UNIT: 'ĐVT',
+  UNIT_TYPE: 'Đơn Vị Đặt',
+  CONVERSION_RATE: 'Định Lượng Quy Đổi',
+  MONTH: 'Tháng',
+  YEAR: 'Năm',
+  NOTES: 'Ghi Chú',
+  CREATED_BY: 'Người Tạo',
+  CREATED_DATE: 'Ngày Tạo',
+  UPDATED_DATE: 'Ngày Cập Nhật',
+  COUNT: 'Đếm',
+  CONTENT: 'Nội dung',
+  RECORD_ID: 'Record ID',
+} as const;
+
 interface LarkRecord {
   record_id: string;
   fields: Record<string, any>;
@@ -292,31 +314,56 @@ export class LarkDemandSyncService {
     // Debug: Log all fields để xem structure
     this.logger.debug(`Mapping fields for ${recordId}:`, Object.keys(fields));
 
-    // Extract all fields with proper methods
-    const customerCode = this.extractFieldValue(fields.fldB6qMDJE); // Mã khách (type 19)
-    const customerName = this.extractLinkRecordValue(fields.fldi50vNFY); // Tên Khách Hàng (type 18)
-    const productCode = this.extractFieldValue(fields.fldObSVczc); // Mã hàng (type 19)
-    const productName = this.extractFieldValue(fields.fldJU22ujn); // Tên Hàng Hóa (type 19)
-    const productCodeAndName = this.extractLinkRecordValue(fields.fldKg9qR3d); // Mã và Tên Hàng (type 18)
+    // Extract all fields with proper methods - SỬ DỤNG TÊN TIẾNG VIỆT
+    const customerCode = this.extractFieldValue(
+      fields[LARK_DEMAND_FIELDS.CUSTOMER_CODE],
+    ); // Mã khách (type 19)
+    const customerName = this.extractLinkRecordValue(
+      fields[LARK_DEMAND_FIELDS.CUSTOMER_NAME],
+    ); // Tên Khách Hàng (type 18)
+    const productCode = this.extractFieldValue(
+      fields[LARK_DEMAND_FIELDS.PRODUCT_CODE],
+    ); // Mã hàng (type 19)
+    const productName = this.extractFieldValue(
+      fields[LARK_DEMAND_FIELDS.PRODUCT_NAME],
+    ); // Tên Hàng Hóa (type 19)
+    const productCodeAndName = this.extractLinkRecordValue(
+      fields[LARK_DEMAND_FIELDS.PRODUCT_CODE_AND_NAME],
+    ); // Mã và Tên Hàng (type 18)
 
-    const quantity = this.extractNumberValue(fields.fldt6xdslC) || 0; // Số lượng (type 2)
-    const conversionRate = this.extractNumberValue(fields.fldedJZ9nw) || 1; // Định Lượng Quy Đổi (type 19)
-    const convertedQuantity = this.extractNumberValue(fields.fldzBhibXP) || 0; // Số lượng quy đổi (type 20 - formula)
+    const quantity =
+      this.extractNumberValue(fields[LARK_DEMAND_FIELDS.QUANTITY]) || 0; // Số lượng (type 2)
+    const conversionRate =
+      this.extractNumberValue(fields[LARK_DEMAND_FIELDS.CONVERSION_RATE]) || 1; // Định Lượng Quy Đổi (type 19)
+    const convertedQuantity =
+      this.extractNumberValue(fields[LARK_DEMAND_FIELDS.CONVERTED_QUANTITY]) ||
+      0; // Số lượng quy đổi (type 20 - formula)
 
-    const unit = this.extractFieldValue(fields.fldBtNjnkb); // ĐVT (type 19)
-    const unitType = this.extractSelectValue(fields.fld8UBa1eD); // Đơn Vị Đặt (type 3)
-    const month = this.extractSelectValue(fields.fldiwjX0x4); // Tháng (type 4)
+    const unit = this.extractFieldValue(fields[LARK_DEMAND_FIELDS.UNIT]); // ĐVT (type 19)
+    const unitType = this.extractSelectValue(
+      fields[LARK_DEMAND_FIELDS.UNIT_TYPE],
+    ); // Đơn Vị Đặt (type 3)
+    const month = this.extractSelectValue(fields[LARK_DEMAND_FIELDS.MONTH]); // Tháng (type 4)
     const year =
-      this.extractNumberValue(fields.fld9xrXbOL) || new Date().getFullYear(); // Năm (type 20 - formula)
+      this.extractNumberValue(fields[LARK_DEMAND_FIELDS.YEAR]) ||
+      new Date().getFullYear(); // Năm (type 20 - formula)
 
-    const notes = fields.fldl4Z68kd || ''; // Ghi Chú (type 1)
-    const createdBy = this.extractFieldValue(fields.fldYucgmBG); // Người Tạo (type 1003)
-    const countValue = this.extractNumberValue(fields.fldQFQjewB); // Đếm (type 20 - formula)
-    const content = this.extractFieldValue(fields.fldsukxySQ); // Nội dung (type 20 - formula, primary)
+    const notes = fields[LARK_DEMAND_FIELDS.NOTES] || ''; // Ghi Chú (type 1)
+    const createdBy = this.extractFieldValue(
+      fields[LARK_DEMAND_FIELDS.CREATED_BY],
+    ); // Người Tạo (type 1003)
+    const countValue = this.extractNumberValue(
+      fields[LARK_DEMAND_FIELDS.COUNT],
+    ); // Đếm (type 20 - formula)
+    const content = this.extractFieldValue(fields[LARK_DEMAND_FIELDS.CONTENT]); // Nội dung (type 20 - formula, primary)
 
     // Handle dates
-    const createdDateField = this.extractDateValue(fields.fldNLbZqnV); // Ngày Tạo (type 1001)
-    const updatedDateField = this.extractDateValue(fields.fldXbL4IrK); // Ngày Cập Nhật (type 1002)
+    const createdDateField = this.extractDateValue(
+      fields[LARK_DEMAND_FIELDS.CREATED_DATE],
+    ); // Ngày Tạo (type 1001)
+    const updatedDateField = this.extractDateValue(
+      fields[LARK_DEMAND_FIELDS.UPDATED_DATE],
+    ); // Ngày Cập Nhật (type 1002)
 
     // Ensure month is not null (required field)
     const finalMonth = month || `Tháng ${new Date().getMonth() + 1}`;
@@ -347,7 +394,7 @@ export class LarkDemandSyncService {
       demandData.createdDate = createdDateField;
     }
 
-    // Log extracted values for debugging
+    // Debug: Log extracted values for comparison
     this.logger.debug(`Extracted values for ${recordId}:`, {
       customerCode,
       customerName,
@@ -361,6 +408,14 @@ export class LarkDemandSyncService {
       year,
       notes: notes ? notes.substring(0, 50) + '...' : 'empty',
       createdBy,
+    });
+
+    // Debug: Show raw field values for comparison (temporary)
+    this.logger.debug(`Raw field values for ${recordId}:`, {
+      customerCodeRaw: fields[LARK_DEMAND_FIELDS.CUSTOMER_CODE],
+      quantityRaw: fields[LARK_DEMAND_FIELDS.QUANTITY],
+      monthRaw: fields[LARK_DEMAND_FIELDS.MONTH],
+      unitTypeRaw: fields[LARK_DEMAND_FIELDS.UNIT_TYPE],
     });
 
     return demandData;
