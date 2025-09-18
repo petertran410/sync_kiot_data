@@ -369,18 +369,14 @@ export class LarkProductSyncService {
           const records = response.data.data?.items || [];
 
           for (const record of records) {
-            const records = response.data.data?.items || [];
+            const kiotVietIdField =
+              record.fields[LARK_PRODUCT_FIELDS.PRODUCT_ID];
 
-            for (const record of records) {
-              const kiotVietIdField =
-                record.fields[LARK_PRODUCT_FIELDS.PRODUCT_ID];
-
-              if (kiotVietIdField) {
-                const kiotVietId = this.safeBigIntToNumber(kiotVietIdField);
-                if (kiotVietId > 0) {
-                  this.existingRecordsCache.set(kiotVietId, record.record_id);
-                  cacheBuilt++;
-                }
+            if (kiotVietIdField) {
+              const kiotVietId = this.safeBigIntToNumber(kiotVietIdField);
+              if (kiotVietId > 0) {
+                this.existingRecordsCache.set(kiotVietId, record.record_id);
+                cacheBuilt++;
               }
             }
 

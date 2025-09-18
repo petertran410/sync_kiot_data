@@ -72,13 +72,37 @@ export class KiotVietPurchaseOrderService {
 
   async checkAndRunAppropriateSync(): Promise<void> {
     try {
+      const runningPurchaseOrderSyncs =
+        await this.prismaService.syncControl.findMany({
+          where: {
+            OR: [
+              { name: 'purchase_order_historical' },
+              { name: 'purchase_order_lark_sync' },
+            ],
+            isRunning: true,
+          },
+        });
+
+      if (runningPurchaseOrderSyncs.length > 0) {
+        this.logger.warn(
+          `Found ${runningPurchaseOrderSyncs.length} PurchaseOrders sync still running: ${runningPurchaseOrderSyncs.map((s) => s.name).join(', ')}`,
+        );
+        this.logger.warn('Skipping purchase order sync to avoid conflicts');
+        return;
+      }
+
       const historicalSync = await this.prismaService.syncControl.findFirst({
         where: { name: 'purchase_order_historical' },
       });
 
       if (historicalSync?.isEnabled && !historicalSync.isRunning) {
-        this.logger.log('Starting historical purchase_order sync...');
+        this.logger.log('Starting historical purchase order sync...');
         await this.syncHistoricalPurchaseOrder();
+        return;
+      }
+
+      if (historicalSync?.isRunning) {
+        this.logger.log('Historical purchase_order sync is running');
         return;
       }
 
@@ -97,7 +121,7 @@ export class KiotVietPurchaseOrderService {
       status: 'idle',
     });
 
-    this.logger.log('✅ Historical purchase_order sync enabled');
+    this.logger.log('Historical purchase_order sync enabled');
   }
 
   async syncHistoricalPurchaseOrder(): Promise<void> {
@@ -119,7 +143,7 @@ export class KiotVietPurchaseOrderService {
         error: null,
       });
 
-      this.logger.log('🚀 Starting historical purchase_order sync...');
+      this.logger.log('Starting historical purchase_order sync...');
 
       const MAX_CONSECUTIVE_EMPTY_PAGES = 5;
       const MAX_CONSECUTIVE_ERROR_PAGES = 3;
@@ -134,24 +158,52 @@ export class KiotVietPurchaseOrderService {
         if (totalPurchaseOrder > 0) {
           if (currentItem >= totalPurchaseOrder) {
             this.logger.log(
-              `✅ Pagination complete. Processed ${processedCount}/${totalPurchaseOrder} purchase_orders`,
+              `Pagination complete. Processed ${processedCount}/${totalPurchaseOrder} purchase_orders`,
             );
             break;
           }
+
+          const progressPercentage = (currentItem / totalPurchaseOrder) * 100;
+          this.logger.log(
+            `Fetching page ${currentPage} (${currentItem}/${totalPurchaseOrder} - ${progressPercentage.toFixed(1)}%)`,
+          );
+        } else {
+          this.logger.log(
+            `Fetching page ${currentPage} (currentItem: ${currentItem})`,
+          );
         }
 
-        try {
-          this.logger.log(
-            `📄 Fetching page ${currentPage} (items ${currentItem} - ${currentItem + this.PAGE_SIZE - 1})`,
-          );
+        const dateEnd = new Date();
+        dateEnd.setDate(dateEnd.getDate() + 1);
+        const dateEndStr = dateEnd.toISOString().split('T')[0];
 
+        try {
           const response = await this.fetchPurchaseOrdersListWithRetry({
             currentItem,
             pageSize: this.PAGE_SIZE,
             includePayment: true,
             includeOrderDelivery: true,
+            fromPurchaseDate: '2024-12-1',
+            toPurchaseDate: dateEndStr,
           });
 
+          if (!response) {
+            this.logger.warn('Received null response from KiotViet API');
+
+            consecutiveEmptyPages++;
+
+            if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
+              this.logger.log(
+                `Reached end after ${consecutiveEmptyPages} empty pages`,
+              );
+              break;
+            }
+
+            await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+            continue;
+          }
+
+          consecutiveEmptyPages = 0;
           consecutiveErrorPages = 0;
 
           const { data: purchase_orders, total } = response;
@@ -159,32 +211,25 @@ export class KiotVietPurchaseOrderService {
           if (total !== undefined && total !== null) {
             if (totalPurchaseOrder === 0) {
               this.logger.log(
-                `📊 Total purchase_orders detected: ${total}. Starting processing...`,
+                `Total purchase_orders detected: ${total}. Starting processing...`,
               );
 
               totalPurchaseOrder = total;
-            } else if (
-              total !== totalPurchaseOrder &&
-              total !== lastValidTotal
-            ) {
+            } else if (total !== totalPurchaseOrder) {
               this.logger.warn(
-                `⚠️ Total count changed: ${totalPurchaseOrder} → ${total}. Using latest.`,
+                `Total count changed: ${totalPurchaseOrder} → ${total}. Using latest.`,
               );
-
               totalPurchaseOrder = total;
             }
             lastValidTotal = total;
           }
 
           if (!purchase_orders || purchase_orders.length === 0) {
-            this.logger.warn(
-              `⚠️ Empty page received at position ${currentItem}`,
-            );
-
+            this.logger.warn(`Empty page received at position ${currentItem}`);
             consecutiveEmptyPages++;
 
             if (totalPurchaseOrder > 0 && currentItem >= totalPurchaseOrder) {
-              this.logger.log('✅ Reached end of data (empty page past total)');
+              this.logger.log('Reached end of data (empty page past total)');
               break;
             }
 
@@ -199,80 +244,113 @@ export class KiotVietPurchaseOrderService {
             continue;
           }
 
+          const existingPurchaseOrderIds = new Set(
+            (
+              await this.prismaService.purchaseOrder.findMany({
+                select: { kiotVietId: true },
+              })
+            ).map((c) => Number(c.kiotVietId)),
+          );
+
           const newPurchaseOrders = purchase_orders.filter((purchase_order) => {
-            if (processedPurchaseOrderIds.has(purchase_order.id)) {
-              this.logger.debug(
-                `⚠️ Duplicate purchase_order ID detected: ${purchase_order.id} (${purchase_order.code})`,
-              );
-              return false;
+            if (
+              !existingPurchaseOrderIds.has(purchase_order.id) &&
+              !processedPurchaseOrderIds.has(purchase_order.id)
+            ) {
+              processedPurchaseOrderIds.add(purchase_order.id);
+              return true;
             }
-            processedPurchaseOrderIds.add(purchase_order.id);
-            return true;
+            return false;
           });
 
-          if (newPurchaseOrders.length !== purchase_orders.length) {
-            this.logger.warn(
-              `🔄 Filtered out ${purchase_orders.length - newPurchaseOrders.length} duplicate purchase_orders on page ${currentPage}`,
-            );
-          }
+          const existingPurchaseOrders = purchase_orders.filter(
+            (purchase_order) => {
+              if (
+                existingPurchaseOrderIds.has(purchase_order.id) &&
+                !processedPurchaseOrderIds.has(purchase_order.id)
+              ) {
+                processedPurchaseOrderIds.add(purchase_order.id);
+                return true;
+              }
+              return false;
+            },
+          );
 
-          if (newPurchaseOrders.length === 0) {
+          if (
+            newPurchaseOrders.length === 0 &&
+            existingPurchaseOrders.length === 0
+          ) {
             this.logger.log(
-              `⏭️ Skipping page ${currentPage} - all purchase_orders already processed`,
+              `Skipping page ${currentPage} - all purchase_orders already processed in this run`,
             );
             currentItem += this.PAGE_SIZE;
             continue;
           }
 
-          this.logger.log(
-            `🔄 Processing ${newPurchaseOrders.length} purchase_orders from page ${currentPage}...`,
-          );
+          let pageProcessedCount = 0;
+          let allSavedPurchaseOrders: any[] = [];
 
-          const purchaseOrdersWithDetails =
-            await this.enrichPurchaseOrdersWithDetails(newPurchaseOrders);
-          const savedPurchaseOrders = await this.savePurchaseOrderToDatabase(
-            purchaseOrdersWithDetails,
-          );
-          await this.syncPurchaseOrdersToLarkBase(savedPurchaseOrders);
+          if (newPurchaseOrders.length > 0) {
+            this.logger.log(
+              `Processing ${newPurchaseOrders.length} NEW purchase_order from page ${currentPage}`,
+            );
 
-          // await this.syncPurchaseOrderDetailsToLarkBase(savedPurchaseOrders);
+            const savedPurchaseOrders =
+              await this.savePurchaseOrderToDatabase(newPurchaseOrders);
+            pageProcessedCount += savedPurchaseOrders.length;
+            allSavedPurchaseOrders.push(...savedPurchaseOrders);
+          }
 
-          processedCount += savedPurchaseOrders.length;
+          if (existingPurchaseOrders.length > 0) {
+            this.logger.log(
+              `Processing ${existingPurchaseOrders.length} EXISTING purchase_order from page ${currentPage}`,
+            );
+
+            const savedPurchaseOrders = await this.savePurchaseOrderToDatabase(
+              existingPurchaseOrders,
+            );
+            pageProcessedCount += savedPurchaseOrders.length;
+            allSavedPurchaseOrders.push(...savedPurchaseOrders);
+          }
+
+          processedCount += pageProcessedCount;
           currentItem += this.PAGE_SIZE;
 
           if (totalPurchaseOrder > 0) {
             const completionPercentage =
               (processedCount / totalPurchaseOrder) * 100;
             this.logger.log(
-              `📈 Progress: ${processedCount}/${totalPurchaseOrder} (${completionPercentage.toFixed(1)}%)`,
+              `Progress: ${processedCount}/${totalPurchaseOrder} (${completionPercentage.toFixed(1)}%)`,
             );
 
             if (processedCount >= totalPurchaseOrder) {
-              this.logger.log('🎉 All purchase_orders processed successfully!');
+              this.logger.log('All purchase_orders processed successfully!');
               break;
             }
           }
 
-          consecutiveEmptyPages = 0;
           await new Promise((resolve) => setTimeout(resolve, 100));
         } catch (error) {
           consecutiveErrorPages++;
           totalRetries++;
 
           this.logger.error(
-            `❌ Page ${currentPage} failed (attempt ${consecutiveErrorPages}/${MAX_CONSECUTIVE_ERROR_PAGES}): ${error.message}`,
+            `API error on page ${currentPage}: ${error.message}`,
           );
 
-          if (
-            consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES ||
-            totalRetries >= MAX_TOTAL_RETRIES
-          ) {
+          if (consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES) {
             throw new Error(
-              `Too many consecutive errors (${consecutiveErrorPages}) or total retries (${totalRetries}). Last error: ${error.message}`,
+              `Multiple consecutive API failures: ${error.message}`,
             );
           }
 
-          await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+          if (totalRetries >= MAX_TOTAL_RETRIES) {
+            throw new Error(`Maximum total retries exceeded: ${error.message}`);
+          }
+
+          const delay = RETRY_DELAY_MS * Math.pow(2, consecutiveErrorPages - 1);
+          this.logger.log(`Retrying after ${delay}ms delay...`);
+          await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }
 
@@ -291,11 +369,11 @@ export class KiotVietPurchaseOrderService {
           : 100;
 
       this.logger.log(
-        `✅ Historical purchase_order sync completed: ${processedCount}/${totalPurchaseOrder} (${completionRate.toFixed(1)}% completion rate)`,
+        `Historical purchase_order sync completed: ${processedCount}/${totalPurchaseOrder} (${completionRate.toFixed(1)}% completion rate)`,
       );
     } catch (error) {
       this.logger.error(
-        `❌ Historical purchase_order sync failed: ${error.message}`,
+        `Historical purchase_order sync failed: ${error.message}`,
       );
 
       await this.updateSyncControl(syncName, {
@@ -315,6 +393,8 @@ export class KiotVietPurchaseOrderService {
       pageSize?: number;
       includePayment?: boolean;
       includeOrderDelivery?: boolean;
+      fromPurchaseDate?: string;
+      toPurchaseDate?: string;
     },
     maxRetries: number = 5,
   ): Promise<any> {
@@ -326,7 +406,7 @@ export class KiotVietPurchaseOrderService {
       } catch (error) {
         lastError = error as Error;
         this.logger.warn(
-          `⚠️ API attempt ${attempt}/${maxRetries} failed: ${error.message}`,
+          `API attempt ${attempt}/${maxRetries} failed: ${error.message}`,
         );
 
         if (attempt < maxRetries) {
@@ -344,6 +424,8 @@ export class KiotVietPurchaseOrderService {
     pageSize?: number;
     includePayment?: boolean;
     includeOrderDelivery?: boolean;
+    fromPurchaseDate?: string;
+    toPurchaseDate?: string;
   }): Promise<any> {
     const headers = await this.authService.getRequestHeaders();
 
@@ -353,6 +435,14 @@ export class KiotVietPurchaseOrderService {
       includePayment: (params.includePayment || true).toString(),
       includeOrderDelivery: (params.includeOrderDelivery || true).toString(),
     });
+
+    if (params.fromPurchaseDate) {
+      queryParams.append('fromPurchaseDate', params.fromPurchaseDate);
+    }
+
+    if (params.toPurchaseDate) {
+      queryParams.append('toPurchaseDate', params.toPurchaseDate);
+    }
 
     const response = await firstValueFrom(
       this.httpService.get(`${this.baseUrl}/purchaseorders?${queryParams}`, {
@@ -411,7 +501,7 @@ export class KiotVietPurchaseOrderService {
     purchase_orders: KiotVietPurchaseOrder[],
   ): Promise<any[]> {
     this.logger.log(
-      `💾 Saving ${purchase_orders.length} purchase_orders to database...`,
+      `Saving ${purchase_orders.length} purchase_orders to database...`,
     );
 
     const savedPurchaseOrders: any[] = [];
@@ -601,13 +691,13 @@ export class KiotVietPurchaseOrderService {
         savedPurchaseOrders.push(purchase_order);
       } catch (error) {
         this.logger.error(
-          `❌ Failed to save order_supplier ${purchaseOrderData.code}: ${error.message}`,
+          `Failed to save order_supplier ${purchaseOrderData.code}: ${error.message}`,
         );
       }
     }
 
     this.logger.log(
-      `✅ Saved ${savedPurchaseOrders.length} purchase_orders successfully`,
+      `Saved ${savedPurchaseOrders.length} purchase_orders successfully`,
     );
     return savedPurchaseOrders;
   }
@@ -615,7 +705,7 @@ export class KiotVietPurchaseOrderService {
   async syncPurchaseOrdersToLarkBase(purchase_orders: any[]): Promise<void> {
     try {
       this.logger.log(
-        `🚀 Starting LarkBase sync for ${purchase_orders.length} purchase_orders...`,
+        `Starting LarkBase sync for ${purchase_orders.length} purchase_orders...`,
       );
 
       const purchaseOrdersToSync = purchase_orders.filter(
@@ -623,39 +713,26 @@ export class KiotVietPurchaseOrderService {
       );
 
       if (purchaseOrdersToSync.length === 0) {
-        this.logger.log('📋 No purchase_orders need LarkBase sync');
+        this.logger.log('No purchase_orders need LarkBase sync');
         return;
       }
 
       await this.larkPurchaseOrderSyncService.syncPurchaseOrdersToLarkBase(
         purchaseOrdersToSync,
       );
-
-      this.logger.log(`✅ LarkBase sync completed successfully`);
+      this.logger.log(`LarkBase sync completed successfully`);
     } catch (error) {
-      this.logger.error(
-        `❌ LarkBase purchase_order sync failed: ${error.message}`,
-      );
+      this.logger.error(`LarkBase sync FAILED: ${error.message}`);
+      this.logger.error(`STOPPING sync to prevent data duplication`);
 
-      try {
-        const purchaseOrderIds = purchase_orders
-          .map((p) => p.id)
-          .filter((id) => id !== undefined);
-
-        if (purchaseOrderIds.length > 0) {
-          await this.prismaService.purchaseOrder.updateMany({
-            where: { id: { in: purchaseOrderIds } },
-            data: {
-              larkSyncedAt: new Date(),
-              larkSyncStatus: 'FAILED',
-            },
-          });
-        }
-      } catch (updateError) {
-        this.logger.error(
-          `Failed to update purchase_order status: ${updateError.message}`,
-        );
-      }
+      const purchaseOrderIds = purchase_orders.map((c) => c.id);
+      await this.prismaService.purchaseOrder.updateMany({
+        where: { id: { in: purchaseOrderIds } },
+        data: {
+          larkSyncStatus: 'FAILED',
+          larkSyncedAt: new Date(),
+        },
+      });
 
       throw new Error(`LarkBase sync failed: ${error.message}`);
     }

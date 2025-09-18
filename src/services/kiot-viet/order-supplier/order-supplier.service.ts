@@ -79,13 +79,37 @@ export class KiotVietOrderSupplierService {
 
   async checkAndRunAppropriateSync(): Promise<void> {
     try {
+      const runningOrderSupplierSyncs =
+        await this.prismaService.syncControl.findMany({
+          where: {
+            OR: [
+              { name: 'order_supplier_historical' },
+              { name: 'order_supplier_lark_sync' },
+            ],
+            isRunning: true,
+          },
+        });
+
+      if (runningOrderSupplierSyncs.length > 0) {
+        this.logger.warn(
+          `Found ${runningOrderSupplierSyncs.length} OrderSuppliers sync still running: ${runningOrderSupplierSyncs.map((s) => s.name).join(', ')}`,
+        );
+        this.logger.warn('Skipping order supplier sync to avoid conflicts');
+        return;
+      }
+
       const historicalSync = await this.prismaService.syncControl.findFirst({
         where: { name: 'order_supplier_historical' },
       });
 
       if (historicalSync?.isEnabled && !historicalSync.isRunning) {
-        this.logger.log('Starting historical order_supplier sync...');
+        this.logger.log('Starting historical order supplier sync...');
         await this.syncHistoricalOrderSuppliers();
+        return;
+      }
+
+      if (historicalSync?.isRunning) {
+        this.logger.log('Historical order_supplier sync is running');
         return;
       }
 
@@ -104,7 +128,7 @@ export class KiotVietOrderSupplierService {
       status: 'idle',
     });
 
-    this.logger.log('✅ Historical order_supplier sync enabled');
+    this.logger.log('Historical order_supplier sync enabled');
   }
 
   async syncHistoricalOrderSuppliers(): Promise<void> {
@@ -126,7 +150,7 @@ export class KiotVietOrderSupplierService {
         error: null,
       });
 
-      this.logger.log('🚀 Starting historical order_supplier sync...');
+      this.logger.log('Starting historical order_supplier sync...');
 
       const MAX_CONSECUTIVE_EMPTY_PAGES = 5;
       const MAX_CONSECUTIVE_ERROR_PAGES = 3;
@@ -141,22 +165,44 @@ export class KiotVietOrderSupplierService {
         if (totalOrderSuppliers > 0) {
           if (currentItem >= totalOrderSuppliers) {
             this.logger.log(
-              `✅ Pagination complete. Processed ${processedCount}/${totalOrderSuppliers} suppliers`,
+              `Pagination complete. Processed ${processedCount}/${totalOrderSuppliers} suppliers`,
             );
             break;
           }
+
+          const progressPercentage = (currentItem / totalOrderSuppliers) * 100;
+          this.logger.log(
+            `Fetching page ${currentPage} (${currentItem}/${totalOrderSuppliers} - ${progressPercentage.toFixed(1)}%)`,
+          );
+        } else {
+          this.logger.log(
+            `Fetching page ${currentPage} (currentItem: ${currentItem})`,
+          );
         }
 
         try {
-          this.logger.log(
-            `📄 Fetching page ${currentPage} (items ${currentItem} - ${currentItem + this.PAGE_SIZE - 1})`,
-          );
-
           const response = await this.fetchOrderSuppliersListWithRetry({
             currentItem,
             pageSize: this.PAGE_SIZE,
           });
 
+          if (!response) {
+            this.logger.warn('Received null response from KiotViet API');
+
+            consecutiveEmptyPages++;
+
+            if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
+              this.logger.log(
+                `Reached end after ${consecutiveEmptyPages} empty pages`,
+              );
+              break;
+            }
+
+            await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+            continue;
+          }
+
+          consecutiveEmptyPages = 0;
           consecutiveErrorPages = 0;
 
           const { data: order_suppliers, total } = response;
@@ -164,16 +210,13 @@ export class KiotVietOrderSupplierService {
           if (total !== undefined && total !== null) {
             if (totalOrderSuppliers === 0) {
               this.logger.log(
-                `📊 Total order_suppliers detected: ${total}. Starting processing...`,
+                `Total order_suppliers detected: ${total}. Starting processing...`,
               );
 
               totalOrderSuppliers = total;
-            } else if (
-              total !== totalOrderSuppliers &&
-              total !== lastValidTotal
-            ) {
+            } else if (total !== totalOrderSuppliers) {
               this.logger.warn(
-                `⚠️ Total count changed: ${totalOrderSuppliers} → ${total}. Using latest.`,
+                `Total count changed: ${totalOrderSuppliers} → ${total}. Using latest.`,
               );
 
               totalOrderSuppliers = total;
@@ -182,14 +225,11 @@ export class KiotVietOrderSupplierService {
           }
 
           if (!order_suppliers || order_suppliers.length === 0) {
-            this.logger.warn(
-              `⚠️ Empty page received at position ${currentItem}`,
-            );
-
+            this.logger.warn(`Empty page received at position ${currentItem}`);
             consecutiveEmptyPages++;
 
             if (totalOrderSuppliers > 0 && currentItem >= totalOrderSuppliers) {
-              this.logger.log('✅ Reached end of data (empty page past total)');
+              this.logger.log('Reached end of data (empty page past total)');
               break;
             }
 
@@ -204,78 +244,113 @@ export class KiotVietOrderSupplierService {
             continue;
           }
 
+          const existingOrderSupplierIds = new Set(
+            (
+              await this.prismaService.orderSupplier.findMany({
+                select: { kiotVietId: true },
+              })
+            ).map((c) => Number(c.kiotVietId)),
+          );
+
           const newOrderSuppliers = order_suppliers.filter((order_supplier) => {
-            if (processedOrderSupplierIds.has(order_supplier.id)) {
-              this.logger.debug(
-                `⚠️ Duplicate order_supplier ID detected: ${order_supplier.id} (${order_supplier.code})`,
-              );
-              return false;
+            if (
+              !existingOrderSupplierIds.has(order_supplier.id) &&
+              !processedOrderSupplierIds.has(order_supplier.id)
+            ) {
+              processedOrderSupplierIds.add(order_supplier.id);
+              return true;
             }
-            processedOrderSupplierIds.add(order_supplier.id);
-            return true;
+            return false;
           });
 
-          if (newOrderSuppliers.length !== order_suppliers.length) {
-            this.logger.warn(
-              `🔄 Filtered out ${order_suppliers.length - newOrderSuppliers.length} duplicate order_suppliers on page ${currentPage}`,
-            );
-          }
+          const existingOrderSuppliers = order_suppliers.filter(
+            (order_supplier) => {
+              if (
+                existingOrderSupplierIds.has(order_supplier.id) &&
+                !processedOrderSupplierIds.has(order_supplier.id)
+              ) {
+                processedOrderSupplierIds.add(order_supplier.id);
+                return true;
+              }
+              return false;
+            },
+          );
 
-          if (newOrderSuppliers.length === 0) {
+          if (
+            newOrderSuppliers.length === 0 &&
+            existingOrderSuppliers.length === 0
+          ) {
             this.logger.log(
-              `⏭️ Skipping page ${currentPage} - all order_suppliers already processed`,
+              `Skipping page ${currentPage} - all order_suppliers already processed in this run`,
             );
             currentItem += this.PAGE_SIZE;
             continue;
           }
 
-          this.logger.log(
-            `🔄 Processing ${newOrderSuppliers.length} order_suppliers from page ${currentPage}...`,
-          );
+          let pageProcessedCount = 0;
+          let allSavedOrderSuppliers: any[] = [];
 
-          const orderSuppliersWithDetails =
-            await this.enrichOrderSuppliersWithDetails(newOrderSuppliers);
-          const savedOrderSuppliers = await this.saveOrderSuppliersToDatabase(
-            orderSuppliersWithDetails,
-          );
-          await this.syncOrderSuppliersToLarkBase(savedOrderSuppliers);
+          if (newOrderSuppliers.length > 0) {
+            this.logger.log(
+              `Processing ${newOrderSuppliers.length} NEW order_supplier from page ${currentPage}`,
+            );
 
-          processedCount += savedOrderSuppliers.length;
+            const savedOrderSuppliers =
+              await this.saveOrderSuppliersToDatabase(newOrderSuppliers);
+            pageProcessedCount += savedOrderSuppliers.length;
+            allSavedOrderSuppliers.push(...savedOrderSuppliers);
+          }
+
+          if (existingOrderSuppliers.length > 0) {
+            this.logger.log(
+              `Processing ${existingOrderSuppliers.length} EXISTING order_supplier from page ${currentPage}`,
+            );
+
+            const savedOrderSuppliers = await this.saveOrderSuppliersToDatabase(
+              existingOrderSuppliers,
+            );
+            pageProcessedCount += savedOrderSuppliers.length;
+            allSavedOrderSuppliers.push(...savedOrderSuppliers);
+          }
+
+          processedCount += pageProcessedCount;
           currentItem += this.PAGE_SIZE;
 
           if (totalOrderSuppliers > 0) {
             const completionPercentage =
               (processedCount / totalOrderSuppliers) * 100;
             this.logger.log(
-              `📈 Progress: ${processedCount}/${totalOrderSuppliers} (${completionPercentage.toFixed(1)}%)`,
+              `Progress: ${processedCount}/${totalOrderSuppliers} (${completionPercentage.toFixed(1)}%)`,
             );
 
             if (processedCount >= totalOrderSuppliers) {
-              this.logger.log('🎉 All suppliers processed successfully!');
+              this.logger.log('All suppliers processed successfully!');
               break;
             }
           }
 
-          consecutiveEmptyPages = 0;
           await new Promise((resolve) => setTimeout(resolve, 100));
         } catch (error) {
           consecutiveErrorPages++;
           totalRetries++;
 
           this.logger.error(
-            `❌ Page ${currentPage} failed (attempt ${consecutiveErrorPages}/${MAX_CONSECUTIVE_ERROR_PAGES}): ${error.message}`,
+            `API error on page ${currentPage}: ${error.message}`,
           );
 
-          if (
-            consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES ||
-            totalRetries >= MAX_TOTAL_RETRIES
-          ) {
+          if (consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES) {
             throw new Error(
-              `Too many consecutive errors (${consecutiveErrorPages}) or total retries (${totalRetries}). Last error: ${error.message}`,
+              `Multiple consecutive API failures: ${error.message}`,
             );
           }
 
-          await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+          if (totalRetries >= MAX_TOTAL_RETRIES) {
+            throw new Error(`Maximum total retries exceeded: ${error.message}`);
+          }
+
+          const delay = RETRY_DELAY_MS * Math.pow(2, consecutiveErrorPages - 1);
+          this.logger.log(`Retrying after ${delay}ms delay...`);
+          await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }
 
@@ -294,11 +369,11 @@ export class KiotVietOrderSupplierService {
           : 100;
 
       this.logger.log(
-        `✅ Historical order_supplier sync completed: ${processedCount}/${totalOrderSuppliers} (${completionRate.toFixed(1)}% completion rate)`,
+        `Historical order_supplier sync completed: ${processedCount}/${totalOrderSuppliers} (${completionRate.toFixed(1)}% completion rate)`,
       );
     } catch (error) {
       this.logger.error(
-        `❌ Historical order_supplier sync failed: ${error.message}`,
+        `Historical order_supplier sync failed: ${error.message}`,
       );
 
       await this.updateSyncControl(syncName, {
@@ -327,7 +402,7 @@ export class KiotVietOrderSupplierService {
       } catch (error) {
         lastError = error as Error;
         this.logger.warn(
-          `⚠️ API attempt ${attempt}/${maxRetries} failed: ${error.message}`,
+          `API attempt ${attempt}/${maxRetries} failed: ${error.message}`,
         );
 
         if (attempt < maxRetries) {
@@ -403,7 +478,7 @@ export class KiotVietOrderSupplierService {
     order_suppliers: KiotVietOrderSupplier[],
   ): Promise<any[]> {
     this.logger.log(
-      `💾 Saving ${order_suppliers.length} order_suppliers to database...`,
+      `Saving ${order_suppliers.length} order_suppliers to database...`,
     );
 
     const savedOrderSuppliers: any[] = [];
@@ -567,13 +642,13 @@ export class KiotVietOrderSupplierService {
         savedOrderSuppliers.push(order_supplier);
       } catch (error) {
         this.logger.error(
-          `❌ Failed to save order_supplier ${orderSupplierData.code}: ${error.message}`,
+          `Failed to save order_supplier ${orderSupplierData.code}: ${error.message}`,
         );
       }
     }
 
     this.logger.log(
-      `✅ Saved ${savedOrderSuppliers.length} suppliers successfully`,
+      `Saved ${savedOrderSuppliers.length} suppliers successfully`,
     );
     return savedOrderSuppliers;
   }
@@ -581,7 +656,7 @@ export class KiotVietOrderSupplierService {
   async syncOrderSuppliersToLarkBase(order_suppliers: any[]): Promise<void> {
     try {
       this.logger.log(
-        `🚀 Starting LarkBase sync for ${order_suppliers.length} order_suppliers...`,
+        `Starting LarkBase sync for ${order_suppliers.length} order_suppliers...`,
       );
 
       const orderSuppliersToSync = order_suppliers.filter(
@@ -589,7 +664,7 @@ export class KiotVietOrderSupplierService {
       );
 
       if (orderSuppliersToSync.length === 0) {
-        this.logger.log('📋 No order_suppliers need LarkBase sync');
+        this.logger.log('No order_suppliers need LarkBase sync');
         return;
       }
 
@@ -597,10 +672,10 @@ export class KiotVietOrderSupplierService {
         orderSuppliersToSync,
       );
 
-      this.logger.log(`✅ LarkBase sync completed successfully`);
+      this.logger.log(`LarkBase sync completed successfully`);
     } catch (error) {
       this.logger.error(
-        `❌ LarkBase order_supplier sync failed: ${error.message}`,
+        `LarkBase order_supplier sync failed: ${error.message}`,
       );
 
       try {

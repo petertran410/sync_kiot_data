@@ -1143,7 +1143,7 @@ export class KiotVietOrderService {
       }
 
       await this.larkOrderSyncService.syncOrdersToLarkBase(ordersToSync);
-      this.logger.log(`✅ LarkBase sync completed successfully`);
+      this.logger.log(`LarkBase sync completed successfully`);
     } catch (error) {
       this.logger.error(`LarkBase sync FAILED: ${error.message}`);
       this.logger.error(`STOPPING sync to prevent data duplication`);

@@ -105,6 +105,8 @@ export class LarkOrderSupplierSyncService {
   private readonly baseTokenDetail: string;
   private readonly tableIdDetail: string;
   private readonly batchSize = 100;
+  private readonly pendingCreation = new Set<number>();
+  private readonly pendingDetailCreation = new Set<number>();
 
   private readonly MAX_AUTH_RETRIES = 3;
   private readonly AUTH_ERROR_CODES = [99991663, 99991664, 99991665];
@@ -160,7 +162,7 @@ export class LarkOrderSupplierSyncService {
       await this.acquireSyncLock(lockKey);
 
       this.logger.log(
-        `🚀 Starting LarkBase sync for ${order_suppliers.length} order_suppliers...`,
+        `Starting LarkBase sync for ${order_suppliers.length} order_suppliers...`,
       );
 
       const orderSuppliersToSync = order_suppliers.filter(
@@ -168,7 +170,16 @@ export class LarkOrderSupplierSyncService {
       );
 
       if (orderSuppliersToSync.length === 0) {
-        this.logger.log('📋 No order_supplier need LarkBase sync');
+        this.logger.log('No order_supplier need LarkBase sync');
+        await this.releaseSyncLock(lockKey);
+        return;
+      }
+
+      if (orderSuppliersToSync.length < 5) {
+        this.logger.log(
+          `Small sync (${orderSuppliersToSync.length} orderSuppliers) - using lightweight mode`,
+        );
+        await this.syncWithoutCache(orderSuppliersToSync);
         await this.releaseSyncLock(lockKey);
         return;
       }
@@ -181,7 +192,7 @@ export class LarkOrderSupplierSyncService {
       ).length;
 
       this.logger.log(
-        `📊 Including: ${pendingCount} PENDING + ${failedCount} FAILED order_suppliers`,
+        `Including: ${pendingCount} PENDING + ${failedCount} FAILED order_suppliers`,
       );
 
       await this.testLarkBaseConnection();
@@ -189,19 +200,19 @@ export class LarkOrderSupplierSyncService {
       const cacheLoaded = await this.loadExistingRecordsWithRetry();
 
       if (!cacheLoaded) {
-        this.logger.warn(
-          '⚠️ Cache loading failed - will use alternative duplicate detection',
-        );
+        this.logger.warn('Cache loading failed - using lightweight mode');
+        await this.syncWithoutCache(orderSuppliersToSync);
+        await this.releaseSyncLock(lockKey);
       }
 
       const { newOrderSuppliers, updateOrderSuppliers } =
-        this.categorizeOrderSuppliers(orderSuppliersToSync);
+        await this.categorizeOrderSuppliers(orderSuppliersToSync);
 
       this.logger.log(
-        `📋 Categorization: ${newOrderSuppliers.length} new, ${updateOrderSuppliers.length} updates`,
+        `Categorization: ${newOrderSuppliers.length} new, ${updateOrderSuppliers.length} updates`,
       );
 
-      const BATCH_SIZE_FOR_SYNC = 20;
+      const BATCH_SIZE_FOR_SYNC = 100;
 
       if (newOrderSuppliers.length > 0) {
         for (
@@ -231,14 +242,14 @@ export class LarkOrderSupplierSyncService {
         }
       }
 
-      await this.releaseSyncLock(lockKey);
-      this.logger.log('🎉 LarkBase order_supplier sync completed!');
+      this.logger.log('LarkBase order_supplier sync completed!');
     } catch (error) {
       this.logger.error(
-        `💥 LarkBase order_supplier sync failed: ${error.message}`,
+        `LarkBase order_supplier sync failed: ${error.message}`,
       );
-      await this.releaseSyncLock(lockKey);
       throw error;
+    } finally {
+      await this.releaseSyncLock(lockKey);
     }
   }
 
@@ -248,7 +259,7 @@ export class LarkOrderSupplierSyncService {
     try {
       await this.acquireDetailSyncLock(lockKey);
 
-      this.logger.log('🚀 Starting LarkBase sync for OrderSupplierDetails...');
+      this.logger.log('Starting LarkBase sync for OrderSupplierDetails...');
 
       const orderSupplierDetailsToSync =
         await this.prismaService.orderSupplierDetail.findMany({
@@ -258,12 +269,21 @@ export class LarkOrderSupplierSyncService {
         });
 
       this.logger.log(
-        `📋 Found ${orderSupplierDetailsToSync.length} order_supplier_details to sync`,
+        `Found ${orderSupplierDetailsToSync.length} order_supplier_details to sync`,
       );
 
       if (orderSupplierDetailsToSync.length === 0) {
-        this.logger.log('📋 No order_supplier_details need LarkBase sync');
+        this.logger.log('No order_supplier_details need LarkBase sync');
         await this.releaseDetailSyncLock(lockKey);
+        return;
+      }
+
+      if (orderSupplierDetailsToSync.length < 5) {
+        this.logger.log(
+          `Small sync (${orderSupplierDetailsToSync.length} orderSuppliers) - using lightweight mode`,
+        );
+        await this.syncWithoutDetailCache(orderSupplierDetailsToSync);
+        await this.releaseSyncLock(lockKey);
         return;
       }
 
@@ -275,7 +295,7 @@ export class LarkOrderSupplierSyncService {
       ).length;
 
       this.logger.log(
-        `📊 Including: ${pendingDetailCount} PENDING + ${failedDetailCount} FAILED order_supplier_details`,
+        `Including: ${pendingDetailCount} PENDING + ${failedDetailCount} FAILED order_supplier_details`,
       );
 
       await this.testLarkBaseDetailConnection();
@@ -283,19 +303,19 @@ export class LarkOrderSupplierSyncService {
       const cacheDetailLoaded = await this.loadExistingDetailRecordsWithRetry();
 
       if (!cacheDetailLoaded) {
-        this.logger.warn(
-          '⚠️ OrderSupplierDetail cache loading failed - will use alternative duplicate detection',
-        );
+        this.logger.warn('Cache loading failed - using lightweight mode');
+        await this.syncWithoutDetailCache(orderSupplierDetailsToSync);
+        await this.releaseSyncLock(lockKey);
       }
 
       const { newOrderSuppliersDetail, updateOrderSuppliersDetail } =
-        this.categorizeOrderSuppliersDetail(orderSupplierDetailsToSync);
+        await this.categorizeOrderSuppliersDetail(orderSupplierDetailsToSync);
 
       this.logger.log(
-        `📋 OrderSupplierDetail Categorization: ${newOrderSuppliersDetail.length} new, ${updateOrderSuppliersDetail.length} updates`,
+        `OrderSupplierDetail Categorization: ${newOrderSuppliersDetail.length} new, ${updateOrderSuppliersDetail.length} updates`,
       );
 
-      const BATCH_SIZE_FOR_SYNC = 50;
+      const BATCH_SIZE_FOR_SYNC = 100;
 
       if (newOrderSuppliersDetail.length > 0) {
         for (
@@ -331,15 +351,12 @@ export class LarkOrderSupplierSyncService {
         }
       }
 
-      await this.releaseDetailSyncLock(lockKey);
-      this.logger.log('🎉 LarkBase OrderSupplierDetail sync completed!');
+      this.logger.log('LarkBase OrderSupplierDetail sync completed!');
     } catch (error) {
-      this.logger.error(
-        `❌ OrderSupplierDetail sync failed: ${error.message}`,
-        error.stack,
-      );
-      await this.releaseDetailSyncLock(lockKey);
+      this.logger.error(`OrderSupplierDetail sync failed: ${error.message}`);
       throw error;
+    } finally {
+      await this.releaseSyncLock(lockKey);
     }
   }
 
@@ -347,35 +364,45 @@ export class LarkOrderSupplierSyncService {
     const maxRetries = 3;
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        this.logger.log(
-          `📥 Loading cache (attempt ${attempt}/${maxRetries})...`,
-        );
+        this.logger.log(`Loading cache (attempt ${attempt}/${maxRetries})...`);
 
-        if (this.isCacheValid()) {
-          this.logger.log('✅ Using existing valid cache');
+        if (this.isCacheValid() && this.existingRecordsCache.size > 5000) {
+          this.logger.log(
+            `Using cache available (${this.existingRecordsCache.size} records) - skipping reload`,
+          );
           return true;
         }
 
-        this.clearCache();
+        if (this.lastCacheLoadTime) {
+          const cacheAgeMinutes =
+            (Date.now() - this.lastCacheLoadTime.getTime()) / (1000 * 60);
+          if (cacheAgeMinutes < 45 && this.existingRecordsCache.size > 500) {
+            this.logger.log(
+              `Recent cache (${cacheAgeMinutes.toFixed(1)}min old, ${this.existingRecordsCache.size} records) - skipping reload`,
+            );
+            return true;
+          }
+        }
 
+        this.clearCache();
         await this.loadExistingRecords();
 
         if (this.existingRecordsCache.size > 0) {
           this.logger.log(
-            `✅ Cache loaded successfully: ${this.existingRecordsCache.size} records`,
+            `Cache loaded successfully: ${this.existingRecordsCache.size} records`,
           );
           this.lastCacheLoadTime = new Date();
           return true;
         }
 
-        this.logger.warn(`⚠️ Cache empty on attempt ${attempt}`);
+        this.logger.warn(`Cache empty on attempt ${attempt}`);
       } catch (error) {
         this.logger.warn(
-          `❌ Cache loading attempt ${attempt} failed: ${error.message}`,
+          `Cache loading attempt ${attempt} failed: ${error.message}`,
         );
         if (attempt < maxRetries) {
-          const delay = attempt * 3000;
-          this.logger.log(`⏳ Waiting ${delay / 1000}s before retry...`);
+          const delay = attempt * 2000;
+          this.logger.log(`Waiting ${delay / 1000}s before retry...`);
           await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }
@@ -388,34 +415,52 @@ export class LarkOrderSupplierSyncService {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         this.logger.log(
-          `📥 Loading cache (attempt ${attempt}/${maxRetries})...`,
+          `Loading cache detail (attempt ${attempt}/${maxRetries})...`,
         );
 
-        if (this.isDetailCacheValid()) {
-          this.logger.log('✅ Using existing valid cache');
+        if (
+          this.isDetailCacheValid() &&
+          this.existingDetailRecordsCache.size > 5000
+        ) {
+          this.logger.log(
+            `Using cache detail available (${this.existingDetailRecordsCache.size} records) - skipping reload`,
+          );
           return true;
         }
 
-        this.clearDetailCache();
+        if (this.lastDetailCacheLoadTime) {
+          const detailCacheAgeMinutes =
+            (Date.now() - this.lastDetailCacheLoadTime.getTime()) / (1000 * 60);
+          if (
+            detailCacheAgeMinutes < 45 &&
+            this.existingDetailRecordsCache.size > 500
+          ) {
+            this.logger.log(
+              `Recent detail cache (${detailCacheAgeMinutes.toFixed(1)}min old, ${this.existingDetailRecordsCache.size} records) - skipping reload`,
+            );
+            return true;
+          }
+        }
 
+        this.clearDetailCache();
         await this.loadExistingDetailRecords();
 
         if (this.existingDetailRecordsCache.size > 0) {
           this.logger.log(
-            `✅ Cache loaded successfully: ${this.existingDetailRecordsCache.size} records`,
+            `Cache detail loaded successfully: ${this.existingDetailRecordsCache.size} records`,
           );
           this.lastDetailCacheLoadTime = new Date();
           return true;
         }
 
-        this.logger.warn(`⚠️ Cache empty on attempt ${attempt}`);
+        this.logger.warn(`Cache empty on attempt ${attempt}`);
       } catch (error) {
         this.logger.warn(
-          `❌ Cache loading attempt ${attempt} failed: ${error.message}`,
+          `Cache loading attempt ${attempt} failed: ${error.message}`,
         );
         if (attempt < maxRetries) {
-          const delay = attempt * 3000;
-          this.logger.log(`⏳ Waiting ${delay / 1000}s before retry...`);
+          const delay = attempt * 2000;
+          this.logger.log(`Waiting ${delay / 1000}s before retry...`);
           await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }
@@ -448,101 +493,93 @@ export class LarkOrderSupplierSyncService {
   private async loadExistingRecords(): Promise<void> {
     try {
       const headers = await this.larkAuthService.getOrderSupplierHeaders();
-      let page_token = '';
+      let pageToken = '';
       let totalLoaded = 0;
       let cacheBuilt = 0;
       let stringConversions = 0;
-      const pageSize = 50;
+      const pageSize = 1000;
 
       do {
         const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records`;
-        const params = new URLSearchParams({
-          page_size: pageSize.toString(),
-          ...(page_token && { page_token }),
-        });
+
+        const params: any = {
+          page_size: pageSize,
+          ...(pageToken && { page_token: pageToken }),
+        };
 
         const startTime = Date.now();
 
-        try {
-          const response = await firstValueFrom(
-            this.httpService.get<LarkBatchResponse>(`${url}?${params}`, {
-              headers,
-              timeout: 60000,
-            }),
-          );
+        const response = await firstValueFrom(
+          this.httpService.get(url, {
+            headers,
+            params,
+            timeout: 15000,
+          }),
+        );
 
-          const loadTime = Date.now() - startTime;
+        const loadTime = Date.now() - startTime;
 
-          if (response.data.code === 0) {
-            const records = response.data.data?.items || [];
+        if (response.data.code === 0) {
+          const records = response.data.data?.items || [];
 
-            for (const record of records) {
-              const kiotVietIdRaw =
-                record.fields[LARK_ORDER_SUPPLIER_FIELDS.kiotVietId];
+          for (const record of records) {
+            const kiotVietIdField =
+              record.fields[LARK_ORDER_SUPPLIER_FIELDS.kiotVietId];
 
-              let kiotVietId = 0;
-
-              if (kiotVietIdRaw !== null && kiotVietIdRaw !== undefined) {
-                if (typeof kiotVietIdRaw === 'string') {
-                  const trimmed = kiotVietIdRaw.trim();
-                  if (trimmed !== '') {
-                    const parsed = parseInt(trimmed, 10);
-                    if (!isNaN(parsed) && parsed > 0) {
-                      kiotVietId = parsed;
-                      stringConversions++;
-                    }
-                  }
-                } else if (typeof kiotVietIdRaw === 'number') {
-                  kiotVietId = Math.floor(kiotVietIdRaw);
-                }
-              }
-
+            if (kiotVietIdField) {
+              const kiotVietId = this.safeBigIntToNumber(kiotVietIdField);
               if (kiotVietId > 0) {
                 this.existingRecordsCache.set(kiotVietId, record.record_id);
                 cacheBuilt++;
               }
-
-              const orderSupplierCode =
-                record.fields[LARK_ORDER_SUPPLIER_FIELDS.ORDER_SUPPLIER_CODE];
-              if (orderSupplierCode) {
-                this.orderSupplierCodeCache.set(
-                  String(orderSupplierCode).trim(),
-                  record.record_id,
-                );
-              }
             }
 
-            totalLoaded += records.length;
-            page_token = response.data.data?.page_token || '';
+            // let kiotVietId = 0;
 
-            this.logger.debug(
-              `📥 Loaded ${records.length} records in ${loadTime}ms (total: ${totalLoaded}, cached: ${cacheBuilt})`,
-            );
+            // if (kiotVietIdRaw !== null && kiotVietIdRaw !== undefined) {
+            //   if (typeof kiotVietIdRaw === 'string') {
+            //     const trimmed = kiotVietIdRaw.trim();
+            //     if (trimmed !== '') {
+            //       const parsed = parseInt(trimmed, 10);
+            //       if (!isNaN(parsed) && parsed > 0) {
+            //         kiotVietId = parsed;
+            //         stringConversions++;
+            //       }
+            //     }
+            //   } else if (typeof kiotVietIdRaw === 'number') {
+            //     kiotVietId = Math.floor(kiotVietIdRaw);
+            //   }
+            // }
 
-            if (totalLoaded % 1000 === 0 || !page_token) {
-              this.logger.log(
-                `📊 Cache progress: ${cacheBuilt}/${totalLoaded} records processed (${stringConversions} string conversions)`,
+            // if (kiotVietId > 0) {
+            //   this.existingRecordsCache.set(kiotVietId, record.record_id);
+            //   cacheBuilt++;
+            // }
+
+            const orderSupplierCode =
+              record.fields[LARK_ORDER_SUPPLIER_FIELDS.ORDER_SUPPLIER_CODE];
+            if (orderSupplierCode) {
+              this.orderSupplierCodeCache.set(
+                String(orderSupplierCode).trim(),
+                record.record_id,
               );
             }
-          } else {
-            throw new Error(
-              `LarkBase API error: ${response.data.msg} (code: ${response.data.code})`,
+          }
+
+          totalLoaded += records.length;
+          pageToken = response.data.data?.page_token || '';
+
+          if (totalLoaded % 1500 === 0 || !pageToken) {
+            this.logger.log(
+              `Cache progress: ${cacheBuilt}/${totalLoaded} records processed (${stringConversions} string conversions)`,
             );
           }
-        } catch (error) {
-          if (error.code === 'ECONNABORTED') {
-            throw new Error(
-              'Request timeout - LarkBase took too long to respond',
-            );
-          }
-          if (error.response?.status === 400) {
-            throw new Error(
-              'Bad request - check table permissions and field names',
-            );
-          }
-          throw error;
+        } else {
+          throw new Error(
+            `LarkBase API error: ${response.data.msg} (code: ${response.data.code})`,
+          );
         }
-      } while (page_token);
+      } while (pageToken);
 
       this.cacheLoaded = true;
 
@@ -550,7 +587,7 @@ export class LarkOrderSupplierSyncService {
         totalLoaded > 0 ? Math.round((cacheBuilt / totalLoaded) * 100) : 0;
 
       this.logger.log(
-        `✅ Cache loaded: ${this.existingRecordsCache.size} by ID, ${this.orderSupplierCodeCache.size} by code (${successRate}% success)`,
+        `Cache loaded: ${this.existingRecordsCache.size} by ID, ${this.orderSupplierCodeCache.size} by code (${successRate}% success)`,
       );
     } catch (error) {
       this.logger.error(`❌ Cache loading failed: ${error.message}`);
@@ -562,55 +599,41 @@ export class LarkOrderSupplierSyncService {
     try {
       const headers =
         await this.larkAuthService.getOrderSupplierDetailHeaders();
-      let page_token = '';
+      let pageToken = '';
       let totalDetailLoaded = 0;
       let cacheDetailBuilt = 0;
       let stringConversions = 0;
-      const pageSize = 50;
+      const pageSize = 100;
 
       do {
         const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseTokenDetail}/tables/${this.tableIdDetail}/records`;
-        const params = new URLSearchParams({
-          page_size: pageSize.toString(),
-          ...(page_token && { page_token }),
-        });
+
+        const params: any = {
+          page_size: pageSize,
+          ...(pageToken && { page_token: pageToken }),
+        };
 
         const startTime = Date.now();
 
-        try {
-          const response = await firstValueFrom(
-            this.httpService.get<LarkBatchResponse>(`${url}?${params}`, {
-              headers,
-              timeout: 60000,
-            }),
-          );
+        const response = await firstValueFrom(
+          this.httpService.get(url, {
+            headers,
+            params,
+            timeout: 15000,
+          }),
+        );
 
-          const loadTime = Date.now() - startTime;
+        const loadTime = Date.now() - startTime;
 
-          if (response.data.code === 0) {
-            const records = response.data.data?.items || [];
+        if (response.data.code === 0) {
+          const records = response.data.data?.items || [];
 
-            for (const record of records) {
-              const kiotVietIdRaw =
-                record.fields[LARK_ORDER_SUPPLIER_DETAIL_FIELDS.kiotVietId];
+          for (const record of records) {
+            const kiotVietIdField =
+              record.fields[LARK_ORDER_SUPPLIER_DETAIL_FIELDS.kiotVietId];
 
-              let kiotVietId = 0;
-
-              if (kiotVietIdRaw !== null && kiotVietIdRaw !== undefined) {
-                if (typeof kiotVietIdRaw === 'string') {
-                  const trimmed = kiotVietIdRaw.trim();
-                  if (trimmed !== '') {
-                    const parsed = parseInt(trimmed, 10);
-                    if (!isNaN(parsed) && parsed > 0) {
-                      kiotVietId = parsed;
-                      stringConversions++;
-                    }
-                  }
-                } else if (typeof kiotVietIdRaw === 'number') {
-                  kiotVietId = Math.floor(kiotVietIdRaw);
-                }
-              }
-
+            if (kiotVietIdField) {
+              const kiotVietId = this.safeBigIntToNumber(kiotVietIdField);
               if (kiotVietId > 0) {
                 this.existingDetailRecordsCache.set(
                   kiotVietId,
@@ -618,50 +641,34 @@ export class LarkOrderSupplierSyncService {
                 );
                 cacheDetailBuilt++;
               }
-
-              const orderSupplierDetailCode =
-                record.fields[
-                  LARK_ORDER_SUPPLIER_DETAIL_FIELDS.ORDER_SUPPLIER_CODE
-                ];
-              if (orderSupplierDetailCode) {
-                this.orderSupplierDetailCodeCache.set(
-                  String(orderSupplierDetailCode).trim(),
-                  record.record_id,
-                );
-              }
             }
 
-            totalDetailLoaded += records.length;
-            page_token = response.data.data?.page_token || '';
-
-            this.logger.debug(
-              `📥 Loaded ${records.length} records in ${loadTime}ms (total: ${totalDetailLoaded}, cached: ${cacheDetailBuilt})`,
-            );
-
-            if (totalDetailLoaded % 1000 === 0 || !page_token) {
-              this.logger.log(
-                `📊 Cache progress: ${cacheDetailBuilt}/${totalDetailLoaded} records processed (${stringConversions} string conversions)`,
+            const orderSupplierDetailCode =
+              record.fields[
+                LARK_ORDER_SUPPLIER_DETAIL_FIELDS.ORDER_SUPPLIER_CODE
+              ];
+            if (orderSupplierDetailCode) {
+              this.orderSupplierDetailCodeCache.set(
+                String(orderSupplierDetailCode).trim(),
+                record.record_id,
               );
             }
-          } else {
-            throw new Error(
-              `LarkBase API error: ${response.data.msg} (code: ${response.data.code})`,
+          }
+
+          totalDetailLoaded += records.length;
+          pageToken = response.data.data?.page_token || '';
+
+          if (totalDetailLoaded % 1500 === 0 || !pageToken) {
+            this.logger.log(
+              `Cache progress: ${cacheDetailBuilt}/${totalDetailLoaded} records processed (${stringConversions} string conversions)`,
             );
           }
-        } catch (error) {
-          if (error.code === 'ECONNABORTED') {
-            throw new Error(
-              'Request timeout - LarkBase took too long to respond',
-            );
-          }
-          if (error.response?.status === 400) {
-            throw new Error(
-              'Bad request - check table permissions and field names',
-            );
-          }
-          throw error;
+        } else {
+          throw new Error(
+            `LarkBase API error: ${response.data.msg} (code: ${response.data.code})`,
+          );
         }
-      } while (page_token);
+      } while (pageToken);
 
       this.cacheDetailLoaded = true;
 
@@ -671,7 +678,7 @@ export class LarkOrderSupplierSyncService {
           : 0;
 
       this.logger.log(
-        `✅ Cache loaded: ${this.existingDetailRecordsCache.size} by ID, ${this.orderSupplierDetailCodeCache.size} by code (${successRate}% success)`,
+        `Cache loaded: ${this.existingDetailRecordsCache.size} by ID, ${this.orderSupplierDetailCodeCache.size} by code (${successRate}% success)`,
       );
     } catch (error) {
       this.logger.error(`❌ Cache loading failed: ${error.message}`);
@@ -679,15 +686,33 @@ export class LarkOrderSupplierSyncService {
     }
   }
 
-  private categorizeOrderSuppliers(order_suppliers: any[]): {
-    newOrderSuppliers: any[];
-    updateOrderSuppliers: any[];
-  } {
+  private categorizeOrderSuppliers(order_suppliers: any[]): Promise<any> {
     const newOrderSuppliers: any[] = [];
     const updateOrderSuppliers: any[] = [];
 
+    const duplicateDetected = order_suppliers.filter((order_supplier) => {
+      const kiotVietId = this.safeBigIntToNumber(order_supplier.kiotVietId);
+      return this.existingRecordsCache.has(kiotVietId);
+    });
+
+    if (duplicateDetected.length > 0) {
+      this.logger.warn(
+        `Detected ${duplicateDetected.length} order_suppliers already in cache: ${duplicateDetected
+          .map((o) => o.kiotVietId)
+          .slice(0, 5)
+          .join(', ')}`,
+      );
+    }
+
     for (const order_supplier of order_suppliers) {
       const kiotVietId = this.safeBigIntToNumber(order_supplier.kiotVietId);
+
+      if (this.pendingCreation.has(kiotVietId)) {
+        this.logger.warn(
+          `Order Supplier ${kiotVietId} is pending creation, skipping`,
+        );
+        continue;
+      }
 
       let existingRecordId = this.existingRecordsCache.get(kiotVietId);
 
@@ -703,6 +728,7 @@ export class LarkOrderSupplierSyncService {
           larkRecordId: existingRecordId,
         });
       } else {
+        this.pendingCreation.add(kiotVietId);
         newOrderSuppliers.push(order_supplier);
       }
     }
@@ -710,17 +736,41 @@ export class LarkOrderSupplierSyncService {
     return { newOrderSuppliers, updateOrderSuppliers };
   }
 
-  private categorizeOrderSuppliersDetail(order_suppliers_detail: any[]): {
-    newOrderSuppliersDetail: any[];
-    updateOrderSuppliersDetail: any[];
-  } {
+  private categorizeOrderSuppliersDetail(
+    order_suppliers_detail: any[],
+  ): Promise<any> {
     const newOrderSuppliersDetail: any[] = [];
     const updateOrderSuppliersDetail: any[] = [];
+
+    const duplicateDetected = order_suppliers_detail.filter(
+      (order_supplier_detail) => {
+        const kiotVietId = this.safeBigIntToNumber(
+          order_supplier_detail.kiotVietId,
+        );
+        return this.existingDetailRecordsCache.has(kiotVietId);
+      },
+    );
+
+    if (duplicateDetected.length > 0) {
+      this.logger.warn(
+        `Detected ${duplicateDetected.length} order_suppliers_detail already in cache: ${duplicateDetected
+          .map((o) => o.kiotVietId)
+          .slice(0, 5)
+          .join(', ')}`,
+      );
+    }
 
     for (const order_supplier_detail of order_suppliers_detail) {
       const kiotVietId = this.safeBigIntToNumber(
         order_supplier_detail.kiotVietId,
       );
+
+      if (this.pendingDetailCreation.has(kiotVietId)) {
+        this.logger.warn(
+          `Order Supplier Detail ${kiotVietId} is pending creation, skipping`,
+        );
+        continue;
+      }
 
       let existingDetailRecordId =
         this.existingDetailRecordsCache.get(kiotVietId);
@@ -737,11 +787,90 @@ export class LarkOrderSupplierSyncService {
           larkRecordId: existingDetailRecordId,
         });
       } else {
+        this.pendingDetailCreation.add(kiotVietId);
         newOrderSuppliersDetail.push(order_supplier_detail);
       }
     }
 
     return { newOrderSuppliersDetail, updateOrderSuppliersDetail };
+  }
+
+  private async syncWithoutCache(order_suppliers: any[]): Promise<void> {
+    this.logger.log(`Running lightweight sync without full cache...`);
+
+    const existingOrderSuppliers =
+      await this.prismaService.orderSupplier.findMany({
+        where: {
+          kiotVietId: { in: order_suppliers.map((o) => o.kiotVietId) },
+        },
+        select: { kiotVietId: true, larkRecordId: true },
+      });
+
+    const quickCache = new Map<number, string>();
+    existingOrderSuppliers.forEach((o) => {
+      if (o.larkRecordId) {
+        quickCache.set(Number(o.kiotVietId), o.larkRecordId);
+      }
+    });
+
+    const originalCache = this.existingRecordsCache;
+    this.existingRecordsCache = quickCache;
+
+    try {
+      const { newOrderSuppliers, updateOrderSuppliers } =
+        await this.categorizeOrderSuppliers(order_suppliers);
+
+      if (newOrderSuppliers.length > 0) {
+        await this.processNewOrderSuppliers(newOrderSuppliers);
+      }
+
+      if (updateOrderSuppliers.length > 0) {
+        await this.processUpdateOrderSuppliers(updateOrderSuppliers);
+      }
+    } finally {
+      this.existingRecordsCache = originalCache;
+    }
+  }
+
+  private async syncWithoutDetailCache(
+    order_suppliers_detail: any[],
+  ): Promise<void> {
+    this.logger.log(`Running lightweight sync without full cache...`);
+
+    const existingOrderSuppliersDetail =
+      await this.prismaService.orderSupplierDetail.findMany({
+        where: {
+          kiotVietId: { in: order_suppliers_detail.map((o) => o.kiotVietId) },
+        },
+        select: { kiotVietId: true, larkRecordId: true },
+      });
+
+    const quickDetailCache = new Map<number, string>();
+    existingOrderSuppliersDetail.forEach((o) => {
+      if (o.larkRecordId) {
+        quickDetailCache.set(Number(o.kiotVietId), o.larkRecordId);
+      }
+    });
+
+    const originalDetailCache = this.existingDetailRecordsCache;
+    this.existingDetailRecordsCache = quickDetailCache;
+
+    try {
+      const { newOrderSuppliersDetail, updateOrderSuppliersDetail } =
+        await this.categorizeOrderSuppliersDetail(order_suppliers_detail);
+
+      if (newOrderSuppliersDetail.length > 0) {
+        await this.processNewOrderSuppliersDetail(newOrderSuppliersDetail);
+      }
+
+      if (updateOrderSuppliersDetail.length > 0) {
+        await this.processUpdateOrderSuppliersDetail(
+          updateOrderSuppliersDetail,
+        );
+      }
+    } finally {
+      this.existingDetailRecordsCache = originalDetailCache;
+    }
   }
 
   private async processNewOrderSuppliers(
@@ -750,7 +879,7 @@ export class LarkOrderSupplierSyncService {
     if (order_suppliers.length === 0) return;
 
     this.logger.log(
-      `📝 Creating ${order_suppliers.length} new order_suppliers...`,
+      `Creating ${order_suppliers.length} new order_suppliers...`,
     );
 
     const batches = this.chunkArray(order_suppliers, this.batchSize);
@@ -759,12 +888,31 @@ export class LarkOrderSupplierSyncService {
 
     for (let i = 0; i < batches.length; i++) {
       const batch = batches[i];
+
+      const verifiedBatch: any[] = [];
+      for (const orderSupplier of batch) {
+        const kiotVietId = this.safeBigIntToNumber(orderSupplier.kiotVietId);
+        if (!this.existingRecordsCache.has(kiotVietId)) {
+          verifiedBatch.push(orderSupplier);
+        } else {
+          this.logger.warn(
+            `Skipping duplicate order_supplier ${kiotVietId} in batch ${i + 1}`,
+          );
+        }
+      }
+
+      if (verifiedBatch.length === 0) {
+        this.logger.log(
+          `Batch ${i + 1} skipped - all order_supplier already exist`,
+        );
+        continue;
+      }
       this.logger.log(
-        `Creating batch ${i + 1}/${batches.length} (${batch.length} order_suppliers)...`,
+        `Creating batch ${i + 1}/${batches.length} (${verifiedBatch.length} order_suppliers)...`,
       );
 
       const { successRecords, failedRecords } =
-        await this.batchCreateOrderSuppliers(batch);
+        await this.batchCreateOrderSuppliers(verifiedBatch);
 
       totalCreated += successRecords.length;
       totalFailed += failedRecords.length;
@@ -777,13 +925,17 @@ export class LarkOrderSupplierSyncService {
         await this.updateDatabaseStatus(failedRecords, 'FAILED');
       }
 
+      this.logger.log(
+        `Batch ${i + 1}/${batches.length}: ${successRecords.length}/${batch.length} created`,
+      );
+
       if (i < batches.length - 1) {
         await new Promise((resolve) => setTimeout(resolve, 500));
       }
     }
 
     this.logger.log(
-      `🎯 Create complete: ${totalCreated} success, ${totalFailed} failed`,
+      `Create complete: ${totalCreated} success, ${totalFailed} failed`,
     );
   }
 
@@ -793,7 +945,7 @@ export class LarkOrderSupplierSyncService {
     if (order_suppliers_detail.length === 0) return;
 
     this.logger.log(
-      `📝 Creating ${order_suppliers_detail.length} new order_suppliers_detail...`,
+      `Creating ${order_suppliers_detail.length} new order_suppliers_detail...`,
     );
 
     const batches = this.chunkArray(order_suppliers_detail, this.batchSize);
@@ -802,12 +954,34 @@ export class LarkOrderSupplierSyncService {
 
     for (let i = 0; i < batches.length; i++) {
       const batch = batches[i];
+
+      const verifiedBatch: any[] = [];
+      for (const orderSupplierDetail of batch) {
+        const kiotVietId = this.safeBigIntToNumber(
+          orderSupplierDetail.kiotVietId,
+        );
+        if (!this.existingDetailRecordsCache.has(kiotVietId)) {
+          verifiedBatch.push(orderSupplierDetail);
+        } else {
+          this.logger.warn(
+            `Skipping duplicate order_supplier_detail ${kiotVietId} in batch ${i + 1}`,
+          );
+        }
+      }
+
+      if (verifiedBatch.length === 0) {
+        this.logger.log(
+          `Batch ${i + 1} skipped - all order_supplier_detail already exist`,
+        );
+        continue;
+      }
+
       this.logger.log(
-        `Creating batch ${i + 1}/${batches.length} (${batch.length} order_suppliers_detail)...`,
+        `Creating batch ${i + 1}/${batches.length} (${verifiedBatch.length} order_suppliers_detail)...`,
       );
 
       const { successDetailRecords, failedDetailRecords } =
-        await this.batchCreateOrderSuppliersDetail(batch);
+        await this.batchCreateOrderSuppliersDetail(verifiedBatch);
 
       totalDetailCreated += successDetailRecords.length;
       totalDetailFailed += failedDetailRecords.length;
@@ -821,7 +995,7 @@ export class LarkOrderSupplierSyncService {
       }
 
       this.logger.log(
-        `📊 Batch ${i + 1}/${batches.length}: ${successDetailRecords.length}/${batch.length} created`,
+        `Batch ${i + 1}/${batches.length}: ${successDetailRecords.length}/${batch.length} created`,
       );
 
       if (i < batches.length - 1) {
@@ -830,7 +1004,7 @@ export class LarkOrderSupplierSyncService {
     }
 
     this.logger.log(
-      `🎯 Create complete: ${totalDetailCreated} success, ${totalDetailFailed} failed`,
+      `Create complete: ${totalDetailCreated} success, ${totalDetailFailed} failed`,
     );
   }
 
@@ -840,7 +1014,7 @@ export class LarkOrderSupplierSyncService {
     if (order_suppliers.length === 0) return;
 
     this.logger.log(
-      `📝 Updating ${order_suppliers.length} existing order_suppliers...`,
+      `Updating ${order_suppliers.length} existing order_suppliers...`,
     );
 
     let successCount = 0;
@@ -880,13 +1054,13 @@ export class LarkOrderSupplierSyncService {
 
     if (createFallbacks.length > 0) {
       this.logger.log(
-        `📝 Creating ${createFallbacks.length} order_suppliers that failed update...`,
+        `Processing ${createFallbacks.length} update fallbacks as new order supplier...`,
       );
       await this.processNewOrderSuppliers(createFallbacks);
     }
 
     this.logger.log(
-      `🎯 Update complete: ${successCount} success, ${failedCount} failed`,
+      `Update complete: ${successCount} update, ${failedCount} failed, ${createFallbacks.length} fallback to create`,
     );
   }
 
@@ -896,7 +1070,7 @@ export class LarkOrderSupplierSyncService {
     if (order_suppliers_detail.length === 0) return;
 
     this.logger.log(
-      `📝 Updating ${order_suppliers_detail.length} existing order_suppliers_detail...`,
+      `Updating ${order_suppliers_detail.length} existing order_suppliers_detail...`,
     );
 
     let successDetailCount = 0;
@@ -940,13 +1114,13 @@ export class LarkOrderSupplierSyncService {
 
     if (createDetailFallbacks.length > 0) {
       this.logger.log(
-        `📝 Creating ${createDetailFallbacks.length} order_suppliers_detail that failed update...`,
+        `Processing ${createDetailFallbacks.length} update fallback as new order supplier detail...`,
       );
       await this.processNewOrderSuppliersDetail(createDetailFallbacks);
     }
 
     this.logger.log(
-      `🎯 Update complete: ${successDetailCount} success, ${failedDetailCount} failed`,
+      `Update complete: ${successDetailCount} success, ${failedDetailCount} failed, ${createDetailFallbacks.length} fallback to create`,
     );
   }
 
@@ -1015,18 +1189,27 @@ export class LarkOrderSupplierSyncService {
         }
 
         this.logger.warn(
-          `⚠️ Batch create failed: ${response.data.msg} (Code: ${response.data.code})`,
+          `Batch create failed: ${response.data.msg} (Code: ${response.data.code})`,
         );
         return { successRecords: [], failedRecords: order_suppliers };
       } catch (error) {
-        if (error.response?.status === 401 || error.response?.status === 403) {
-          authRetries++;
-          await this.forceTokenRefresh();
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-          continue;
-        }
+        this.logger.error('Batch create error details:', {
+          status: error.response?.status,
+          statusText: error.response?.statusText,
+          data: error.response?.data,
+          config: {
+            url: error.config?.url,
+            method: error.config?.method,
+            data: JSON.parse(error.config?.data || '{}'),
+          },
+        });
 
-        this.logger.error(`❌ Batch create error: ${error.message}`);
+        if (records && records.length > 0) {
+          this.logger.error(
+            'Sample record being sent:',
+            JSON.stringify(records[0], null, 2),
+          );
+        }
         return { successRecords: [], failedRecords: order_suppliers };
       }
     }
@@ -1105,21 +1288,30 @@ export class LarkOrderSupplierSyncService {
         }
 
         this.logger.warn(
-          `⚠️ Batch create failed: ${response.data.msg} (Code: ${response.data.code})`,
+          `Batch create failed: ${response.data.msg} (Code: ${response.data.code})`,
         );
         return {
           successDetailRecords: [],
           failedDetailRecords: order_suppliers_detail,
         };
       } catch (error) {
-        if (error.response?.status === 401 || error.response?.status === 403) {
-          authRetries++;
-          await this.forceDetailTokenRefresh();
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-          continue;
-        }
+        this.logger.error('Batch create error details:', {
+          status: error.response?.status,
+          statusText: error.response?.statusText,
+          data: error.response?.data,
+          config: {
+            url: error.config?.url,
+            method: error.config?.method,
+            data: JSON.parse(error.config?.data || '{}'),
+          },
+        });
 
-        this.logger.error(`❌ Batch create error: ${error.message}`);
+        if (records && records.length > 0) {
+          this.logger.error(
+            'Sample record being sent:',
+            JSON.stringify(records[0], null, 2),
+          );
+        }
         return {
           successDetailRecords: [],
           failedDetailRecords: order_suppliers_detail,
@@ -1153,7 +1345,7 @@ export class LarkOrderSupplierSyncService {
 
         if (response.data.code === 0) {
           this.logger.debug(
-            `✅ Updated record ${order_supplier.larkRecordId} for order_supplier ${order_supplier.code}`,
+            `Updated record ${order_supplier.larkRecordId} for order_supplier ${order_supplier.code}`,
           );
           return true;
         }
@@ -1212,7 +1404,7 @@ export class LarkOrderSupplierSyncService {
 
         if (response.data.code === 0) {
           this.logger.debug(
-            `✅ Updated record ${order_supplier_detail.larkRecordId} for order_supplier_detail ${order_supplier_detail.code}`,
+            `Updated record ${order_supplier_detail.larkRecordId} for order_supplier_detail ${order_supplier_detail.code}`,
           );
           return true;
         }
