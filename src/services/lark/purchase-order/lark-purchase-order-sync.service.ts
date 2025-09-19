@@ -218,10 +218,12 @@ export class LarkPurchaseOrderSyncService {
   }
 
   async syncPurchaseOrderDetailsToLarkBase(): Promise<void> {
+    this.logger.log('🔍 DEBUG: syncPurchaseOrderDetailsToLarkBase called');
     const lockKey = `lark_purchase_order_detail_sync_lock_${Date.now()}`;
 
     try {
       await this.acquireDetailSyncLock(lockKey);
+      this.logger.log('🔍 DEBUG: Lock acquired successfully');
 
       this.logger.log(`Starting LarkBase sync for purchase_orders_details`);
 
@@ -233,13 +235,30 @@ export class LarkPurchaseOrderSyncService {
         });
 
       this.logger.log(
-        `Found ${purchaseOrderDetailsToSync.length} purchase_order_detail to sync`,
+        `🔍 DEBUG: Found ${purchaseOrderDetailsToSync.length} records with PENDING/FAILED status`,
       );
 
+      // this.logger.log(
+      //   `Found ${purchaseOrderDetailsToSync.length} purchase_order_detail to sync`,
+      // );
+
       if (purchaseOrderDetailsToSync.length === 0) {
-        this.logger.log('No purchase_orders_details need LarkBase sync');
+        this.logger.log(
+          '🔍 DEBUG: No records to sync - checking database status',
+        );
+        // this.logger.log('No purchase_orders_details need LarkBase sync');
+
+        const statusCounts =
+          await this.prismaService.purchaseOrderDetail.groupBy({
+            by: ['larkSyncStatus'],
+            _count: { larkSyncStatus: true },
+          });
+        this.logger.log('🔍 DEBUG: Current status distribution:', statusCounts);
         await this.releaseSyncLock(lockKey);
         return;
+
+        // await this.releaseSyncLock(lockKey);
+        // return;
       }
 
       // const purchaseOrderDetailsIds = purchase_orders_details
@@ -930,6 +949,11 @@ export class LarkPurchaseOrderSyncService {
 
       if (successRecords.length > 0) {
         await this.updateDatabaseStatus(successRecords, 'SYNCED');
+
+        successRecords.forEach((record) => {
+          const kiotVietId = this.safeBigIntToNumber(record.kiotVietId);
+          this.pendingCreation.delete(kiotVietId);
+        });
       }
 
       if (failedRecords.length > 0) {
@@ -995,6 +1019,10 @@ export class LarkPurchaseOrderSyncService {
 
       if (successDetailsRecords.length > 0) {
         await this.updateDetailDatabaseStatus(successDetailsRecords, 'SYNCED');
+
+        successDetailsRecords.forEach((detail) => {
+          this.pendingDetailCreation.delete(detail.uniqueKey);
+        });
       }
 
       if (failedDetailsRecords.length > 0) {

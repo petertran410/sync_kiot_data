@@ -919,6 +919,11 @@ export class LarkOrderSupplierSyncService {
 
       if (successRecords.length > 0) {
         await this.updateDatabaseStatus(successRecords, 'SYNCED');
+
+        successRecords.forEach((record) => {
+          const kiotVietId = this.safeBigIntToNumber(record.kiotVietId);
+          this.pendingCreation.delete(kiotVietId);
+        });
       }
 
       if (failedRecords.length > 0) {
@@ -988,6 +993,11 @@ export class LarkOrderSupplierSyncService {
 
       if (successDetailRecords.length > 0) {
         await this.updateDetailDatabaseStatus(successDetailRecords, 'SYNCED');
+
+        successDetailRecords.forEach((detail) => {
+          const kiotVietId = this.safeBigIntToNumber(detail.kiotVietId);
+          this.pendingDetailCreation.delete(kiotVietId);
+        });
       }
 
       if (failedDetailRecords.length > 0) {

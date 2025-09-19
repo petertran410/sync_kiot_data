@@ -726,17 +726,29 @@ export class KiotVietPurchaseOrderService {
       );
       this.logger.log(`LarkBase sync completed successfully`);
     } catch (error) {
-      this.logger.error(`LarkBase sync FAILED: ${error.message}`);
-      this.logger.error(`STOPPING sync to prevent data duplication`);
+      this.logger.error(
+        `LarkBase order_supplier sync failed: ${error.message}`,
+      );
 
-      const purchaseOrderIds = purchase_orders.map((c) => c.id);
-      await this.prismaService.purchaseOrder.updateMany({
-        where: { id: { in: purchaseOrderIds } },
-        data: {
-          larkSyncStatus: 'FAILED',
-          larkSyncedAt: new Date(),
-        },
-      });
+      try {
+        const purchaseOrderIds = purchase_orders
+          .map((o) => o.id)
+          .filter((id) => id !== undefined);
+
+        if (purchaseOrderIds.length > 0) {
+          await this.prismaService.purchaseOrder.updateMany({
+            where: { id: { in: purchaseOrderIds } },
+            data: {
+              larkSyncedAt: new Date(),
+              larkSyncStatus: 'FAILED',
+            },
+          });
+        }
+      } catch (error) {
+        this.logger.error(
+          `Failed to update purchase_order status: ${error.message}`,
+        );
+      }
 
       throw new Error(`LarkBase sync failed: ${error.message}`);
     }
