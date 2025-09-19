@@ -635,6 +635,8 @@ export class KiotVietPurchaseOrderService {
                   uniqueKey: purchase_order.id + '.' + acsNumber,
                   price: detail.price,
                   discount: detail.disount,
+                  larkSyncStatus: 'PENDING',
+                  larkSyncedAt: new Date(),
                 },
                 create: {
                   purchaseOrderId: purchase_order.id,
@@ -647,6 +649,8 @@ export class KiotVietPurchaseOrderService {
                   uniqueKey: purchase_order.id + '.' + acsNumber,
                   price: detail.price,
                   discount: detail.disount,
+                  larkSyncStatus: 'PENDING',
+                  larkSyncedAt: new Date(),
                 },
               });
             }

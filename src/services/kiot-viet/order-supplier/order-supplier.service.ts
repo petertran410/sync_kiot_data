@@ -612,6 +612,8 @@ export class KiotVietOrderSupplierService {
                   allocationThirdParty: detail.allocationThirdParty,
                   orderQuantity: detail.orderQuantity,
                   subTotal: new Prisma.Decimal(detail.subTotal || 0),
+                  larkSyncedAt: new Date(),
+                  larkSyncStatus: 'PENDING',
                 },
                 create: {
                   kiotVietId: BigInt(detail.id),
@@ -633,6 +635,8 @@ export class KiotVietOrderSupplierService {
                   allocationThirdParty: detail.allocationThirdParty,
                   orderQuantity: detail.orderQuantity,
                   subTotal: new Prisma.Decimal(detail.subTotal || 0),
+                  larkSyncedAt: new Date(),
+                  larkSyncStatus: 'PENDING',
                 },
               });
             }
