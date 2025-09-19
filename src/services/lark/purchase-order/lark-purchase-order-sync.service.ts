@@ -68,6 +68,8 @@ export class LarkPurchaseOrderSyncService {
   private readonly baseTokenDetail: string;
   private readonly tableIdDetail: string;
   private readonly batchSize = 100;
+  private readonly pendingCreation = new Set<number>();
+  private readonly pendingDetailCreation = new Set<number>();
 
   private readonly MAX_AUTH_RETRIES = 3;
   private readonly AUTH_ERROR_CODES = [99991663, 99991664, 99991665];
@@ -79,12 +81,12 @@ export class LarkPurchaseOrderSyncService {
   private purchaseOrderDetailCache = new Map<string, string>();
 
   private cacheLoaded = false;
-  private detailCacheLoaded = false;
+  private cacheDetailLoaded = false;
 
   private lastCacheLoadTime: Date | null = null;
   private lastDetailCacheLoadTime: Date | null = null;
 
-  private readonly CACHE_VALIDITY_MINUTES = 30;
+  private readonly CACHE_VALIDITY_MINUTES = 600;
 
   constructor(
     private readonly httpService: HttpService,
@@ -123,7 +125,7 @@ export class LarkPurchaseOrderSyncService {
       await this.acquireSyncLock(lockKey);
 
       this.logger.log(
-        `🚀 Starting LarkBase sync for ${purchase_orders.length} purchase_orders`,
+        `Starting LarkBase sync for ${purchase_orders.length} purchase_orders...`,
       );
 
       const purchaseOrdersToSync = purchase_orders.filter(
@@ -131,8 +133,17 @@ export class LarkPurchaseOrderSyncService {
       );
 
       if (purchaseOrdersToSync.length === 0) {
-        this.logger.log('📋 No purchase_orders need LarkBase sync');
+        this.logger.log('No purchase_orders need LarkBase sync');
         await this.releaseSyncLock(lockKey);
+        return;
+      }
+
+      if (purchaseOrdersToSync.length < 5) {
+        this.logger.log(
+          `Small sync (${purchaseOrdersToSync.length} purchaseOrder) - using lightweight mode`,
+        );
+        await this.syncWithoutCache(purchaseOrdersToSync);
+        await this.releaseDetailSyncLock(lockKey);
         return;
       }
 
@@ -144,7 +155,7 @@ export class LarkPurchaseOrderSyncService {
       ).length;
 
       this.logger.log(
-        `📊 Including: ${pendingCount} PENDING + ${failedCount} FAILED purchase_orders`,
+        `Including: ${pendingCount} PENDING + ${failedCount} FAILED purchase_orders`,
       );
 
       await this.testLarkBaseConnection();
@@ -152,19 +163,19 @@ export class LarkPurchaseOrderSyncService {
       const cacheLoaded = await this.loadExistingRecordsWithRetry();
 
       if (!cacheLoaded) {
-        this.logger.warn(
-          '⚠️ Cache loading failed - will use alternative duplicate detection',
-        );
+        this.logger.warn('Cache loading failed - using lightweight mode');
+        await this.syncWithoutCache(purchaseOrdersToSync);
+        await this.releaseSyncLock(lockKey);
       }
 
       const { newPurchaseOrders, updatePurchaseOrders } =
-        this.categorizePurchaseOrders(purchaseOrdersToSync);
+        await this.categorizePurchaseOrders(purchaseOrdersToSync);
 
       this.logger.log(
-        `📋 Categorization: ${newPurchaseOrders.length} new, ${updatePurchaseOrders.length} updates`,
+        `Categorization: ${newPurchaseOrders.length} new, ${updatePurchaseOrders.length} updates`,
       );
 
-      const BATCH_SIZE_FOR_SYNC = 50;
+      const BATCH_SIZE_FOR_SYNC = 100;
 
       if (newPurchaseOrders.length > 0) {
         for (
@@ -194,15 +205,15 @@ export class LarkPurchaseOrderSyncService {
         }
       }
 
-      await this.releaseSyncLock(lockKey);
-      this.logger.log('🎉 LarkBase purchase_order and details sync completed!');
+      this.logger.log('LarkBase purchase_order sync completed!');
     } catch (error) {
       this.logger.error(
-        `❌ Purchase order sync failed: ${error.message}`,
+        `Purchase order sync failed: ${error.message}`,
         error.stack,
       );
-      await this.releaseSyncLock(lockKey);
       throw error;
+    } finally {
+      await this.releaseSyncLock(lockKey);
     }
   }
 
@@ -212,13 +223,7 @@ export class LarkPurchaseOrderSyncService {
     try {
       await this.acquireDetailSyncLock(lockKey);
 
-      this.logger.log(`🚀 Starting LarkBase sync for purchase_orders_details`);
-
-      // const purchaseOrderDetailsToSync = purchase_orders_details.filter(
-      //   (s) =>
-      //     s.uniqueKey &&
-      //     (s.larkSyncStatus === 'PENDING' || s.larkSyncStatus === 'FAILED'),
-      // );
+      this.logger.log(`Starting LarkBase sync for purchase_orders_details`);
 
       const purchaseOrderDetailsToSync =
         await this.prismaService.purchaseOrderDetail.findMany({
@@ -228,11 +233,11 @@ export class LarkPurchaseOrderSyncService {
         });
 
       this.logger.log(
-        `📋 Found ${purchaseOrderDetailsToSync.length} order_supplier_details to sync`,
+        `Found ${purchaseOrderDetailsToSync.length} purchase_order_detail to sync`,
       );
 
       if (purchaseOrderDetailsToSync.length === 0) {
-        this.logger.log('📋 No purchase_orders_details need LarkBase sync');
+        this.logger.log('No purchase_orders_details need LarkBase sync');
         await this.releaseSyncLock(lockKey);
         return;
       }
@@ -295,6 +300,15 @@ export class LarkPurchaseOrderSyncService {
       //   return;
       // }
 
+      if (purchaseOrderDetailsToSync.length < 5) {
+        this.logger.log(
+          `Small sync (${purchaseOrderDetailsToSync.length} purchaseOrderDetails) - using lightweight mode`,
+        );
+        await this.syncWithoutDetailCache(purchaseOrderDetailsToSync);
+        await this.releaseSyncLock(lockKey);
+        return;
+      }
+
       const pendingDetailCount = purchaseOrderDetailsToSync.filter(
         (s) => s.larkSyncStatus === 'PENDING',
       ).length;
@@ -303,7 +317,7 @@ export class LarkPurchaseOrderSyncService {
       ).length;
 
       this.logger.log(
-        `📊 Including: ${pendingDetailCount} PENDING + ${failedDetailCount} FAILED purchase_orders_details`,
+        `Including: ${pendingDetailCount} PENDING + ${failedDetailCount} FAILED purchase_orders_details`,
       );
 
       await this.testLarkBaseDetailConnection();
@@ -312,18 +326,20 @@ export class LarkPurchaseOrderSyncService {
 
       if (!cacheDetailLoaded) {
         this.logger.warn(
-          '⚠️ PurchaseOrderDetail cache loading failed - will use alternative duplicate detection',
+          'PurchaseOrderDetail cache loading failed - will use alternative duplicate detection',
         );
+        await this.syncWithoutDetailCache(purchaseOrderDetailsToSync);
+        await this.releaseDetailSyncLock(lockKey);
       }
 
       const { newPurchaseOrdersDetails, updatePurchaseOrdersDetails } =
-        this.categorizePurchaseOrderDetails(purchaseOrderDetailsToSync);
+        await this.categorizePurchaseOrderDetails(purchaseOrderDetailsToSync);
 
       this.logger.log(
-        `📋 PurchaseOrderDetail Categorization: ${newPurchaseOrdersDetails.length} new, ${updatePurchaseOrdersDetails.length} updates`,
+        `PurchaseOrderDetail Categorization: ${newPurchaseOrdersDetails.length} new, ${updatePurchaseOrdersDetails.length} updates`,
       );
 
-      const BATCH_SIZE_FOR_SYNC = 50;
+      const BATCH_SIZE_FOR_SYNC = 100;
 
       if (newPurchaseOrdersDetails.length > 0) {
         for (
@@ -359,15 +375,12 @@ export class LarkPurchaseOrderSyncService {
         }
       }
 
-      await this.releaseDetailSyncLock(lockKey);
-      this.logger.log('🎉 LarkBase PurchaseOrderDetail sync completed!');
+      this.logger.log('LarkBase PurchaseOrderDetail sync completed!');
     } catch (error) {
-      this.logger.error(
-        `❌ PurchaseOrderDetail sync failed: ${error.message}`,
-        error.stack,
-      );
-      await this.releaseDetailSyncLock(lockKey);
+      this.logger.error(`PurchaseOrderDetail sync failed: ${error.message}`);
       throw error;
+    } finally {
+      await this.releaseDetailSyncLock(lockKey);
     }
   }
 
@@ -375,35 +388,45 @@ export class LarkPurchaseOrderSyncService {
     const maxRetries = 3;
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        this.logger.log(
-          `📥 Loading cache (attempt ${attempt}/${maxRetries})...`,
-        );
+        this.logger.log(`Loading cache (attempt ${attempt}/${maxRetries})...`);
 
-        if (this.isCacheValid()) {
-          this.logger.log('✅ Using existing valid cache');
+        if (this.isCacheValid() && this.existingRecordsCache.size > 5000) {
+          this.logger.log(
+            `Using cache available (${this.existingRecordsCache.size} records) - skipping reload`,
+          );
           return true;
         }
 
-        this.clearCache();
+        if (this.lastCacheLoadTime) {
+          const cacheAgeMinutes =
+            (Date.now() - this.lastCacheLoadTime.getTime()) / (1000 * 60);
+          if (cacheAgeMinutes < 45 && this.existingRecordsCache.size > 500) {
+            this.logger.log(
+              `Recent cache (${cacheAgeMinutes.toFixed(1)}min old, ${this.existingRecordsCache.size} records) - skipping reload`,
+            );
+            return true;
+          }
+        }
 
+        this.clearCache();
         await this.loadExistingRecords();
 
         if (this.existingRecordsCache.size > 0) {
           this.logger.log(
-            `✅ Cache loaded successfully: ${this.existingRecordsCache.size} records`,
+            `Cache loaded successfully: ${this.existingRecordsCache.size} records`,
           );
           this.lastCacheLoadTime = new Date();
           return true;
         }
 
-        this.logger.warn(`⚠️ Cache empty on attempt ${attempt}`);
+        this.logger.warn(`Cache empty on attempt ${attempt}`);
       } catch (error) {
         this.logger.warn(
-          `❌ Cache loading attempt ${attempt} failed: ${error.message}`,
+          `Cache loading attempt ${attempt} failed: ${error.message}`,
         );
         if (attempt < maxRetries) {
-          const delay = attempt * 3000;
-          this.logger.log(`⏳ Waiting ${delay / 1000}s before retry...`);
+          const delay = attempt * 2000;
+          this.logger.log(`Waiting ${delay / 1000}s before retry...`);
           await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }
@@ -415,13 +438,30 @@ export class LarkPurchaseOrderSyncService {
     const maxRetries = 3;
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        this.logger.log(
-          `📥 Loading cache (attempt ${attempt}/${maxRetries})...`,
-        );
+        this.logger.log(`Loading cache (attempt ${attempt}/${maxRetries})...`);
 
-        if (this.isDetailCacheValid()) {
-          this.logger.log('✅ Using existing valid cache');
+        if (
+          this.isDetailCacheValid() &&
+          this.existingDetailRecordsCache.size > 5000
+        ) {
+          this.logger.log(
+            `Using cache detail available (${this.existingDetailRecordsCache.size} records) - skipping reload`,
+          );
           return true;
+        }
+
+        if (this.lastDetailCacheLoadTime) {
+          const detailCacheAgeMinutes =
+            (Date.now() - this.lastDetailCacheLoadTime.getTime()) / (1000 * 60);
+          if (
+            detailCacheAgeMinutes < 45 &&
+            this.existingDetailRecordsCache.size > 500
+          ) {
+            this.logger.log(
+              `Recent detail cache (${detailCacheAgeMinutes.toFixed(1)}min old, ${this.existingDetailRecordsCache.size} records) - skipping reload`,
+            );
+            return true;
+          }
         }
 
         this.clearDetailCache();
@@ -429,22 +469,21 @@ export class LarkPurchaseOrderSyncService {
 
         if (this.existingDetailRecordsCache.size > 0) {
           this.logger.log(
-            `✅ Cache loaded successfully: ${this.existingDetailRecordsCache.size} records`,
+            `Cache loaded successfully: ${this.existingDetailRecordsCache.size} records`,
           );
           this.lastDetailCacheLoadTime = new Date();
           return true;
         }
-        this.logger.warn(`⚠️ Cache empty on attempt ${attempt}`);
+        this.logger.warn(`Cache empty on attempt ${attempt}`);
       } catch (error) {
         this.logger.warn(
-          `❌ Cache loading attempt ${attempt} failed: ${error.message}`,
+          `Cache loading attempt ${attempt} failed: ${error.message}`,
         );
         if (attempt < maxRetries) {
-          const delay = attempt * 3000;
-          this.logger.log(`⏳ Waiting ${delay / 1000}s before retry...`);
+          const delay = attempt * 2000;
+          this.logger.log(`Waiting ${delay / 1000}s before retry...`);
           await new Promise((resolve) => setTimeout(resolve, delay));
         }
-        return false;
       }
     }
     return false;
@@ -455,121 +494,113 @@ export class LarkPurchaseOrderSyncService {
       return false;
     }
 
-    const now = new Date();
-    const diffMinutes =
-      (now.getTime() - this.lastCacheLoadTime.getTime()) / (1000 * 60);
-    return diffMinutes < this.CACHE_VALIDITY_MINUTES;
+    const cacheAge = Date.now() - this.lastCacheLoadTime.getTime();
+    const maxAge = this.CACHE_VALIDITY_MINUTES * 60 * 1000;
+
+    return cacheAge < maxAge && this.existingRecordsCache.size > 0;
   }
 
   private isDetailCacheValid(): boolean {
-    if (!this.detailCacheLoaded || !this.lastDetailCacheLoadTime) {
+    if (!this.cacheDetailLoaded || !this.lastDetailCacheLoadTime) {
       return false;
     }
 
-    const now = new Date();
-    const diffMinutes =
-      (now.getTime() - this.lastDetailCacheLoadTime.getTime()) / (1000 * 60);
-    return diffMinutes < this.CACHE_VALIDITY_MINUTES;
+    const cacheDetailAge = Date.now() - this.lastDetailCacheLoadTime.getTime();
+    const maxAge = this.CACHE_VALIDITY_MINUTES * 60 * 1000;
+
+    return cacheDetailAge < maxAge && this.existingDetailRecordsCache.size > 0;
   }
 
   private async loadExistingRecords(): Promise<void> {
     try {
       const headers = await this.larkAuthService.getPurchaseOrderHeaders();
-      let page_token = '';
+      let pageToken = '';
       let totalLoaded = 0;
       let cacheBuilt = 0;
       let stringConversions = 0;
-      const pageSize = 50;
+      const pageSize = 1000;
 
       do {
         const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records`;
-        const params = new URLSearchParams({
-          page_size: pageSize.toString(),
-          ...(page_token && { page_token }),
-        });
+
+        const params: any = {
+          page_size: pageSize,
+          ...(pageToken && { page_token: pageToken }),
+        };
 
         const startTime = Date.now();
 
-        try {
-          const response = await firstValueFrom(
-            this.httpService.get<LarkBatchResponse>(`${url}?${params}`, {
-              headers,
-              timeout: 60000,
-            }),
-          );
+        const response = await firstValueFrom(
+          this.httpService.get(url, {
+            headers,
+            params,
+            timeout: 15000,
+          }),
+        );
 
-          const loadTime = Date.now() - startTime;
+        const loadTime = Date.now() - startTime;
 
-          if (response.data.code === 0) {
-            const records = response.data.data?.items || [];
+        if (response.data.code === 0) {
+          const records = response.data.data?.items || [];
 
-            for (const record of records) {
-              const kiotVietIdRaw =
-                record.fields[LARK_PURCHASE_ORDER_FIELDS.KIOTVIET_ID];
+          for (const record of records) {
+            const kiotVietIdField =
+              record.fields[LARK_PURCHASE_ORDER_FIELDS.KIOTVIET_ID];
 
-              let kiotVietId = 0;
-
-              if (kiotVietIdRaw !== null && kiotVietIdRaw !== undefined) {
-                if (typeof kiotVietIdRaw === 'string') {
-                  const trimmed = kiotVietIdRaw.trim();
-                  if (trimmed !== '') {
-                    const parsed = parseInt(trimmed, 10);
-                    if (!isNaN(parsed) && parsed > 0) {
-                      kiotVietId = parsed;
-                      stringConversions++;
-                    }
-                  }
-                } else if (typeof kiotVietIdRaw === 'number') {
-                  kiotVietId = Math.floor(kiotVietIdRaw);
-                }
-              }
-
+            if (kiotVietIdField) {
+              const kiotVietId = this.safeBigIntToNumber(kiotVietIdField);
               if (kiotVietId > 0) {
                 this.existingRecordsCache.set(kiotVietId, record.record_id);
                 cacheBuilt++;
               }
-
-              const purchaseOrderCode =
-                record.fields[LARK_PURCHASE_ORDER_FIELDS.PURCHASE_ORDER_CODE];
-              if (purchaseOrderCode) {
-                this.purchaseOrderCodeCache.set(
-                  String(purchaseOrderCode).trim(),
-                  record.record_id,
-                );
-              }
             }
 
-            totalLoaded += records.length;
-            page_token = response.data.data?.page_token || '';
+            // let kiotVietId = 0;
 
-            this.logger.debug(
-              `📥 Loaded ${records.length} records in ${loadTime}ms (total: ${totalLoaded}, cached: ${cacheBuilt})`,
-            );
+            // if (kiotVietIdRaw !== null && kiotVietIdRaw !== undefined) {
+            //   if (typeof kiotVietIdRaw === 'string') {
+            //     const trimmed = kiotVietIdRaw.trim();
+            //     if (trimmed !== '') {
+            //       const parsed = parseInt(trimmed, 10);
+            //       if (!isNaN(parsed) && parsed > 0) {
+            //         kiotVietId = parsed;
+            //         stringConversions++;
+            //       }
+            //     }
+            //   } else if (typeof kiotVietIdRaw === 'number') {
+            //     kiotVietId = Math.floor(kiotVietIdRaw);
+            //   }
+            // }
 
-            if (totalLoaded % 1000 === 0 || !page_token) {
-              this.logger.log(
-                `📊 Cache progress: ${cacheBuilt}/${totalLoaded} records processed (${stringConversions} string conversions)`,
+            // if (kiotVietId > 0) {
+            //   this.existingRecordsCache.set(kiotVietId, record.record_id);
+            //   cacheBuilt++;
+            // }
+
+            const purchaseOrderCode =
+              record.fields[LARK_PURCHASE_ORDER_FIELDS.PURCHASE_ORDER_CODE];
+            if (purchaseOrderCode) {
+              this.purchaseOrderCodeCache.set(
+                String(purchaseOrderCode).trim(),
+                record.record_id,
               );
             }
-          } else {
-            throw new Error(
-              `LarkBase API error: ${response.data.msg} (code: ${response.data.code})`,
+          }
+
+          totalLoaded += records.length;
+          pageToken = response.data.data?.page_token || '';
+
+          if (totalLoaded % 1500 === 0 || !pageToken) {
+            this.logger.log(
+              `Cache progress: ${cacheBuilt}/${totalLoaded} records processed (${stringConversions} string conversions)`,
             );
           }
-        } catch (error) {
-          if (error.code === 'ECONNABORTED') {
-            throw new Error(
-              'Request timeout - LarkBase took too long to respond',
-            );
-          }
-          if (error.response?.status === 400) {
-            throw new Error(
-              'Bad request - check table permissions and field names',
-            );
-          }
-          throw error;
+        } else {
+          throw new Error(
+            `LarkBase API error: ${response.data.msg} (code: ${response.data.code})`,
+          );
         }
-      } while (page_token);
+      } while (pageToken);
 
       this.cacheLoaded = true;
 
@@ -577,10 +608,10 @@ export class LarkPurchaseOrderSyncService {
         totalLoaded > 0 ? Math.round((cacheBuilt / totalLoaded) * 100) : 0;
 
       this.logger.log(
-        `✅ Cache loaded: ${this.existingRecordsCache.size} by ID, ${this.purchaseOrderCodeCache.size} by code (${successRate}% success)`,
+        `Cache loaded: ${this.existingRecordsCache.size} by ID, ${this.purchaseOrderCodeCache.size} by code (${successRate}% success)`,
       );
     } catch (error) {
-      this.logger.error(`❌ Cache loading failed: ${error.message}`);
+      this.logger.error(`Cache loading failed: ${error.message}`);
       throw error;
     }
   }
@@ -589,124 +620,122 @@ export class LarkPurchaseOrderSyncService {
     try {
       const headers =
         await this.larkAuthService.getPurchaseOrderDetailHeaders();
-      let page_token = '';
+      let pageToken = '';
       let totalLoaded = 0;
-      let cacheBuilt = 0;
+      let cacheDetailBuilt = 0;
       let stringConversions = 0;
-      const pageSize = 50;
+      const pageSize = 100;
 
       do {
         const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseTokenDetail}/tables/${this.tableIdDetail}/records`;
 
         const params = new URLSearchParams({
           page_size: pageSize.toString(),
-          ...(page_token && { page_token }),
+          ...(pageToken && { pageToken }),
         });
 
         const startTime = Date.now();
 
-        try {
-          const response = await firstValueFrom(
-            this.httpService.get<LarkBatchResponse>(`${url}?${params}`, {
-              headers,
-              timeout: 60000,
-            }),
-          );
+        const response = await firstValueFrom(
+          this.httpService.get(url, {
+            headers,
+            params,
+            timeout: 15000,
+          }),
+        );
 
-          const loadTime = Date.now() - startTime;
+        const loadTime = Date.now() - startTime;
 
-          if (response.data.code === 0) {
-            const records = response.data.data?.items || [];
+        if (response.data.code === 0) {
+          const records = response.data.data?.items || [];
 
-            for (const record of records) {
-              // const fields = record.fields;
-              const uniqueKeyRaw =
-                record.fields[LARK_PURCHASE_ORDER_DETAIL_FIELDS.UNIQUE_KEY];
+          for (const record of records) {
+            const uniqueKeyRaw =
+              record.fields[LARK_PURCHASE_ORDER_DETAIL_FIELDS.UNIQUE_KEY];
 
-              let uniqueKey = '';
+            let uniqueKey = '';
 
-              if (uniqueKeyRaw !== null && uniqueKeyRaw !== undefined) {
-                if (typeof uniqueKeyRaw === 'string') {
-                  const trimmed = uniqueKeyRaw.trim();
-                  if (trimmed !== '') {
-                    uniqueKey = trimmed;
-                    stringConversions++;
-                  }
-                } else if (typeof uniqueKeyRaw === 'number') {
-                  uniqueKey = String(uniqueKeyRaw).trim();
-                  if (uniqueKey !== '') {
-                    stringConversions++;
-                  }
+            if (uniqueKeyRaw !== null && uniqueKeyRaw !== undefined) {
+              if (typeof uniqueKeyRaw === 'string') {
+                const trimmed = uniqueKeyRaw.trim();
+                if (trimmed !== '') {
+                  uniqueKey = trimmed;
+                  stringConversions++;
+                }
+              } else if (typeof uniqueKeyRaw === 'number') {
+                uniqueKey = String(uniqueKeyRaw).trim();
+                if (uniqueKey !== '') {
+                  stringConversions++;
                 }
               }
-
-              if (uniqueKey && record.record_id) {
-                this.existingDetailRecordsCache.set(
-                  uniqueKey,
-                  record.record_id,
-                );
-                cacheBuilt++;
-              }
             }
 
-            totalLoaded += records.length;
-            page_token = response.data.data?.page_token || '';
-
-            this.logger.debug(
-              `📄 Loaded: ${records.length} records in ${loadTime}ms (total: ${totalLoaded}, cached: ${cacheBuilt}`,
-            );
-
-            if (totalLoaded % 1000 === 0 || !page_token) {
-              this.logger.log(
-                `📊 Cache progress: ${cacheBuilt}/${totalLoaded} records processed (${stringConversions} string conversions)`,
-              );
+            if (uniqueKey && record.record_id) {
+              this.existingDetailRecordsCache.set(uniqueKey, record.record_id);
+              cacheDetailBuilt++;
             }
-          } else {
-            throw new Error(
-              `LarkBase API error: ${response.data.msg} (code: ${response.data.code})`,
+          }
+
+          totalLoaded += records.length;
+          pageToken = response.data.data?.page_token || '';
+
+          if (totalLoaded % 1500 === 0 || !pageToken) {
+            this.logger.log(
+              `Cache progress: ${cacheDetailBuilt}/${totalLoaded} records processed (${stringConversions} string conversions)`,
             );
           }
-        } catch (error) {
-          if (error.code === 'ECONNABORTED') {
-            throw new Error(
-              'Request timeout - LarkBase took too long to respond',
-            );
-          }
-          if (error.response?.status === 400) {
-            throw new Error(
-              'Bad request - check table permissions and field names',
-            );
-          }
-          throw error;
+        } else {
+          throw new Error(
+            `LarkBase API error: ${response.data.msg} (code: ${response.data.code})`,
+          );
         }
-      } while (page_token);
+      } while (pageToken);
 
-      this.detailCacheLoaded = true;
+      this.cacheDetailLoaded = true;
 
       const successRate =
-        totalLoaded > 0 ? Math.round((cacheBuilt / totalLoaded) * 100) : 0;
+        totalLoaded > 0
+          ? Math.round((cacheDetailBuilt / totalLoaded) * 100)
+          : 0;
 
       this.logger.log(
-        `✅ Cache loaded: ${this.existingRecordsCache.size} by ID, ${this.purchaseOrderCodeCache.size} by code (${successRate}% success)`,
+        `Cache loaded: ${this.existingRecordsCache.size} by ID, ${this.purchaseOrderCodeCache.size} by code (${successRate}% success)`,
       );
     } catch (error) {
       this.logger.error(
-        `❌ Failed to load existing detail records: ${error.message}`,
-        error.stack,
+        `Failed to load existing detail records: ${error.message}`,
       );
       throw error;
     }
   }
 
-  private categorizePurchaseOrders(purchase_orders: any[]): {
-    newPurchaseOrders: any[];
-    updatePurchaseOrders: any[];
-  } {
+  private async categorizePurchaseOrders(purchase_orders: any[]): Promise<any> {
     const newPurchaseOrders: any[] = [];
     const updatePurchaseOrders: any[] = [];
 
+    const duplicateDetected = purchase_orders.filter((purchase_order) => {
+      const kiotVietId = this.safeBigIntToNumber(purchase_order.kiotVietId);
+      return this.existingRecordsCache.has(kiotVietId);
+    });
+
+    if (duplicateDetected.length > 0) {
+      this.logger.warn(
+        `Detected ${duplicateDetected.length} purchase_orders already in cache: ${duplicateDetected
+          .map((o) => o.kiotVietId)
+          .slice(0, 5)
+          .join(', ')}`,
+      );
+    }
+
     for (const purchase_order of purchase_orders) {
       const kiotVietId = this.safeBigIntToNumber(purchase_order.kiotVietId);
+
+      if (this.pendingCreation.has(kiotVietId)) {
+        this.logger.warn(
+          `Purchase Order ${kiotVietId} is pending creation, skipping`,
+        );
+        continue;
+      }
 
       let existingRecordId = this.existingRecordsCache.get(kiotVietId);
 
@@ -729,29 +758,130 @@ export class LarkPurchaseOrderSyncService {
     return { newPurchaseOrders, updatePurchaseOrders };
   }
 
-  private categorizePurchaseOrderDetails(details: any[]): {
-    newPurchaseOrdersDetails: any[];
-    updatePurchaseOrdersDetails: any[];
-  } {
+  private async categorizePurchaseOrderDetails(
+    purchase_order_details: any[],
+  ): Promise<any> {
     const newPurchaseOrdersDetails: any[] = [];
     const updatePurchaseOrdersDetails: any[] = [];
 
-    for (const detail of details) {
-      // Dùng uniqueKey trực tiếp từ database record
-      const uniqueKey = detail.uniqueKey;
+    const duplicateDetected = purchase_order_details.filter(
+      (purchase_order_detail) => {
+        const uniqueKey = purchase_order_detail.uniqueKey;
+        return this.existingDetailRecordsCache.has(uniqueKey);
+      },
+    );
 
-      if (uniqueKey && this.existingDetailRecordsCache.has(uniqueKey)) {
-        const existingRecordId = this.existingDetailRecordsCache.get(uniqueKey);
+    if (duplicateDetected.length > 0) {
+      this.logger.warn(
+        `Detectd ${duplicateDetected.length} purchase_order_detail already in cache: ${duplicateDetected.map((o) => o.uniqueKey)}`,
+      );
+    }
+
+    for (const purchase_order_detail of purchase_order_details) {
+      const uniqueKey = purchase_order_detail.uniqueKey;
+
+      if (this.pendingDetailCreation.has(uniqueKey)) {
+        this.logger.warn(
+          `Purchase Order Detail ${uniqueKey} is pending creation, skipping`,
+        );
+        continue;
+      }
+
+      let existingDetailRecordId =
+        this.existingDetailRecordsCache.get(uniqueKey);
+
+      // if(!existingDetailRecordId) {
+      //   existingDetailRecordId = this.purchaseOrderDetailCache
+      // }
+
+      if (existingDetailRecordId) {
         updatePurchaseOrdersDetails.push({
-          ...detail,
-          larkRecordId: existingRecordId,
+          ...purchase_order_detail,
+          larkRecordId: existingDetailRecordId,
         });
       } else {
-        newPurchaseOrdersDetails.push(detail);
+        this.pendingDetailCreation.add(uniqueKey);
+        newPurchaseOrdersDetails.push(purchase_order_detail);
       }
     }
 
     return { newPurchaseOrdersDetails, updatePurchaseOrdersDetails };
+  }
+
+  private async syncWithoutCache(purchase_orders: any[]): Promise<void> {
+    this.logger.log(`Running lightweight sync without full cache...`);
+
+    const existingPurchaseOrders =
+      await this.prismaService.purchaseOrder.findMany({
+        where: { kiotVietId: { in: purchase_orders.map((o) => o.kiotVietId) } },
+        select: { kiotVietId: true, larkRecordId: true },
+      });
+
+    const quickCache = new Map<number, string>();
+    existingPurchaseOrders.forEach((o) => {
+      if (o.larkRecordId) {
+        quickCache.set(Number(o.kiotVietId), o.larkRecordId);
+      }
+    });
+
+    const originalCache = this.existingRecordsCache;
+    this.existingRecordsCache = quickCache;
+
+    try {
+      const { newPurchaseOrders, updatePurchaseOrders } =
+        await this.categorizePurchaseOrders(purchase_orders);
+
+      if (newPurchaseOrders.length > 0) {
+        await this.processNewPurchaseOrders(newPurchaseOrders);
+      }
+
+      if (updatePurchaseOrders.length > 0) {
+        await this.processUpdatePurchaseOrders(updatePurchaseOrders);
+      }
+    } finally {
+      this.existingRecordsCache = originalCache;
+    }
+  }
+
+  private async syncWithoutDetailCache(
+    purchase_orders_detail: any[],
+  ): Promise<void> {
+    this.logger.log(`Running lightweight sync without full cache...`);
+
+    const existingPurchaseOrdersDetail =
+      await this.prismaService.purchaseOrderDetail.findMany({
+        where: {
+          uniqueKey: { in: purchase_orders_detail.map((o) => o.uniqueKey) },
+        },
+        select: { uniqueKey: true, larkRecordId: true },
+      });
+
+    const quickDetailCache = new Map<string, string>();
+    existingPurchaseOrdersDetail.forEach((o) => {
+      if (o.larkRecordId) {
+        quickDetailCache.set(String(o.uniqueKey), o.larkRecordId);
+      }
+    });
+
+    const originalDetailCache = this.existingDetailRecordsCache;
+    this.existingDetailRecordsCache = quickDetailCache;
+
+    try {
+      const { newPurchaseOrdersDetail, updatePurchaseOrdersDetail } =
+        await this.categorizePurchaseOrderDetails(purchase_orders_detail);
+
+      if (newPurchaseOrdersDetail.length > 0) {
+        await this.processNewPurchaseOrderDetails(newPurchaseOrdersDetail);
+      }
+
+      if (updatePurchaseOrdersDetail.length > 0) {
+        await this.processUpdatePurchaseOrderDetails(
+          updatePurchaseOrdersDetail,
+        );
+      }
+    } finally {
+      this.existingDetailRecordsCache = originalDetailCache;
+    }
   }
 
   private async processNewPurchaseOrders(
@@ -760,7 +890,7 @@ export class LarkPurchaseOrderSyncService {
     if (purchase_orders.length === 0) return;
 
     this.logger.log(
-      `📝 Creating ${purchase_orders.length} new purchase_orders...`,
+      `Creating ${purchase_orders.length} new purchase_orders...`,
     );
 
     const batches = this.chunkArray(purchase_orders, this.batchSize);
@@ -769,12 +899,31 @@ export class LarkPurchaseOrderSyncService {
 
     for (let i = 0; i < batches.length; i++) {
       const batch = batches[i];
+
+      const verifiedBatch: any[] = [];
+      for (const purchaseOrder of batch) {
+        const kiotVietId = this.safeBigIntToNumber(purchaseOrder.kiotVietId);
+        if (!this.existingRecordsCache.has(kiotVietId)) {
+          verifiedBatch.push(purchaseOrder);
+        } else {
+          this.logger.warn(
+            `Skipping duplicate purchase_order ${kiotVietId} in batch ${i + 1}`,
+          );
+        }
+      }
+
+      if (verifiedBatch.length === 0) {
+        this.logger.log(
+          `Batch ${i + 1} skipped - all purchase_order already exist`,
+        );
+        continue;
+      }
       this.logger.log(
-        `Creating batch ${i + 1}/${batches.length} (${batch.length} purchase_orders)...`,
+        `Creating batch ${i + 1}/${batches.length} (${verifiedBatch.length} purchase_orders)...`,
       );
 
       const { successRecords, failedRecords } =
-        await this.batchCreatePurchaseOrders(batch);
+        await this.batchCreatePurchaseOrders(verifiedBatch);
 
       totalCreated += successRecords.length;
       totalFailed += failedRecords.length;
@@ -788,7 +937,7 @@ export class LarkPurchaseOrderSyncService {
       }
 
       this.logger.log(
-        `📊 Batch ${i + 1}/${batches.length}: ${successRecords.length}/${batch.length} created`,
+        `Batch ${i + 1}/${batches.length}: ${successRecords.length}/${batch.length} created`,
       );
 
       if (i < batches.length - 1) {
@@ -797,7 +946,7 @@ export class LarkPurchaseOrderSyncService {
     }
 
     this.logger.log(
-      `🎯 Create complete: ${totalCreated} success, ${totalFailed} failed`,
+      `Create complete: ${totalCreated} success, ${totalFailed} failed`,
     );
   }
 
@@ -805,7 +954,7 @@ export class LarkPurchaseOrderSyncService {
     if (details.length === 0) return;
 
     this.logger.log(
-      `📝 Creating ${details.length} new purchase order details details...`,
+      `Creating ${details.length} new purchase order details details...`,
     );
 
     const batches = this.chunkArray(details, this.batchSize);
@@ -814,12 +963,32 @@ export class LarkPurchaseOrderSyncService {
 
     for (let i = 0; i < batches.length; i++) {
       const batch = batches[i];
+
+      const verifiedBatch: any[] = [];
+      for (const purchaseOrderDetail of batch) {
+        const uniqueKey = purchaseOrderDetail.uniqueKey;
+        if (!this.existingDetailRecordsCache.has(uniqueKey)) {
+          verifiedBatch.push(purchaseOrderDetail);
+        } else {
+          this.logger.warn(
+            `Skipping duplicate purchase_order_detail ${uniqueKey} in batch ${i + 1}`,
+          );
+        }
+      }
+
+      if (verifiedBatch.length === 0) {
+        this.logger.log(
+          `Batch ${i + 1} skipped - all purchase_order_detail already exist`,
+        );
+        continue;
+      }
+
       this.logger.log(
-        `Creating batch ${i + 1}/${batches.length} (${batch.length} purchase_orders_details)...`,
+        `Creating batch ${i + 1}/${batches.length} (${verifiedBatch.length} purchase_orders_details)...`,
       );
 
       const { successDetailsRecords, failedDetailsRecords } =
-        await this.batchCreatePurchaseOrderDetails(batch);
+        await this.batchCreatePurchaseOrderDetails(verifiedBatch);
 
       totalDetailsCreated += successDetailsRecords.length;
       totalDetailsFailed += failedDetailsRecords.length;
@@ -833,7 +1002,7 @@ export class LarkPurchaseOrderSyncService {
       }
 
       this.logger.log(
-        `📊 Batch ${i + 1}/${batches.length}: ${successDetailsRecords.length}/${batch.length} created`,
+        `Batch ${i + 1}/${batches.length}: ${successDetailsRecords.length}/${batch.length} created`,
       );
 
       if (i < batches.length - 1) {
@@ -841,7 +1010,7 @@ export class LarkPurchaseOrderSyncService {
       }
 
       this.logger.log(
-        `🎯 Create complete: ${totalDetailsCreated} success, ${totalDetailsFailed} failed`,
+        `Create complete: ${totalDetailsCreated} success, ${totalDetailsFailed} failed`,
       );
     }
   }
@@ -852,14 +1021,14 @@ export class LarkPurchaseOrderSyncService {
     if (purchase_orders.length === 0) return;
 
     this.logger.log(
-      `📝 Updating ${purchase_orders.length} existing purchase_orders...`,
+      `Updating ${purchase_orders.length} existing purchase_orders...`,
     );
 
     let successCount = 0;
     let failedCount = 0;
     const createFallbacks: any[] = [];
 
-    const UPDATE_CHUNK_SIZE = 50;
+    const UPDATE_CHUNK_SIZE = 5;
 
     for (let i = 0; i < purchase_orders.length; i += UPDATE_CHUNK_SIZE) {
       const chunk = purchase_orders.slice(i, i + UPDATE_CHUNK_SIZE);
@@ -892,68 +1061,73 @@ export class LarkPurchaseOrderSyncService {
 
     if (createFallbacks.length > 0) {
       this.logger.log(
-        `📝 Creating ${createFallbacks.length} purchase_orders that failed update...`,
+        `Processing ${createFallbacks.length} update fallbacks as new purchase_orders...`,
       );
       await this.processNewPurchaseOrders(createFallbacks);
     }
 
     this.logger.log(
-      `🎯 Update complete: ${successCount} success, ${failedCount} failed`,
+      `Update complete: ${successCount} success, ${failedCount} failed`,
     );
   }
 
   private async processUpdatePurchaseOrderDetails(
-    details: any[],
+    purchase_orders_detail: any[],
   ): Promise<void> {
-    if (details.length === 0) return;
+    if (purchase_orders_detail.length === 0) return;
 
     this.logger.log(
-      `📝 Updating ${details.length} existing purchase order details...`,
+      `Updating ${purchase_orders_detail.length} existing purchase order purchase_orders_detail...`,
     );
 
     let successDetailCount = 0;
     let failedDetailCount = 0;
-    const createFallbacks: any[] = [];
+    const createDetailFallbacks: any[] = [];
 
-    const UPDATE_CHUNK_SIZE = 50;
+    const UPDATE_CHUNK_SIZE = 5;
 
-    for (let i = 0; i < details.length; i += UPDATE_CHUNK_SIZE) {
-      const chunk = details.slice(i, i + UPDATE_CHUNK_SIZE);
+    for (let i = 0; i < purchase_orders_detail.length; i += UPDATE_CHUNK_SIZE) {
+      const chunk = purchase_orders_detail.slice(i, i + UPDATE_CHUNK_SIZE);
 
       await Promise.all(
-        chunk.map(async (detail) => {
+        chunk.map(async (purchase_order_detail) => {
           try {
-            const updated = await this.updateSinglePurchaseOrderDetail(detail);
+            const updated = await this.updateSinglePurchaseOrderDetail(
+              purchase_order_detail,
+            );
 
             if (updated) {
               successDetailCount++;
-              await this.updateDetailDatabaseStatus([detail], 'SYNCED');
+              await this.updateDetailDatabaseStatus(
+                [purchase_order_detail],
+                'SYNCED',
+              );
             } else {
-              createFallbacks.push(detail);
+              createDetailFallbacks.push(purchase_order_detail);
             }
           } catch (error) {
             this.logger.warn(
-              `Update failed for detail ${detail.uniqueKey}: ${error.message}`,
+              `Update failed for purchase_order_detail ${purchase_order_detail.uniqueKey}: ${error.message}`,
             );
-            createFallbacks.push(detail);
+            createDetailFallbacks.push(purchase_order_detail);
           }
         }),
       );
 
-      if (i + UPDATE_CHUNK_SIZE < details.length) {
+      if (i + UPDATE_CHUNK_SIZE < purchase_orders_detail.length) {
         await new Promise((resolve) => setTimeout(resolve, 300));
       }
     }
 
-    if (createFallbacks.length > 0) {
+    if (createDetailFallbacks.length > 0) {
       this.logger.log(
-        `🔄 Processing ${createFallbacks.length} update fallbacks as new detail records...`,
+        `Processing ${createDetailFallbacks.length} update fallbacks as new detail records...`,
       );
-      await this.processNewPurchaseOrderDetails(createFallbacks);
+      await this.processNewPurchaseOrderDetails(createDetailFallbacks);
     }
 
     this.logger.log(
-      `📝 Update complete: ${successDetailCount} success, ${failedDetailCount} failed`,
+      `Update complete: ${successDetailCount} success, ${failedDetailCount} failed`,
     );
   }
 
@@ -1022,18 +1196,27 @@ export class LarkPurchaseOrderSyncService {
         }
 
         this.logger.warn(
-          `⚠️ Batch create failed: ${response.data.msg} (Code: ${response.data.code})`,
+          `Batch create failed: ${response.data.msg} (Code: ${response.data.code})`,
         );
         return { successRecords: [], failedRecords: purchase_orders };
       } catch (error) {
-        if (error.response?.status === 401 || error.response?.status === 403) {
-          authRetries++;
-          await this.forceTokenRefresh();
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-          continue;
-        }
+        this.logger.error('Batch create error details:', {
+          status: error.response?.status,
+          statusText: error.response?.statusText,
+          data: error.response?.data,
+          config: {
+            url: error.config?.url,
+            method: error.config?.method,
+            data: JSON.parse(error.config?.data || '{}'),
+          },
+        });
 
-        this.logger.error(`❌ Batch create error: ${error.message}`);
+        if (records && records.length > 0) {
+          this.logger.error(
+            'Sample record being sent:',
+            JSON.stringify(records[0], null, 2),
+          );
+        }
         return { successRecords: [], failedRecords: purchase_orders };
       }
     }
@@ -1082,7 +1265,6 @@ export class LarkPurchaseOrderSyncService {
             const purchase_order_detail = successDetailsRecords[i];
             const createdDetailRecord = createdDetailsRecords[i];
 
-            // Use uniqueKey directly from database record
             if (purchase_order_detail.uniqueKey) {
               this.existingDetailRecordsCache.set(
                 purchase_order_detail.uniqueKey,
@@ -1102,19 +1284,28 @@ export class LarkPurchaseOrderSyncService {
         }
 
         this.logger.warn(
-          `⚠️ Batch create failed: ${response.data.msg} (Code: ${response.data.code})`,
+          `Batch create failed: ${response.data.msg} (Code: ${response.data.code})`,
         );
 
         return { successDetailsRecords: [], failedDetailsRecords: details };
       } catch (error) {
-        if (error.response?.status === 403) {
-          authRetries++;
-          await this.forceDetailTokenRefresh();
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-          continue;
-        }
+        this.logger.error('Batch create error details:', {
+          status: error.response?.status,
+          statusText: error.response?.statusText,
+          data: error.response?.data,
+          config: {
+            url: error.config?.url,
+            method: error.config?.method,
+            data: JSON.parse(error.config?.data || '{}'),
+          },
+        });
 
-        this.logger.error(`❌ Batch create error: ${error.message}`);
+        if (records && records.length > 0) {
+          this.logger.error(
+            'Sample record being sent:',
+            JSON.stringify(records[0], null, 2),
+          );
+        }
         return { successDetailsRecords: [], failedDetailsRecords: details };
       }
     }
@@ -1142,7 +1333,7 @@ export class LarkPurchaseOrderSyncService {
 
         if (response.data.code === 0) {
           this.logger.debug(
-            `✅ Updated record ${purchase_order.larkRecordId} for purchase_order ${purchase_order.code}`,
+            `Updated record ${purchase_order.larkRecordId} for purchase_order ${purchase_order.code}`,
           );
           return true;
         }
@@ -1197,7 +1388,7 @@ export class LarkPurchaseOrderSyncService {
 
         if (response.data.code === 0) {
           this.logger.debug(
-            `✅ Updated record ${detail.larkRecordId} for purchase_order_detail ${detail.code}`,
+            `Updated record ${detail.larkRecordId} for purchase_order_detail ${detail.code}`,
           );
           return true;
         }
@@ -1683,7 +1874,7 @@ export class LarkPurchaseOrderSyncService {
   clearDetailCache(): void {
     this.existingDetailRecordsCache.clear();
     this.purchaseOrderDetailCache.clear();
-    this.detailCacheLoaded = false;
+    this.cacheDetailLoaded = false;
     this.lastCacheLoadTime = null;
     this.logger.log('🗑️ Detail cache cleared');
   }

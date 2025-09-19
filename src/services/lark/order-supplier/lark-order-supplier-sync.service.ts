@@ -123,7 +123,7 @@ export class LarkOrderSupplierSyncService {
   private lastCacheLoadTime: Date | null = null;
   private lastDetailCacheLoadTime: Date | null = null;
 
-  private readonly CACHE_VALIDITY_MINUTES = 30;
+  private readonly CACHE_VALIDITY_MINUTES = 600;
 
   constructor(
     private readonly httpService: HttpService,
@@ -280,10 +280,10 @@ export class LarkOrderSupplierSyncService {
 
       if (orderSupplierDetailsToSync.length < 5) {
         this.logger.log(
-          `Small sync (${orderSupplierDetailsToSync.length} orderSuppliers) - using lightweight mode`,
+          `Small sync (${orderSupplierDetailsToSync.length} orderSupplierDetails) - using lightweight mode`,
         );
         await this.syncWithoutDetailCache(orderSupplierDetailsToSync);
-        await this.releaseSyncLock(lockKey);
+        await this.releaseDetailSyncLock(lockKey);
         return;
       }
 
@@ -305,7 +305,7 @@ export class LarkOrderSupplierSyncService {
       if (!cacheDetailLoaded) {
         this.logger.warn('Cache loading failed - using lightweight mode');
         await this.syncWithoutDetailCache(orderSupplierDetailsToSync);
-        await this.releaseSyncLock(lockKey);
+        await this.releaseDetailSyncLock(lockKey);
       }
 
       const { newOrderSuppliersDetail, updateOrderSuppliersDetail } =
@@ -590,7 +590,7 @@ export class LarkOrderSupplierSyncService {
         `Cache loaded: ${this.existingRecordsCache.size} by ID, ${this.orderSupplierCodeCache.size} by code (${successRate}% success)`,
       );
     } catch (error) {
-      this.logger.error(`❌ Cache loading failed: ${error.message}`);
+      this.logger.error(`Cache loading failed: ${error.message}`);
       throw error;
     }
   }
@@ -681,12 +681,12 @@ export class LarkOrderSupplierSyncService {
         `Cache loaded: ${this.existingDetailRecordsCache.size} by ID, ${this.orderSupplierDetailCodeCache.size} by code (${successRate}% success)`,
       );
     } catch (error) {
-      this.logger.error(`❌ Cache loading failed: ${error.message}`);
+      this.logger.error(`Cache loading failed: ${error.message}`);
       throw error;
     }
   }
 
-  private categorizeOrderSuppliers(order_suppliers: any[]): Promise<any> {
+  private async categorizeOrderSuppliers(order_suppliers: any[]): Promise<any> {
     const newOrderSuppliers: any[] = [];
     const updateOrderSuppliers: any[] = [];
 
@@ -736,7 +736,7 @@ export class LarkOrderSupplierSyncService {
     return { newOrderSuppliers, updateOrderSuppliers };
   }
 
-  private categorizeOrderSuppliersDetail(
+  private async categorizeOrderSuppliersDetail(
     order_suppliers_detail: any[],
   ): Promise<any> {
     const newOrderSuppliersDetail: any[] = [];
@@ -775,11 +775,11 @@ export class LarkOrderSupplierSyncService {
       let existingDetailRecordId =
         this.existingDetailRecordsCache.get(kiotVietId);
 
-      if (!existingDetailRecordId && order_supplier_detail.code) {
-        existingDetailRecordId = this.orderSupplierDetailCodeCache.get(
-          String(order_supplier_detail.code).trim(),
-        );
-      }
+      // if (!existingDetailRecordId) {
+      //   existingDetailRecordId = this.orderSupplierDetailCodeCache.get(
+      //     String(order_supplier_detail.code).trim(),
+      //   );
+      // }
 
       if (existingDetailRecordId) {
         updateOrderSuppliersDetail.push({
