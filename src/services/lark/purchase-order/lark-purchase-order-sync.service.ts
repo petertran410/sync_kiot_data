@@ -732,22 +732,12 @@ export class LarkPurchaseOrderSyncService {
     const newPurchaseOrders: any[] = [];
     const updatePurchaseOrders: any[] = [];
 
-    const duplicateDetected = purchase_orders.filter((purchase_order) => {
-      const kiotVietId = this.safeBigIntToNumber(purchase_order.kiotVietId);
-      return this.existingRecordsCache.has(kiotVietId);
-    });
-
-    if (duplicateDetected.length > 0) {
-      this.logger.warn(
-        `Detected ${duplicateDetected.length} purchase_orders already in cache: ${duplicateDetected
-          .map((o) => o.kiotVietId)
-          .slice(0, 5)
-          .join(', ')}`,
-      );
-    }
-
     for (const purchase_order of purchase_orders) {
-      const kiotVietId = this.safeBigIntToNumber(purchase_order.kiotVietId);
+      const kiotVietId = purchase_order.kiotVietId
+        ? typeof purchase_order.kiotVietId === 'bigint'
+          ? Number(purchase_order.kiotVietId)
+          : Number(purchase_order.kiotVietId)
+        : 0;
 
       if (this.pendingCreation.has(kiotVietId)) {
         this.logger.warn(
@@ -886,16 +876,16 @@ export class LarkPurchaseOrderSyncService {
     this.existingDetailRecordsCache = quickDetailCache;
 
     try {
-      const { newPurchaseOrdersDetail, updatePurchaseOrdersDetail } =
+      const { newPurchaseOrdersDetails, updatePurchaseOrdersDetails } =
         await this.categorizePurchaseOrderDetails(purchase_orders_detail);
 
-      if (newPurchaseOrdersDetail.length > 0) {
-        await this.processNewPurchaseOrderDetails(newPurchaseOrdersDetail);
+      if (newPurchaseOrdersDetails.length > 0) {
+        await this.processNewPurchaseOrderDetails(newPurchaseOrdersDetails);
       }
 
-      if (updatePurchaseOrdersDetail.length > 0) {
+      if (updatePurchaseOrdersDetails.length > 0) {
         await this.processUpdatePurchaseOrderDetails(
-          updatePurchaseOrdersDetail,
+          updatePurchaseOrdersDetails,
         );
       }
     } finally {
