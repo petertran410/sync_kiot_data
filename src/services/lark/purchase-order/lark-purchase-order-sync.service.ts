@@ -218,12 +218,12 @@ export class LarkPurchaseOrderSyncService {
   }
 
   async syncPurchaseOrderDetailsToLarkBase(): Promise<void> {
-    this.logger.log('🔍 DEBUG: syncPurchaseOrderDetailsToLarkBase called');
+    this.logger.log('DEBUG: syncPurchaseOrderDetailsToLarkBase called');
     const lockKey = `lark_purchase_order_detail_sync_lock_${Date.now()}`;
 
     try {
       await this.acquireDetailSyncLock(lockKey);
-      this.logger.log('🔍 DEBUG: Lock acquired successfully');
+      this.logger.log('DEBUG: Lock acquired successfully');
 
       this.logger.log(`Starting LarkBase sync for purchase_orders_details`);
 
@@ -235,96 +235,26 @@ export class LarkPurchaseOrderSyncService {
         });
 
       this.logger.log(
-        `🔍 DEBUG: Found ${purchaseOrderDetailsToSync.length} records with PENDING/FAILED status`,
+        `DEBUG: Found ${purchaseOrderDetailsToSync.length} records with PENDING/FAILED status`,
       );
 
-      // this.logger.log(
-      //   `Found ${purchaseOrderDetailsToSync.length} purchase_order_detail to sync`,
-      // );
-
       if (purchaseOrderDetailsToSync.length === 0) {
-        this.logger.log(
-          '🔍 DEBUG: No records to sync - checking database status',
-        );
-        // this.logger.log('No purchase_orders_details need LarkBase sync');
+        this.logger.log('DEBUG: No records to sync - checking database status');
 
         const statusCounts =
           await this.prismaService.purchaseOrderDetail.groupBy({
             by: ['larkSyncStatus'],
             _count: { larkSyncStatus: true },
           });
-        this.logger.log('🔍 DEBUG: Current status distribution:', statusCounts);
-        await this.releaseSyncLock(lockKey);
+        this.logger.log('DEBUG: Current status distribution:', statusCounts);
         return;
-
-        // await this.releaseSyncLock(lockKey);
-        // return;
       }
-
-      // const purchaseOrderDetailsIds = purchase_orders_details
-      //   .map((po) => po.id)
-      //   .filter((id) => id);
-
-      // if (purchaseOrderDetailsIds.length === 0) {
-      //   this.logger.log('📋 No valid purchase order IDs found');
-      //   await this.releaseDetailSyncLock(lockKey);
-      //   return;
-      // }
-
-      // const purchaseOrdersWithDetails =
-      //   await this.prismaService.purchaseOrder.findMany({
-      //     where: {
-      //       id: { in: purchaseOrderIds },
-      //       details: {
-      //         some: {
-      //           OR: [
-      //             { larkSyncStatus: 'PENDING' },
-      //             { larkSyncStatus: 'FAILED' },
-      //           ],
-      //         },
-      //       },
-      //     },
-      //     include: {
-      //       details: {
-      //         where: {
-      //           OR: [
-      //             { larkSyncStatus: 'PENDING' },
-      //             { larkSyncStatus: 'FAILED' },
-      //           ],
-      //         },
-      //       },
-      //     },
-      //   });
-
-      // const allDetails: any[] = [];
-
-      // for (const purchaseOrder of purchaseOrdersWithDetails) {
-      //   if (purchaseOrder.details && Array.isArray(purchaseOrder.details)) {
-      //     for (const detail of purchaseOrder.details) {
-      //       allDetails.push({
-      //         ...detail,
-      //         purchaseOrderCode: purchaseOrder.code,
-      //       });
-      //     }
-      //   }
-      // }
-
-      // this.logger.log(
-      //   `📋 Extracted ${allDetails.length} purchase order details from ${purchaseOrdersWithDetails.length} purchase orders`,
-      // );
-
-      // if (allDetails.length === 0) {
-      //   this.logger.log('📋 No purchase order details found to sync');
-      //   await this.releaseDetailSyncLock(lockKey);
-      //   return;
-      // }
 
       if (purchaseOrderDetailsToSync.length < 5) {
         this.logger.log(
           `Small sync (${purchaseOrderDetailsToSync.length} purchaseOrderDetails) - using lightweight mode`,
         );
         await this.syncWithoutDetailCache(purchaseOrderDetailsToSync);
-        await this.releaseSyncLock(lockKey);
         return;
       }
 
@@ -348,7 +278,7 @@ export class LarkPurchaseOrderSyncService {
           'PurchaseOrderDetail cache loading failed - will use alternative duplicate detection',
         );
         await this.syncWithoutDetailCache(purchaseOrderDetailsToSync);
-        await this.releaseDetailSyncLock(lockKey);
+        return;
       }
 
       const { newPurchaseOrdersDetails, updatePurchaseOrdersDetails } =
