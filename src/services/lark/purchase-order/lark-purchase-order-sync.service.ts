@@ -541,7 +541,7 @@ export class LarkPurchaseOrderSyncService {
 
           if (totalLoaded % 1500 === 0 || !pageToken) {
             this.logger.log(
-              `Cache progress: ${cacheBuilt}/${totalLoaded} records processed (${stringConversions} string conversions)`,
+              `Cache progress: ${cacheBuilt}/${totalLoaded} records processed (${stringConversions} string conversions) (${loadTime}ms/page)`,
             );
           }
         } else {
@@ -573,15 +573,15 @@ export class LarkPurchaseOrderSyncService {
       let totalLoaded = 0;
       let cacheDetailBuilt = 0;
       let stringConversions = 0;
-      const pageSize = 100;
+      const pageSize = 1000;
 
       do {
         const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseTokenDetail}/tables/${this.tableIdDetail}/records`;
 
-        const params = new URLSearchParams({
-          page_size: pageSize.toString(),
-          ...(pageToken && { pageToken }),
-        });
+        const params: any = {
+          page_size: pageSize,
+          ...(pageToken && { page_token: pageToken }),
+        };
 
         const startTime = Date.now();
 
@@ -630,7 +630,7 @@ export class LarkPurchaseOrderSyncService {
 
           if (totalLoaded % 1500 === 0 || !pageToken) {
             this.logger.log(
-              `Cache progress: ${cacheDetailBuilt}/${totalLoaded} records processed (${stringConversions} string conversions)`,
+              `Cache progress: ${cacheDetailBuilt}/${totalLoaded} records processed (${stringConversions} string conversions) (${loadTime}ms/page)`,
             );
           }
         } else {
@@ -648,7 +648,7 @@ export class LarkPurchaseOrderSyncService {
           : 0;
 
       this.logger.log(
-        `Cache loaded: ${this.existingRecordsCache.size} by ID, ${this.purchaseOrderCodeCache.size} by code (${successRate}% success)`,
+        `Cache loaded: ${this.existingDetailRecordsCache.size} records (${successRate}% success)`,
       );
     } catch (error) {
       this.logger.error(
