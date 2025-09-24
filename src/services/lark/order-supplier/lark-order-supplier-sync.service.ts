@@ -56,6 +56,7 @@ const BRANCH_NAME = {
 
 const USER_OPTION = {
   NGUYEN_THI_NGAN: 'Nguyễn Thị Ngân',
+  LINH_THUY_DUONG: 'Linh Thuỳ Dương',
 };
 
 const STATUS_OPTION = {
@@ -68,6 +69,7 @@ const STATUS_OPTION = {
 
 const CREATOR = {
   NGUYEN_THI_NGAN: 'Nguyễn Thị Ngân',
+  LINH_THUY_DUONG: 'Linh Thuỳ Dương',
 };
 
 interface LarkBatchResponse {
@@ -1414,7 +1416,7 @@ export class LarkOrderSupplierSyncService {
 
         if (response.data.code === 0) {
           this.logger.debug(
-            `Updated record ${order_supplier_detail.larkRecordId} for order_supplier_detail ${order_supplier_detail.code}`,
+            `Updated record ${order_supplier_detail.larkRecordId} for order_supplier_detail ${order_supplier_detail.orderSupplierCode}`,
           );
           return true;
         }
@@ -1977,6 +1979,7 @@ export class LarkOrderSupplierSyncService {
     if (order_supplier.userId !== null && order_supplier.userId !== undefined) {
       const userMapping = {
         13: USER_OPTION.NGUYEN_THI_NGAN,
+        10: USER_OPTION.LINH_THUY_DUONG,
       };
 
       fields[LARK_ORDER_SUPPLIER_FIELDS.USER_ID] =
@@ -2027,6 +2030,7 @@ export class LarkOrderSupplierSyncService {
     if (order_supplier.createdBy) {
       const createdByMapping = {
         13: CREATOR.NGUYEN_THI_NGAN,
+        10: CREATOR.LINH_THUY_DUONG,
       };
       fields[LARK_ORDER_SUPPLIER_FIELDS.CREATED_BY] =
         createdByMapping[order_supplier.createdBy];
