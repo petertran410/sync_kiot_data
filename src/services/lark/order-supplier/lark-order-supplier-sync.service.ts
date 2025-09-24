@@ -276,7 +276,6 @@ export class LarkOrderSupplierSyncService {
 
       if (orderSupplierDetailsToSync.length === 0) {
         this.logger.log('No order_supplier_details need LarkBase sync');
-        await this.releaseDetailSyncLock(lockKey);
         return;
       }
 
@@ -285,7 +284,6 @@ export class LarkOrderSupplierSyncService {
           `Small sync (${orderSupplierDetailsToSync.length} orderSupplierDetails) - using lightweight mode`,
         );
         await this.syncWithoutDetailCache(orderSupplierDetailsToSync);
-        await this.releaseDetailSyncLock(lockKey);
         return;
       }
 
@@ -308,6 +306,7 @@ export class LarkOrderSupplierSyncService {
         this.logger.warn('Cache loading failed - using lightweight mode');
         await this.syncWithoutDetailCache(orderSupplierDetailsToSync);
         await this.releaseDetailSyncLock(lockKey);
+        return;
       }
 
       const { newOrderSuppliersDetail, updateOrderSuppliersDetail } =
@@ -355,10 +354,12 @@ export class LarkOrderSupplierSyncService {
 
       this.logger.log('LarkBase OrderSupplierDetail sync completed!');
     } catch (error) {
-      this.logger.error(`OrderSupplierDetail sync failed: ${error.message}`);
+      this.logger.error(
+        `LarkBase OrderSupplierDetail sync failed: ${error.message}`,
+      );
       throw error;
     } finally {
-      await this.releaseSyncLock(lockKey);
+      await this.releaseDetailSyncLock(lockKey);
     }
   }
 

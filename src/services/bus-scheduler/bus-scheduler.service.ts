@@ -2106,7 +2106,7 @@ export class BusSchedulerService implements OnModuleInit {
         return;
       }
       this.logger.log(
-        '📋 Running parallel startup sync checks (7-minute entities only)...',
+        'Running parallel startup sync checks (7-minute entities only)...',
       );
       this.startupAbortController = new AbortController();
       const signal = this.startupAbortController.signal;
