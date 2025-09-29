@@ -434,18 +434,18 @@ export class KiotVietTransferService {
 
     for (const transferData of transfers) {
       try {
-        const branch = await this.prismaService.branch.findFirst({
-          where: {
-            OR: [
-              { kiotVietId: transferData.fromBranchId },
-              { kiotVietId: transferData.toBranchId },
-            ],
-          },
-          select: {
-            id: true,
-            name: true,
-          },
-        });
+        // const branch = await this.prismaService.branch.findFirst({
+        //   where: {
+        //     AND: [
+        //       { kiotVietId: transferData.fromBranchId },
+        //       { kiotVietId: transferData.toBranchId },
+        //     ],
+        //   },
+        //   select: {
+        //     id: true,
+        //     name: true,
+        //   },
+        // });
 
         const transfer = await this.prismaService.transfer.upsert({
           where: { kiotVietId: BigInt(transferData.id) },
@@ -455,14 +455,14 @@ export class KiotVietTransferService {
             dispatchedDate: transferData.dispatchedDate
               ? new Date(transferData.dispatchedDate)
               : new Date(),
-            fromBranchId: branch?.id ?? null,
+            fromBranchId: transferData?.fromBranchId ?? null,
             isActive: transferData.isActive ?? false,
             receivedDate: transferData.receivedDate
               ? new Date(transferData.receivedDate)
               : new Date(),
             retailerId: transferData.retailerId ?? null,
             status: transferData.status ?? null,
-            toBranchId: branch?.id ?? null,
+            toBranchId: transferData?.toBranchId ?? null,
             lastSyncedAt: new Date(),
           },
           create: {
@@ -472,14 +472,14 @@ export class KiotVietTransferService {
             dispatchedDate: transferData.dispatchedDate
               ? new Date(transferData.dispatchedDate)
               : new Date(),
-            fromBranchId: branch?.id ?? null,
+            fromBranchId: transferData?.fromBranchId ?? null,
             isActive: transferData.isActive ?? false,
             receivedDate: transferData.receivedDate
               ? new Date(transferData.receivedDate)
               : new Date(),
             retailerId: transferData.retailerId ?? null,
             status: transferData.status ?? null,
-            toBranchId: branch?.id ?? null,
+            toBranchId: transferData?.toBranchId ?? null,
             lastSyncedAt: new Date(),
           },
         });

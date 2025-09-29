@@ -241,8 +241,6 @@ model Branch {
   priceBooks       PriceBookBranch[]
   purchaseOrders   PurchaseOrder[]
   returns          Return[]
-  transfersFrom    Transfer[]              @relation("SourceBranch")
-  transfersTo      Transfer[]              @relation("DestinationBranch")
   voucherCampaigns VoucherCampaignBranch[]
   invoices         Invoice[]               @relation("BranchInvoices")
   orders           Order[]                 @relation("BranchOrders")
@@ -813,8 +811,6 @@ model Transfer {
   status            Int?
   toBranchId        Int?
   lastSyncedAt      DateTime?
-  fromBranch        Branch?           @relation("SourceBranch", fields: [fromBranchId], references: [id])
-  toBranch          Branch?           @relation("DestinationBranch", fields: [toBranchId], references: [id])
   details           TransferDetail[]
 
   @@index([kiotVietId])
