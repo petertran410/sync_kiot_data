@@ -1,4 +1,3 @@
-// src/services/lark/auth/lark-auth.service.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
@@ -45,14 +44,13 @@ export class LarkAuthService {
   private demandAccessToken: string | null = null;
   private demandTokenExpiry: Date | null = null;
 
+  private cashflowAccessToken: string | null = null;
+  private cashflowTokenExpiry: Date | null = null;
+
   constructor(
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
   ) {}
-
-  // ============================================================================
-  // GENERIC ACCESS TOKEN METHOD
-  // ============================================================================
 
   async getAccessToken(
     service:
@@ -65,7 +63,8 @@ export class LarkAuthService {
       | 'orderSupplierDetail'
       | 'purchaseOrder'
       | 'purchaseOrderDetail'
-      | 'demand',
+      | 'demand'
+      | 'cashflow',
   ): Promise<string> {
     switch (service) {
       case 'customer':
@@ -88,6 +87,8 @@ export class LarkAuthService {
         return await this.getPurchaseOrderDetailAccessToken();
       case 'demand':
         return await this.getDemandAccessToken();
+      case 'cashflow':
+        return await this.getCashflowAccessToken();
       default:
         throw new Error(`Unknown service: ${service}`);
     }
@@ -988,5 +989,92 @@ export class LarkAuthService {
     this.demandAccessToken = null;
     this.demandTokenExpiry = null;
     await this.forceRefreshDemandToken();
+  }
+
+  // ============================================================================
+  // CASHFLOW TOKEN MANAGEMENT
+  // ============================================================================
+
+  async getCashflowHeaders(): Promise<Record<string, string>> {
+    const token = await this.getCashflowAccessToken();
+    return {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    };
+  }
+
+  private async getCashflowAccessToken(): Promise<string> {
+    if (
+      this.cashflowAccessToken &&
+      this.cashflowTokenExpiry &&
+      this.cashflowTokenExpiry > new Date(Date.now() + 5 * 60 * 1000)
+    ) {
+      return this.cashflowAccessToken;
+    }
+
+    return await this.refreshCashflowToken();
+  }
+
+  private async refreshCashflowToken(): Promise<string> {
+    try {
+      this.logger.log('🔄 Refreshing LarkBase cashflow access token...');
+
+      const appId = this.configService.get<string>('LARK_CASHFLOW_SYNC_APP_ID');
+      const appSecret = this.configService.get<string>(
+        'LARK_CASHFLOW_SYNC_APP_SECRET',
+      );
+
+      if (!appId || !appSecret) {
+        throw new Error('LarkBase cashflow credentials not configured');
+      }
+
+      const url =
+        'https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal';
+
+      const response = await firstValueFrom(
+        this.httpService.post<TenantAccessTokenResponse>(
+          url,
+          {
+            app_id: appId,
+            app_secret: appSecret,
+          },
+          {
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            timeout: 10000,
+          },
+        ),
+      );
+
+      if (response.data.code !== 0) {
+        throw new Error(
+          `LarkBase auth failed: ${response.data.msg} (code: ${response.data.code})`,
+        );
+      }
+
+      this.cashflowAccessToken = response.data.tenant_access_token;
+      this.cashflowTokenExpiry = new Date(
+        Date.now() + response.data.expire * 1000,
+      );
+
+      this.logger.log('✅ LarkBase cashflow token refreshed successfully');
+      return this.cashflowAccessToken;
+    } catch (error) {
+      this.logger.error(
+        `❌ Failed to refresh cashflow token: ${error.message}`,
+      );
+
+      this.cashflowAccessToken = null;
+      this.cashflowTokenExpiry = null;
+
+      throw new Error(`Token refresh failed: ${error.message}`);
+    }
+  }
+
+  async forceRefreshCashflowToken(): Promise<void> {
+    this.cashflowAccessToken = null;
+    this.cashflowTokenExpiry = null;
+    await this.forceRefreshCashflowToken();
   }
 }

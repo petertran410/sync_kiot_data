@@ -1249,6 +1249,8 @@ model Cashflow {
   amount                    Decimal?      @db.Decimal(15, 2)
   description               String?
   lastSyncedAt              DateTime     @default(now())
+  larkSyncStatus            LarkSyncStatus     @default(PENDING)
+  larkRecordId              String?
   // bankAccount               BankAccount? @relation(fields: [accountId], references: [id])
   branch                    Branch?      @relation(fields: [branchId], references: [id])
   // user                      User? @relation(fields: [userId], references: [id])

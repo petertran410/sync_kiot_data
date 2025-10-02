@@ -19,6 +19,7 @@ import { LarkOrderSupplierSyncService } from 'src/services/lark/order-supplier/l
 import { KiotVietPurchaseOrderService } from 'src/services/kiot-viet/purchase-order/purchase-order.service';
 import { KiotVietTradeMarkService } from 'src/services/kiot-viet/trademark/trademark.service';
 import { KiotVietCashflowService } from 'src/services/kiot-viet/cashflow/cashflow.service';
+import { LarkCashflowSyncService } from 'src/services/lark/cashflow/lark-cashflow-sync.service';
 import { KiotVietTransferService } from 'src/services/kiot-viet/transfer/transfer.service';
 import { LarkDemandSyncService } from 'src/services/lark/demand/lark-demand-sync.service';
 
@@ -47,6 +48,7 @@ export class SyncController {
     private readonly larkPurchaseOrderSyncService: LarkPurchaseOrderSyncService,
     private readonly trademarkService: KiotVietTradeMarkService,
     private readonly cashflowService: KiotVietCashflowService,
+    private readonly larkCashflowSyncService: LarkCashflowSyncService,
     private readonly transferService: KiotVietTransferService,
     private readonly larkDemandSyncService: LarkDemandSyncService,
   ) {}
@@ -571,9 +573,9 @@ export class SyncController {
     try {
       this.logger.log('Starting cashflow sync...');
 
-      await this.cashflowService.enableHistoricalSync();
+      // await this.cashflowService.enableHistoricalSync();
 
-      await this.cashflowService.syncHistoricalCashflows();
+      await this.cashflowService.syncRecentCashflows();
 
       return {
         success: true,
