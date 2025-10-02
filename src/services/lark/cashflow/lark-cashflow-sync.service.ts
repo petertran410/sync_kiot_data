@@ -807,16 +807,13 @@ export class LarkCashflowSyncService {
     if (cashflows.length === 0) return;
 
     const cashflowIds = cashflows.map((i) => i.id);
-    const updateData = {
-      larkSyncStatus: status,
-      larkSyncedAt: new Date(),
-      ...(status === 'FAILED' && { larkSyncRetries: { increment: 1 } }),
-      ...(status === 'SYNCED' && { larkSyncRetries: 0 }),
-    };
 
     await this.prismaService.cashflow.updateMany({
       where: { id: { in: cashflowIds } },
-      data: updateData,
+      data: {
+        larkSyncStatus: status,
+        lastSyncedAt: new Date(),
+      },
     });
   }
 
