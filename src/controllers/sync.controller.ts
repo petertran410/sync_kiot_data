@@ -568,14 +568,38 @@ export class SyncController {
     }
   }
 
-  @Post('cashflows')
-  async syncCashflows() {
+  @Post('cashflows-recent')
+  async syncCashflowsRecent() {
     try {
       this.logger.log('Starting cashflow sync...');
 
       // await this.cashflowService.enableHistoricalSync();
 
       await this.cashflowService.syncRecentCashflows();
+
+      return {
+        success: true,
+        message: 'Cashflow sync completed successfully',
+        timestamp: new Date().toISOString,
+      };
+    } catch (error) {
+      this.logger.error(`❌ Cashflow sync failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
+
+  @Post('cashflows-historical')
+  async syncCashflowsHistorical() {
+    try {
+      this.logger.log('Starting cashflow sync...');
+
+      await this.cashflowService.enableHistoricalSync();
+
+      await this.cashflowService.syncHistoricalCashflows();
 
       return {
         success: true,
