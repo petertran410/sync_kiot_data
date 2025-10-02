@@ -307,6 +307,19 @@ export class KiotVietCashflowService {
           processedCount += pageProcessedCount;
           currentItem += this.PAGE_SIZE;
 
+          if (allSavedCashflows.length > 0) {
+            try {
+              await this.syncCashflowToLarkBase(allSavedCashflows);
+              this.logger.log(
+                `Synced ${allSavedCashflows.length} cashflows to LarkBase`,
+              );
+            } catch (error) {
+              this.logger.warn(
+                `LarkBase sync failed for page ${currentPage}: ${error.message}`,
+              );
+            }
+          }
+
           if (totalCashflows > 0) {
             const completionPercentage =
               (processedCount / totalCashflows) * 100;
@@ -320,18 +333,6 @@ export class KiotVietCashflowService {
             }
           }
 
-          if (allSavedCashflows.length > 0) {
-            try {
-              await this.syncCashflowToLarkBase(allSavedCashflows);
-              this.logger.log(
-                `Synced ${allSavedCashflows.length} cashflows to LarkBase`,
-              );
-            } catch (error) {
-              this.logger.warn(
-                `LarkBase sync failed for page ${currentPage}: ${error.message}`,
-              );
-            }
-          }
           await new Promise((resolve) => setTimeout(resolve, 100));
         } catch (error) {
           consecutiveErrorPages++;
@@ -575,6 +576,19 @@ export class KiotVietCashflowService {
           processedCount += pageProcessedCount;
           currentItem += this.PAGE_SIZE;
 
+          if (allSavedCashflows.length > 0) {
+            try {
+              await this.syncCashflowToLarkBase(allSavedCashflows);
+              this.logger.log(
+                `Synced ${allSavedCashflows.length} cashflows to LarkBase`,
+              );
+            } catch (error) {
+              this.logger.warn(
+                `LarkBase sync failed for page ${currentPage}: ${error.message}`,
+              );
+            }
+          }
+
           if (totalCashflows > 0) {
             const completionPercentage =
               (processedCount / totalCashflows) * 100;
@@ -588,18 +602,6 @@ export class KiotVietCashflowService {
             }
           }
 
-          if (allSavedCashflows.length > 0) {
-            try {
-              await this.syncCashflowToLarkBase(allSavedCashflows);
-              this.logger.log(
-                `Synced ${allSavedCashflows.length} cashflows to LarkBase`,
-              );
-            } catch (error) {
-              this.logger.warn(
-                `LarkBase sync failed for page ${currentPage}: ${error.message}`,
-              );
-            }
-          }
           await new Promise((resolve) => setTimeout(resolve, 100));
         } catch (error) {
           consecutiveErrorPages++;
