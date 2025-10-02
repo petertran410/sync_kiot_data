@@ -484,7 +484,7 @@ export class LarkCashflowSyncService {
     let failedCount = 0;
     const createFallbacks: any[] = [];
 
-    const UPDATE_CHUNK_SIZE = 100;
+    const UPDATE_CHUNK_SIZE = 5;
 
     for (let i = 0; i < cashflows.length; i += UPDATE_CHUNK_SIZE) {
       const chunk = cashflows.slice(i, i + UPDATE_CHUNK_SIZE);
@@ -671,6 +671,16 @@ export class LarkCashflowSyncService {
           return false;
         }
 
+        if (error.response?.status === 400) {
+          this.logger.error(`Bad request for cashflow ${cashflow.code}:`, {
+            status: error.response?.status,
+            data: error.response?.data,
+            recordId: cashflow.larkRecordId,
+            fields: this.mapCashflowToLarkBase(cashflow),
+          });
+          return false;
+        }
+
         throw error;
       }
     }
@@ -754,6 +764,10 @@ export class LarkCashflowSyncService {
       fields[LARK_CASHFLOW_FIELDS.DESCRIPTION] = cashflow.description;
     }
 
+    if (cashflow.branchName) {
+      fields[LARK_CASHFLOW_FIELDS.BRANCH] = cashflow.branchName;
+    }
+
     if (cashflow.cashGroup) {
       fields[LARK_CASHFLOW_FIELDS.CASH_GROUP] = cashflow.cashGroup;
     }
@@ -807,13 +821,16 @@ export class LarkCashflowSyncService {
     if (cashflows.length === 0) return;
 
     const cashflowIds = cashflows.map((i) => i.id);
+    const updateData = {
+      larkSyncStatus: status,
+      lastSyncedAt: new Date(),
+      ...(status === 'FAILED' && { larkSyncRetries: { increment: 1 } }),
+      ...(status === 'SYNCED' && { larkSyncRetries: 0 }),
+    };
 
     await this.prismaService.cashflow.updateMany({
       where: { id: { in: cashflowIds } },
-      data: {
-        larkSyncStatus: status,
-        lastSyncedAt: new Date(),
-      },
+      data: updateData,
     });
   }
 
