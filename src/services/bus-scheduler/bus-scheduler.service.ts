@@ -129,137 +129,137 @@ export class BusSchedulerService implements OnModuleInit {
     }, 5000);
   }
 
-  @Cron('*/1 * * * *', {
-    name: 'main_sync_cycle',
-    timeZone: 'Asia/Ho_Chi_Minh',
-  })
-  async handleMainSyncCycle() {
-    if (this.isDailyCycleRunning || this.dailyCyclePriorityLevel > 0) {
-      if (!this.mainSchedulerSuspendedForDaily) {
-        this.logger.log('SUSPENDING 1-minute cycle - Daily cycle has priority');
-        this.mainSchedulerSuspendedForDaily = true;
+  // @Cron('*/1 * * * *', {
+  //   name: 'main_sync_cycle',
+  //   timeZone: 'Asia/Ho_Chi_Minh',
+  // })
+  // async handleMainSyncCycle() {
+  //   if (this.isDailyCycleRunning || this.dailyCyclePriorityLevel > 0) {
+  //     if (!this.mainSchedulerSuspendedForDaily) {
+  //       this.logger.log('SUSPENDING 1-minute cycle - Daily cycle has priority');
+  //       this.mainSchedulerSuspendedForDaily = true;
 
-        if (this.mainCycleAbortController) {
-          this.mainCycleAbortController.abort();
-          this.logger.log('FORCE ABORTING ongoing 1-minute cycle');
-        }
-      }
+  //       if (this.mainCycleAbortController) {
+  //         this.mainCycleAbortController.abort();
+  //         this.logger.log('FORCE ABORTING ongoing 1-minute cycle');
+  //       }
+  //     }
 
-      this.logger.debug(
-        `⏸1-minute cycle suspended (dailyCyclePriorityLevel: ${this.dailyCyclePriorityLevel}, isDailyCycleRunning: ${this.isDailyCycleRunning})`,
-      );
-      return;
-    }
+  //     this.logger.debug(
+  //       `⏸1-minute cycle suspended (dailyCyclePriorityLevel: ${this.dailyCyclePriorityLevel}, isDailyCycleRunning: ${this.isDailyCycleRunning})`,
+  //     );
+  //     return;
+  //   }
 
-    if (
-      this.mainSchedulerSuspendedForDaily &&
-      !this.isDailyCycleRunning &&
-      this.dailyCyclePriorityLevel === 0
-    ) {
-      this.logger.log('RESUMING 2-minute cycle - Daily cycle completed');
-      this.mainSchedulerSuspendedForDaily = false;
-    }
+  //   if (
+  //     this.mainSchedulerSuspendedForDaily &&
+  //     !this.isDailyCycleRunning &&
+  //     this.dailyCyclePriorityLevel === 0
+  //   ) {
+  //     this.logger.log('RESUMING 2-minute cycle - Daily cycle completed');
+  //     this.mainSchedulerSuspendedForDaily = false;
+  //   }
 
-    if (!this.isMainSchedulerEnabled) {
-      this.logger.debug('Main scheduler is disabled');
-      return;
-    }
+  //   if (!this.isMainSchedulerEnabled) {
+  //     this.logger.debug('Main scheduler is disabled');
+  //     return;
+  //   }
 
-    this.mainCycleAbortController = new AbortController();
-    const signal = this.mainCycleAbortController.signal;
+  //   this.mainCycleAbortController = new AbortController();
+  //   const signal = this.mainCycleAbortController.signal;
 
-    try {
-      this.logger.log('Starting 1-minute parallel sync cycle...');
-      const startTime = Date.now();
+  //   try {
+  //     this.logger.log('Starting 1-minute parallel sync cycle...');
+  //     const startTime = Date.now();
 
-      if (signal.aborted) {
-        this.logger.log('1-minute cycle aborted before starting');
-        return;
-      }
+  //     if (signal.aborted) {
+  //       this.logger.log('1-minute cycle aborted before starting');
+  //       return;
+  //     }
 
-      const runningSyncs = await this.checkRunningSyncsWithTimeout();
-      if (runningSyncs.length > 0) {
-        const runningTooLong = runningSyncs.some((sync) => {
-          if (!sync.startedAt) return false;
-          const runningTime = Date.now() - sync.startedAt.getTime();
-          return runningTime > 5 * 60 * 1000;
-        });
+  //     const runningSyncs = await this.checkRunningSyncsWithTimeout();
+  //     if (runningSyncs.length > 0) {
+  //       const runningTooLong = runningSyncs.some((sync) => {
+  //         if (!sync.startedAt) return false;
+  //         const runningTime = Date.now() - sync.startedAt.getTime();
+  //         return runningTime > 5 * 60 * 1000;
+  //       });
 
-        if (runningTooLong) {
-          this.logger.warn('Detected long-running syncs - triggering cleanup');
-          await this.cleanupStuckSyncs();
+  //       if (runningTooLong) {
+  //         this.logger.warn('Detected long-running syncs - triggering cleanup');
+  //         await this.cleanupStuckSyncs();
 
-          this.logger.log('Waiting 10s for processes to terminate...');
-          await new Promise((resolve) => setTimeout(resolve, 10000));
+  //         this.logger.log('Waiting 10s for processes to terminate...');
+  //         await new Promise((resolve) => setTimeout(resolve, 10000));
 
-          this.logger.log(
-            'Skipping this cycle after cleanup - will try next cycle',
-          );
-          return;
-        } else {
-          this.logger.log(
-            `Parallel sync skipped - running: ${runningSyncs.map((s) => s.name).join(', ')}`,
-          );
-          return;
-        }
-      }
+  //         this.logger.log(
+  //           'Skipping this cycle after cleanup - will try next cycle',
+  //         );
+  //         return;
+  //       } else {
+  //         this.logger.log(
+  //           `Parallel sync skipped - running: ${runningSyncs.map((s) => s.name).join(', ')}`,
+  //         );
+  //         return;
+  //       }
+  //     }
 
-      await this.updateCycleTracking('main_cycle', 'running');
+  //     await this.updateCycleTracking('main_cycle', 'running');
 
-      const CYCLE_TIMEOUT_MS = 8 * 60 * 1000;
+  //     const CYCLE_TIMEOUT_MS = 8 * 60 * 1000;
 
-      try {
-        const cyclePromise = this.executeMainCycleWithAbortSignal(signal);
-        const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(
-            () => reject(new Error('Cycle timeout after 8 minutes')),
-            CYCLE_TIMEOUT_MS,
-          ),
-        );
+  //     try {
+  //       const cyclePromise = this.executeMainCycleWithAbortSignal(signal);
+  //       const timeoutPromise = new Promise<never>((_, reject) =>
+  //         setTimeout(
+  //           () => reject(new Error('Cycle timeout after 8 minutes')),
+  //           CYCLE_TIMEOUT_MS,
+  //         ),
+  //       );
 
-        await Promise.race([cyclePromise, timeoutPromise]);
-        await this.updateCycleTracking('main_cycle', 'completed');
+  //       await Promise.race([cyclePromise, timeoutPromise]);
+  //       await this.updateCycleTracking('main_cycle', 'completed');
 
-        const totalDuration = ((Date.now() - startTime) / 1000).toFixed(2);
-        this.logger.log(`1-minute sync cycle completed in ${totalDuration}s`);
-      } catch (timeoutError) {
-        if (signal.aborted) {
-          this.logger.log('2-minute cycle was aborted by daily cycle priority');
-          await this.updateCycleTracking(
-            'main_cycle',
-            'aborted',
-            'Aborted by daily cycle priority',
-          );
-        } else if (
-          timeoutError instanceof Error &&
-          timeoutError.message.includes('timeout')
-        ) {
-          this.logger.error(`1-minute cycle timed out after 8 minutes`);
-          await this.updateCycleTracking(
-            'main_cycle',
-            'timeout',
-            'Cycle exceeded 8 minute timeout',
-          );
-        } else {
-          throw timeoutError;
-        }
-      }
-    } catch (error) {
-      if (signal.aborted) {
-        this.logger.log('2-minute cycle aborted during execution');
-        await this.updateCycleTracking(
-          'main_cycle',
-          'aborted',
-          'Aborted by daily cycle priority',
-        );
-      } else {
-        this.logger.error(`2-minute sync cycle failed: ${error.message}`);
-        await this.updateCycleTracking('main_cycle', 'failed', error.message);
-      }
-    } finally {
-      this.mainCycleAbortController = null;
-    }
-  }
+  //       const totalDuration = ((Date.now() - startTime) / 1000).toFixed(2);
+  //       this.logger.log(`1-minute sync cycle completed in ${totalDuration}s`);
+  //     } catch (timeoutError) {
+  //       if (signal.aborted) {
+  //         this.logger.log('2-minute cycle was aborted by daily cycle priority');
+  //         await this.updateCycleTracking(
+  //           'main_cycle',
+  //           'aborted',
+  //           'Aborted by daily cycle priority',
+  //         );
+  //       } else if (
+  //         timeoutError instanceof Error &&
+  //         timeoutError.message.includes('timeout')
+  //       ) {
+  //         this.logger.error(`1-minute cycle timed out after 8 minutes`);
+  //         await this.updateCycleTracking(
+  //           'main_cycle',
+  //           'timeout',
+  //           'Cycle exceeded 8 minute timeout',
+  //         );
+  //       } else {
+  //         throw timeoutError;
+  //       }
+  //     }
+  //   } catch (error) {
+  //     if (signal.aborted) {
+  //       this.logger.log('2-minute cycle aborted during execution');
+  //       await this.updateCycleTracking(
+  //         'main_cycle',
+  //         'aborted',
+  //         'Aborted by daily cycle priority',
+  //       );
+  //     } else {
+  //       this.logger.error(`2-minute sync cycle failed: ${error.message}`);
+  //       await this.updateCycleTracking('main_cycle', 'failed', error.message);
+  //     }
+  //   } finally {
+  //     this.mainCycleAbortController = null;
+  //   }
+  // }
 
   private async checkRunningSyncsWithTimeout(): Promise<any[]> {
     const runningSyncs = await this.prismaService.syncControl.findMany({
@@ -2138,18 +2138,18 @@ export class BusSchedulerService implements OnModuleInit {
       );
       this.startupAbortController = new AbortController();
       const signal = this.startupAbortController.signal;
-      const startupPromises = [
-        this.executeAbortableStartupSync('customer', signal, () =>
-          this.customerService.checkAndRunAppropriateSync(),
-        ),
-        this.executeAbortableStartupSync('invoice', signal, () =>
-          this.invoiceService.checkAndRunAppropriateSync(),
-        ),
-        this.executeAbortableStartupSync('order', signal, () =>
-          this.orderService.checkAndRunAppropriateSync(),
-        ),
-      ];
-      await Promise.allSettled(startupPromises);
+      // const startupPromises = [
+      //   this.executeAbortableStartupSync('customer', signal, () =>
+      //     this.customerService.checkAndRunAppropriateSync(),
+      //   ),
+      //   this.executeAbortableStartupSync('invoice', signal, () =>
+      //     this.invoiceService.checkAndRunAppropriateSync(),
+      //   ),
+      //   this.executeAbortableStartupSync('order', signal, () =>
+      //     this.orderService.checkAndRunAppropriateSync(),
+      //   ),
+      // ];
+      // await Promise.allSettled(startupPromises);
       this.logger.log('Startup check completed');
     } catch (error) {
       this.logger.error(`Startup check failed: ${error.message}`);
