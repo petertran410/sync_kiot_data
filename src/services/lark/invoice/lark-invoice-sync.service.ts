@@ -60,6 +60,7 @@ const SALE_NAME = {
   LINH_THU_TRANG: 'Linh Thu Trang',
   LY_THI_HONG_DAO: 'Lý Thị Hồng Đào',
   NGUYEN_HUU_TOAN: 'Nguyễn Hữu Toàn',
+  LE_BICH_NGOC: 'Lê Bích Ngọc',
 };
 
 const SALE_CHANNEL_OPTIONS = {
@@ -1279,6 +1280,7 @@ export class LarkInvoiceSyncService {
         1015788: SALE_NAME.LINH_THUY_DUONG,
         1016818: SALE_NAME.NGUYEN_THI_PHUONG,
         383855: SALE_NAME.NGUYEN_HUU_TOAN,
+        1032906: SALE_NAME.LE_BICH_NGOC,
       };
 
       fields[LARK_INVOICE_FIELDS.SELLER] =
