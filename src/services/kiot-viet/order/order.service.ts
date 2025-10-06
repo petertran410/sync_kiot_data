@@ -447,11 +447,6 @@ export class KiotVietOrderService {
 
   async syncRecentOrders(): Promise<void> {
     const syncName = 'order_recent';
-    let currentItem = 0;
-    let processedCount = 0;
-    let consecutiveEmptyPages = 0;
-    let consecutiveErrorPages = 0;
-    let processedOrderIds = new Set<number>();
 
     try {
       await this.updateSyncControl(syncName, {
@@ -463,154 +458,59 @@ export class KiotVietOrderService {
 
       this.logger.log('Starting recent order sync...');
 
-      const MAX_CONSECUTIVE_EMPTY_PAGES = 5;
-      const MAX_CONSECUTIVE_ERROR_PAGES = 3;
-      const RETRY_DELAY_MS = 2000;
-      const MAX_TOTAL_RETRIES = 10;
-      const MAX_PAGES = 5;
-      let totalRetries = 0;
+      const dateStart = new Date();
+      dateStart.setDate(dateStart.getDate() - 1);
+      const dateStartStr = dateStart.toISOString().split('T')[0];
 
-      while (true) {
-        const currentPage = Math.floor(currentItem / this.PAGE_SIZE) + 1;
+      const dateEnd = new Date();
+      dateEnd.setDate(dateEnd.getDate() + 1);
+      const dateEndStr = dateEnd.toISOString().split('T')[0];
 
-        if (currentPage > MAX_PAGES) {
-          this.logger.log(
-            `Reached max pages limit (${MAX_PAGES}). Stopping sync.`,
-          );
-          break;
-        }
+      this.logger.log(`Sync window: ${dateStartStr} to ${dateEndStr}`);
 
-        this.logger.log(
-          `Fetching page ${currentPage} (currentItem: ${currentItem})`,
-        );
+      const processedOrderIds = new Set<number>();
+      let totalProcessed = 0;
 
-        try {
-          const orderListResponse = await this.fetchOrdersListWithRetry({
-            currentItem,
-            pageSize: this.PAGE_SIZE,
-            orderBy: 'id',
-            orderDirection: 'DESC',
-            includePayment: true,
-            includeOrderDelivery: true,
-          });
+      // QUERY 1: Lấy orders MỚI TẠO trong 7 ngày
+      this.logger.log('Fetching newly created orders...');
+      const newOrders = await this.fetchOrdersByCreatedDate(
+        dateStartStr,
+        dateEndStr,
+      );
+      this.logger.log(`Found ${newOrders.length} newly created orders`);
 
-          if (!orderListResponse) {
-            this.logger.warn('Received null response from KiotViet API');
-            consecutiveEmptyPages++;
-            if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
-              this.logger.log(
-                `Reached end after ${consecutiveEmptyPages} empty pages`,
-              );
-              break;
-            }
-            await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
-            continue;
-          }
+      for (const order of newOrders) {
+        processedOrderIds.add(order.id);
+      }
 
-          consecutiveEmptyPages = 0;
-          consecutiveErrorPages = 0;
+      const savedNewOrders = await this.saveOrdersToDatabase(newOrders);
+      totalProcessed += savedNewOrders.length;
 
-          const { data: orders } = orderListResponse;
+      if (savedNewOrders.length > 0) {
+        await this.syncOrdersToLarkBase(savedNewOrders);
+      }
 
-          if (!orders || orders.length === 0) {
-            this.logger.log(`No orders in page ${currentPage}`);
-            consecutiveEmptyPages++;
-            if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
-              this.logger.log(
-                `Reached end after ${consecutiveEmptyPages} consecutive empty pages`,
-              );
-              break;
-            }
-            currentItem += this.PAGE_SIZE;
-            await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
-            continue;
-          }
+      // QUERY 2: Lấy orders ĐÃ UPDATE trong 7 ngày
+      this.logger.log('Fetching updated orders...');
+      const updatedOrders = await this.fetchOrdersByModifiedDate(
+        dateStartStr,
+        dateEndStr,
+      );
+      this.logger.log(`Found ${updatedOrders.length} updated orders`);
 
-          const newOrders: any[] = [];
-          const existingOrders: any[] = [];
+      const uniqueUpdatedOrders = updatedOrders.filter(
+        (order) => !processedOrderIds.has(order.id),
+      );
+      this.logger.log(
+        `${uniqueUpdatedOrders.length} unique updated orders (excluding already processed)`,
+      );
 
-          for (const order of orders) {
-            if (processedOrderIds.has(order.id)) {
-              continue;
-            }
-            processedOrderIds.add(order.id);
+      const savedUpdatedOrders =
+        await this.saveOrdersToDatabase(uniqueUpdatedOrders);
+      totalProcessed += savedUpdatedOrders.length;
 
-            const existingOrder = await this.prismaService.order.findFirst({
-              where: { kiotVietId: BigInt(order.id) },
-              select: { id: true },
-            });
-
-            if (existingOrder) {
-              existingOrders.push(order);
-            } else {
-              newOrders.push(order);
-            }
-          }
-
-          if (newOrders.length === 0 && existingOrders.length === 0) {
-            this.logger.log(
-              `Skipping page ${currentPage} - all orders already processed in this run`,
-            );
-            currentItem += this.PAGE_SIZE;
-            continue;
-          }
-
-          let pageProcessedCount = 0;
-          let allSavedOrders: any[] = [];
-
-          if (newOrders.length > 0) {
-            this.logger.log(
-              `Processing ${newOrders.length} NEW orders from page ${currentPage}...`,
-            );
-            const savedOrders = await this.saveOrdersToDatabase(newOrders);
-            pageProcessedCount += savedOrders.length;
-            allSavedOrders.push(...savedOrders);
-          }
-
-          if (existingOrders.length > 0) {
-            this.logger.log(
-              `Processing ${existingOrders.length} EXISTING orders from page ${currentPage}`,
-            );
-            const savedOrders = await this.saveOrdersToDatabase(existingOrders);
-            pageProcessedCount += savedOrders.length;
-            allSavedOrders.push(...savedOrders);
-          }
-
-          processedCount += pageProcessedCount;
-          currentItem += this.PAGE_SIZE;
-
-          if (allSavedOrders.length > 0) {
-            try {
-              await this.syncOrdersToLarkBase(allSavedOrders);
-              this.logger.log(
-                `Synced ${allSavedOrders.length} orders to LarkBase`,
-              );
-            } catch (error) {
-              this.logger.warn(
-                `LarkBase sync failed for page ${currentPage}: ${error.message}`,
-              );
-            }
-          }
-
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        } catch (error) {
-          consecutiveErrorPages++;
-          totalRetries++;
-          this.logger.error(
-            `API error on page ${currentPage}: ${error.message}`,
-          );
-          if (consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES) {
-            throw new Error(
-              `Multiple consecutive API failures: ${error.message}`,
-            );
-          }
-          if (totalRetries >= MAX_TOTAL_RETRIES) {
-            throw new Error(`Maximum total retries exceeded: ${error.message}`);
-          }
-          const delay = RETRY_DELAY_MS * Math.pow(2, consecutiveErrorPages - 1);
-          this.logger.log(`Retrying after ${delay}ms delay...`);
-          await new Promise((resolve) => setTimeout(resolve, delay));
-        }
+      if (savedUpdatedOrders.length > 0) {
+        await this.syncOrdersToLarkBase(savedUpdatedOrders);
       }
 
       await this.updateSyncControl(syncName, {
@@ -619,11 +519,11 @@ export class KiotVietOrderService {
         status: 'completed',
         completedAt: new Date(),
         lastRunAt: new Date(),
-        progress: { processedCount },
+        progress: { processedCount: totalProcessed },
       });
 
       this.logger.log(
-        `Recent order sync completed: ${processedCount} orders processed`,
+        `Recent order sync completed: ${totalProcessed} orders processed`,
       );
     } catch (error) {
       this.logger.error(`Recent order sync failed: ${error.message}`);
@@ -631,10 +531,109 @@ export class KiotVietOrderService {
         isRunning: false,
         status: 'failed',
         error: error.message,
-        progress: { processedCount },
       });
       throw error;
     }
+  }
+
+  private async fetchOrdersByCreatedDate(
+    fromDate: string,
+    toDate: string,
+  ): Promise<any[]> {
+    const allOrders: any[] = [];
+    let currentItem = 0;
+    let hasMore = true;
+
+    while (hasMore) {
+      const response = await this.fetchOrdersListWithRetry({
+        currentItem,
+        pageSize: this.PAGE_SIZE,
+        orderBy: 'createdDate',
+        orderDirection: 'DESC',
+        includePayment: true,
+        includeOrderDelivery: true,
+      });
+
+      if (!response || !response.data || response.data.length === 0) {
+        hasMore = false;
+        break;
+      }
+
+      const ordersInWindow = response.data.filter((order) => {
+        if (!order.createdDate) return false;
+        const createdDate = new Date(order.createdDate)
+          .toISOString()
+          .split('T')[0];
+        return createdDate >= fromDate && createdDate <= toDate;
+      });
+
+      allOrders.push(...ordersInWindow);
+
+      if (ordersInWindow.length === 0 && allOrders.length > 0) {
+        hasMore = false;
+        break;
+      }
+
+      currentItem += this.PAGE_SIZE;
+
+      if (currentItem > 5000) {
+        this.logger.warn(
+          'Reached safety limit of 5000 items for created date query',
+        );
+        hasMore = false;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    return allOrders;
+  }
+
+  private async fetchOrdersByModifiedDate(
+    fromDate: string,
+    toDate: string,
+  ): Promise<any[]> {
+    const allOrders: any[] = [];
+    let currentItem = 0;
+    let hasMore = true;
+
+    while (hasMore) {
+      const response = await this.fetchOrdersListWithRetry({
+        currentItem,
+        pageSize: this.PAGE_SIZE,
+        orderBy: 'id',
+        orderDirection: 'DESC',
+        includePayment: true,
+        includeOrderDelivery: true,
+        lastModifiedFrom: fromDate,
+        toDate: toDate,
+      });
+
+      if (!response || !response.data || response.data.length === 0) {
+        hasMore = false;
+        break;
+      }
+
+      allOrders.push(...response.data);
+
+      if (response.total && currentItem + this.PAGE_SIZE >= response.total) {
+        hasMore = false;
+        break;
+      }
+
+      currentItem += this.PAGE_SIZE;
+
+      if (currentItem > 5000) {
+        this.logger.warn(
+          'Reached safety limit of 5000 items for modified date query',
+        );
+        hasMore = false;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    return allOrders;
   }
 
   async fetchOrdersListWithRetry(

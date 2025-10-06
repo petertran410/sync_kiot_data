@@ -467,11 +467,6 @@ export class KiotVietInvoiceService {
 
   async syncRecentInvoices(): Promise<void> {
     const syncName = 'invoice_recent';
-    let currentItem = 0;
-    let processedCount = 0;
-    let consecutiveEmptyPages = 0;
-    let consecutiveErrorPages = 0;
-    let processedInvoiceIds = new Set<number>();
 
     try {
       await this.updateSyncControl(syncName, {
@@ -483,157 +478,60 @@ export class KiotVietInvoiceService {
 
       this.logger.log('Starting recent invoice sync...');
 
-      const MAX_CONSECUTIVE_EMPTY_PAGES = 5;
-      const MAX_CONSECUTIVE_ERROR_PAGES = 3;
-      const RETRY_DELAY_MS = 2000;
-      const MAX_TOTAL_RETRIES = 10;
-      const MAX_PAGES = 5;
-      let totalRetries = 0;
+      const dateStart = new Date();
+      dateStart.setDate(dateStart.getDate() - 1);
+      const dateStartStr = dateStart.toISOString().split('T')[0];
 
-      while (true) {
-        const currentPage = Math.floor(currentItem / this.PAGE_SIZE) + 1;
+      const dateEnd = new Date();
+      dateEnd.setDate(dateEnd.getDate() + 1);
+      const dateEndStr = dateEnd.toISOString().split('T')[0];
 
-        if (currentPage > MAX_PAGES) {
-          this.logger.log(
-            `Reached max pages limit (${MAX_PAGES}). Stopping sync.`,
-          );
-          break;
-        }
+      this.logger.log(`Sync window: ${dateStartStr} to ${dateEndStr}`);
 
-        this.logger.log(
-          `Fetching page ${currentPage} (currentItem: ${currentItem})`,
-        );
+      const processedInvoiceIds = new Set<number>();
+      let totalProcessed = 0;
 
-        try {
-          const invoiceListResponse = await this.fetchInvoicesListWithRetry({
-            currentItem,
-            pageSize: this.PAGE_SIZE,
-            orderBy: 'createdDate',
-            orderDirection: 'DESC',
-            includeInvoiceDelivery: true,
-            includePayment: true,
-            includeTotal: true,
-          });
+      // QUERY 1: Lấy invoices MỚI TẠO trong 7 ngày
+      this.logger.log('Fetching newly created invoices...');
+      const newInvoices = await this.fetchInvoicesByCreatedDate(
+        dateStartStr,
+        dateEndStr,
+      );
+      this.logger.log(`Found ${newInvoices.length} newly created invoices`);
 
-          if (!invoiceListResponse) {
-            this.logger.warn('Received null response from KiotViet API');
-            consecutiveEmptyPages++;
-            if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
-              this.logger.log(
-                `Reached end after ${consecutiveEmptyPages} empty pages`,
-              );
-              break;
-            }
-            await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
-            continue;
-          }
+      for (const invoice of newInvoices) {
+        processedInvoiceIds.add(invoice.id);
+      }
 
-          consecutiveEmptyPages = 0;
-          consecutiveErrorPages = 0;
+      const savedNewInvoices = await this.saveInvoicesToDatabase(newInvoices);
+      totalProcessed += savedNewInvoices.length;
 
-          const { data: invoices } = invoiceListResponse;
+      if (savedNewInvoices.length > 0) {
+        await this.syncInvoicesToLarkBase(savedNewInvoices);
+      }
 
-          if (!invoices || invoices.length === 0) {
-            this.logger.log(`No invoices in page ${currentPage}`);
-            consecutiveEmptyPages++;
-            if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
-              this.logger.log(
-                `Reached end after ${consecutiveEmptyPages} consecutive empty pages`,
-              );
-              break;
-            }
-            currentItem += this.PAGE_SIZE;
-            await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
-            continue;
-          }
+      // QUERY 2: Lấy invoices ĐÃ UPDATE trong 7 ngày
+      this.logger.log('Fetching updated invoices...');
+      const updatedInvoices = await this.fetchInvoicesByModifiedDate(
+        dateStartStr,
+        dateEndStr,
+      );
+      this.logger.log(`Found ${updatedInvoices.length} updated invoices`);
 
-          const newInvoices: any[] = [];
-          const existingInvoices: any[] = [];
+      const uniqueUpdatedInvoices = updatedInvoices.filter(
+        (invoice) => !processedInvoiceIds.has(invoice.id),
+      );
+      this.logger.log(
+        `${uniqueUpdatedInvoices.length} unique updated invoices (excluding already processed)`,
+      );
 
-          for (const invoice of invoices) {
-            if (processedInvoiceIds.has(invoice.id)) {
-              continue;
-            }
-            processedInvoiceIds.add(invoice.id);
+      const savedUpdatedInvoices = await this.saveInvoicesToDatabase(
+        uniqueUpdatedInvoices,
+      );
+      totalProcessed += savedUpdatedInvoices.length;
 
-            const existingInvoice = await this.prismaService.invoice.findFirst({
-              where: { kiotVietId: BigInt(invoice.id) },
-              select: { id: true },
-            });
-
-            if (existingInvoice) {
-              existingInvoices.push(invoice);
-            } else {
-              newInvoices.push(invoice);
-            }
-          }
-
-          if (newInvoices.length === 0 && existingInvoices.length === 0) {
-            this.logger.log(
-              `Skipping page ${currentPage} - all invoices already processed in this run`,
-            );
-            currentItem += this.PAGE_SIZE;
-            continue;
-          }
-
-          let pageProcessedCount = 0;
-          let allSavedInvoices: any[] = [];
-
-          if (newInvoices.length > 0) {
-            this.logger.log(
-              `Processing ${newInvoices.length} NEW invoices from page ${currentPage}...`,
-            );
-            const savedInvoices =
-              await this.saveInvoicesToDatabase(newInvoices);
-            pageProcessedCount += savedInvoices.length;
-            allSavedInvoices.push(...savedInvoices);
-          }
-
-          if (existingInvoices.length > 0) {
-            this.logger.log(
-              `Processing ${existingInvoices.length} EXISTING invoices from page ${currentPage}`,
-            );
-            const savedInvoices =
-              await this.saveInvoicesToDatabase(existingInvoices);
-            pageProcessedCount += savedInvoices.length;
-            allSavedInvoices.push(...savedInvoices);
-          }
-
-          processedCount += pageProcessedCount;
-          currentItem += this.PAGE_SIZE;
-
-          if (allSavedInvoices.length > 0) {
-            try {
-              await this.syncInvoicesToLarkBase(allSavedInvoices);
-              this.logger.log(
-                `Synced ${allSavedInvoices.length} invoices to LarkBase`,
-              );
-            } catch (error) {
-              this.logger.warn(
-                `LarkBase sync failed for page ${currentPage}: ${error.message}`,
-              );
-            }
-          }
-
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        } catch (error) {
-          consecutiveErrorPages++;
-          totalRetries++;
-          this.logger.error(
-            `API error on page ${currentPage}: ${error.message}`,
-          );
-          if (consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES) {
-            throw new Error(
-              `Multiple consecutive API failures: ${error.message}`,
-            );
-          }
-          if (totalRetries >= MAX_TOTAL_RETRIES) {
-            throw new Error(`Maximum total retries exceeded: ${error.message}`);
-          }
-          const delay = RETRY_DELAY_MS * Math.pow(2, consecutiveErrorPages - 1);
-          this.logger.log(`Retrying after ${delay}ms delay...`);
-          await new Promise((resolve) => setTimeout(resolve, delay));
-        }
+      if (savedUpdatedInvoices.length > 0) {
+        await this.syncInvoicesToLarkBase(savedUpdatedInvoices);
       }
 
       await this.updateSyncControl(syncName, {
@@ -642,11 +540,11 @@ export class KiotVietInvoiceService {
         status: 'completed',
         completedAt: new Date(),
         lastRunAt: new Date(),
-        progress: { processedCount },
+        progress: { processedCount: totalProcessed },
       });
 
       this.logger.log(
-        `Recent invoice sync completed: ${processedCount} invoices processed`,
+        `Recent invoice sync completed: ${totalProcessed} invoices processed`,
       );
     } catch (error) {
       this.logger.error(`Recent invoice sync failed: ${error.message}`);
@@ -654,10 +552,111 @@ export class KiotVietInvoiceService {
         isRunning: false,
         status: 'failed',
         error: error.message,
-        progress: { processedCount },
       });
       throw error;
     }
+  }
+
+  private async fetchInvoicesByCreatedDate(
+    fromDate: string,
+    toDate: string,
+  ): Promise<any[]> {
+    const allInvoices: any[] = [];
+    let currentItem = 0;
+    let hasMore = true;
+
+    while (hasMore) {
+      const response = await this.fetchInvoicesListWithRetry({
+        currentItem,
+        pageSize: this.PAGE_SIZE,
+        orderBy: 'createdDate',
+        orderDirection: 'DESC',
+        includeInvoiceDelivery: true,
+        includePayment: true,
+        includeTotal: true,
+      });
+
+      if (!response || !response.data || response.data.length === 0) {
+        hasMore = false;
+        break;
+      }
+
+      const invoicesInWindow = response.data.filter((invoice) => {
+        if (!invoice.createdDate) return false;
+        const createdDate = new Date(invoice.createdDate)
+          .toISOString()
+          .split('T')[0];
+        return createdDate >= fromDate && createdDate <= toDate;
+      });
+
+      allInvoices.push(...invoicesInWindow);
+
+      if (invoicesInWindow.length === 0 && allInvoices.length > 0) {
+        hasMore = false;
+        break;
+      }
+
+      currentItem += this.PAGE_SIZE;
+
+      if (currentItem > 5000) {
+        this.logger.warn(
+          'Reached safety limit of 5000 items for created date query',
+        );
+        hasMore = false;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    return allInvoices;
+  }
+
+  private async fetchInvoicesByModifiedDate(
+    fromDate: string,
+    toDate: string,
+  ): Promise<any[]> {
+    const allInvoices: any[] = [];
+    let currentItem = 0;
+    let hasMore = true;
+
+    while (hasMore) {
+      const response = await this.fetchInvoicesListWithRetry({
+        currentItem,
+        pageSize: this.PAGE_SIZE,
+        orderBy: 'createdDate',
+        orderDirection: 'DESC',
+        includeInvoiceDelivery: true,
+        includePayment: true,
+        includeTotal: true,
+        lastModifiedFrom: fromDate,
+        toDate: toDate,
+      });
+
+      if (!response || !response.data || response.data.length === 0) {
+        hasMore = false;
+        break;
+      }
+
+      allInvoices.push(...response.data);
+
+      if (response.total && currentItem + this.PAGE_SIZE >= response.total) {
+        hasMore = false;
+        break;
+      }
+
+      currentItem += this.PAGE_SIZE;
+
+      if (currentItem > 5000) {
+        this.logger.warn(
+          'Reached safety limit of 5000 items for modified date query',
+        );
+        hasMore = false;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    return allInvoices;
   }
 
   async fetchInvoicesListWithRetry(
