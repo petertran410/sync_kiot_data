@@ -447,13 +447,10 @@ export class KiotVietOrderService {
 
   async syncRecentOrders(): Promise<void> {
     const syncName = 'order_recent';
-
     let currentItem = 0;
     let processedCount = 0;
-    let totalOrders = 0;
     let consecutiveEmptyPages = 0;
     let consecutiveErrorPages = 0;
-    let lastValidTotal = 0;
     let processedOrderIds = new Set<number>();
 
     try {
@@ -470,61 +467,42 @@ export class KiotVietOrderService {
       const MAX_CONSECUTIVE_ERROR_PAGES = 3;
       const RETRY_DELAY_MS = 2000;
       const MAX_TOTAL_RETRIES = 10;
-
+      const MAX_PAGES = 5;
       let totalRetries = 0;
 
       while (true) {
         const currentPage = Math.floor(currentItem / this.PAGE_SIZE) + 1;
 
-        if (totalOrders > 0) {
-          if (currentItem >= totalOrders) {
-            this.logger.log(
-              `Pagination complete. Processed: ${processedCount}/${totalOrders} orders`,
-            );
-            break;
-          }
-
-          const progressPercentage = (currentItem / totalOrders) * 100;
+        if (currentPage > MAX_PAGES) {
           this.logger.log(
-            `Fetching page ${currentPage} (${currentItem}/${totalOrders} - ${progressPercentage.toFixed(1)}%)`,
+            `Reached max pages limit (${MAX_PAGES}). Stopping sync.`,
           );
-        } else {
-          this.logger.log(
-            `Fetching page ${currentPage} (currentItem: ${currentItem})`,
-          );
+          break;
         }
 
-        const dateStart = new Date();
-        dateStart.setDate(dateStart.getDate());
-        const dateStartStr = dateStart.toISOString().split('T')[0];
-
-        const dateEnd = new Date();
-        dateEnd.setDate(dateEnd.getDate() + 1);
-        const dateEndStr = dateEnd.toISOString().split('T')[0];
+        this.logger.log(
+          `Fetching page ${currentPage} (currentItem: ${currentItem})`,
+        );
 
         try {
           const orderListResponse = await this.fetchOrdersListWithRetry({
             currentItem,
             pageSize: this.PAGE_SIZE,
-            orderBy: 'createdDate',
+            orderBy: 'id',
             orderDirection: 'DESC',
             includePayment: true,
             includeOrderDelivery: true,
-            lastModifiedFrom: dateStartStr,
-            toDate: dateEndStr,
           });
 
           if (!orderListResponse) {
             this.logger.warn('Received null response from KiotViet API');
             consecutiveEmptyPages++;
-
             if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
               this.logger.log(
-                `🔚 Reached end after ${consecutiveEmptyPages} empty pages`,
+                `Reached end after ${consecutiveEmptyPages} empty pages`,
               );
               break;
             }
-
             await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
             continue;
           }
@@ -532,73 +510,42 @@ export class KiotVietOrderService {
           consecutiveEmptyPages = 0;
           consecutiveErrorPages = 0;
 
-          const { total, data: orders } = orderListResponse;
-
-          if (total !== undefined && total !== null) {
-            if (totalOrders === 0) {
-              this.logger.log(
-                `Total orders detected: ${total}. Starting processing...`,
-              );
-
-              totalOrders = total;
-            } else if (total !== totalOrders) {
-              this.logger.warn(
-                `Total count changed: ${totalOrders} -> ${total}. Using latest.`,
-              );
-              totalOrders = total;
-            }
-            lastValidTotal = total;
-          }
+          const { data: orders } = orderListResponse;
 
           if (!orders || orders.length === 0) {
-            this.logger.warn(`Empty page received at position ${currentItem}`);
+            this.logger.log(`No orders in page ${currentPage}`);
             consecutiveEmptyPages++;
-
-            if (totalOrders > 0 && currentItem >= totalOrders) {
-              this.logger.log('Reached end of data (empty page past total)');
-              break;
-            }
-
             if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
               this.logger.log(
-                `🔚 Stopping after ${consecutiveEmptyPages} consecutive empty pages`,
+                `Reached end after ${consecutiveEmptyPages} consecutive empty pages`,
               );
               break;
             }
-
             currentItem += this.PAGE_SIZE;
+            await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
             continue;
           }
 
-          const existingOrderIds = new Set(
-            (
-              await this.prismaService.order.findMany({
-                select: { kiotVietId: true },
-              })
-            ).map((c) => Number(c.kiotVietId)),
-          );
+          const newOrders: any[] = [];
+          const existingOrders: any[] = [];
 
-          const newOrders = orders.filter((order) => {
-            if (
-              !existingOrderIds.has(order.id) &&
-              !processedOrderIds.has(order.id)
-            ) {
-              processedOrderIds.add(order.id);
-              return true;
+          for (const order of orders) {
+            if (processedOrderIds.has(order.id)) {
+              continue;
             }
-            return false;
-          });
+            processedOrderIds.add(order.id);
 
-          const existingOrders = orders.filter((order) => {
-            if (
-              existingOrderIds.has(order.id) &&
-              !processedOrderIds.has(order.id)
-            ) {
-              processedOrderIds.add(order.id);
-              return true;
+            const existingOrder = await this.prismaService.order.findFirst({
+              where: { kiotVietId: BigInt(order.id) },
+              select: { id: true },
+            });
+
+            if (existingOrder) {
+              existingOrders.push(order);
+            } else {
+              newOrders.push(order);
             }
-            return false;
-          });
+          }
 
           if (newOrders.length === 0 && existingOrders.length === 0) {
             this.logger.log(
@@ -615,7 +562,6 @@ export class KiotVietOrderService {
             this.logger.log(
               `Processing ${newOrders.length} NEW orders from page ${currentPage}...`,
             );
-
             const savedOrders = await this.saveOrdersToDatabase(newOrders);
             pageProcessedCount += savedOrders.length;
             allSavedOrders.push(...savedOrders);
@@ -625,7 +571,6 @@ export class KiotVietOrderService {
             this.logger.log(
               `Processing ${existingOrders.length} EXISTING orders from page ${currentPage}`,
             );
-
             const savedOrders = await this.saveOrdersToDatabase(existingOrders);
             pageProcessedCount += savedOrders.length;
             allSavedOrders.push(...savedOrders);
@@ -647,37 +592,21 @@ export class KiotVietOrderService {
             }
           }
 
-          if (totalOrders > 0) {
-            const completionPercentage = (processedCount / totalOrders) * 100;
-            this.logger.log(
-              `Progress: ${processedCount}/${totalOrders} (${completionPercentage.toFixed(1)}%)`,
-            );
-
-            if (processedCount >= totalOrders) {
-              this.logger.log('All orders procesed successfully!');
-              break;
-            }
-          }
-
           await new Promise((resolve) => setTimeout(resolve, 100));
         } catch (error) {
           consecutiveErrorPages++;
           totalRetries++;
-
           this.logger.error(
             `API error on page ${currentPage}: ${error.message}`,
           );
-
           if (consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES) {
             throw new Error(
               `Multiple consecutive API failures: ${error.message}`,
             );
           }
-
           if (totalRetries >= MAX_TOTAL_RETRIES) {
             throw new Error(`Maximum total retries exceeded: ${error.message}`);
           }
-
           const delay = RETRY_DELAY_MS * Math.pow(2, consecutiveErrorPages - 1);
           this.logger.log(`Retrying after ${delay}ms delay...`);
           await new Promise((resolve) => setTimeout(resolve, delay));
@@ -686,35 +615,24 @@ export class KiotVietOrderService {
 
       await this.updateSyncControl(syncName, {
         isRunning: false,
-        isEnabled: false,
+        isEnabled: true,
         status: 'completed',
         completedAt: new Date(),
         lastRunAt: new Date(),
-        progress: { processedCount, expectedTotal: totalOrders },
+        progress: { processedCount },
       });
-
-      await this.updateSyncControl('order_recent', {
-        isEnabled: true,
-        isRunning: false,
-        status: 'idle',
-      });
-
-      const completionRate =
-        totalOrders > 0 ? (processedCount / totalOrders) * 100 : 100;
 
       this.logger.log(
-        `Recent order sync completed: ${processedCount}/${totalOrders} (${completionRate.toFixed(1)}% completion rate)`,
+        `Recent order sync completed: ${processedCount} orders processed`,
       );
     } catch (error) {
       this.logger.error(`Recent order sync failed: ${error.message}`);
-
       await this.updateSyncControl(syncName, {
         isRunning: false,
         status: 'failed',
         error: error.message,
-        progress: { processedCount, expectedTotal: totalOrders },
+        progress: { processedCount },
       });
-
       throw error;
     }
   }
