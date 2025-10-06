@@ -479,7 +479,7 @@ export class KiotVietInvoiceService {
       this.logger.log('Starting recent invoice sync...');
 
       const dateStart = new Date();
-      dateStart.setDate(dateStart.getDate() - 1);
+      dateStart.setDate(dateStart.getDate());
       const dateStartStr = dateStart.toISOString().split('T')[0];
 
       const dateEnd = new Date();
@@ -491,7 +491,6 @@ export class KiotVietInvoiceService {
       const processedInvoiceIds = new Set<number>();
       let totalProcessed = 0;
 
-      // QUERY 1: Lấy invoices MỚI TẠO trong 7 ngày
       this.logger.log('Fetching newly created invoices...');
       const newInvoices = await this.fetchInvoicesByCreatedDate(
         dateStartStr,
@@ -510,7 +509,6 @@ export class KiotVietInvoiceService {
         await this.syncInvoicesToLarkBase(savedNewInvoices);
       }
 
-      // QUERY 2: Lấy invoices ĐÃ UPDATE trong 7 ngày
       this.logger.log('Fetching updated invoices...');
       const updatedInvoices = await this.fetchInvoicesByModifiedDate(
         dateStartStr,
