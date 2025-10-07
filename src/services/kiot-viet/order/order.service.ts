@@ -229,7 +229,7 @@ export class KiotVietOrderService {
           const orderListResponse = await this.fetchOrdersListWithRetry({
             currentItem,
             pageSize: this.PAGE_SIZE,
-            orderBy: 'createdDate',
+            orderBy: 'id',
             orderDirection: 'DESC',
             includePayment: true,
             includeOrderDelivery: true,
@@ -448,6 +448,14 @@ export class KiotVietOrderService {
   async syncRecentOrders(): Promise<void> {
     const syncName = 'order_recent';
 
+    let currentItem = 0;
+    let processedCount = 0;
+    let totalOrders = 0;
+    let consecutiveEmptyPages = 0;
+    let consecutiveErrorPages = 0;
+    let lastValidTotal = 0;
+    let processedOrderIds = new Set<number>();
+
     try {
       await this.updateSyncControl(syncName, {
         isRunning: true,
@@ -458,182 +466,257 @@ export class KiotVietOrderService {
 
       this.logger.log('Starting recent order sync...');
 
-      const dateStart = new Date();
-      dateStart.setDate(dateStart.getDate() - 1);
-      const dateStartStr = dateStart.toISOString().split('T')[0];
+      const MAX_CONSECUTIVE_EMPTY_PAGES = 5;
+      const MAX_CONSECUTIVE_ERROR_PAGES = 3;
+      const RETRY_DELAY_MS = 2000;
+      const MAX_TOTAL_RETRIES = 10;
 
-      const dateEnd = new Date();
-      dateEnd.setDate(dateEnd.getDate() + 1);
-      const dateEndStr = dateEnd.toISOString().split('T')[0];
+      let totalRetries = 0;
 
-      this.logger.log(`Sync window: ${dateStartStr} to ${dateEndStr}`);
+      while (true) {
+        const currentPage = Math.floor(currentItem / this.PAGE_SIZE) + 1;
 
-      const processedOrderIds = new Set<number>();
-      let totalProcessed = 0;
+        if (totalOrders > 0) {
+          if (currentItem >= totalOrders) {
+            this.logger.log(
+              `Pagination complete. Processed: ${processedCount}/${totalOrders} orders`,
+            );
+            break;
+          }
 
-      // QUERY 1: Lấy orders MỚI TẠO trong 7 ngày
-      this.logger.log('Fetching newly created orders...');
-      const newOrders = await this.fetchOrdersByCreatedDate(
-        dateStartStr,
-        dateEndStr,
-      );
-      this.logger.log(`Found ${newOrders.length} newly created orders`);
+          const progressPercentage = (currentItem / totalOrders) * 100;
+          this.logger.log(
+            `Fetching page ${currentPage} (${currentItem}/${totalOrders} - ${progressPercentage.toFixed(1)}%)`,
+          );
+        } else {
+          this.logger.log(
+            `Fetching page ${currentPage} (currentItem: ${currentItem})`,
+          );
+        }
 
-      for (const order of newOrders) {
-        processedOrderIds.add(order.id);
-      }
+        const dateStart = new Date();
+        dateStart.setDate(dateStart.getDate());
+        const dateStartStr = dateStart.toISOString().split('T')[0];
 
-      const savedNewOrders = await this.saveOrdersToDatabase(newOrders);
-      totalProcessed += savedNewOrders.length;
+        const dateEnd = new Date();
+        dateEnd.setDate(dateEnd.getDate() + 1);
+        const dateEndStr = dateEnd.toISOString().split('T')[0];
 
-      if (savedNewOrders.length > 0) {
-        await this.syncOrdersToLarkBase(savedNewOrders);
-      }
+        try {
+          const orderListResponse = await this.fetchOrdersListWithRetry({
+            currentItem,
+            pageSize: this.PAGE_SIZE,
+            orderBy: 'id',
+            orderDirection: 'DESC',
+            includePayment: true,
+            includeOrderDelivery: true,
+            lastModifiedFrom: dateStartStr,
+            toDate: dateEndStr,
+          });
 
-      // QUERY 2: Lấy orders ĐÃ UPDATE trong 7 ngày
-      this.logger.log('Fetching updated orders...');
-      const updatedOrders = await this.fetchOrdersByModifiedDate(
-        dateStartStr,
-        dateEndStr,
-      );
-      this.logger.log(`Found ${updatedOrders.length} updated orders`);
+          if (!orderListResponse) {
+            this.logger.warn('Received null response from KiotViet API');
+            consecutiveEmptyPages++;
 
-      const uniqueUpdatedOrders = updatedOrders.filter(
-        (order) => !processedOrderIds.has(order.id),
-      );
-      this.logger.log(
-        `${uniqueUpdatedOrders.length} unique updated orders (excluding already processed)`,
-      );
+            if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
+              this.logger.log(
+                `🔚 Reached end after ${consecutiveEmptyPages} empty pages`,
+              );
+              break;
+            }
 
-      const savedUpdatedOrders =
-        await this.saveOrdersToDatabase(uniqueUpdatedOrders);
-      totalProcessed += savedUpdatedOrders.length;
+            await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+            continue;
+          }
 
-      if (savedUpdatedOrders.length > 0) {
-        await this.syncOrdersToLarkBase(savedUpdatedOrders);
+          consecutiveEmptyPages = 0;
+          consecutiveErrorPages = 0;
+
+          const { total, data: orders } = orderListResponse;
+
+          if (total !== undefined && total !== null) {
+            if (totalOrders === 0) {
+              this.logger.log(
+                `Total orders detected: ${total}. Starting processing...`,
+              );
+
+              totalOrders = total;
+            } else if (total !== totalOrders) {
+              this.logger.warn(
+                `Total count changed: ${totalOrders} -> ${total}. Using latest.`,
+              );
+              totalOrders = total;
+            }
+            lastValidTotal = total;
+          }
+
+          if (!orders || orders.length === 0) {
+            this.logger.warn(`Empty page received at position ${currentItem}`);
+            consecutiveEmptyPages++;
+
+            if (totalOrders > 0 && currentItem >= totalOrders) {
+              this.logger.log('Reached end of data (empty page past total)');
+              break;
+            }
+
+            if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
+              this.logger.log(
+                `🔚 Stopping after ${consecutiveEmptyPages} consecutive empty pages`,
+              );
+              break;
+            }
+
+            currentItem += this.PAGE_SIZE;
+            continue;
+          }
+
+          const existingOrderIds = new Set(
+            (
+              await this.prismaService.order.findMany({
+                select: { kiotVietId: true },
+              })
+            ).map((c) => Number(c.kiotVietId)),
+          );
+
+          const newOrders = orders.filter((order) => {
+            if (
+              !existingOrderIds.has(order.id) &&
+              !processedOrderIds.has(order.id)
+            ) {
+              processedOrderIds.add(order.id);
+              return true;
+            }
+            return false;
+          });
+
+          const existingOrders = orders.filter((order) => {
+            if (
+              existingOrderIds.has(order.id) &&
+              !processedOrderIds.has(order.id)
+            ) {
+              processedOrderIds.add(order.id);
+              return true;
+            }
+            return false;
+          });
+
+          if (newOrders.length === 0 && existingOrders.length === 0) {
+            this.logger.log(
+              `Skipping page ${currentPage} - all orders already processed in this run`,
+            );
+            currentItem += this.PAGE_SIZE;
+            continue;
+          }
+
+          let pageProcessedCount = 0;
+          let allSavedOrders: any[] = [];
+
+          if (newOrders.length > 0) {
+            this.logger.log(
+              `Processing ${newOrders.length} NEW orders from page ${currentPage}...`,
+            );
+
+            const savedOrders = await this.saveOrdersToDatabase(newOrders);
+            pageProcessedCount += savedOrders.length;
+            allSavedOrders.push(...savedOrders);
+          }
+
+          if (existingOrders.length > 0) {
+            this.logger.log(
+              `Processing ${existingOrders.length} EXISTING orders from page ${currentPage}`,
+            );
+
+            const savedOrders = await this.saveOrdersToDatabase(existingOrders);
+            pageProcessedCount += savedOrders.length;
+            allSavedOrders.push(...savedOrders);
+          }
+
+          processedCount += pageProcessedCount;
+          currentItem += this.PAGE_SIZE;
+
+          if (totalOrders > 0) {
+            const completionPercentage = (processedCount / totalOrders) * 100;
+            this.logger.log(
+              `Progress: ${processedCount}/${totalOrders} (${completionPercentage.toFixed(1)}%)`,
+            );
+
+            if (processedCount >= totalOrders) {
+              this.logger.log('All orders procesed successfully!');
+              break;
+            }
+          }
+
+          if (allSavedOrders.length > 0) {
+            try {
+              await this.syncOrdersToLarkBase(allSavedOrders);
+              this.logger.log(
+                `Synced ${allSavedOrders.length} orders to LarkBase`,
+              );
+            } catch (error) {
+              this.logger.warn(
+                `LarkBase sync failed for page ${currentPage}: ${error.message}`,
+              );
+            }
+          }
+
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        } catch (error) {
+          consecutiveErrorPages++;
+          totalRetries++;
+
+          this.logger.error(
+            `API error on page ${currentPage}: ${error.message}`,
+          );
+
+          if (consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES) {
+            throw new Error(
+              `Multiple consecutive API failures: ${error.message}`,
+            );
+          }
+
+          if (totalRetries >= MAX_TOTAL_RETRIES) {
+            throw new Error(`Maximum total retries exceeded: ${error.message}`);
+          }
+
+          const delay = RETRY_DELAY_MS * Math.pow(2, consecutiveErrorPages - 1);
+          this.logger.log(`Retrying after ${delay}ms delay...`);
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
       }
 
       await this.updateSyncControl(syncName, {
         isRunning: false,
-        isEnabled: true,
+        isEnabled: false,
         status: 'completed',
         completedAt: new Date(),
         lastRunAt: new Date(),
-        progress: { processedCount: totalProcessed },
+        progress: { processedCount, expectedTotal: totalOrders },
       });
 
+      await this.updateSyncControl('order_recent', {
+        isEnabled: true,
+        isRunning: false,
+        status: 'idle',
+      });
+
+      const completionRate =
+        totalOrders > 0 ? (processedCount / totalOrders) * 100 : 100;
+
       this.logger.log(
-        `Recent order sync completed: ${totalProcessed} orders processed`,
+        `Recent order sync completed: ${processedCount}/${totalOrders} (${completionRate.toFixed(1)}% completion rate)`,
       );
     } catch (error) {
       this.logger.error(`Recent order sync failed: ${error.message}`);
+
       await this.updateSyncControl(syncName, {
         isRunning: false,
         status: 'failed',
         error: error.message,
+        progress: { processedCount, expectedTotal: totalOrders },
       });
+
       throw error;
     }
-  }
-
-  private async fetchOrdersByCreatedDate(
-    fromDate: string,
-    toDate: string,
-  ): Promise<any[]> {
-    const allOrders: any[] = [];
-    let currentItem = 0;
-    let hasMore = true;
-
-    while (hasMore) {
-      const response = await this.fetchOrdersListWithRetry({
-        currentItem,
-        pageSize: this.PAGE_SIZE,
-        orderBy: 'createdDate',
-        orderDirection: 'DESC',
-        includePayment: true,
-        includeOrderDelivery: true,
-      });
-
-      if (!response || !response.data || response.data.length === 0) {
-        hasMore = false;
-        break;
-      }
-
-      const ordersInWindow = response.data.filter((order) => {
-        if (!order.createdDate) return false;
-        const createdDate = new Date(order.createdDate)
-          .toISOString()
-          .split('T')[0];
-        return createdDate >= fromDate && createdDate <= toDate;
-      });
-
-      allOrders.push(...ordersInWindow);
-
-      if (ordersInWindow.length === 0 && allOrders.length > 0) {
-        hasMore = false;
-        break;
-      }
-
-      currentItem += this.PAGE_SIZE;
-
-      if (currentItem > 5000) {
-        this.logger.warn(
-          'Reached safety limit of 5000 items for created date query',
-        );
-        hasMore = false;
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-
-    return allOrders;
-  }
-
-  private async fetchOrdersByModifiedDate(
-    fromDate: string,
-    toDate: string,
-  ): Promise<any[]> {
-    const allOrders: any[] = [];
-    let currentItem = 0;
-    let hasMore = true;
-
-    while (hasMore) {
-      const response = await this.fetchOrdersListWithRetry({
-        currentItem,
-        pageSize: this.PAGE_SIZE,
-        orderBy: 'id',
-        orderDirection: 'DESC',
-        includePayment: true,
-        includeOrderDelivery: true,
-        lastModifiedFrom: fromDate,
-        toDate: toDate,
-      });
-
-      if (!response || !response.data || response.data.length === 0) {
-        hasMore = false;
-        break;
-      }
-
-      allOrders.push(...response.data);
-
-      if (response.total && currentItem + this.PAGE_SIZE >= response.total) {
-        hasMore = false;
-        break;
-      }
-
-      currentItem += this.PAGE_SIZE;
-
-      if (currentItem > 5000) {
-        this.logger.warn(
-          'Reached safety limit of 5000 items for modified date query',
-        );
-        hasMore = false;
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-
-    return allOrders;
   }
 
   async fetchOrdersListWithRetry(
