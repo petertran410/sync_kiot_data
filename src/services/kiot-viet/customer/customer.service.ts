@@ -41,7 +41,7 @@ interface KiotVietCustomer {
 export class KiotVietCustomerService {
   private readonly logger = new Logger(KiotVietCustomerService.name);
   private readonly baseUrl: string;
-  private readonly PAGE_SIZE = 100;
+  private readonly PAGE_SIZE = 200;
 
   constructor(
     private readonly httpService: HttpService,
@@ -181,7 +181,7 @@ export class KiotVietCustomerService {
           const customerListResponse = await this.fetchCustomersListWithRetry({
             currentItem,
             pageSize: this.PAGE_SIZE,
-            orderBy: 'createdDate',
+            orderBy: 'id',
             orderDirection: 'DESC',
             includeTotal: true,
             includeCustomerGroup: true,
@@ -534,7 +534,7 @@ export class KiotVietCustomerService {
           const customerListResponse = await this.fetchCustomersListWithRetry({
             currentItem,
             pageSize: this.PAGE_SIZE,
-            orderBy: 'createdDate',
+            orderBy: 'id',
             orderDirection: 'DESC',
             includeTotal: true,
             includeCustomerGroup: true,

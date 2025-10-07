@@ -301,6 +301,24 @@ export class BusSchedulerService implements OnModuleInit {
   private async executeMainCycleWithAbortSignal(
     signal: AbortSignal,
   ): Promise<void> {
+    const now = new Date();
+    const hour = now.getHours();
+    const minute = now.getMinutes();
+
+    const isHistoricalWindow =
+      hour >= 22 || hour < 3 || (hour === 3 && minute <= 30);
+
+    if (isHistoricalWindow) {
+      this.logger.log('Night window (22:00-03:30) - Running HISTORICAL sync');
+      await this.enableHistoricalSyncForMainEntities();
+    } else {
+      this.logger.log('Day window (03:31-21:59) - Running RECENT sync');
+
+      await this.forceStopHistoricalSyncs();
+
+      await this.disableHistoricalSyncForMainEntities();
+    }
+
     const syncPromises: Promise<void>[] = [];
 
     syncPromises.push(
@@ -325,6 +343,92 @@ export class BusSchedulerService implements OnModuleInit {
     );
 
     await Promise.all(syncPromises);
+  }
+
+  private async forceStopHistoricalSyncs(): Promise<void> {
+    const historicalSyncs = await this.prismaService.syncControl.findMany({
+      where: {
+        OR: [
+          { name: 'order_historical' },
+          { name: 'invoice_historical' },
+          { name: 'customer_historical' },
+        ],
+        isRunning: true,
+      },
+    });
+
+    if (historicalSyncs.length > 0) {
+      this.logger.warn(
+        `🛑 Force stopping ${historicalSyncs.length} historical syncs at day window transition`,
+      );
+
+      await this.prismaService.syncControl.updateMany({
+        where: {
+          OR: [
+            { name: 'order_historical' },
+            { name: 'invoice_historical' },
+            { name: 'customer_historical' },
+          ],
+          isRunning: true,
+        },
+        data: {
+          isRunning: false,
+          status: 'stopped',
+          error: 'Stopped by day window transition (03:31)',
+          completedAt: new Date(),
+        },
+      });
+    }
+  }
+
+  private async enableHistoricalSyncForMainEntities(): Promise<void> {
+    await this.prismaService.syncControl.updateMany({
+      where: {
+        name: {
+          in: ['order_historical', 'invoice_historical', 'customer_historical'],
+        },
+      },
+      data: {
+        isEnabled: true,
+        status: 'idle',
+      },
+    });
+
+    await this.prismaService.syncControl.updateMany({
+      where: {
+        name: {
+          in: ['order_recent', 'invoice_recent', 'customer_recent'],
+        },
+      },
+      data: {
+        isEnabled: false,
+      },
+    });
+  }
+
+  private async disableHistoricalSyncForMainEntities(): Promise<void> {
+    await this.prismaService.syncControl.updateMany({
+      where: {
+        name: {
+          in: ['order_historical', 'invoice_historical', 'customer_historical'],
+        },
+      },
+      data: {
+        isEnabled: false,
+      },
+    });
+
+    await this.prismaService.syncControl.updateMany({
+      where: {
+        name: {
+          in: ['order_recent', 'invoice_recent', 'customer_recent'],
+        },
+      },
+      data: {
+        isEnabled: true,
+        status: 'idle',
+      },
+    });
   }
 
   private async executeAbortableSync(
