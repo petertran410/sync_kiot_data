@@ -90,7 +90,7 @@ interface KiotVietOrder {
 export class KiotVietOrderService {
   private readonly logger = new Logger(KiotVietOrderService.name);
   private readonly baseUrl: string;
-  private readonly PAGE_SIZE = 200;
+  private readonly PAGE_SIZE = 100;
 
   constructor(
     private readonly httpService: HttpService,
@@ -506,7 +506,7 @@ export class KiotVietOrderService {
           const orderListResponse = await this.fetchOrdersListWithRetry({
             currentItem,
             pageSize: this.PAGE_SIZE,
-            orderBy: 'id',
+            orderBy: 'createdDate',
             orderDirection: 'DESC',
             includePayment: true,
             includeOrderDelivery: true,
