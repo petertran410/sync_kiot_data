@@ -634,18 +634,6 @@ export class KiotVietOrderService {
           processedCount += pageProcessedCount;
           currentItem += this.PAGE_SIZE;
 
-          if (totalOrders > 0) {
-            const completionPercentage = (processedCount / totalOrders) * 100;
-            this.logger.log(
-              `Progress: ${processedCount}/${totalOrders} (${completionPercentage.toFixed(1)}%)`,
-            );
-
-            if (processedCount >= totalOrders) {
-              this.logger.log('All orders procesed successfully!');
-              break;
-            }
-          }
-
           if (allSavedOrders.length > 0) {
             try {
               await this.syncOrdersToLarkBase(allSavedOrders);
@@ -656,6 +644,18 @@ export class KiotVietOrderService {
               this.logger.warn(
                 `LarkBase sync failed for page ${currentPage}: ${error.message}`,
               );
+            }
+          }
+
+          if (totalOrders > 0) {
+            const completionPercentage = (processedCount / totalOrders) * 100;
+            this.logger.log(
+              `Progress: ${processedCount}/${totalOrders} (${completionPercentage.toFixed(1)}%)`,
+            );
+
+            if (processedCount >= totalOrders) {
+              this.logger.log('All orders procesed successfully!');
+              break;
             }
           }
 
