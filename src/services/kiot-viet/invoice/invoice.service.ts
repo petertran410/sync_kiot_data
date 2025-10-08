@@ -659,18 +659,6 @@ export class KiotVietInvoiceService {
           processedCount += pageProcessedCount;
           currentItem += this.PAGE_SIZE;
 
-          if (totalInvoices > 0) {
-            const completionPercentage = (processedCount / totalInvoices) * 100;
-            this.logger.log(
-              `Progress: ${processedCount}/${totalInvoices} (${completionPercentage.toFixed(1)}%)`,
-            );
-
-            if (processedCount >= totalInvoices) {
-              this.logger.log('All invoices processed successfully');
-              break;
-            }
-          }
-
           if (allSavedInvoices.length > 0) {
             try {
               await this.syncInvoicesToLarkBase(allSavedInvoices);
@@ -681,6 +669,18 @@ export class KiotVietInvoiceService {
               this.logger.warn(
                 `LarkBase sync failed for page ${currentPage}: ${error.message}`,
               );
+            }
+          }
+
+          if (totalInvoices > 0) {
+            const completionPercentage = (processedCount / totalInvoices) * 100;
+            this.logger.log(
+              `Progress: ${processedCount}/${totalInvoices} (${completionPercentage.toFixed(1)}%)`,
+            );
+
+            if (processedCount >= totalInvoices) {
+              this.logger.log('All invoices processed successfully');
+              break;
             }
           }
 

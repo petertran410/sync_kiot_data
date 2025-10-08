@@ -506,7 +506,7 @@ export class KiotVietOrderService {
           const orderListResponse = await this.fetchOrdersListWithRetry({
             currentItem,
             pageSize: this.PAGE_SIZE,
-            orderBy: 'createdDate',
+            orderBy: 'id',
             orderDirection: 'DESC',
             includePayment: true,
             includeOrderDelivery: true,
