@@ -60,6 +60,7 @@ const SALE_NAME = {
   LY_THI_HONG_DAO: 'Lý Thị Hồng Đào',
   NGUYEN_HUU_TOAN: 'Nguyễn Hữu Toàn',
   LE_BICH_NGOC: 'Lê Bích Ngọc',
+  NGUYEN_THI_LOAN: 'Nguyễn Thị Loan',
 };
 
 interface LarkBaseRecord {
@@ -823,6 +824,7 @@ export class LarkOrderSyncService {
         1016818: SALE_NAME.NGUYEN_THI_PHUONG,
         383855: SALE_NAME.NGUYEN_HUU_TOAN,
         1032906: SALE_NAME.LE_BICH_NGOC,
+        1032972: SALE_NAME.NGUYEN_THI_LOAN,
       };
 
       fields[LARK_ORDER_FIELDS.SELLER] = sellerMapping[order.soldById] || '';
