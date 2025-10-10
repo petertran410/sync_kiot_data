@@ -834,7 +834,7 @@ export class KiotVietCustomerService {
             organization: customerData.organization ?? '',
             comments: customerData.comments ?? '',
             taxCode: customerData.taxCode ?? '',
-            groups: customerData.groups ?? '',
+            groups: customerData.groups,
             debt: customerData.debt ? new Prisma.Decimal(customerData.debt) : 0,
             totalInvoiced: customerData.totalInvoiced
               ? new Prisma.Decimal(customerData.totalInvoiced)
@@ -879,7 +879,7 @@ export class KiotVietCustomerService {
             organization: customerData.organization ?? '',
             comments: customerData.comments ?? '',
             taxCode: customerData.taxCode ?? '',
-            groups: customerData.groups ?? '',
+            groups: customerData.groups,
             debt: customerData.debt ? new Prisma.Decimal(customerData.debt) : 0,
             totalInvoiced: customerData.totalInvoiced
               ? new Prisma.Decimal(customerData.totalInvoiced)
