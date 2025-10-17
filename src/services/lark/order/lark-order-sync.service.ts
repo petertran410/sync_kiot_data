@@ -278,7 +278,7 @@ export class LarkOrderSyncService {
   private async loadExistingRecords(): Promise<void> {
     try {
       const headers = await this.larkAuthService.getOrderHeaders();
-      let pageToken = '';
+      let pageToken: string | undefined = undefined;
       let totalLoaded = 0;
       let cacheBuilt = 0;
       const pageSize = 1000;
@@ -286,10 +286,13 @@ export class LarkOrderSyncService {
       do {
         const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records`;
 
-        const params: any = {
-          page_size: pageSize,
-          ...(pageToken && { page_token: pageToken }),
+        const params: Record<string, string> = {
+          page_size: String(pageSize),
         };
+
+        if (pageToken) {
+          params.page_token = pageToken;
+        }
 
         const startTime = Date.now();
 
@@ -297,7 +300,7 @@ export class LarkOrderSyncService {
           this.httpService.get(url, {
             headers,
             params,
-            timeout: 15000,
+            timeout: 45000,
           }),
         );
 
@@ -329,7 +332,7 @@ export class LarkOrderSyncService {
           }
 
           totalLoaded += records.length;
-          pageToken = response.data.data?.page_token || '';
+          pageToken = response.data.data?.page_token;
 
           if (totalLoaded % 1500 === 0 || !pageToken) {
             this.logger.log(

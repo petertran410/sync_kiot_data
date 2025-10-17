@@ -107,7 +107,7 @@ interface KiotVietInvoice {
 export class KiotVietInvoiceService {
   private readonly logger = new Logger(KiotVietInvoiceService.name);
   private readonly baseUrl: string;
-  private readonly PAGE_SIZE = 200;
+  private readonly PAGE_SIZE = 100;
 
   constructor(
     private readonly httpService: HttpService,
