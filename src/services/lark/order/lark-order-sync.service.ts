@@ -278,29 +278,28 @@ export class LarkOrderSyncService {
   private async loadExistingRecords(): Promise<void> {
     try {
       const headers = await this.larkAuthService.getOrderHeaders();
-      let pageToken: string | undefined = undefined;
+      let pageToken: string | undefined;
       let totalLoaded = 0;
       let cacheBuilt = 0;
-      const pageSize = 1000;
+      const pageSize = 100;
 
       do {
         const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records`;
 
-        const params: Record<string, string> = {
+        const params = new URLSearchParams({
           page_size: String(pageSize),
-        };
+        });
 
         if (pageToken) {
-          params.page_token = pageToken;
+          params.append('page_token', pageToken);
         }
 
         const startTime = Date.now();
 
         const response = await firstValueFrom(
-          this.httpService.get(url, {
+          this.httpService.get(`${url}?${params}`, {
             headers,
-            params,
-            timeout: 45000,
+            timeout: 90000,
           }),
         );
 
