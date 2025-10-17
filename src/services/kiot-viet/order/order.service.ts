@@ -221,6 +221,10 @@ export class KiotVietOrderService {
           );
         }
 
+        const dateStart = new Date();
+        dateStart.setDate(dateStart.getDate() - 90);
+        const dateStartStr = dateStart.toISOString().split('T')[0];
+
         const dateEnd = new Date();
         dateEnd.setDate(dateEnd.getDate() + 1);
         const dateEndStr = dateEnd.toISOString().split('T')[0];
@@ -233,7 +237,7 @@ export class KiotVietOrderService {
             orderDirection: 'DESC',
             includePayment: true,
             includeOrderDelivery: true,
-            lastModifiedFrom: '2024-12-1',
+            lastModifiedFrom: dateStartStr,
             toDate: dateEndStr,
           });
 

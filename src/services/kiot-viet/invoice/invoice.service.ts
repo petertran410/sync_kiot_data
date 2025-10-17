@@ -240,6 +240,10 @@ export class KiotVietInvoiceService {
           );
         }
 
+        const dateStart = new Date();
+        dateStart.setDate(dateStart.getDate() - 90);
+        const dateStartStr = dateStart.toISOString().split('T')[0];
+
         const dateEnd = new Date();
         dateEnd.setDate(dateEnd.getDate() + 1);
         const dateEndStr = dateEnd.toISOString().split('T')[0];
@@ -255,7 +259,7 @@ export class KiotVietInvoiceService {
             includeTotal: true,
             // lastModifiedFrom: '2024-12-1',
             // toDate: dateEndStr,
-            fromPurchaseDate: '2024-12-1',
+            fromPurchaseDate: dateStartStr,
             toPurchaseDate: dateEndStr,
           });
 
