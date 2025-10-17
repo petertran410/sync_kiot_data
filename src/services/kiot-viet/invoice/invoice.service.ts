@@ -241,7 +241,7 @@ export class KiotVietInvoiceService {
         }
 
         const dateStart = new Date();
-        dateStart.setDate(dateStart.getDate() - 90);
+        dateStart.setDate(dateStart.getDate() + 1);
         const dateStartStr = dateStart.toISOString().split('T')[0];
 
         const dateEnd = new Date();
