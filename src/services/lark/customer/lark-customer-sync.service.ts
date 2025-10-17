@@ -277,7 +277,7 @@ export class LarkCustomerSyncService {
       let pageToken: string | undefined = undefined;
       let totalLoaded = 0;
       let cacheBuilt = 0;
-      const pageSize = 100;
+      const pageSize = 1000;
 
       do {
         const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records`;
