@@ -496,27 +496,28 @@ export class LarkOrderSupplierSyncService {
   private async loadExistingRecords(): Promise<void> {
     try {
       const headers = await this.larkAuthService.getOrderSupplierHeaders();
-      let pageToken = '';
+      let pageToken: string | undefined;
       let totalLoaded = 0;
       let cacheBuilt = 0;
-      let stringConversions = 0;
-      const pageSize = 1000;
+      const pageSize = 500;
 
       do {
         const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records`;
 
-        const params: any = {
-          page_size: pageSize,
-          ...(pageToken && { page_token: pageToken }),
-        };
+        const params = new URLSearchParams({
+          page_size: String(pageSize),
+        });
+
+        if (pageToken) {
+          params.append('page_token', pageToken);
+        }
 
         const startTime = Date.now();
 
         const response = await firstValueFrom(
-          this.httpService.get(url, {
+          this.httpService.get(`${url}?${params}`, {
             headers,
-            params,
-            timeout: 15000,
+            timeout: 90000,
           }),
         );
 
@@ -574,7 +575,7 @@ export class LarkOrderSupplierSyncService {
 
           if (totalLoaded % 1500 === 0 || !pageToken) {
             this.logger.log(
-              `Cache progress: ${cacheBuilt}/${totalLoaded} records processed (${stringConversions} string conversions)`,
+              `Cache progress: ${cacheBuilt}/${totalLoaded} records (${loadTime}ms/page)`,
             );
           }
         } else {
@@ -602,27 +603,28 @@ export class LarkOrderSupplierSyncService {
     try {
       const headers =
         await this.larkAuthService.getOrderSupplierDetailHeaders();
-      let pageToken = '';
+      let pageToken: string | undefined;
       let totalDetailLoaded = 0;
       let cacheDetailBuilt = 0;
-      let stringConversions = 0;
-      const pageSize = 100;
+      const pageSize = 500;
 
       do {
         const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseTokenDetail}/tables/${this.tableIdDetail}/records`;
 
-        const params: any = {
-          page_size: pageSize,
-          ...(pageToken && { page_token: pageToken }),
-        };
+        const params = new URLSearchParams({
+          page_size: String(pageSize),
+        });
+
+        if (pageToken) {
+          params.append('page_token', pageToken);
+        }
 
         const startTime = Date.now();
 
         const response = await firstValueFrom(
-          this.httpService.get(url, {
+          this.httpService.get(`${url}?${params}`, {
             headers,
-            params,
-            timeout: 15000,
+            timeout: 90000,
           }),
         );
 
@@ -663,7 +665,7 @@ export class LarkOrderSupplierSyncService {
 
           if (totalDetailLoaded % 1500 === 0 || !pageToken) {
             this.logger.log(
-              `Cache progress: ${cacheDetailBuilt}/${totalDetailLoaded} records processed (${stringConversions} string conversions)`,
+              `Cache progress: ${cacheDetailBuilt}/${totalDetailLoaded} records (${loadTime}ms/page)`,
             );
           }
         } else {

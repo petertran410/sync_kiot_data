@@ -344,7 +344,7 @@ export class LarkProductSyncService {
   private async loadExistingRecords(): Promise<void> {
     try {
       const headers = await this.larkAuthService.getProductHeaders();
-      let pageToken = '';
+      let pageToken: string | undefined;
       let totalLoaded = 0;
       let cacheBuilt = 0;
       const pageSize = 500;
@@ -363,9 +363,8 @@ export class LarkProductSyncService {
         const startTime = Date.now();
 
         const response = await firstValueFrom(
-          this.httpService.get(url, {
+          this.httpService.get(`${url}?${params}`, {
             headers,
-            params,
             timeout: 90000,
           }),
         );

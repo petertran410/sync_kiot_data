@@ -253,26 +253,28 @@ export class LarkCashflowSyncService {
   private async loadExistingRecords(): Promise<void> {
     try {
       const headers = await this.larkAuthService.getCashflowHeaders();
-      let pageToken = '';
+      let pageToken: string | undefined;
       let totalLoaded = 0;
       let cacheBuilt = 0;
-      const pageSize = 1000;
+      const pageSize = 500;
 
       do {
         const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records`;
 
-        const params: any = {
-          page_size: pageSize,
-          ...(pageToken && { page_token: pageToken }),
-        };
+        const params = new URLSearchParams({
+          page_size: String(pageSize),
+        });
+
+        if (pageToken) {
+          params.append('page_token', pageToken);
+        }
 
         const startTime = Date.now();
 
         const response = await firstValueFrom(
-          this.httpService.get(url, {
+          this.httpService.get(`${url}?${params}`, {
             headers,
-            params,
-            timeout: 15000,
+            timeout: 90000,
           }),
         );
 
