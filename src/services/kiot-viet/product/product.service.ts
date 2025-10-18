@@ -256,7 +256,7 @@ export class KiotVietProductService {
           const response = await this.fetchProductsListWithRetry({
             currentItem,
             pageSize: this.PAGE_SIZE,
-            orderBy: 'createdDate',
+            orderBy: 'id',
             orderDirection: 'DESC',
             includeInventory: true,
             includePricebook: true,
@@ -393,18 +393,6 @@ export class KiotVietProductService {
           processedCount += pageProcessedCount;
           currentItem += this.PAGE_SIZE;
 
-          if (totalProducts > 0) {
-            const completionPercentage = (processedCount / totalProducts) * 100;
-            this.logger.log(
-              `Progress: ${processedCount}/${totalProducts} (${completionPercentage.toFixed(1)}%)`,
-            );
-
-            if (processedCount >= totalProducts) {
-              this.logger.log('All products processed successfully');
-              break;
-            }
-          }
-
           if (allSavedProducts.length > 0) {
             try {
               await this.syncProductsToLarkBase(allSavedProducts);
@@ -415,6 +403,18 @@ export class KiotVietProductService {
               this.logger.warn(
                 `LarkBase sync failed for page${currentPage}: ${error.message}`,
               );
+            }
+          }
+
+          if (totalProducts > 0) {
+            const completionPercentage = (processedCount / totalProducts) * 100;
+            this.logger.log(
+              `Progress: ${processedCount}/${totalProducts} (${completionPercentage.toFixed(1)}%)`,
+            );
+
+            if (processedCount >= totalProducts) {
+              this.logger.log('All products processed successfully');
+              break;
             }
           }
 
@@ -886,39 +886,41 @@ export class KiotVietProductService {
         return;
       }
 
-      // const enrichedProducts = await Promise.all(
-      //   productsToSync.map(async (product) => {
-      //     const inventories =
-      //       await this.prismaService.productInventory.findMany({
-      //         where: { productId: product.id },
-      //         select: {
-      //           productId: true,
-      //           branchId: true,
-      //           onHand: true,
-      //           reserved: true,
-      //           onOrder: true,
-      //           cost: true,
-      //         },
-      //       });
+      const enrichedProducts = await Promise.all(
+        productsToSync.map(async (product) => {
+          const inventories =
+            await this.prismaService.productInventory.findMany({
+              where: { productId: product.id },
+              select: {
+                productId: true,
+                branchId: true,
+                onHand: true,
+                reserved: true,
+                onOrder: true,
+                cost: true,
+              },
+            });
 
-      //     const priceBooks = await this.prismaService.priceBookDetail.findMany({
-      //       where: { productId: product.id },
-      //       select: {
-      //         productId: true,
-      //         priceBookId: true,
-      //         price: true,
-      //       },
-      //     });
+          const priceBooks = await this.prismaService.priceBookDetail.findMany({
+            where: { productId: product.id },
+            select: {
+              productId: true,
+              priceBookId: true,
+              price: true,
+            },
+          });
 
-      //     return {
-      //       ...product,
-      //       inventories: inventories || [],
-      //       priceBooks: priceBooks || [],
-      //     };
-      //   }),
-      // );
+          return {
+            ...product,
+            inventories: inventories || [],
+            priceBooks: priceBooks || [],
+          };
+        }),
+      );
 
-      await this.larkProductSyncService.syncProductsToLarkBase(productsToSync);
+      await this.larkProductSyncService.syncProductsToLarkBase(
+        enrichedProducts,
+      );
       this.logger.log('✅ LarkBase product sync completed');
     } catch (error) {
       this.logger.error(`LarkBase sync FAILED: ${error.message}`);

@@ -163,7 +163,7 @@ export class LarkProductSyncService {
   private productCodeCache: Map<string, string> = new Map();
   private cacheLoaded: boolean = false;
   private lastCacheLoadTime: Date | null = null;
-  private readonly CACHE_VALIDITY_MINUTES = 30;
+  private readonly CACHE_VALIDITY_MINUTES = 600;
 
   constructor(
     private readonly httpService: HttpService,
@@ -318,7 +318,7 @@ export class LarkProductSyncService {
         );
         if (attempt < maxRetries) {
           const delay = attempt * 2000;
-          this.logger.log(`⏳ Waiting ${delay / 1000}s before retry...`);
+          this.logger.log(`Waiting ${delay / 1000}s before retry...`);
           await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }
@@ -343,15 +343,18 @@ export class LarkProductSyncService {
       let pageToken = '';
       let totalLoaded = 0;
       let cacheBuilt = 0;
-      const pageSize = 100;
+      const pageSize = 500;
 
       do {
         const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records`;
 
-        const params: any = {
-          page_size: pageSize,
-          ...(pageToken && { page_token: pageToken }),
-        };
+        const params = new URLSearchParams({
+          page_size: String(pageSize),
+        });
+
+        if (pageToken) {
+          params.append('page_token', pageToken);
+        }
 
         const startTime = Date.now();
 
@@ -359,7 +362,7 @@ export class LarkProductSyncService {
           this.httpService.get(url, {
             headers,
             params,
-            timeout: 15000,
+            timeout: 90000,
           }),
         );
 
