@@ -719,13 +719,14 @@ export class KiotVietProductService {
           },
         });
 
+        const inventories: any[] = [];
         if (productData.inventories && productData.inventories.length > 0) {
           for (let i = 0; i < productData.inventories.length; i++) {
             const detail = productData.inventories[i];
-            await this.prismaService.productInventory.upsert({
+            const inventory = await this.prismaService.productInventory.upsert({
               where: {
                 productId_lineNumber: {
-                  productId: product?.id,
+                  productId: product.id,
                   lineNumber: i + 1,
                 },
               },
@@ -763,103 +764,54 @@ export class KiotVietProductService {
                 lastSyncedAt: new Date(),
               },
             });
+            inventories.push(inventory);
           }
         }
 
-        if (productData.attributes && productData.attributes.length > 0) {
-          for (let i = 0; i < productData.attributes.length; i++) {
-            const detail = productData.attributes[i];
-
-            await this.prismaService.productAttribute.upsert({
-              where: {
-                productId_lineNumber: {
-                  productId: product.id,
-                  lineNumber: i + 1,
-                },
-              },
-              update: {
-                productId: product.id,
-                attributeName: detail.attributeName,
-                attributeValue: detail.attributeValue,
-                lineNumber: i + 1,
-                lastSyncedAt: new Date(),
-              },
-              create: {
-                productId: product.id,
-                attributeName: detail.attributeName,
-                attributeValue: detail.attributeValue,
-                lineNumber: i + 1,
-                lastSyncedAt: new Date(),
-              },
-            });
-          }
-        }
-
-        if (productData.images && productData.images.length > 0) {
-          for (let i = 0; i < productData.images.length; i++) {
-            await this.prismaService.productImage.upsert({
-              where: {
-                productId_lineNumber: {
-                  productId: product.id,
-                  lineNumber: i + 1,
-                },
-              },
-              update: {
-                productId: product.id,
-                imageUrl: productData.images,
-                lineNumber: i + 1,
-                lastSyncedAt: new Date(),
-              },
-              create: {
-                productId: product.id,
-                imageUrl: productData.images,
-                lineNumber: i + 1,
-                lastSyncedAt: new Date(),
-              },
-            });
-          }
-        } else {
-          continue;
-        }
-
-        if (productData.priceBooks) {
+        const priceBooks: any[] = [];
+        if (productData.priceBooks && productData.priceBooks.length > 0) {
           for (let i = 0; i < productData.priceBooks.length; i++) {
             const detail = productData.priceBooks[i];
             const pricebook = await this.prismaService.priceBook.findFirst({
               where: { kiotVietId: detail.priceBookId },
-              select: { id: true, name: true },
             });
 
-            await this.prismaService.priceBookDetail.upsert({
-              where: {
-                productId_lineNumber: {
-                  productId: product.id,
-                  lineNumber: i + 1,
+            const priceBookDetail =
+              await this.prismaService.priceBookDetail.upsert({
+                where: {
+                  productId_lineNumber: {
+                    productId: product.id,
+                    lineNumber: i + 1,
+                  },
                 },
-              },
-              update: {
-                lineNumber: i + 1,
-                priceBookId: pricebook?.id ?? null,
-                priceBookName: pricebook?.name,
-                price: detail.price ?? 0,
-                lastSyncedAt: new Date(),
-                productId: product.id,
-                productName: product.name,
-              },
-              create: {
-                lineNumber: i + 1,
-                priceBookId: pricebook?.id ?? null,
-                priceBookName: pricebook?.name,
-                price: detail.price ?? 0,
-                lastSyncedAt: new Date(),
-                productId: product.id,
-                productName: product.name,
-              },
-            });
+                update: {
+                  lineNumber: i + 1,
+                  priceBookId: pricebook?.id ?? null,
+                  priceBookName: pricebook?.name,
+                  price: detail.price ?? 0,
+                  lastSyncedAt: new Date(),
+                  productId: product.id,
+                  productName: product.name,
+                },
+                create: {
+                  lineNumber: i + 1,
+                  priceBookId: pricebook?.id ?? null,
+                  priceBookName: pricebook?.name,
+                  price: detail.price ?? 0,
+                  lastSyncedAt: new Date(),
+                  productId: product.id,
+                  productName: product.name,
+                },
+              });
+            priceBooks.push(priceBookDetail);
           }
         }
 
-        savedProducts.push(product);
+        savedProducts.push({
+          ...product,
+          inventories,
+          priceBooks,
+        });
       } catch (error) {
         this.logger.error(
           `❌ Failed to save product ${productData.code}: ${error.message}`,
@@ -886,56 +838,11 @@ export class KiotVietProductService {
         return;
       }
 
-      const enrichedProducts = await Promise.all(
-        productsToSync.map(async (product) => {
-          const inventories =
-            await this.prismaService.productInventory.findMany({
-              where: { productId: product.id },
-              select: {
-                productId: true,
-                branchId: true,
-                onHand: true,
-                reserved: true,
-                onOrder: true,
-                cost: true,
-              },
-            });
-
-          const priceBooks = await this.prismaService.priceBookDetail.findMany({
-            where: { productId: product.id },
-            select: {
-              productId: true,
-              priceBookId: true,
-              price: true,
-            },
-          });
-
-          return {
-            ...product,
-            inventories: inventories || [],
-            priceBooks: priceBooks || [],
-          };
-        }),
-      );
-
-      await this.larkProductSyncService.syncProductsToLarkBase(
-        enrichedProducts,
-      );
+      await this.larkProductSyncService.syncProductsToLarkBase(productsToSync);
       this.logger.log('✅ LarkBase product sync completed');
     } catch (error) {
-      this.logger.error(`LarkBase sync FAILED: ${error.message}`);
-      this.logger.error(`STOPPING sync to prevent data duplication`);
-
-      const productIds = products.map((c) => c.id);
-      await this.prismaService.product.updateMany({
-        where: { id: { in: productIds } },
-        data: {
-          larkSyncStatus: 'FAILED',
-          larkSyncedAt: new Date(),
-        },
-      });
-
-      throw new Error(`LarkBase sync failed: ${error.message}`);
+      this.logger.error(`LarkBase sync failed: ${error.message}`);
+      throw error;
     }
   }
 
