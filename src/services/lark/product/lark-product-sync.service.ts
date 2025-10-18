@@ -61,6 +61,8 @@ const LARK_PRODUCT_FIELDS = {
   PRICE_SUNDAY_BASIC: 'Bảng giá chuỗi Sunday Basic',
   PRICE_HADILAO: 'Bảng Giá Hadilao Việt Nam',
   PRICE_TRA_NON: 'Chuỗi Lá Trà Non',
+  PRICE_HOANG_QUAN_HCM: 'Bảng Giá Hoàng Quân HCM',
+  PRICE_HOC_VIEN_CAFE_HN: 'Bảng Giá Học Viện Cafe Hà Nội',
 } as const;
 
 const ALLOWS_SALE_OPTIONS = {
@@ -101,6 +103,8 @@ const PRICEBOOK_FIELD_MAPPING: Record<number, string> = {
   20: LARK_PRODUCT_FIELDS.PRICE_SUNDAY_BASIC,
   21: LARK_PRODUCT_FIELDS.PRICE_HADILAO,
   22: LARK_PRODUCT_FIELDS.PRICE_TRA_NON,
+  23: LARK_PRODUCT_FIELDS.PRICE_HOANG_QUAN_HCM,
+  24: LARK_PRODUCT_FIELDS.PRICE_HOC_VIEN_CAFE_HN,
 } as const;
 
 const BRANCH_COST_MAPPING: Record<number, string> = {
@@ -880,6 +884,8 @@ export class LarkProductSyncService {
           20: LARK_PRODUCT_FIELDS.PRICE_SUNDAY_BASIC,
           21: LARK_PRODUCT_FIELDS.PRICE_HADILAO,
           22: LARK_PRODUCT_FIELDS.PRICE_TRA_NON,
+          23: LARK_PRODUCT_FIELDS.PRICE_HOANG_QUAN_HCM,
+          24: LARK_PRODUCT_FIELDS.PRICE_HOC_VIEN_CAFE_HN,
         };
 
         const larkField = priceBookMapping[priceBookId];
