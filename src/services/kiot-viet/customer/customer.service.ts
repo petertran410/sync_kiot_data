@@ -186,11 +186,12 @@ export class KiotVietCustomerService {
             currentItem,
             pageSize: this.PAGE_SIZE,
             orderBy: 'id',
-            orderDirection: 'DESC',
+            // orderDirection: 'DESC',
             includeTotal: true,
             includeCustomerGroup: true,
             includeCustomerSocial: true,
-            lastModifiedFrom: dateStartStr,
+            // lastModifiedFrom: dateStartStr,
+            lastModifiedFrom: '2024-12-01',
             toDate: dateEndStr,
           });
 
