@@ -53,21 +53,6 @@ export class SyncController {
     private readonly larkDemandSyncService: LarkDemandSyncService,
   ) {}
 
-  @Get('status')
-  async getStatus() {
-    try {
-      return {
-        success: true,
-        data: await this.busScheduler.getSchedulerStatus(),
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: error.message,
-      };
-    }
-  }
-
   @Post('reset')
   async resetAllSyncs() {
     try {
