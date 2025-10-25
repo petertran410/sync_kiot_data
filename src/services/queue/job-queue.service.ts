@@ -16,7 +16,7 @@ export class JobQueueService {
 
   async addJob(
     entityType: string,
-    entityId: bigint,
+    entityId: number,
     kiotVietId: bigint,
   ): Promise<void> {
     try {

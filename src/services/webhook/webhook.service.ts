@@ -27,7 +27,7 @@ export class WebhookService {
 
             await this.jobQueueService.addJob(
               'order',
-              BigInt(savedOrder.id),
+              savedOrder.id,
               savedOrder.kiotVietId,
             );
           }
@@ -54,7 +54,7 @@ export class WebhookService {
 
             await this.jobQueueService.addJob(
               'invoice',
-              BigInt(savedInvoice.id),
+              savedInvoice.id,
               savedInvoice.kiotVietId,
             );
           }
