@@ -46,6 +46,8 @@ export class WebhookService {
       for (const notification of notifications) {
         const data = notification?.Data || [];
 
+        console.log(data);
+
         for (const invoiceData of data) {
           const savedInvoice = await this.upsertInvoice(invoiceData);
 
@@ -127,6 +129,9 @@ export class WebhookService {
   private async upsertInvoice(invoiceData: any) {
     try {
       const kiotVietId = BigInt(invoiceData.Id);
+      const invoiceCode = invoiceData.Code;
+      const baseCode = this.extractBaseInvoiceCode(invoiceCode);
+
       const branchId = await this.findBranchId(invoiceData.BranchId);
       const customerId = await this.findCustomerId(invoiceData.CustomerId);
       const soldById = invoiceData.SoldById
@@ -137,53 +142,73 @@ export class WebhookService {
         invoiceData.SaleChannelId,
       );
 
-      const invoice = await this.prismaService.invoice.upsert({
-        where: { kiotVietId },
-        update: {
-          total: new Prisma.Decimal(invoiceData.Total || 0),
-          totalPayment: new Prisma.Decimal(invoiceData.TotalPayment || 0),
-          status: invoiceData.Status,
-          statusValue: invoiceData.StatusValue,
-          discount: invoiceData.Discount
-            ? new Prisma.Decimal(invoiceData.Discount)
-            : null,
-          discountRatio: invoiceData.DiscountRatio,
-          modifiedDate: invoiceData.ModifiedDate
-            ? new Date(invoiceData.ModifiedDate)
-            : null,
-          lastSyncedAt: new Date(),
-          larkSyncStatus: 'PENDING',
+      const existingInvoice = await this.prismaService.invoice.findFirst({
+        where: {
+          OR: [
+            { kiotVietId },
+            { code: baseCode },
+            { code: { startsWith: `${baseCode}.` } },
+          ],
         },
-        create: {
-          kiotVietId,
-          code: invoiceData.Code,
-          purchaseDate: new Date(invoiceData.PurchaseDate),
-          branchId,
-          soldById,
-          customerId,
-          orderId,
-          total: new Prisma.Decimal(invoiceData.Total || 0),
-          totalPayment: new Prisma.Decimal(invoiceData.TotalPayment || 0),
-          discount: invoiceData.Discount
-            ? new Prisma.Decimal(invoiceData.Discount)
-            : null,
-          discountRatio: invoiceData.DiscountRatio,
-          status: invoiceData.Status,
-          statusValue: invoiceData.StatusValue,
-          description: invoiceData.Description,
-          saleChannelId,
-          modifiedDate: invoiceData.ModifiedDate
-            ? new Date(invoiceData.ModifiedDate)
-            : null,
-          larkSyncStatus: 'PENDING',
-        },
+        orderBy: { modifiedDate: 'desc' },
       });
 
-      return invoice;
+      const invoicePayload = {
+        kiotVietId,
+        code: invoiceCode,
+        purchaseDate: new Date(invoiceData.PurchaseDate),
+        branchId: invoiceData.BranchId,
+        soldById: invoiceData.SoldById,
+        customerId: invoiceData.CustomerId,
+        orderId: invoiceData.OrderId,
+        total: new Prisma.Decimal(invoiceData.Total || 0),
+        totalPayment: new Prisma.Decimal(invoiceData.TotalPayment || 0),
+        discount: invoiceData.Discount
+          ? new Prisma.Decimal(invoiceData.Discount)
+          : 0,
+        discountRatio: invoiceData.DiscountRatio,
+        status: invoiceData.Status,
+        statusValue: invoiceData.StatusValue,
+        description: invoiceData.Description,
+        saleChannelId: invoiceData.SaleChannelId,
+        createdDate: invoiceData.CreatedDate
+          ? new Date(invoiceData.CreatedDate)
+          : new Date(),
+        modifiedDate: invoiceData.ModifiedDate
+          ? new Date(invoiceData.ModifiedDate)
+          : new Date(),
+        lastSyncedAt: new Date(),
+        larkSyncStatus: 'PENDING' as const,
+      };
+
+      if (existingInvoice) {
+        // Update existing invoice
+        return await this.prismaService.invoice.update({
+          where: { id: existingInvoice.id },
+          data: invoicePayload,
+        });
+      }
+
+      // Create new invoice
+      return await this.prismaService.invoice.create({
+        data: invoicePayload,
+      });
     } catch (error) {
       this.logger.error(`❌ Upsert invoice failed: ${error.message}`);
       throw error;
     }
+  }
+
+  private extractBaseInvoiceCode(code: string): string {
+    const dotIndex = code.lastIndexOf('.');
+    if (dotIndex === -1) return code;
+
+    const suffix = code.substring(dotIndex + 1);
+    if (/^\d+$/.test(suffix)) {
+      return code.substring(0, dotIndex);
+    }
+
+    return code;
   }
 
   private async findBranchId(kiotVietBranchId: number): Promise<number | null> {
