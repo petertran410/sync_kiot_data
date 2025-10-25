@@ -11,7 +11,6 @@ import { SyncController } from './controllers/sync.controller';
 import { LarkModule } from './services/lark/lark.module';
 import { HealthController } from './controllers/health.controller';
 import { WebhookModule } from './services/webhook/webhook.module';
-import { QueueModule } from './services/queue/queue.module';
 import { WebhookController } from './controllers/webhook.controller';
 
 @Module({
@@ -23,7 +22,6 @@ import { WebhookController } from './controllers/webhook.controller';
     BusSchedulerModule,
     LarkModule,
     WebhookModule,
-    QueueModule,
   ],
   controllers: [
     AppController,

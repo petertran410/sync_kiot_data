@@ -1,15 +1,18 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { JobQueueService } from '../queue/job-queue.service';
 import { Prisma } from '@prisma/client';
+import { HttpService } from '@nestjs/axios';
+import { firstValueFrom } from 'rxjs';
 
 @Injectable()
 export class WebhookService {
   private readonly logger = new Logger(WebhookService.name);
+  private readonly LARK_WEBHOOK_URL =
+    'https://dieptra2018.sg.larksuite.com/base/automation/webhook/event/L96takKScw61fQhCxx0laQY1gXb';
 
   constructor(
     private readonly prismaService: PrismaService,
-    private readonly jobQueueService: JobQueueService,
+    private readonly httpService: HttpService,
   ) {}
 
   async processOrderWebhook(webhookData: any): Promise<void> {
@@ -24,15 +27,11 @@ export class WebhookService {
 
           if (savedOrder) {
             this.logger.log(`✅ Upserted order ${savedOrder.code}`);
-
-            await this.jobQueueService.addJob(
-              'order',
-              savedOrder.id,
-              savedOrder.kiotVietId,
-            );
           }
         }
       }
+
+      await this.sendToLarkWebhook(webhookData);
     } catch (error) {
       this.logger.error(`❌ Process webhook failed: ${error.message}`);
       throw error;
@@ -46,25 +45,32 @@ export class WebhookService {
       for (const notification of notifications) {
         const data = notification?.Data || [];
 
-        console.log(data);
-
         for (const invoiceData of data) {
           const savedInvoice = await this.upsertInvoice(invoiceData);
 
           if (savedInvoice) {
             this.logger.log(`✅ Upserted invoice ${savedInvoice.code}`);
-
-            await this.jobQueueService.addJob(
-              'invoice',
-              savedInvoice.id,
-              savedInvoice.kiotVietId,
-            );
           }
         }
       }
+
+      await this.sendToLarkWebhook(webhookData);
     } catch (error) {
       this.logger.error(`❌ Process invoice webhook failed: ${error.message}`);
       throw error;
+    }
+  }
+
+  private async sendToLarkWebhook(webhookData: any): Promise<void> {
+    try {
+      await firstValueFrom(
+        this.httpService.post(this.LARK_WEBHOOK_URL, webhookData, {
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+      this.logger.log(`✅ Sent webhook data to Lark successfully`);
+    } catch (error) {
+      this.logger.error(`❌ Failed to send to Lark: ${error.message}`);
     }
   }
 

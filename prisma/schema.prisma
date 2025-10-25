@@ -1285,23 +1285,6 @@ model SyncControl {
   @@index([isRunning, status])
 }
 
-model JobQueue {
-  id           Int      @id @default(autoincrement())
-  entityType   String   @map("entity_type") @db.VarChar(50)
-  entityId     Int      @map("entity_id")
-  kiotVietId   BigInt   @map("kiot_viet_id")
-  status       String   @default("PENDING") @db.VarChar(20)
-  retryCount   Int      @default(0) @map("retry_count")
-  maxRetries   Int      @default(3) @map("max_retries")
-  error        String?  @db.Text
-  createdAt    DateTime @default(now()) @map("created_at")
-  processedAt  DateTime? @map("processed_at")
-  
-  @@unique([entityType, kiotVietId])
-  @@index([status, createdAt])
-  @@map("job_queue")
-}
-
 enum LarkSyncStatus {
   PENDING
   SYNCED
