@@ -157,10 +157,10 @@ export class WebhookService {
         kiotVietId,
         code: invoiceCode,
         purchaseDate: new Date(invoiceData.PurchaseDate),
-        branchId: invoiceData.BranchId,
-        soldById: invoiceData.SoldById,
-        customerId: invoiceData.CustomerId,
-        orderId: invoiceData.OrderId,
+        branchId,
+        soldById,
+        customerId,
+        orderId,
         total: new Prisma.Decimal(invoiceData.Total || 0),
         totalPayment: new Prisma.Decimal(invoiceData.TotalPayment || 0),
         discount: invoiceData.Discount
@@ -170,7 +170,7 @@ export class WebhookService {
         status: invoiceData.Status,
         statusValue: invoiceData.StatusValue,
         description: invoiceData.Description,
-        saleChannelId: invoiceData.SaleChannelId,
+        saleChannelId,
         createdDate: invoiceData.CreatedDate
           ? new Date(invoiceData.CreatedDate)
           : new Date(),
@@ -236,6 +236,6 @@ export class WebhookService {
     const saleChannel = await this.prismaService.saleChannel.findUnique({
       where: { kiotVietId: kiotVietSaleChannelId },
     });
-    return saleChannel?.id || null;
+    return saleChannel?.id || 1;
   }
 }
