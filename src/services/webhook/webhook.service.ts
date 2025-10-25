@@ -22,6 +22,8 @@ export class WebhookService {
       for (const notification of notifications) {
         const data = notification?.Data || [];
 
+        console.log(data);
+
         for (const orderData of data) {
           const savedOrder = await this.upsertOrder(orderData);
 
