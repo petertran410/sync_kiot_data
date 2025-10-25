@@ -22,6 +22,7 @@ import { KiotVietCashflowService } from 'src/services/kiot-viet/cashflow/cashflo
 import { LarkCashflowSyncService } from 'src/services/lark/cashflow/lark-cashflow-sync.service';
 import { KiotVietTransferService } from 'src/services/kiot-viet/transfer/transfer.service';
 import { LarkDemandSyncService } from 'src/services/lark/demand/lark-demand-sync.service';
+import { LarkSyncWorkerService } from 'src/services/queue/lark-sync-worker.service';
 
 @Controller('sync')
 export class SyncController {
@@ -51,7 +52,13 @@ export class SyncController {
     private readonly larkCashflowSyncService: LarkCashflowSyncService,
     private readonly transferService: KiotVietTransferService,
     private readonly larkDemandSyncService: LarkDemandSyncService,
+    private readonly larkSyncWorkerService: LarkSyncWorkerService,
   ) {}
+
+  @Get('queue/stats')
+  async getQueueStats() {
+    return this.larkSyncWorkerService.getStats();
+  }
 
   @Post('reset')
   async resetAllSyncs() {

@@ -1,12 +1,10 @@
 import { Module } from '@nestjs/common';
-import { WebhookController } from '../../controllers/webhook.controller';
 import { WebhookService } from './webhook.service';
 import { PrismaModule } from '../../prisma/prisma.module';
-import { LarkModule } from '../lark/lark.module';
+import { QueueModule } from '../queue/queue.module';
 
 @Module({
-  imports: [PrismaModule, LarkModule],
-  controllers: [WebhookController],
+  imports: [PrismaModule, QueueModule],
   providers: [WebhookService],
   exports: [WebhookService],
 })
