@@ -47,6 +47,8 @@ export class WebhookService {
       for (const notification of notifications) {
         const data = notification?.Data || [];
 
+        console.log(data);
+
         for (const invoiceData of data) {
           const savedInvoice = await this.upsertInvoice(invoiceData);
 
