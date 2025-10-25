@@ -256,89 +256,89 @@ export class BusSchedulerService implements OnModuleInit {
   //   }
   // }
 
-  private async checkRunningSyncsWithTimeout(): Promise<any[]> {
-    const runningSyncs = await this.prismaService.syncControl.findMany({
-      where: { isRunning: true },
-    });
+  // private async checkRunningSyncsWithTimeout(): Promise<any[]> {
+  //   const runningSyncs = await this.prismaService.syncControl.findMany({
+  //     where: { isRunning: true },
+  //   });
 
-    const now = Date.now();
-    const cleanupPromises = runningSyncs
-      .filter(
-        (sync) =>
-          sync.startedAt && now - sync.startedAt.getTime() > 10 * 60 * 1000,
-      )
-      .map((sync) =>
-        this.prismaService.syncControl.update({
-          where: { id: sync.id },
-          data: {
-            isRunning: false,
-            status: 'auto_cleanup',
-            error: 'Auto-cleaned due to timeout',
-            completedAt: new Date(),
-          },
-        }),
-      );
+  //   const now = Date.now();
+  //   const cleanupPromises = runningSyncs
+  //     .filter(
+  //       (sync) =>
+  //         sync.startedAt && now - sync.startedAt.getTime() > 10 * 60 * 1000,
+  //     )
+  //     .map((sync) =>
+  //       this.prismaService.syncControl.update({
+  //         where: { id: sync.id },
+  //         data: {
+  //           isRunning: false,
+  //           status: 'auto_cleanup',
+  //           error: 'Auto-cleaned due to timeout',
+  //           completedAt: new Date(),
+  //         },
+  //       }),
+  //     );
 
-    if (cleanupPromises.length > 0) {
-      this.logger.warn(
-        `🧹 Auto-cleaning ${cleanupPromises.length} stuck syncs`,
-      );
-      await Promise.all(cleanupPromises);
+  //   if (cleanupPromises.length > 0) {
+  //     this.logger.warn(
+  //       `🧹 Auto-cleaning ${cleanupPromises.length} stuck syncs`,
+  //     );
+  //     await Promise.all(cleanupPromises);
 
-      return await this.prismaService.syncControl.findMany({
-        where: { isRunning: true },
-      });
-    }
+  //     return await this.prismaService.syncControl.findMany({
+  //       where: { isRunning: true },
+  //     });
+  //   }
 
-    return runningSyncs;
-  }
+  //   return runningSyncs;
+  // }
 
-  private async executeMainCycleWithAbortSignal(
-    signal: AbortSignal,
-  ): Promise<void> {
-    const now = new Date();
-    const hour = now.getHours();
-    const minute = now.getMinutes();
+  // private async executeMainCycleWithAbortSignal(
+  //   signal: AbortSignal,
+  // ): Promise<void> {
+  //   const now = new Date();
+  //   const hour = now.getHours();
+  //   const minute = now.getMinutes();
 
-    const isHistoricalWindow =
-      hour >= 22 || hour < 3 || (hour === 3 && minute <= 29);
+  //   const isHistoricalWindow =
+  //     hour >= 22 || hour < 3 || (hour === 3 && minute <= 29);
 
-    if (isHistoricalWindow) {
-      this.logger.log('Night window (22:00-03:29) - Running HISTORICAL sync');
-      await this.enableHistoricalSyncForMainEntities();
-    } else {
-      this.logger.log('Day window (03:30-21:59) - Running RECENT sync');
+  //   if (isHistoricalWindow) {
+  //     this.logger.log('Night window (22:00-03:29) - Running HISTORICAL sync');
+  //     await this.enableHistoricalSyncForMainEntities();
+  //   } else {
+  //     this.logger.log('Day window (03:30-21:59) - Running RECENT sync');
 
-      await this.forceStopHistoricalSyncs();
+  //     await this.forceStopHistoricalSyncs();
 
-      await this.disableHistoricalSyncForMainEntities();
-    }
+  //     await this.disableHistoricalSyncForMainEntities();
+  //   }
 
-    const syncPromises: Promise<void>[] = [];
+  //   const syncPromises: Promise<void>[] = [];
 
-    syncPromises.push(
-      this.executeAbortableSync('customer', signal, async () => {
-        await this.runCustomerSync();
-        await this.runCustomerLarkSync();
-      }),
-    );
+  //   syncPromises.push(
+  //     this.executeAbortableSync('customer', signal, async () => {
+  //       await this.runCustomerSync();
+  //       await this.runCustomerLarkSync();
+  //     }),
+  //   );
 
-    syncPromises.push(
-      this.executeAbortableSync('invoice', signal, async () => {
-        await this.runInvoiceSync();
-        await this.runInvoiceLarkSync();
-      }),
-    );
+  //   syncPromises.push(
+  //     this.executeAbortableSync('invoice', signal, async () => {
+  //       await this.runInvoiceSync();
+  //       await this.runInvoiceLarkSync();
+  //     }),
+  //   );
 
-    syncPromises.push(
-      this.executeAbortableSync('order', signal, async () => {
-        await this.runOrderSync();
-        await this.runOrderLarkSync();
-      }),
-    );
+  //   syncPromises.push(
+  //     this.executeAbortableSync('order', signal, async () => {
+  //       await this.runOrderSync();
+  //       await this.runOrderLarkSync();
+  //     }),
+  //   );
 
-    await Promise.all(syncPromises);
-  }
+  //   await Promise.all(syncPromises);
+  // }
 
   private async forceStopHistoricalSyncs(): Promise<void> {
     const historicalSyncs = await this.prismaService.syncControl.findMany({
