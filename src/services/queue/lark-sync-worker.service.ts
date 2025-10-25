@@ -101,6 +101,11 @@ export class LarkSyncWorkerService {
       throw new Error(`Invoice not found: ${entityId}`);
     }
 
+    if (invoice.larkSyncStatus === 'SYNCED') {
+      this.logger.log(`⏭️ Invoice ${invoice.code} already synced, skipping`);
+      return;
+    }
+
     await this.larkInvoiceSyncService.syncInvoicesToLarkBase([invoice]);
   }
 

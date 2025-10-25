@@ -46,19 +46,26 @@ export class WebhookService {
       for (const notification of notifications) {
         const data = notification?.Data || [];
 
-        console.log(data);
-
         for (const invoiceData of data) {
           const savedInvoice = await this.upsertInvoice(invoiceData);
 
           if (savedInvoice) {
             this.logger.log(`✅ Upserted invoice ${savedInvoice.code}`);
 
-            await this.jobQueueService.addJob(
-              'invoice',
-              savedInvoice.id,
-              savedInvoice.kiotVietId,
-            );
+            if (
+              savedInvoice.larkSyncStatus === 'PENDING' ||
+              savedInvoice.larkSyncStatus === 'FAILED'
+            ) {
+              await this.jobQueueService.addJob(
+                'invoice',
+                savedInvoice.id,
+                savedInvoice.kiotVietId,
+              );
+            } else {
+              this.logger.log(
+                `⏭️ Invoice ${savedInvoice.code} already ${savedInvoice.larkSyncStatus}, skipping job creation`,
+              );
+            }
           }
         }
       }
@@ -130,7 +137,6 @@ export class WebhookService {
     try {
       const kiotVietId = BigInt(invoiceData.Id);
       const invoiceCode = invoiceData.Code;
-      const baseCode = this.extractBaseInvoiceCode(invoiceCode);
 
       const branchId = await this.findBranchId(invoiceData.BranchId);
       const customerId = await this.findCustomerId(invoiceData.CustomerId);
@@ -144,16 +150,11 @@ export class WebhookService {
 
       const existingInvoice = await this.prismaService.invoice.findFirst({
         where: {
-          OR: [
-            { kiotVietId },
-            { code: baseCode },
-            { code: { startsWith: `${baseCode}.` } },
-          ],
+          OR: [{ kiotVietId }, { code: invoiceCode }],
         },
-        orderBy: { modifiedDate: 'desc' },
       });
 
-      const invoicePayload = {
+      const basePayload = {
         kiotVietId,
         code: invoiceCode,
         purchaseDate: new Date(invoiceData.PurchaseDate),
@@ -178,20 +179,37 @@ export class WebhookService {
           ? new Date(invoiceData.ModifiedDate)
           : new Date(),
         lastSyncedAt: new Date(),
-        larkSyncStatus: 'PENDING' as const,
       };
 
       if (existingInvoice) {
-        // Update existing invoice
+        // Detect thay đổi thực sự
+        const hasChanged = this.detectInvoiceChanges(
+          existingInvoice,
+          basePayload,
+        );
+
+        const updatePayload = {
+          ...basePayload,
+          // Reset về PENDING nếu:
+          // 1. Có thay đổi thực sự, HOẶC
+          // 2. Chưa SYNCED (PENDING/FAILED)
+          larkSyncStatus:
+            hasChanged || existingInvoice.larkSyncStatus !== 'SYNCED'
+              ? ('PENDING' as const)
+              : existingInvoice.larkSyncStatus,
+        };
+
         return await this.prismaService.invoice.update({
           where: { id: existingInvoice.id },
-          data: invoicePayload,
+          data: updatePayload,
         });
       }
 
-      // Create new invoice
       return await this.prismaService.invoice.create({
-        data: invoicePayload,
+        data: {
+          ...basePayload,
+          larkSyncStatus: 'PENDING' as const,
+        },
       });
     } catch (error) {
       this.logger.error(`❌ Upsert invoice failed: ${error.message}`);
@@ -199,16 +217,55 @@ export class WebhookService {
     }
   }
 
-  private extractBaseInvoiceCode(code: string): string {
-    const dotIndex = code.lastIndexOf('.');
-    if (dotIndex === -1) return code;
+  private detectInvoiceChanges(existing: any, newData: any): boolean {
+    const fieldsToCompare = [
+      'total',
+      'totalPayment',
+      'discount',
+      'discountRatio',
+      'status',
+      'statusValue',
+      'description',
+      'branchId',
+      'customerId',
+      'soldById',
+      'orderId',
+      'saleChannelId',
+    ];
 
-    const suffix = code.substring(dotIndex + 1);
-    if (/^\d+$/.test(suffix)) {
-      return code.substring(0, dotIndex);
+    for (const field of fieldsToCompare) {
+      const existingValue = existing[field];
+      const newValue = newData[field];
+
+      if (existingValue instanceof Prisma.Decimal) {
+        if (!existingValue.equals(newValue)) {
+          this.logger.log(
+            `Invoice changed: ${field} (${existingValue} → ${newValue})`,
+          );
+          return true;
+        }
+        continue;
+      }
+
+      if (typeof existingValue === 'bigint') {
+        if (existingValue !== BigInt(newValue || 0)) {
+          this.logger.log(
+            `Invoice changed: ${field} (${existingValue} → ${newValue})`,
+          );
+          return true;
+        }
+        continue;
+      }
+
+      if (existingValue !== newValue) {
+        this.logger.log(
+          `Invoice changed: ${field} (${existingValue} → ${newValue})`,
+        );
+        return true;
+      }
     }
 
-    return code;
+    return false;
   }
 
   private async findBranchId(kiotVietBranchId: number): Promise<number | null> {
