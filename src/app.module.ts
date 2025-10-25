@@ -12,6 +12,7 @@ import { LarkModule } from './services/lark/lark.module';
 import { HealthController } from './controllers/health.controller';
 import { WebhookModule } from './services/webhook/webhook.module';
 import { QueueModule } from './services/queue/queue.module';
+import { WebhookController } from './controllers/webhook.controller';
 
 @Module({
   imports: [
@@ -24,7 +25,12 @@ import { QueueModule } from './services/queue/queue.module';
     WebhookModule,
     QueueModule,
   ],
-  controllers: [AppController, SyncController, HealthController],
+  controllers: [
+    AppController,
+    SyncController,
+    HealthController,
+    WebhookController,
+  ],
   providers: [AppService],
 })
 export class AppModule {}
