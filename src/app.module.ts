@@ -10,6 +10,7 @@ import { BusSchedulerModule } from './services/bus-scheduler/bus-scheduler.modul
 import { SyncController } from './controllers/sync.controller';
 import { LarkModule } from './services/lark/lark.module';
 import { HealthController } from './controllers/health.controller';
+import { WebhookModule } from './services/webhook/webhook.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { HealthController } from './controllers/health.controller';
     KiotVietModule,
     BusSchedulerModule,
     LarkModule,
+    WebhookModule,
   ],
   controllers: [AppController, SyncController, HealthController],
   providers: [AppService],
