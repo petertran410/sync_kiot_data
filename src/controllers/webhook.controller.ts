@@ -26,4 +26,17 @@ export class WebhookController {
       return { success: true };
     }
   }
+
+  @Post('invoice')
+  @HttpCode(HttpStatus.OK)
+  async handleInvoiceWebhook(@Body() webhookData: any) {
+    try {
+      this.logger.log('📨 Received KiotViet invoice webhook');
+      await this.webhookService.processInvoiceWebhook(webhookData);
+      return { success: true };
+    } catch (error) {
+      this.logger.error(`❌ Invoice webhook error: ${error.message}`);
+      return { success: true };
+    }
+  }
 }
