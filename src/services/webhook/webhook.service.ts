@@ -8,7 +8,7 @@ import { firstValueFrom } from 'rxjs';
 export class WebhookService {
   private readonly logger = new Logger(WebhookService.name);
   private readonly LARK_WEBHOOK_URL =
-    'https://dieptra2018.sg.larksuite.com/base/automation/webhook/event/L96takKScw61fQhCxx0laQY1gXb';
+    'https://dieptra2018.sg.larksuite.com/base/workflow/webhook/event/UgifaGlVqw56jvh9gx6l6Dhzg6f';
 
   constructor(
     private readonly prismaService: PrismaService,
