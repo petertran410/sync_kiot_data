@@ -452,15 +452,45 @@ export class LarkInvoiceSyncService {
       where: {
         kiotVietId: { in: invoices.map((i) => i.kiotVietId) },
       },
-      select: { kiotVietId: true, larkRecordId: true },
+      select: { kiotVietId: true, larkRecordId: true, code: true },
     });
 
     const quickCache = new Map<number, string>();
-    existingInvoices.forEach((i) => {
-      if (i.larkRecordId) {
-        quickCache.set(Number(i.kiotVietId), i.larkRecordId);
+    const invoicesNeedLarkQuery: any[] = [];
+
+    for (const inv of existingInvoices) {
+      if (inv.larkRecordId) {
+        quickCache.set(Number(inv.kiotVietId), inv.larkRecordId);
+      } else {
+        const matchingInvoice = invoices.find(
+          (i) => i.kiotVietId === inv.kiotVietId,
+        );
+        if (matchingInvoice) {
+          invoicesNeedLarkQuery.push(matchingInvoice);
+        }
       }
-    });
+    }
+
+    if (invoicesNeedLarkQuery.length > 0) {
+      this.logger.log(
+        `🔍 Querying LarkBase for ${invoicesNeedLarkQuery.length} invoices without larkRecordId...`,
+      );
+
+      for (const invoice of invoicesNeedLarkQuery) {
+        const recordId = await this.findLarkRecordByCode(invoice.code);
+        if (recordId) {
+          this.logger.log(
+            `✅ Found existing LarkBase record ${recordId} for invoice ${invoice.code}`,
+          );
+          quickCache.set(Number(invoice.kiotVietId), recordId);
+
+          await this.prismaService.invoice.update({
+            where: { id: invoice.id },
+            data: { larkRecordId: recordId },
+          });
+        }
+      }
+    }
 
     const originalCache = this.existingRecordsCache;
     this.existingRecordsCache = quickCache;
@@ -479,6 +509,59 @@ export class LarkInvoiceSyncService {
     } finally {
       this.existingRecordsCache = originalCache;
     }
+  }
+
+  private async findLarkRecordByCode(code: string): Promise<string | null> {
+    if (!code) return null;
+
+    let authRetries = 0;
+
+    while (authRetries < this.MAX_AUTH_RETRIES) {
+      try {
+        const headers = await this.larkAuthService.getInvoiceHeaders();
+        const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/search`;
+
+        const response = await firstValueFrom(
+          this.httpService.post<LarkBatchResponse>(
+            url,
+            {
+              filter: {
+                conjunction: 'and',
+                conditions: [
+                  {
+                    field_name: 'Mã hoá đơn',
+                    operator: 'is',
+                    value: [code.trim()],
+                  },
+                ],
+              },
+            },
+            { headers, timeout: 10000 },
+          ),
+        );
+
+        const items = response.data?.data?.items;
+        if (response.data.code === 0 && items && items.length > 0) {
+          return items[0].record_id;
+        }
+
+        return null;
+      } catch (error) {
+        if (error.response?.status === 401 || error.response?.status === 403) {
+          authRetries++;
+          await this.larkAuthService.forceRefreshInvoiceToken();
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          continue;
+        }
+
+        this.logger.warn(
+          `Failed to query LarkBase for invoice ${code}: ${error.message}`,
+        );
+        return null;
+      }
+    }
+
+    return null;
   }
 
   private async processNewInvoices(invoices: any[]): Promise<void> {

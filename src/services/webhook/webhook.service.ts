@@ -63,7 +63,7 @@ export class WebhookService {
               );
             } else {
               this.logger.log(
-                `⏭️ Invoice ${savedInvoice.code} already ${savedInvoice.larkSyncStatus}, skipping job creation`,
+                `⏭️ Invoice ${savedInvoice.code} already ${savedInvoice.larkSyncStatus}, no sync needed`,
               );
             }
           }
