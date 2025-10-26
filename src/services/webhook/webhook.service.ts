@@ -145,7 +145,9 @@ export class WebhookService {
           customerId,
           customerCode: orderData.CustomerCode,
           customerName: orderData.CustomerName,
-          saleChannelName: orderData.SaleChannel.Name,
+          saleChannelName: orderData.SaleChannel.Name
+            ? orderData.SaleChannel.Name
+            : 'Bán Trực Tiếp',
           total: new Prisma.Decimal(orderData.Total || 0),
           totalPayment: new Prisma.Decimal(orderData.TotalPayment || 0),
           discount: orderData.Discount
