@@ -110,7 +110,7 @@ export class WebhookService {
       const customerId = await this.findCustomerId(orderData.CustomerId);
       const soldById = orderData.SoldById ? BigInt(orderData.SoldById) : null;
       const saleChannelId = await this.findSaleChannelId(
-        orderData.SaleChannel.map((id) => id.Id),
+        orderData.SaleChannel.Id,
       );
 
       const order = await this.prismaService.order.upsert({
@@ -122,7 +122,7 @@ export class WebhookService {
           totalPayment: new Prisma.Decimal(orderData.TotalPayment || 0),
           customerCode: orderData.CustomerCode,
           customerName: orderData.CustomerName,
-          saleChannelName: orderData.SaleChannel.map((name) => name.Name),
+          saleChannelName: orderData.SaleChannel.Name,
           discount: orderData.Discount
             ? new Prisma.Decimal(orderData.Discount)
             : null,
@@ -145,7 +145,7 @@ export class WebhookService {
           customerId,
           customerCode: orderData.CustomerCode,
           customerName: orderData.CustomerName,
-          saleChannelName: orderData.SaleChannel.map((name) => name.Name),
+          saleChannelName: orderData.SaleChannel.Name,
           total: new Prisma.Decimal(orderData.Total || 0),
           totalPayment: new Prisma.Decimal(orderData.TotalPayment || 0),
           discount: orderData.Discount
