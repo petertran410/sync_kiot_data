@@ -389,7 +389,13 @@ export class WebhookService {
       const soldById = invoiceData.SoldById
         ? BigInt(invoiceData.SoldById)
         : null;
-      const orderId = detailedInvoice?.orderId ?? invoiceData.OrderId ?? null;
+      // const orderId = detailedInvoice?.orderId ?? invoiceData.OrderId ?? null;
+      const orderId = detailedInvoice?.orderId
+        ? await this.findOrderId(detailedInvoice.orderId)
+        : invoiceData.OrderId
+          ? await this.findOrderId(invoiceData.OrderId)
+          : null;
+
       const saleChannel = await this.findSaleChannelId(
         invoiceData.SaleChannelId,
       );
@@ -405,6 +411,7 @@ export class WebhookService {
           discount: invoiceData.Discount
             ? new Prisma.Decimal(invoiceData.Discount)
             : 0,
+          orderId,
           discountRatio: invoiceData.DiscountRatio,
           description: detailedInvoice?.description ?? invoiceData.Description,
           usingCod: detailedInvoice?.usingCod ?? false,
@@ -912,5 +919,13 @@ export class WebhookService {
       select: { name: true },
     });
     return { id: 1, name: defaultChannel?.name || 'Bán trực tiếp' };
+  }
+
+  private async findOrderId(kiotVietOrderId: number): Promise<number | null> {
+    if (!kiotVietOrderId) return null;
+    const order = await this.prismaService.order.findUnique({
+      where: { kiotVietId: BigInt(kiotVietOrderId) },
+    });
+    return order?.id || null;
   }
 }
