@@ -99,6 +99,7 @@ export class WebhookService {
             ? new Prisma.Decimal(orderData.Discount)
             : null,
           discountRatio: orderData.DiscountRatio,
+          createdDate: new Date(orderData.CreatedDate),
           modifiedDate: orderData.ModifiedDate
             ? new Date(orderData.ModifiedDate)
             : null,
@@ -122,12 +123,171 @@ export class WebhookService {
           statusValue: orderData.StatusValue,
           description: orderData.Description,
           saleChannelId,
+          createdDate: new Date(orderData.CreatedDate),
           modifiedDate: orderData.ModifiedDate
             ? new Date(orderData.ModifiedDate)
             : null,
           larkSyncStatus: 'PENDING',
         },
       });
+
+      if (orderData.OrderDetails && orderData.OrderDetails.length > 0) {
+        for (let i = 0; i < orderData.OrderDetails.length; i++) {
+          const detail = orderData.OrderDetails[i];
+          const product = await this.prismaService.product.findUnique({
+            where: { kiotVietId: BigInt(detail.ProductId) },
+            select: { id: true, code: true, name: true },
+          });
+
+          if (product) {
+            await this.prismaService.orderDetail.upsert({
+              where: {
+                orderId_lineNumber: { orderId: order.id, lineNumber: i + 1 },
+              },
+              update: {
+                quantity: detail.Quantity,
+                price: new Prisma.Decimal(detail.Price),
+                discount: detail.Discount
+                  ? new Prisma.Decimal(detail.Discount)
+                  : null,
+                discountRatio: detail.DiscountRatio,
+                productCode: product.code,
+                productName: product.name,
+              },
+              create: {
+                orderId: order.id,
+                productId: product.id,
+                productCode: product.code,
+                productName: product.name,
+                quantity: detail.Quantity,
+                price: new Prisma.Decimal(detail.Price),
+                discount: detail.Discount
+                  ? new Prisma.Decimal(detail.Discount)
+                  : null,
+                discountRatio: detail.DiscountRatio,
+                lineNumber: i + 1,
+              },
+            });
+          }
+        }
+      }
+
+      const deliveryData = orderData.DeliveryPackage || orderData.OrderDelivery;
+      if (deliveryData) {
+        await this.prismaService.orderDelivery.upsert({
+          where: { orderId: order.id },
+          update: {
+            deliveryCode: deliveryData.DeliveryCode || deliveryData.ServiceType,
+            type: deliveryData.ServiceType
+              ? parseInt(deliveryData.ServiceType)
+              : null,
+            receiver: deliveryData.Receiver,
+            contactNumber: deliveryData.ContactNumber,
+            address: deliveryData.Address,
+            locationId: deliveryData.LocationId,
+            locationName: deliveryData.LocationName,
+            wardName: deliveryData.WardName,
+            weight: deliveryData.Weight,
+            length: deliveryData.Length,
+            width: deliveryData.Width,
+            height: deliveryData.Height,
+          },
+          create: {
+            orderId: order.id,
+            deliveryCode: deliveryData.DeliveryCode || deliveryData.ServiceType,
+            type: deliveryData.ServiceType
+              ? parseInt(deliveryData.ServiceType)
+              : null,
+            receiver: deliveryData.Receiver,
+            contactNumber: deliveryData.ContactNumber,
+            address: deliveryData.Address,
+            locationId: deliveryData.LocationId,
+            locationName: deliveryData.LocationName,
+            wardName: deliveryData.WardName,
+            weight: deliveryData.Weight,
+            length: deliveryData.Length,
+            width: deliveryData.Width,
+            height: deliveryData.Height,
+          },
+        });
+      }
+
+      if (orderData.Payments && orderData.Payments.length > 0) {
+        for (const payment of orderData.Payments) {
+          const bankAccount = payment.AccountId
+            ? await this.prismaService.bankAccount.findFirst({
+                where: { kiotVietId: payment.AccountId },
+                select: { id: true },
+              })
+            : null;
+
+          await this.prismaService.payment.upsert({
+            where: { kiotVietId: payment.Id ? BigInt(payment.Id) : BigInt(0) },
+            update: {
+              orderId: order.id,
+              code: payment.Code,
+              amount: new Prisma.Decimal(payment.Amount),
+              method: payment.Method,
+              status: payment.Status,
+              transDate: new Date(payment.TransDate),
+              accountId: bankAccount?.id ?? null,
+              description: payment.Description,
+            },
+            create: {
+              kiotVietId: payment.Id ? BigInt(payment.Id) : null,
+              orderId: order.id,
+              code: payment.Code,
+              amount: new Prisma.Decimal(payment.Amount),
+              method: payment.Method,
+              status: payment.Status,
+              transDate: new Date(payment.TransDate),
+              accountId: bankAccount?.id ?? null,
+              description: payment.Description,
+            },
+          });
+        }
+      }
+
+      if (
+        orderData.invoiceOrderSurcharges &&
+        orderData.invoiceOrderSurcharges.length > 0
+      ) {
+        for (const surcharge of orderData.invoiceOrderSurcharges) {
+          const surchargeRecord = surcharge.surchargeId
+            ? await this.prismaService.surcharge.findFirst({
+                where: { kiotVietId: surcharge.surchargeId },
+                select: { id: true },
+              })
+            : null;
+
+          await this.prismaService.orderSurcharge.upsert({
+            where: {
+              kiotVietId: surcharge.id ? BigInt(surcharge.id) : BigInt(0),
+            },
+            update: {
+              surchargeName: surcharge.surchargeName,
+              surValue: surcharge.surValue
+                ? new Prisma.Decimal(surcharge.surValue)
+                : null,
+              price: surcharge.price
+                ? new Prisma.Decimal(surcharge.price)
+                : null,
+            },
+            create: {
+              kiotVietId: surcharge.id ? BigInt(surcharge.id) : null,
+              orderId: order.id,
+              surchargeId: surchargeRecord?.id ?? null,
+              surchargeName: surcharge.surchargeName,
+              surValue: surcharge.surValue
+                ? new Prisma.Decimal(surcharge.surValue)
+                : null,
+              price: surcharge.price
+                ? new Prisma.Decimal(surcharge.price)
+                : null,
+            },
+          });
+        }
+      }
 
       return order;
     } catch (error) {
@@ -197,6 +357,181 @@ export class WebhookService {
         },
       });
 
+      if (invoiceData.InvoiceDetails && invoiceData.InvoiceDetails.length > 0) {
+        for (let i = 0; i < invoiceData.InvoiceDetails.length; i++) {
+          const detail = invoiceData.InvoiceDetails[i];
+          const product = await this.prismaService.product.findUnique({
+            where: { kiotVietId: BigInt(detail.ProductId) },
+            select: { id: true, code: true, name: true },
+          });
+
+          if (product) {
+            await this.prismaService.invoiceDetail.upsert({
+              where: {
+                invoiceId_lineNumber: {
+                  invoiceId: invoice.id,
+                  lineNumber: i + 1,
+                },
+              },
+              update: {
+                quantity: detail.Quantity,
+                price: new Prisma.Decimal(detail.Price),
+                discount: detail.Discount
+                  ? new Prisma.Decimal(detail.Discount)
+                  : null,
+                discountRatio: detail.DiscountRatio,
+                subTotal: new Prisma.Decimal(
+                  detail.Price * detail.Quantity - (detail.Discount || 0),
+                ),
+                productCode: product.code,
+                productName: product.name,
+              },
+              create: {
+                invoiceId: invoice.id,
+                productId: product.id,
+                productCode: product.code,
+                productName: product.name,
+                quantity: detail.Quantity,
+                price: new Prisma.Decimal(detail.Price),
+                discount: detail.Discount
+                  ? new Prisma.Decimal(detail.Discount)
+                  : null,
+                discountRatio: detail.DiscountRatio,
+                subTotal: new Prisma.Decimal(
+                  detail.Price * detail.Quantity - (detail.Discount || 0),
+                ),
+                lineNumber: i + 1,
+              },
+            });
+          }
+        }
+      }
+
+      if (invoiceData.InvoiceDelivery) {
+        const detail = invoiceData.InvoiceDelivery;
+        await this.prismaService.invoiceDelivery.upsert({
+          where: { invoiceId: invoice.id },
+          update: {
+            deliveryCode: detail.DeliveryCode,
+            status: detail.Status,
+            type: detail.Type,
+            price: detail.Price ? new Prisma.Decimal(detail.Price) : null,
+            receiver: detail.Receiver,
+            contactNumber: detail.ContactNumber,
+            address: detail.Address,
+            locationId: detail.LocationId,
+            locationName: detail.LocationName,
+            wardName: detail.WardName,
+            usingPriceCod: detail.UsingPriceCod || false,
+            priceCodPayment: detail.PriceCodPayment
+              ? new Prisma.Decimal(detail.PriceCodPayment)
+              : null,
+            weight: detail.Weight,
+            length: detail.Length,
+            width: detail.Width,
+            height: detail.Height,
+          },
+          create: {
+            invoiceId: invoice.id,
+            deliveryCode: detail.DeliveryCode,
+            status: detail.Status,
+            type: detail.Type,
+            price: detail.Price ? new Prisma.Decimal(detail.Price) : null,
+            receiver: detail.Receiver,
+            contactNumber: detail.ContactNumber,
+            address: detail.Address,
+            locationId: detail.LocationId,
+            locationName: detail.LocationName,
+            wardName: detail.WardName,
+            usingPriceCod: detail.UsingPriceCod || false,
+            priceCodPayment: detail.PriceCodPayment
+              ? new Prisma.Decimal(detail.PriceCodPayment)
+              : null,
+            weight: detail.Weight,
+            length: detail.Length,
+            width: detail.Width,
+            height: detail.Height,
+          },
+        });
+      }
+
+      if (invoiceData.Payments && invoiceData.Payments.length > 0) {
+        for (const payment of invoiceData.Payments) {
+          const bankAccount = payment.AccountId
+            ? await this.prismaService.bankAccount.findFirst({
+                where: { kiotVietId: payment.AccountId },
+                select: { id: true },
+              })
+            : null;
+
+          await this.prismaService.payment.upsert({
+            where: { kiotVietId: payment.Id ? BigInt(payment.Id) : BigInt(0) },
+            update: {
+              invoiceId: invoice.id,
+              code: payment.Code,
+              amount: new Prisma.Decimal(payment.Amount),
+              method: payment.Method,
+              status: payment.Status,
+              transDate: new Date(payment.TransDate),
+              accountId: bankAccount?.id ?? null,
+              description: payment.Description,
+            },
+            create: {
+              kiotVietId: payment.Id ? BigInt(payment.Id) : null,
+              invoiceId: invoice.id,
+              code: payment.Code,
+              amount: new Prisma.Decimal(payment.Amount),
+              method: payment.Method,
+              status: payment.Status,
+              transDate: new Date(payment.TransDate),
+              accountId: bankAccount?.id ?? null,
+              description: payment.Description,
+            },
+          });
+        }
+      }
+
+      if (
+        invoiceData.invoiceOrderSurcharges &&
+        invoiceData.invoiceOrderSurcharges.length > 0
+      ) {
+        for (const surcharge of invoiceData.invoiceOrderSurcharges) {
+          const surchargeRecord = surcharge.surchargeId
+            ? await this.prismaService.surcharge.findFirst({
+                where: { kiotVietId: surcharge.surchargeId },
+                select: { id: true },
+              })
+            : null;
+
+          await this.prismaService.invoiceSurcharge.upsert({
+            where: {
+              kiotVietId: surcharge.id ? BigInt(surcharge.id) : BigInt(0),
+            },
+            update: {
+              surchargeName: surcharge.surchargeName,
+              surValue: surcharge.surValue
+                ? new Prisma.Decimal(surcharge.surValue)
+                : null,
+              price: surcharge.price
+                ? new Prisma.Decimal(surcharge.price)
+                : null,
+            },
+            create: {
+              kiotVietId: surcharge.id ? BigInt(surcharge.id) : null,
+              invoiceId: invoice.id,
+              surchargeId: surchargeRecord?.id ?? null,
+              surchargeName: surcharge.surchargeName,
+              surValue: surcharge.surValue
+                ? new Prisma.Decimal(surcharge.surValue)
+                : null,
+              price: surcharge.price
+                ? new Prisma.Decimal(surcharge.price)
+                : null,
+            },
+          });
+        }
+      }
+
       return invoice;
     } catch (error) {
       this.logger.error(`❌ Upsert invoice failed: ${error.message}`);
@@ -229,6 +564,6 @@ export class WebhookService {
     const saleChannel = await this.prismaService.saleChannel.findUnique({
       where: { kiotVietId: kiotVietSaleChannelId },
     });
-    return saleChannel?.id || null;
+    return saleChannel?.id || 1;
   }
 }
