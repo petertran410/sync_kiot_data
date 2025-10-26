@@ -11,6 +11,8 @@ export class WebhookService {
   private readonly logger = new Logger(WebhookService.name);
   private readonly LARK_WEBHOOK_URL =
     'https://dieptra2018.sg.larksuite.com/base/workflow/webhook/event/UgifaGlVqw56jvh9gx6l6Dhzg6f';
+  private readonly LARK_WEBHOOK_CUSTOMER_URL =
+    'https://dieptra2018.sg.larksuite.com/base/workflow/webhook/event/PjojaSOgJwMtLJhk8NXl3eYFgqf';
 
   constructor(
     private readonly prismaService: PrismaService,
@@ -79,15 +81,24 @@ export class WebhookService {
         console.log(data);
 
         for (const customerData of data) {
-          const savedCustomer = await this.upsertCustomer(customerData);
+          const detailedCustomer = await this.fetchCustomerDetail(
+            customerData.Id,
+          );
+
+          if (detailedCustomer) {
+            await this.sendToLarkCustomerWebhook(detailedCustomer);
+          }
+
+          const savedCustomer = await this.upsertCustomer(
+            customerData,
+            detailedCustomer,
+          );
 
           if (savedCustomer) {
             this.logger.log(`✅ Upserted customer ${savedCustomer.code}`);
           }
         }
       }
-
-      await this.sendToLarkWebhook(webhookData);
     } catch (error) {
       this.logger.error(`❌ Process customer webhook failed: ${error.message}`);
       throw error;
@@ -98,6 +109,19 @@ export class WebhookService {
     try {
       await firstValueFrom(
         this.httpService.post(this.LARK_WEBHOOK_URL, webhookData, {
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+      this.logger.log(`✅ Sent webhook data to Lark successfully`);
+    } catch (error) {
+      this.logger.error(`❌ Failed to send to Lark: ${error.message}`);
+    }
+  }
+
+  private async sendToLarkCustomerWebhook(webhookData: any): Promise<void> {
+    try {
+      await firstValueFrom(
+        this.httpService.post(this.LARK_WEBHOOK_CUSTOMER_URL, webhookData, {
           headers: { 'Content-Type': 'application/json' },
         }),
       );
@@ -577,11 +601,9 @@ export class WebhookService {
     }
   }
 
-  private async upsertCustomer(customerData: any) {
+  private async upsertCustomer(customerData: any, detailedCustomer: any) {
     try {
       const kiotVietId = BigInt(customerData.Id);
-
-      const detailedCustomer = await this.fetchCustomerDetail(customerData.Id);
 
       const branchId = detailedCustomer?.branchId
         ? await this.findBranchId(detailedCustomer.branchId)
@@ -697,6 +719,9 @@ export class WebhookService {
           },
         }),
       );
+
+      this.logger.log('📦 Fetched customer detail:');
+      this.logger.log(JSON.stringify(response.data, null, 2));
 
       return response.data;
     } catch (error) {
