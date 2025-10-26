@@ -31,15 +31,19 @@ export class WebhookService {
         console.log(data);
 
         for (const orderData of data) {
-          const savedOrder = await this.upsertOrder(orderData);
+          const detailedOrder = await this.fetchOrderDetail(orderData.Id);
+
+          if (detailedOrder) {
+            await this.sendToLarkWebhook(detailedOrder);
+          }
+
+          const savedOrder = await this.upsertOrder(orderData, detailedOrder);
 
           if (savedOrder) {
             this.logger.log(`✅ Upserted order ${savedOrder.code}`);
           }
         }
       }
-
-      await this.sendToLarkWebhook(webhookData);
     } catch (error) {
       this.logger.error(`❌ Process webhook failed: ${error.message}`);
       throw error;
@@ -56,15 +60,22 @@ export class WebhookService {
         console.log(data);
 
         for (const invoiceData of data) {
-          const savedInvoice = await this.upsertInvoice(invoiceData);
+          const detailedInvoice = await this.fetchInvoiceDetail(invoiceData.Id);
+
+          if (detailedInvoice) {
+            await this.sendToLarkWebhook(detailedInvoice);
+          }
+
+          const savedInvoice = await this.upsertInvoice(
+            invoiceData,
+            detailedInvoice,
+          );
 
           if (savedInvoice) {
             this.logger.log(`✅ Upserted invoice ${savedInvoice.code}`);
           }
         }
       }
-
-      await this.sendToLarkWebhook(webhookData);
     } catch (error) {
       this.logger.error(`❌ Process invoice webhook failed: ${error.message}`);
       throw error;
@@ -131,7 +142,7 @@ export class WebhookService {
     }
   }
 
-  private async upsertOrder(orderData: any) {
+  private async upsertOrder(orderData: any, detailedOrder: any) {
     try {
       const kiotVietId = BigInt(orderData.Id);
       const branchId = await this.findBranchId(orderData.BranchId);
@@ -146,17 +157,21 @@ export class WebhookService {
           statusValue: orderData.StatusValue,
           total: new Prisma.Decimal(orderData.Total || 0),
           totalPayment: new Prisma.Decimal(orderData.TotalPayment || 0),
-          customerCode: orderData.CustomerCode,
-          customerName: orderData.CustomerName,
+          customerCode: detailedOrder?.customerCode ?? orderData.CustomerCode,
+          customerName: detailedOrder?.customerName ?? orderData.CustomerName,
           saleChannelId: saleChannel.id,
           saleChannelName: saleChannel.name,
           discount: orderData.Discount
             ? new Prisma.Decimal(orderData.Discount)
             : null,
           discountRatio: orderData.DiscountRatio,
-          createdDate: orderData.CreatedDate
-            ? new Date(orderData.CreatedDate)
-            : new Date(),
+          description: detailedOrder?.description ?? orderData.Description,
+          usingCod: detailedOrder?.usingCod ?? false,
+          createdDate: detailedOrder?.createdDate
+            ? new Date(detailedOrder.createdDate)
+            : orderData.CreatedDate
+              ? new Date(orderData.CreatedDate)
+              : new Date(),
           modifiedDate: orderData.ModifiedDate
             ? new Date(orderData.ModifiedDate)
             : null,
@@ -170,8 +185,8 @@ export class WebhookService {
           branchId,
           soldById,
           customerId,
-          customerCode: orderData.CustomerCode,
-          customerName: orderData.CustomerName,
+          customerCode: detailedOrder?.customerCode ?? orderData.CustomerCode,
+          customerName: detailedOrder?.customerName ?? orderData.CustomerName,
           saleChannelId: saleChannel.id,
           saleChannelName: saleChannel.name,
           total: new Prisma.Decimal(orderData.Total || 0),
@@ -182,10 +197,13 @@ export class WebhookService {
           discountRatio: orderData.DiscountRatio,
           status: orderData.Status,
           statusValue: orderData.StatusValue,
-          description: orderData.Description,
-          createdDate: orderData.CreatedDate
-            ? new Date(orderData.CreatedDate)
-            : new Date(),
+          description: detailedOrder?.description ?? orderData.Description,
+          usingCod: detailedOrder?.usingCod ?? false,
+          createdDate: detailedOrder?.createdDate
+            ? new Date(detailedOrder.createdDate)
+            : orderData.CreatedDate
+              ? new Date(orderData.CreatedDate)
+              : new Date(),
           modifiedDate: orderData.ModifiedDate
             ? new Date(orderData.ModifiedDate)
             : null,
@@ -193,11 +211,14 @@ export class WebhookService {
         },
       });
 
-      if (orderData.OrderDetails && orderData.OrderDetails.length > 0) {
-        for (let i = 0; i < orderData.OrderDetails.length; i++) {
-          const detail = orderData.OrderDetails[i];
+      if (
+        detailedOrder?.orderDetails &&
+        detailedOrder.orderDetails.length > 0
+      ) {
+        for (let i = 0; i < detailedOrder.orderDetails.length; i++) {
+          const detail = detailedOrder.orderDetails[i];
           const product = await this.prismaService.product.findUnique({
-            where: { kiotVietId: BigInt(detail.ProductId) },
+            where: { kiotVietId: BigInt(detail.productId) },
             select: { id: true, code: true, name: true },
           });
 
@@ -207,12 +228,14 @@ export class WebhookService {
                 orderId_lineNumber: { orderId: order.id, lineNumber: i + 1 },
               },
               update: {
-                quantity: detail.Quantity,
-                price: new Prisma.Decimal(detail.Price),
-                discount: detail.Discount
-                  ? new Prisma.Decimal(detail.Discount)
+                quantity: detail.quantity,
+                price: new Prisma.Decimal(detail.price),
+                discount: detail.discount
+                  ? new Prisma.Decimal(detail.discount)
                   : null,
-                discountRatio: detail.DiscountRatio,
+                discountRatio: detail.discountRatio,
+                note: detail.note ?? null,
+                isMaster: detail.isMaster ?? true,
                 productCode: product.code,
                 productName: product.name,
               },
@@ -221,12 +244,14 @@ export class WebhookService {
                 productId: product.id,
                 productCode: product.code,
                 productName: product.name,
-                quantity: detail.Quantity,
-                price: new Prisma.Decimal(detail.Price),
-                discount: detail.Discount
-                  ? new Prisma.Decimal(detail.Discount)
+                quantity: detail.quantity,
+                price: new Prisma.Decimal(detail.price),
+                discount: detail.discount
+                  ? new Prisma.Decimal(detail.discount)
                   : null,
-                discountRatio: detail.DiscountRatio,
+                discountRatio: detail.discountRatio,
+                note: detail.note ?? null,
+                isMaster: detail.isMaster ?? true,
                 lineNumber: i + 1,
               },
             });
@@ -234,87 +259,85 @@ export class WebhookService {
         }
       }
 
-      const deliveryData = orderData.DeliveryPackage || orderData.OrderDelivery;
-      if (deliveryData) {
+      if (detailedOrder?.orderDelivery) {
+        const delivery = detailedOrder.orderDelivery;
         await this.prismaService.orderDelivery.upsert({
           where: { orderId: order.id },
           update: {
-            deliveryCode: deliveryData.DeliveryCode || deliveryData.ServiceType,
-            type: deliveryData.ServiceType
-              ? parseInt(deliveryData.ServiceType)
-              : null,
-            receiver: deliveryData.Receiver,
-            contactNumber: deliveryData.ContactNumber,
-            address: deliveryData.Address,
-            locationId: deliveryData.LocationId,
-            locationName: deliveryData.LocationName,
-            wardName: deliveryData.WardName,
-            weight: deliveryData.Weight,
-            length: deliveryData.Length,
-            width: deliveryData.Width,
-            height: deliveryData.Height,
+            deliveryCode: delivery.deliveryCode,
+            type: delivery.type,
+            price: delivery.price ? new Prisma.Decimal(delivery.price) : null,
+            receiver: delivery.receiver,
+            contactNumber: delivery.contactNumber,
+            address: delivery.address,
+            locationId: delivery.locationId,
+            locationName: delivery.locationName,
+            wardName: delivery.wardName,
+            weight: delivery.weight,
+            length: delivery.length,
+            width: delivery.width,
+            height: delivery.height,
           },
           create: {
             orderId: order.id,
-            deliveryCode: deliveryData.DeliveryCode || deliveryData.ServiceType,
-            type: deliveryData.ServiceType
-              ? parseInt(deliveryData.ServiceType)
-              : null,
-            receiver: deliveryData.Receiver,
-            contactNumber: deliveryData.ContactNumber,
-            address: deliveryData.Address,
-            locationId: deliveryData.LocationId,
-            locationName: deliveryData.LocationName,
-            wardName: deliveryData.WardName,
-            weight: deliveryData.Weight,
-            length: deliveryData.Length,
-            width: deliveryData.Width,
-            height: deliveryData.Height,
+            deliveryCode: delivery.deliveryCode,
+            type: delivery.type,
+            price: delivery.price ? new Prisma.Decimal(delivery.price) : null,
+            receiver: delivery.receiver,
+            contactNumber: delivery.contactNumber,
+            address: delivery.address,
+            locationId: delivery.locationId,
+            locationName: delivery.locationName,
+            wardName: delivery.wardName,
+            weight: delivery.weight,
+            length: delivery.length,
+            width: delivery.width,
+            height: delivery.height,
           },
         });
       }
 
-      if (orderData.Payments && orderData.Payments.length > 0) {
-        for (const payment of orderData.Payments) {
-          const bankAccount = payment.AccountId
+      if (detailedOrder?.payments && detailedOrder.payments.length > 0) {
+        for (const payment of detailedOrder.payments) {
+          const bankAccount = payment.accountId
             ? await this.prismaService.bankAccount.findFirst({
-                where: { kiotVietId: payment.AccountId },
+                where: { kiotVietId: payment.accountId },
                 select: { id: true },
               })
             : null;
 
           await this.prismaService.payment.upsert({
-            where: { kiotVietId: payment.Id ? BigInt(payment.Id) : BigInt(0) },
+            where: { kiotVietId: payment.id ? BigInt(payment.id) : BigInt(0) },
             update: {
               orderId: order.id,
-              code: payment.Code,
-              amount: new Prisma.Decimal(payment.Amount),
-              method: payment.Method,
-              status: payment.Status,
-              transDate: new Date(payment.TransDate),
+              code: payment.code,
+              amount: new Prisma.Decimal(payment.amount),
+              method: payment.method,
+              status: payment.status,
+              transDate: new Date(payment.transDate),
               accountId: bankAccount?.id ?? null,
-              description: payment.Description,
+              description: payment.description,
             },
             create: {
-              kiotVietId: payment.Id ? BigInt(payment.Id) : null,
+              kiotVietId: payment.id ? BigInt(payment.id) : null,
               orderId: order.id,
-              code: payment.Code,
-              amount: new Prisma.Decimal(payment.Amount),
-              method: payment.Method,
-              status: payment.Status,
-              transDate: new Date(payment.TransDate),
+              code: payment.code,
+              amount: new Prisma.Decimal(payment.amount),
+              method: payment.method,
+              status: payment.status,
+              transDate: new Date(payment.transDate),
               accountId: bankAccount?.id ?? null,
-              description: payment.Description,
+              description: payment.description,
             },
           });
         }
       }
 
       if (
-        orderData.invoiceOrderSurcharges &&
-        orderData.invoiceOrderSurcharges.length > 0
+        detailedOrder?.invoiceOrderSurcharges &&
+        detailedOrder.invoiceOrderSurcharges.length > 0
       ) {
-        for (const surcharge of orderData.invoiceOrderSurcharges) {
+        for (const surcharge of detailedOrder.invoiceOrderSurcharges) {
           const surchargeRecord = surcharge.surchargeId
             ? await this.prismaService.surcharge.findFirst({
                 where: { kiotVietId: surcharge.surchargeId },
@@ -358,7 +381,7 @@ export class WebhookService {
     }
   }
 
-  private async upsertInvoice(invoiceData: any) {
+  private async upsertInvoice(invoiceData: any, detailedInvoice: any) {
     try {
       const kiotVietId = BigInt(invoiceData.Id);
       const branchId = await this.findBranchId(invoiceData.BranchId);
@@ -366,7 +389,7 @@ export class WebhookService {
       const soldById = invoiceData.SoldById
         ? BigInt(invoiceData.SoldById)
         : null;
-      const orderId = invoiceData.OrderId ? invoiceData.OrderId : null;
+      const orderId = detailedInvoice?.orderId ?? invoiceData.OrderId ?? null;
       const saleChannel = await this.findSaleChannelId(
         invoiceData.SaleChannelId,
       );
@@ -374,6 +397,7 @@ export class WebhookService {
       const invoice = await this.prismaService.invoice.upsert({
         where: { kiotVietId },
         update: {
+          orderCode: detailedInvoice?.orderCode ?? null,
           total: new Prisma.Decimal(invoiceData.Total || 0),
           totalPayment: new Prisma.Decimal(invoiceData.TotalPayment || 0),
           status: invoiceData.Status,
@@ -382,18 +406,27 @@ export class WebhookService {
             ? new Prisma.Decimal(invoiceData.Discount)
             : 0,
           discountRatio: invoiceData.DiscountRatio,
-          createdDate: invoiceData.CreatedDate
-            ? new Date(invoiceData.CreatedDate)
-            : new Date(),
-          modifiedDate: invoiceData.ModifiedDate
-            ? new Date(invoiceData.ModifiedDate)
-            : new Date(),
+          description: detailedInvoice?.description ?? invoiceData.Description,
+          usingCod: detailedInvoice?.usingCod ?? false,
+          customerCode: detailedInvoice?.customerCode ?? null,
+          customerName: detailedInvoice?.customerName ?? null,
+          createdDate: detailedInvoice?.createdDate
+            ? new Date(detailedInvoice.createdDate)
+            : invoiceData.CreatedDate
+              ? new Date(invoiceData.CreatedDate)
+              : new Date(),
+          modifiedDate: detailedInvoice?.modifiedDate
+            ? new Date(detailedInvoice.modifiedDate)
+            : invoiceData.ModifiedDate
+              ? new Date(invoiceData.ModifiedDate)
+              : new Date(),
           lastSyncedAt: new Date(),
           larkSyncStatus: 'PENDING',
         },
         create: {
           kiotVietId,
           code: invoiceData.Code,
+          orderCode: detailedInvoice?.orderCode ?? null,
           purchaseDate: new Date(invoiceData.PurchaseDate),
           branchId,
           soldById,
@@ -407,23 +440,33 @@ export class WebhookService {
           discountRatio: invoiceData.DiscountRatio,
           status: invoiceData.Status,
           statusValue: invoiceData.StatusValue,
-          description: invoiceData.Description,
+          description: detailedInvoice?.description ?? invoiceData.Description,
+          usingCod: detailedInvoice?.usingCod ?? false,
+          customerCode: detailedInvoice?.customerCode ?? null,
+          customerName: detailedInvoice?.customerName ?? null,
           saleChannelId: saleChannel.id,
-          createdDate: invoiceData.CreatedDate
-            ? new Date(invoiceData.CreatedDate)
-            : new Date(),
-          modifiedDate: invoiceData.ModifiedDate
-            ? new Date(invoiceData.ModifiedDate)
-            : new Date(),
+          createdDate: detailedInvoice?.createdDate
+            ? new Date(detailedInvoice.createdDate)
+            : invoiceData.CreatedDate
+              ? new Date(invoiceData.CreatedDate)
+              : new Date(),
+          modifiedDate: detailedInvoice?.modifiedDate
+            ? new Date(detailedInvoice.modifiedDate)
+            : invoiceData.ModifiedDate
+              ? new Date(invoiceData.ModifiedDate)
+              : new Date(),
           larkSyncStatus: 'PENDING',
         },
       });
 
-      if (invoiceData.InvoiceDetails && invoiceData.InvoiceDetails.length > 0) {
-        for (let i = 0; i < invoiceData.InvoiceDetails.length; i++) {
-          const detail = invoiceData.InvoiceDetails[i];
+      if (
+        detailedInvoice?.invoiceDetails &&
+        detailedInvoice.invoiceDetails.length > 0
+      ) {
+        for (let i = 0; i < detailedInvoice.invoiceDetails.length; i++) {
+          const detail = detailedInvoice.invoiceDetails[i];
           const product = await this.prismaService.product.findUnique({
-            where: { kiotVietId: BigInt(detail.ProductId) },
+            where: { kiotVietId: BigInt(detail.productId) },
             select: { id: true, code: true, name: true },
           });
 
@@ -436,14 +479,16 @@ export class WebhookService {
                 },
               },
               update: {
-                quantity: detail.Quantity,
-                price: new Prisma.Decimal(detail.Price),
-                discount: detail.Discount
-                  ? new Prisma.Decimal(detail.Discount)
+                quantity: detail.quantity,
+                price: new Prisma.Decimal(detail.price),
+                discount: detail.discount
+                  ? new Prisma.Decimal(detail.discount)
                   : null,
-                discountRatio: detail.DiscountRatio,
+                discountRatio: detail.discountRatio,
+                note: detail.note ?? null,
+                serialNumbers: detail.serialNumbers ?? null,
                 subTotal: new Prisma.Decimal(
-                  detail.Price * detail.Quantity - (detail.Discount || 0),
+                  detail.price * detail.quantity - (detail.discount || 0),
                 ),
                 productCode: product.code,
                 productName: product.name,
@@ -453,14 +498,16 @@ export class WebhookService {
                 productId: product.id,
                 productCode: product.code,
                 productName: product.name,
-                quantity: detail.Quantity,
-                price: new Prisma.Decimal(detail.Price),
-                discount: detail.Discount
-                  ? new Prisma.Decimal(detail.Discount)
+                quantity: detail.quantity,
+                price: new Prisma.Decimal(detail.price),
+                discount: detail.discount
+                  ? new Prisma.Decimal(detail.discount)
                   : null,
-                discountRatio: detail.DiscountRatio,
+                discountRatio: detail.discountRatio,
+                note: detail.note ?? null,
+                serialNumbers: detail.serialNumbers ?? null,
                 subTotal: new Prisma.Decimal(
-                  detail.Price * detail.Quantity - (detail.Discount || 0),
+                  detail.price * detail.quantity - (detail.discount || 0),
                 ),
                 lineNumber: i + 1,
               },
@@ -469,95 +516,95 @@ export class WebhookService {
         }
       }
 
-      if (invoiceData.InvoiceDelivery) {
-        const detail = invoiceData.InvoiceDelivery;
+      if (detailedInvoice?.invoiceDelivery) {
+        const detail = detailedInvoice.invoiceDelivery;
         await this.prismaService.invoiceDelivery.upsert({
           where: { invoiceId: invoice.id },
           update: {
-            deliveryCode: detail.DeliveryCode,
-            status: detail.Status,
-            type: detail.Type,
-            price: detail.Price ? new Prisma.Decimal(detail.Price) : null,
-            receiver: detail.Receiver,
-            contactNumber: detail.ContactNumber,
-            address: detail.Address,
-            locationId: detail.LocationId,
-            locationName: detail.LocationName,
-            wardName: detail.WardName,
-            usingPriceCod: detail.UsingPriceCod || false,
-            priceCodPayment: detail.PriceCodPayment
-              ? new Prisma.Decimal(detail.PriceCodPayment)
+            deliveryCode: detail.deliveryCode,
+            status: detail.status,
+            type: detail.type,
+            price: detail.price ? new Prisma.Decimal(detail.price) : null,
+            receiver: detail.receiver,
+            contactNumber: detail.contactNumber,
+            address: detail.address,
+            locationId: detail.locationId,
+            locationName: detail.locationName,
+            wardName: detail.wardName,
+            usingPriceCod: detail.usingPriceCod || false,
+            priceCodPayment: detail.priceCodPayment
+              ? new Prisma.Decimal(detail.priceCodPayment)
               : null,
-            weight: detail.Weight,
-            length: detail.Length,
-            width: detail.Width,
-            height: detail.Height,
+            weight: detail.weight,
+            length: detail.length,
+            width: detail.width,
+            height: detail.height,
           },
           create: {
             invoiceId: invoice.id,
-            deliveryCode: detail.DeliveryCode,
-            status: detail.Status,
-            type: detail.Type,
-            price: detail.Price ? new Prisma.Decimal(detail.Price) : null,
-            receiver: detail.Receiver,
-            contactNumber: detail.ContactNumber,
-            address: detail.Address,
-            locationId: detail.LocationId,
-            locationName: detail.LocationName,
-            wardName: detail.WardName,
-            usingPriceCod: detail.UsingPriceCod || false,
-            priceCodPayment: detail.PriceCodPayment
-              ? new Prisma.Decimal(detail.PriceCodPayment)
+            deliveryCode: detail.deliveryCode,
+            status: detail.status,
+            type: detail.type,
+            price: detail.price ? new Prisma.Decimal(detail.price) : null,
+            receiver: detail.receiver,
+            contactNumber: detail.contactNumber,
+            address: detail.address,
+            locationId: detail.locationId,
+            locationName: detail.locationName,
+            wardName: detail.wardName,
+            usingPriceCod: detail.usingPriceCod || false,
+            priceCodPayment: detail.priceCodPayment
+              ? new Prisma.Decimal(detail.priceCodPayment)
               : null,
-            weight: detail.Weight,
-            length: detail.Length,
-            width: detail.Width,
-            height: detail.Height,
+            weight: detail.weight,
+            length: detail.length,
+            width: detail.width,
+            height: detail.height,
           },
         });
       }
 
-      if (invoiceData.Payments && invoiceData.Payments.length > 0) {
-        for (const payment of invoiceData.Payments) {
-          const bankAccount = payment.AccountId
+      if (detailedInvoice?.payments && detailedInvoice.payments.length > 0) {
+        for (const payment of detailedInvoice.payments) {
+          const bankAccount = payment.accountId
             ? await this.prismaService.bankAccount.findFirst({
-                where: { kiotVietId: payment.AccountId },
+                where: { kiotVietId: payment.accountId },
                 select: { id: true },
               })
             : null;
 
           await this.prismaService.payment.upsert({
-            where: { kiotVietId: payment.Id ? BigInt(payment.Id) : BigInt(0) },
+            where: { kiotVietId: payment.id ? BigInt(payment.id) : BigInt(0) },
             update: {
               invoiceId: invoice.id,
-              code: payment.Code,
-              amount: new Prisma.Decimal(payment.Amount),
-              method: payment.Method,
-              status: payment.Status,
-              transDate: new Date(payment.TransDate),
+              code: payment.code,
+              amount: new Prisma.Decimal(payment.amount),
+              method: payment.method,
+              status: payment.status,
+              transDate: new Date(payment.transDate),
               accountId: bankAccount?.id ?? null,
-              description: payment.Description,
+              description: payment.description,
             },
             create: {
-              kiotVietId: payment.Id ? BigInt(payment.Id) : null,
+              kiotVietId: payment.id ? BigInt(payment.id) : null,
               invoiceId: invoice.id,
-              code: payment.Code,
-              amount: new Prisma.Decimal(payment.Amount),
-              method: payment.Method,
-              status: payment.Status,
-              transDate: new Date(payment.TransDate),
+              code: payment.code,
+              amount: new Prisma.Decimal(payment.amount),
+              method: payment.method,
+              status: payment.status,
+              transDate: new Date(payment.transDate),
               accountId: bankAccount?.id ?? null,
-              description: payment.Description,
+              description: payment.description,
             },
           });
         }
       }
 
       if (
-        invoiceData.invoiceOrderSurcharges &&
-        invoiceData.invoiceOrderSurcharges.length > 0
+        detailedInvoice?.invoiceOrderSurcharges &&
+        detailedInvoice.invoiceOrderSurcharges.length > 0
       ) {
-        for (const surcharge of invoiceData.invoiceOrderSurcharges) {
+        for (const surcharge of detailedInvoice.invoiceOrderSurcharges) {
           const surchargeRecord = surcharge.surchargeId
             ? await this.prismaService.surcharge.findFirst({
                 where: { kiotVietId: surcharge.surchargeId },
@@ -726,6 +773,60 @@ export class WebhookService {
       return response.data;
     } catch (error) {
       this.logger.warn(`⚠️ Could not fetch customer detail: ${error.message}`);
+      return null;
+    }
+  }
+
+  private async fetchOrderDetail(orderId: number): Promise<any> {
+    try {
+      const accessToken = await this.authService.getAccessToken();
+      const baseUrl = this.configService.get<string>('KIOT_BASE_URL');
+      const shopName = this.configService.get<string>('KIOT_SHOP_NAME');
+
+      const url = `${baseUrl}/orders/${orderId}`;
+
+      const response = await firstValueFrom(
+        this.httpService.get(url, {
+          headers: {
+            Retailer: shopName,
+            Authorization: `Bearer ${accessToken}`,
+          },
+        }),
+      );
+
+      this.logger.log('📦 Fetched order detail:');
+      this.logger.log(JSON.stringify(response.data, null, 2));
+
+      return response.data;
+    } catch (error) {
+      this.logger.warn(`⚠️ Could not fetch order detail: ${error.message}`);
+      return null;
+    }
+  }
+
+  private async fetchInvoiceDetail(invoiceId: number): Promise<any> {
+    try {
+      const accessToken = await this.authService.getAccessToken();
+      const baseUrl = this.configService.get<string>('KIOT_BASE_URL');
+      const shopName = this.configService.get<string>('KIOT_SHOP_NAME');
+
+      const url = `${baseUrl}/invoices/${invoiceId}`;
+
+      const response = await firstValueFrom(
+        this.httpService.get(url, {
+          headers: {
+            Retailer: shopName,
+            Authorization: `Bearer ${accessToken}`,
+          },
+        }),
+      );
+
+      this.logger.log('📦 Fetched invoice detail:');
+      this.logger.log(JSON.stringify(response.data, null, 2));
+
+      return response.data;
+    } catch (error) {
+      this.logger.warn(`⚠️ Could not fetch invoice detail: ${error.message}`);
       return null;
     }
   }
