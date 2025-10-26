@@ -766,7 +766,7 @@ export class WebhookService {
         where: { id: 1 },
         select: { name: true },
       });
-      return { id: null, name: defaultChannel?.name || 'Bán Trực Tiếp' };
+      return { id: null, name: defaultChannel?.name || 'Bán trực tiếp' };
     }
 
     const saleChannel = await this.prismaService.saleChannel.findUnique({
@@ -782,6 +782,6 @@ export class WebhookService {
       where: { id: 1 },
       select: { name: true },
     });
-    return { id: 1, name: defaultChannel?.name || 'Bán Trực Tiếp' };
+    return { id: 1, name: defaultChannel?.name || 'Bán trực tiếp' };
   }
 }
