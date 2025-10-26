@@ -109,9 +109,7 @@ export class WebhookService {
       const branchId = await this.findBranchId(orderData.BranchId);
       const customerId = await this.findCustomerId(orderData.CustomerId);
       const soldById = orderData.SoldById ? BigInt(orderData.SoldById) : null;
-      const saleChannelId = await this.findSaleChannelId(
-        orderData.SaleChannelId,
-      );
+      const saleChannel = await this.findSaleChannelId(orderData.SaleChannelId);
 
       const order = await this.prismaService.order.upsert({
         where: { kiotVietId },
@@ -122,8 +120,8 @@ export class WebhookService {
           totalPayment: new Prisma.Decimal(orderData.TotalPayment || 0),
           customerCode: orderData.CustomerCode,
           customerName: orderData.CustomerName,
-          saleChannelId,
-          saleChannelName: orderData.SaleChannel.Name || 'Bán trực tiếp',
+          saleChannelId: saleChannel.id,
+          saleChannelName: saleChannel.name,
           discount: orderData.Discount
             ? new Prisma.Decimal(orderData.Discount)
             : null,
@@ -146,7 +144,8 @@ export class WebhookService {
           customerId,
           customerCode: orderData.CustomerCode,
           customerName: orderData.CustomerName,
-          saleChannelName: orderData.SaleChannel.Name || 'Bán trực tiếp',
+          saleChannelId: saleChannel.id,
+          saleChannelName: saleChannel.name,
           total: new Prisma.Decimal(orderData.Total || 0),
           totalPayment: new Prisma.Decimal(orderData.TotalPayment || 0),
           discount: orderData.Discount
@@ -156,7 +155,6 @@ export class WebhookService {
           status: orderData.Status,
           statusValue: orderData.StatusValue,
           description: orderData.Description,
-          saleChannelId,
           createdDate: orderData.CreatedDate
             ? new Date(orderData.CreatedDate)
             : new Date(),
@@ -341,7 +339,7 @@ export class WebhookService {
         ? BigInt(invoiceData.SoldById)
         : null;
       const orderId = invoiceData.OrderId ? invoiceData.OrderId : null;
-      const saleChannelId = await this.findSaleChannelId(
+      const saleChannel = await this.findSaleChannelId(
         invoiceData.SaleChannelId,
       );
 
@@ -382,7 +380,7 @@ export class WebhookService {
           status: invoiceData.Status,
           statusValue: invoiceData.StatusValue,
           description: invoiceData.Description,
-          saleChannelId,
+          saleChannelId: saleChannel.id,
           createdDate: invoiceData.CreatedDate
             ? new Date(invoiceData.CreatedDate)
             : new Date(),
@@ -762,11 +760,28 @@ export class WebhookService {
 
   private async findSaleChannelId(
     kiotVietSaleChannelId: number,
-  ): Promise<number | null> {
-    if (!kiotVietSaleChannelId) return null;
+  ): Promise<{ id: number | null; name: string }> {
+    if (!kiotVietSaleChannelId) {
+      const defaultChannel = await this.prismaService.saleChannel.findUnique({
+        where: { id: 1 },
+        select: { name: true },
+      });
+      return { id: null, name: defaultChannel?.name || 'Bán Trực Tiếp' };
+    }
+
     const saleChannel = await this.prismaService.saleChannel.findUnique({
       where: { kiotVietId: kiotVietSaleChannelId },
+      select: { id: true, name: true },
     });
-    return saleChannel?.id || 1;
+
+    if (saleChannel) {
+      return { id: saleChannel.id, name: saleChannel.name };
+    }
+
+    const defaultChannel = await this.prismaService.saleChannel.findUnique({
+      where: { id: 1 },
+      select: { name: true },
+    });
+    return { id: 1, name: defaultChannel?.name || 'Bán Trực Tiếp' };
   }
 }
