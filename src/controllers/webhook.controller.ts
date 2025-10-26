@@ -39,4 +39,17 @@ export class WebhookController {
       return { success: true };
     }
   }
+
+  @Post('customer')
+  @HttpCode(HttpStatus.OK)
+  async handleCustomerWebhook(@Body() webhookData: any) {
+    try {
+      this.logger.log('📨 Received KiotViet customer webhook');
+      await this.webhookService.processCustomerWebhook(webhookData);
+      return { success: true };
+    } catch (error) {
+      this.logger.error(`❌ Customer webhook error: ${error.message}`);
+      return { success: true };
+    }
+  }
 }

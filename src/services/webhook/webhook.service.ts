@@ -65,6 +65,31 @@ export class WebhookService {
     }
   }
 
+  async processCustomerWebhook(webhookData: any): Promise<void> {
+    try {
+      const notifications = webhookData?.Notifications || [];
+
+      for (const notification of notifications) {
+        const data = notification?.Data || [];
+
+        console.log(data);
+
+        for (const customerData of data) {
+          const savedCustomer = await this.upsertCustomer(customerData);
+
+          if (savedCustomer) {
+            this.logger.log(`✅ Upserted customer ${savedCustomer.code}`);
+          }
+        }
+      }
+
+      await this.sendToLarkWebhook(webhookData);
+    } catch (error) {
+      this.logger.error(`❌ Process customer webhook failed: ${error.message}`);
+      throw error;
+    }
+  }
+
   private async sendToLarkWebhook(webhookData: any): Promise<void> {
     try {
       await firstValueFrom(
@@ -85,7 +110,7 @@ export class WebhookService {
       const customerId = await this.findCustomerId(orderData.CustomerId);
       const soldById = orderData.SoldById ? BigInt(orderData.SoldById) : null;
       const saleChannelId = await this.findSaleChannelId(
-        orderData.SaleChannelId,
+        orderData.SaleChannel.map((id) => id.Id),
       );
 
       const order = await this.prismaService.order.upsert({
@@ -95,6 +120,9 @@ export class WebhookService {
           statusValue: orderData.StatusValue,
           total: new Prisma.Decimal(orderData.Total || 0),
           totalPayment: new Prisma.Decimal(orderData.TotalPayment || 0),
+          customerCode: orderData.CustomerCode,
+          customerName: orderData.CustomerName,
+          saleChannelName: orderData.SaleChannel.map((name) => name.Name),
           discount: orderData.Discount
             ? new Prisma.Decimal(orderData.Discount)
             : null,
@@ -115,6 +143,9 @@ export class WebhookService {
           branchId,
           soldById,
           customerId,
+          customerCode: orderData.CustomerCode,
+          customerName: orderData.CustomerName,
+          saleChannelName: orderData.SaleChannel.map((name) => name.Name),
           total: new Prisma.Decimal(orderData.Total || 0),
           totalPayment: new Prisma.Decimal(orderData.TotalPayment || 0),
           discount: orderData.Discount
@@ -540,6 +571,173 @@ export class WebhookService {
     } catch (error) {
       this.logger.error(`❌ Upsert invoice failed: ${error.message}`);
       throw error;
+    }
+  }
+
+  private async upsertCustomer(customerData: any) {
+    try {
+      const kiotVietId = BigInt(customerData.Id);
+
+      const detailedCustomer = await this.fetchCustomerDetail(customerData.Id);
+
+      const branchId = detailedCustomer?.branchId
+        ? await this.findBranchId(detailedCustomer.branchId)
+        : null;
+
+      const customer = await this.prismaService.customer.upsert({
+        where: { kiotVietId },
+        update: {
+          code: customerData.Code,
+          name: customerData.Name,
+          type: customerData.Type ?? null,
+          gender: customerData.Gender ?? null,
+          birthDate: customerData.BirthDate
+            ? new Date(customerData.BirthDate)
+            : null,
+          contactNumber: customerData.ContactNumber ?? null,
+          address: customerData.Address ?? null,
+          locationName: customerData.LocationName ?? null,
+          email: customerData.Email ?? null,
+          organization: customerData.Organization ?? null,
+          taxCode: customerData.TaxCode ?? null,
+          comments: customerData.Comments ?? null,
+          debt: detailedCustomer?.debt
+            ? new Prisma.Decimal(detailedCustomer.debt)
+            : null,
+          totalInvoiced: detailedCustomer?.totalInvoiced
+            ? new Prisma.Decimal(detailedCustomer.totalInvoiced)
+            : null,
+          totalPoint: detailedCustomer?.totalPoint ?? null,
+          totalRevenue: detailedCustomer?.totalRevenue
+            ? new Prisma.Decimal(detailedCustomer.totalRevenue)
+            : null,
+          rewardPoint: detailedCustomer?.rewardPoint
+            ? BigInt(detailedCustomer.rewardPoint)
+            : null,
+          groups: detailedCustomer?.groups ?? null,
+          branchId,
+          modifiedDate: customerData.ModifiedDate
+            ? new Date(customerData.ModifiedDate)
+            : new Date(),
+          lastSyncedAt: new Date(),
+          larkSyncStatus: 'PENDING',
+        },
+        create: {
+          kiotVietId,
+          code: customerData.Code,
+          name: customerData.Name,
+          type: customerData.Type ?? null,
+          gender: customerData.Gender ?? null,
+          birthDate: customerData.BirthDate
+            ? new Date(customerData.BirthDate)
+            : null,
+          contactNumber: customerData.ContactNumber ?? null,
+          address: customerData.Address ?? null,
+          locationName: customerData.LocationName ?? null,
+          email: customerData.Email ?? null,
+          organization: customerData.Organization ?? null,
+          taxCode: customerData.TaxCode ?? null,
+          comments: customerData.Comments ?? null,
+          debt: detailedCustomer?.debt
+            ? new Prisma.Decimal(detailedCustomer.debt)
+            : null,
+          totalInvoiced: detailedCustomer?.totalInvoiced
+            ? new Prisma.Decimal(detailedCustomer.totalInvoiced)
+            : null,
+          totalPoint: detailedCustomer?.totalPoint ?? null,
+          totalRevenue: detailedCustomer?.totalRevenue
+            ? new Prisma.Decimal(detailedCustomer.totalRevenue)
+            : null,
+          rewardPoint: detailedCustomer?.rewardPoint
+            ? BigInt(detailedCustomer.rewardPoint)
+            : null,
+          groups: detailedCustomer?.groups ?? null,
+          branchId,
+          createdDate: detailedCustomer?.createdDate
+            ? new Date(detailedCustomer.createdDate)
+            : new Date(),
+          modifiedDate: customerData.ModifiedDate
+            ? new Date(customerData.ModifiedDate)
+            : new Date(),
+          larkSyncStatus: 'PENDING',
+        },
+      });
+
+      if (detailedCustomer?.groups) {
+        await this.syncCustomerGroups(
+          customer.id,
+          kiotVietId,
+          detailedCustomer.groups,
+        );
+      }
+
+      return customer;
+    } catch (error) {
+      this.logger.error(`❌ Upsert customer failed: ${error.message}`);
+      throw error;
+    }
+  }
+
+  private async fetchCustomerDetail(customerId: number): Promise<any> {
+    try {
+      const accessToken =
+        await this.httpService['authService'].getAccessToken();
+      const baseUrl = 'https://public.kiotapi.com';
+      const shopName = process.env.KIOT_SHOP_NAME;
+
+      const url = `${baseUrl}/customers/${customerId}`;
+
+      const response = await firstValueFrom(
+        this.httpService.get(url, {
+          headers: {
+            Retailer: shopName,
+            Authorization: `Bearer ${accessToken}`,
+          },
+        }),
+      );
+
+      return response.data;
+    } catch (error) {
+      this.logger.warn(`⚠️ Could not fetch customer detail: ${error.message}`);
+      return null;
+    }
+  }
+
+  private async syncCustomerGroups(
+    customerId: number,
+    kiotVietCustomerId: bigint,
+    groupsString: string,
+  ): Promise<void> {
+    try {
+      if (!groupsString) return;
+
+      const groupNames = groupsString.split(',').map((g) => g.trim());
+
+      const customerGroups = await this.prismaService.customerGroup.findMany({
+        where: {
+          name: {
+            in: groupNames,
+          },
+        },
+      });
+
+      for (const group of customerGroups) {
+        await this.prismaService.customerGroupRelation.upsert({
+          where: {
+            customerId_customerGroupId: {
+              customerId,
+              customerGroupId: group.id,
+            },
+          },
+          update: {},
+          create: {
+            customerId,
+            customerGroupId: group.id,
+          },
+        });
+      }
+    } catch (error) {
+      this.logger.warn(`⚠️ Sync customer groups failed: ${error.message}`);
     }
   }
 
