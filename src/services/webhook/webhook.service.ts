@@ -3,6 +3,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { Prisma } from '@prisma/client';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
+import { KiotVietAuthService } from '../kiot-viet/auth.service';
+import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class WebhookService {
@@ -13,6 +15,8 @@ export class WebhookService {
   constructor(
     private readonly prismaService: PrismaService,
     private readonly httpService: HttpService,
+    private readonly authService: KiotVietAuthService,
+    private readonly configService: ConfigService,
   ) {}
 
   async processOrderWebhook(webhookData: any): Promise<void> {
@@ -679,10 +683,9 @@ export class WebhookService {
 
   private async fetchCustomerDetail(customerId: number): Promise<any> {
     try {
-      const accessToken =
-        await this.httpService['authService'].getAccessToken();
-      const baseUrl = 'https://public.kiotapi.com';
-      const shopName = process.env.KIOT_SHOP_NAME;
+      const accessToken = await this.authService.getAccessToken();
+      const baseUrl = this.configService.get<string>('KIOT_BASE_URL');
+      const shopName = this.configService.get<string>('KIOT_SHOP_NAME');
 
       const url = `${baseUrl}/customers/${customerId}`;
 
