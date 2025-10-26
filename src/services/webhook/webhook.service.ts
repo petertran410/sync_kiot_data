@@ -110,7 +110,7 @@ export class WebhookService {
       const customerId = await this.findCustomerId(orderData.CustomerId);
       const soldById = orderData.SoldById ? BigInt(orderData.SoldById) : null;
       const saleChannelId = await this.findSaleChannelId(
-        orderData.SaleChannel.Id,
+        orderData.SaleChannelId,
       );
 
       const order = await this.prismaService.order.upsert({
