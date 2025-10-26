@@ -99,7 +99,9 @@ export class WebhookService {
             ? new Prisma.Decimal(orderData.Discount)
             : null,
           discountRatio: orderData.DiscountRatio,
-          createdDate: new Date(orderData.CreatedDate),
+          createdDate: orderData.CreatedDate
+            ? new Date(orderData.CreatedDate)
+            : new Date(),
           modifiedDate: orderData.ModifiedDate
             ? new Date(orderData.ModifiedDate)
             : null,
@@ -123,7 +125,9 @@ export class WebhookService {
           statusValue: orderData.StatusValue,
           description: orderData.Description,
           saleChannelId,
-          createdDate: new Date(orderData.CreatedDate),
+          createdDate: orderData.CreatedDate
+            ? new Date(orderData.CreatedDate)
+            : new Date(),
           modifiedDate: orderData.ModifiedDate
             ? new Date(orderData.ModifiedDate)
             : null,
