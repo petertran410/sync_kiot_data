@@ -130,7 +130,7 @@ export class KiotVietInvoiceService {
           where: {
             OR: [
               { name: 'invoice_historical' },
-              { name: 'invoice_recent' },
+              // { name: 'invoice_recent' },
               { name: 'invoice_lark_sync' },
             ],
             isRunning: true,
@@ -167,14 +167,14 @@ export class KiotVietInvoiceService {
         return;
       }
 
-      if (recentSync?.isEnabled && !recentSync.isRunning) {
-        this.logger.log('Starting recent invoice sync...');
-        await this.syncRecentInvoices();
-        return;
-      }
+      // if (recentSync?.isEnabled && !recentSync.isRunning) {
+      //   this.logger.log('Starting recent invoice sync...');
+      //   await this.syncRecentInvoices();
+      //   return;
+      // }
 
-      this.logger.log('Running default recent invoice sync...');
-      await this.syncRecentInvoices();
+      // this.logger.log('Running default recent invoice sync...');
+      // await this.syncRecentInvoices();
     } catch (error) {
       this.logger.error(`Sync check failed: ${error.message}`);
       throw error;
@@ -259,7 +259,7 @@ export class KiotVietInvoiceService {
             includeTotal: true,
             // lastModifiedFrom: '2024-12-1',
             // toDate: dateEndStr,
-            fromPurchaseDate: dateStartStr,
+            fromPurchaseDate: '2024-12-1',
             toPurchaseDate: dateEndStr,
           });
 
@@ -471,282 +471,282 @@ export class KiotVietInvoiceService {
     }
   }
 
-  async syncRecentInvoices(): Promise<void> {
-    const syncName = 'invoice_recent';
+  // async syncRecentInvoices(): Promise<void> {
+  //   const syncName = 'invoice_recent';
 
-    let currentItem = 0;
-    let processedCount = 0;
-    let totalInvoices = 0;
-    let consecutiveEmptyPages = 0;
-    let consecutiveErrorPages = 0;
-    let lastValidTotal = 0;
-    let processedInvoiceIds = new Set<number>();
+  //   let currentItem = 0;
+  //   let processedCount = 0;
+  //   let totalInvoices = 0;
+  //   let consecutiveEmptyPages = 0;
+  //   let consecutiveErrorPages = 0;
+  //   let lastValidTotal = 0;
+  //   let processedInvoiceIds = new Set<number>();
 
-    try {
-      await this.updateSyncControl(syncName, {
-        isRunning: true,
-        status: 'running',
-        startedAt: new Date(),
-        error: null,
-      });
+  //   try {
+  //     await this.updateSyncControl(syncName, {
+  //       isRunning: true,
+  //       status: 'running',
+  //       startedAt: new Date(),
+  //       error: null,
+  //     });
 
-      this.logger.log('Starting recent invoice sync...');
+  //     this.logger.log('Starting recent invoice sync...');
 
-      const MAX_CONSECUTIVE_EMPTY_PAGES = 5;
-      const MAX_CONSECUTIVE_ERROR_PAGES = 3;
-      const RETRY_DELAY_MS = 2000;
-      const MAX_TOTAL_RETRIES = 10;
+  //     const MAX_CONSECUTIVE_EMPTY_PAGES = 5;
+  //     const MAX_CONSECUTIVE_ERROR_PAGES = 3;
+  //     const RETRY_DELAY_MS = 2000;
+  //     const MAX_TOTAL_RETRIES = 10;
 
-      let totalRetries = 0;
+  //     let totalRetries = 0;
 
-      while (true) {
-        const currentPage = Math.floor(currentItem / this.PAGE_SIZE) + 1;
+  //     while (true) {
+  //       const currentPage = Math.floor(currentItem / this.PAGE_SIZE) + 1;
 
-        if (totalInvoices > 0) {
-          if (currentItem >= totalInvoices) {
-            this.logger.log(
-              `Pagination complete. Processed: ${processedCount}/${totalInvoices} customers`,
-            );
-            break;
-          }
+  //       if (totalInvoices > 0) {
+  //         if (currentItem >= totalInvoices) {
+  //           this.logger.log(
+  //             `Pagination complete. Processed: ${processedCount}/${totalInvoices} customers`,
+  //           );
+  //           break;
+  //         }
 
-          const progressPercentage = (currentItem / totalInvoices) * 100;
-          this.logger.log(
-            `Fetching page ${currentPage} (${currentItem}/${totalInvoices} - ${progressPercentage.toFixed(1)}%)`,
-          );
-        } else {
-          this.logger.log(
-            `Fetching page ${currentPage} (currentItem: ${currentItem})`,
-          );
-        }
+  //         const progressPercentage = (currentItem / totalInvoices) * 100;
+  //         this.logger.log(
+  //           `Fetching page ${currentPage} (${currentItem}/${totalInvoices} - ${progressPercentage.toFixed(1)}%)`,
+  //         );
+  //       } else {
+  //         this.logger.log(
+  //           `Fetching page ${currentPage} (currentItem: ${currentItem})`,
+  //         );
+  //       }
 
-        const dateStart = new Date();
-        dateStart.setDate(dateStart.getDate());
-        const dateStartStr = dateStart.toISOString().split('T')[0];
+  //       const dateStart = new Date();
+  //       dateStart.setDate(dateStart.getDate());
+  //       const dateStartStr = dateStart.toISOString().split('T')[0];
 
-        const dateEnd = new Date();
-        dateEnd.setDate(dateEnd.getDate() + 1);
-        const dateEndStr = dateEnd.toISOString().split('T')[0];
+  //       const dateEnd = new Date();
+  //       dateEnd.setDate(dateEnd.getDate() + 1);
+  //       const dateEndStr = dateEnd.toISOString().split('T')[0];
 
-        try {
-          const invoiceListResponse = await this.fetchInvoicesListWithRetry({
-            currentItem,
-            pageSize: this.PAGE_SIZE,
-            orderBy: 'id',
-            orderDirection: 'DESC',
-            includeInvoiceDelivery: true,
-            includePayment: true,
-            includeTotal: true,
-            // lastModifiedFrom: dateStartStr,
-            // toDate: dateEndStr,
-            fromPurchaseDate: dateStartStr,
-            toPurchaseDate: dateEndStr,
-          });
+  //       try {
+  //         const invoiceListResponse = await this.fetchInvoicesListWithRetry({
+  //           currentItem,
+  //           pageSize: this.PAGE_SIZE,
+  //           orderBy: 'id',
+  //           orderDirection: 'DESC',
+  //           includeInvoiceDelivery: true,
+  //           includePayment: true,
+  //           includeTotal: true,
+  //           // lastModifiedFrom: dateStartStr,
+  //           // toDate: dateEndStr,
+  //           fromPurchaseDate: dateStartStr,
+  //           toPurchaseDate: dateEndStr,
+  //         });
 
-          if (!invoiceListResponse) {
-            this.logger.warn('Received null response from KiotViet API');
-            consecutiveEmptyPages++;
+  //         if (!invoiceListResponse) {
+  //           this.logger.warn('Received null response from KiotViet API');
+  //           consecutiveEmptyPages++;
 
-            if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
-              this.logger.log(
-                `🔚 Reached end after ${consecutiveEmptyPages} empty pages`,
-              );
-              break;
-            }
+  //           if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
+  //             this.logger.log(
+  //               `🔚 Reached end after ${consecutiveEmptyPages} empty pages`,
+  //             );
+  //             break;
+  //           }
 
-            await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
-            continue;
-          }
+  //           await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+  //           continue;
+  //         }
 
-          consecutiveEmptyPages = 0;
-          consecutiveErrorPages = 0;
+  //         consecutiveEmptyPages = 0;
+  //         consecutiveErrorPages = 0;
 
-          const { total, data: invoices } = invoiceListResponse;
+  //         const { total, data: invoices } = invoiceListResponse;
 
-          if (total !== undefined && total !== null) {
-            if (totalInvoices === 0) {
-              this.logger.log(`Total invoices detected: ${totalInvoices}`);
+  //         if (total !== undefined && total !== null) {
+  //           if (totalInvoices === 0) {
+  //             this.logger.log(`Total invoices detected: ${totalInvoices}`);
 
-              totalInvoices = total;
-            } else if (total !== totalInvoices) {
-              this.logger.warn(
-                `Total count changed: ${totalInvoices} -> ${total}. Using latest.`,
-              );
-              totalInvoices = total;
-            }
-            lastValidTotal = total;
-          }
+  //             totalInvoices = total;
+  //           } else if (total !== totalInvoices) {
+  //             this.logger.warn(
+  //               `Total count changed: ${totalInvoices} -> ${total}. Using latest.`,
+  //             );
+  //             totalInvoices = total;
+  //           }
+  //           lastValidTotal = total;
+  //         }
 
-          if (!invoices || invoices.length === 0) {
-            this.logger.warn(`Empty page received at position ${currentItem}`);
-            consecutiveEmptyPages++;
+  //         if (!invoices || invoices.length === 0) {
+  //           this.logger.warn(`Empty page received at position ${currentItem}`);
+  //           consecutiveEmptyPages++;
 
-            if (totalInvoices > 0 && currentItem >= totalInvoices) {
-              this.logger.log('Reached end of data (empty page past total)');
-              break;
-            }
+  //           if (totalInvoices > 0 && currentItem >= totalInvoices) {
+  //             this.logger.log('Reached end of data (empty page past total)');
+  //             break;
+  //           }
 
-            if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
-              this.logger.log(
-                `🔚 Stopping after ${consecutiveEmptyPages} consecutive empty pages`,
-              );
-              break;
-            }
+  //           if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
+  //             this.logger.log(
+  //               `🔚 Stopping after ${consecutiveEmptyPages} consecutive empty pages`,
+  //             );
+  //             break;
+  //           }
 
-            currentItem += this.PAGE_SIZE;
-            continue;
-          }
+  //           currentItem += this.PAGE_SIZE;
+  //           continue;
+  //         }
 
-          const existingInvoiceIds = new Set(
-            (
-              await this.prismaService.invoice.findMany({
-                select: { kiotVietId: true },
-              })
-            ).map((c) => Number(c.kiotVietId)),
-          );
+  //         const existingInvoiceIds = new Set(
+  //           (
+  //             await this.prismaService.invoice.findMany({
+  //               select: { kiotVietId: true },
+  //             })
+  //           ).map((c) => Number(c.kiotVietId)),
+  //         );
 
-          const newInvoices = invoices.filter((invoice) => {
-            if (
-              !existingInvoiceIds.has(invoice.id) &&
-              !processedInvoiceIds.has(invoice.id)
-            ) {
-              processedInvoiceIds.add(invoice.id);
-              return true;
-            }
-            return false;
-          });
+  //         const newInvoices = invoices.filter((invoice) => {
+  //           if (
+  //             !existingInvoiceIds.has(invoice.id) &&
+  //             !processedInvoiceIds.has(invoice.id)
+  //           ) {
+  //             processedInvoiceIds.add(invoice.id);
+  //             return true;
+  //           }
+  //           return false;
+  //         });
 
-          const existingInvoices = invoices.filter((invoice) => {
-            if (
-              existingInvoiceIds.has(invoice.id) &&
-              !processedInvoiceIds.has(invoice.id)
-            ) {
-              processedInvoiceIds.add(invoice.id);
-              return true;
-            }
-            return false;
-          });
+  //         const existingInvoices = invoices.filter((invoice) => {
+  //           if (
+  //             existingInvoiceIds.has(invoice.id) &&
+  //             !processedInvoiceIds.has(invoice.id)
+  //           ) {
+  //             processedInvoiceIds.add(invoice.id);
+  //             return true;
+  //           }
+  //           return false;
+  //         });
 
-          if (newInvoices.length === 0 && existingInvoices.length === 0) {
-            this.logger.log(
-              `Skipping page ${currentPage} - all invoices already processed in this run`,
-            );
-            currentItem += this.PAGE_SIZE;
-            continue;
-          }
+  //         if (newInvoices.length === 0 && existingInvoices.length === 0) {
+  //           this.logger.log(
+  //             `Skipping page ${currentPage} - all invoices already processed in this run`,
+  //           );
+  //           currentItem += this.PAGE_SIZE;
+  //           continue;
+  //         }
 
-          let pageProcessedCount = 0;
-          let allSavedInvoices: any[] = [];
+  //         let pageProcessedCount = 0;
+  //         let allSavedInvoices: any[] = [];
 
-          if (newInvoices.length > 0) {
-            this.logger.log(
-              `Processing ${newInvoices.length} NEW invoices from page ${currentPage}...`,
-            );
+  //         if (newInvoices.length > 0) {
+  //           this.logger.log(
+  //             `Processing ${newInvoices.length} NEW invoices from page ${currentPage}...`,
+  //           );
 
-            const savedInvoices =
-              await this.saveInvoicesToDatabase(newInvoices);
-            pageProcessedCount += savedInvoices.length;
-            allSavedInvoices.push(...savedInvoices);
-          }
+  //           const savedInvoices =
+  //             await this.saveInvoicesToDatabase(newInvoices);
+  //           pageProcessedCount += savedInvoices.length;
+  //           allSavedInvoices.push(...savedInvoices);
+  //         }
 
-          if (existingInvoices.length > 0) {
-            this.logger.log(
-              `Processin ${existingInvoices.length} EXISTING invoices from page ${currentPage}`,
-            );
+  //         if (existingInvoices.length > 0) {
+  //           this.logger.log(
+  //             `Processin ${existingInvoices.length} EXISTING invoices from page ${currentPage}`,
+  //           );
 
-            const savedInvoices =
-              await this.saveInvoicesToDatabase(existingInvoices);
-            pageProcessedCount += savedInvoices.length;
-            allSavedInvoices.push(...savedInvoices);
-          }
+  //           const savedInvoices =
+  //             await this.saveInvoicesToDatabase(existingInvoices);
+  //           pageProcessedCount += savedInvoices.length;
+  //           allSavedInvoices.push(...savedInvoices);
+  //         }
 
-          processedCount += pageProcessedCount;
-          currentItem += this.PAGE_SIZE;
+  //         processedCount += pageProcessedCount;
+  //         currentItem += this.PAGE_SIZE;
 
-          if (allSavedInvoices.length > 0) {
-            try {
-              await this.syncInvoicesToLarkBase(allSavedInvoices);
-              this.logger.log(
-                `Synced ${allSavedInvoices.length} invoices to LarkBase`,
-              );
-            } catch (error) {
-              this.logger.warn(
-                `LarkBase sync failed for page ${currentPage}: ${error.message}`,
-              );
-            }
-          }
+  //         if (allSavedInvoices.length > 0) {
+  //           try {
+  //             await this.syncInvoicesToLarkBase(allSavedInvoices);
+  //             this.logger.log(
+  //               `Synced ${allSavedInvoices.length} invoices to LarkBase`,
+  //             );
+  //           } catch (error) {
+  //             this.logger.warn(
+  //               `LarkBase sync failed for page ${currentPage}: ${error.message}`,
+  //             );
+  //           }
+  //         }
 
-          if (totalInvoices > 0) {
-            const completionPercentage = (processedCount / totalInvoices) * 100;
-            this.logger.log(
-              `Progress: ${processedCount}/${totalInvoices} (${completionPercentage.toFixed(1)}%)`,
-            );
+  //         if (totalInvoices > 0) {
+  //           const completionPercentage = (processedCount / totalInvoices) * 100;
+  //           this.logger.log(
+  //             `Progress: ${processedCount}/${totalInvoices} (${completionPercentage.toFixed(1)}%)`,
+  //           );
 
-            if (processedCount >= totalInvoices) {
-              this.logger.log('All invoices processed successfully');
-              break;
-            }
-          }
+  //           if (processedCount >= totalInvoices) {
+  //             this.logger.log('All invoices processed successfully');
+  //             break;
+  //           }
+  //         }
 
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        } catch (error) {
-          consecutiveErrorPages++;
-          totalRetries++;
+  //         await new Promise((resolve) => setTimeout(resolve, 100));
+  //       } catch (error) {
+  //         consecutiveErrorPages++;
+  //         totalRetries++;
 
-          this.logger.error(
-            `API error on page ${currentPage}: ${error.message}`,
-          );
+  //         this.logger.error(
+  //           `API error on page ${currentPage}: ${error.message}`,
+  //         );
 
-          if (consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES) {
-            throw new Error(
-              `Multiple consecutive API failures: ${error.message}`,
-            );
-          }
+  //         if (consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES) {
+  //           throw new Error(
+  //             `Multiple consecutive API failures: ${error.message}`,
+  //           );
+  //         }
 
-          if (totalRetries >= MAX_TOTAL_RETRIES) {
-            throw new Error(`Maximum total retries exceeded: ${error.message}`);
-          }
+  //         if (totalRetries >= MAX_TOTAL_RETRIES) {
+  //           throw new Error(`Maximum total retries exceeded: ${error.message}`);
+  //         }
 
-          const delay = RETRY_DELAY_MS * Math.pow(2, consecutiveErrorPages - 1);
-          this.logger.log(`Retrying after ${delay}ms delay...`);
-          await new Promise((resolve) => setTimeout(resolve, delay));
-        }
-      }
+  //         const delay = RETRY_DELAY_MS * Math.pow(2, consecutiveErrorPages - 1);
+  //         this.logger.log(`Retrying after ${delay}ms delay...`);
+  //         await new Promise((resolve) => setTimeout(resolve, delay));
+  //       }
+  //     }
 
-      await this.updateSyncControl(syncName, {
-        isRunning: false,
-        isEnabled: false,
-        status: 'completed',
-        completedAt: new Date(),
-        lastRunAt: new Date(),
-        progress: { processedCount, expectedTotal: totalInvoices },
-      });
+  //     await this.updateSyncControl(syncName, {
+  //       isRunning: false,
+  //       isEnabled: false,
+  //       status: 'completed',
+  //       completedAt: new Date(),
+  //       lastRunAt: new Date(),
+  //       progress: { processedCount, expectedTotal: totalInvoices },
+  //     });
 
-      await this.updateSyncControl('invoice_recent', {
-        isEnabled: true,
-        isRunning: false,
-        status: 'idle',
-      });
+  //     await this.updateSyncControl('invoice_recent', {
+  //       isEnabled: true,
+  //       isRunning: false,
+  //       status: 'idle',
+  //     });
 
-      const completionRate =
-        totalInvoices > 0 ? (processedCount / totalInvoices) * 100 : 100;
+  //     const completionRate =
+  //       totalInvoices > 0 ? (processedCount / totalInvoices) * 100 : 100;
 
-      this.logger.log(
-        `Recent invoice sync completed: ${processedCount}/${totalInvoices} (${completionRate.toFixed(1)}% completion rate)`,
-      );
-    } catch (error) {
-      this.logger.error(`Recent invoice sync failed: ${error.message}`);
+  //     this.logger.log(
+  //       `Recent invoice sync completed: ${processedCount}/${totalInvoices} (${completionRate.toFixed(1)}% completion rate)`,
+  //     );
+  //   } catch (error) {
+  //     this.logger.error(`Recent invoice sync failed: ${error.message}`);
 
-      await this.updateSyncControl(syncName, {
-        isRunning: false,
-        status: 'failed',
-        error: error.message,
-        progress: { processedCount, expectedTotal: totalInvoices },
-      });
+  //     await this.updateSyncControl(syncName, {
+  //       isRunning: false,
+  //       status: 'failed',
+  //       error: error.message,
+  //       progress: { processedCount, expectedTotal: totalInvoices },
+  //     });
 
-      throw error;
-    }
-  }
+  //     throw error;
+  //   }
+  // }
 
   private async fetchInvoicesByCreatedDate(
     fromDate: string,

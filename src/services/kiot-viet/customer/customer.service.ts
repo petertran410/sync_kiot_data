@@ -64,7 +64,7 @@ export class KiotVietCustomerService {
           where: {
             OR: [
               { name: 'customer_historical' },
-              { name: 'customer_recent' },
+              // { name: 'customer_recent' },
               { name: 'customer_lark_sync' },
             ],
             isRunning: true,
@@ -100,14 +100,14 @@ export class KiotVietCustomerService {
         return;
       }
 
-      if (recentSync?.isEnabled && !recentSync.isRunning) {
-        this.logger.log('Starting recent customer sync...');
-        await this.syncRecentCustomers();
-        return;
-      }
+      // if (recentSync?.isEnabled && !recentSync.isRunning) {
+      //   this.logger.log('Starting recent customer sync...');
+      //   await this.syncRecentCustomers();
+      //   return;
+      // }
 
-      this.logger.log('Running default recent customer sync...');
-      await this.syncRecentCustomers();
+      // this.logger.log('Running default recent customer sync...');
+      // await this.syncRecentCustomers();
     } catch (error) {
       this.logger.error(`Sync check failed: ${error.message}`);
       throw error;
@@ -478,280 +478,280 @@ export class KiotVietCustomerService {
     return response.data;
   }
 
-  async syncRecentCustomers(): Promise<void> {
-    const syncName = 'customer_recent';
+  // async syncRecentCustomers(): Promise<void> {
+  //   const syncName = 'customer_recent';
 
-    let currentItem = 0;
-    let processedCount = 0;
-    let totalCustomers = 0;
-    let consecutiveEmptyPages = 0;
-    let consecutiveErrorPages = 0;
-    let lastValidTotal = 0;
-    let processedCustomerIds = new Set<number>();
+  //   let currentItem = 0;
+  //   let processedCount = 0;
+  //   let totalCustomers = 0;
+  //   let consecutiveEmptyPages = 0;
+  //   let consecutiveErrorPages = 0;
+  //   let lastValidTotal = 0;
+  //   let processedCustomerIds = new Set<number>();
 
-    try {
-      await this.updateSyncControl(syncName, {
-        isRunning: true,
-        status: 'running',
-        startedAt: new Date(),
-        error: null,
-      });
+  //   try {
+  //     await this.updateSyncControl(syncName, {
+  //       isRunning: true,
+  //       status: 'running',
+  //       startedAt: new Date(),
+  //       error: null,
+  //     });
 
-      this.logger.log('Starting recent customer sync...');
+  //     this.logger.log('Starting recent customer sync...');
 
-      const MAX_CONSECUTIVE_EMPTY_PAGES = 5;
-      const MAX_CONSECUTIVE_ERROR_PAGES = 3;
-      const RETRY_DELAY_MS = 2000;
-      const MAX_TOTAL_RETRIES = 10;
+  //     const MAX_CONSECUTIVE_EMPTY_PAGES = 5;
+  //     const MAX_CONSECUTIVE_ERROR_PAGES = 3;
+  //     const RETRY_DELAY_MS = 2000;
+  //     const MAX_TOTAL_RETRIES = 10;
 
-      let totalRetries = 0;
+  //     let totalRetries = 0;
 
-      while (true) {
-        const currentPage = Math.floor(currentItem / this.PAGE_SIZE) + 1;
+  //     while (true) {
+  //       const currentPage = Math.floor(currentItem / this.PAGE_SIZE) + 1;
 
-        if (totalCustomers > 0) {
-          if (currentItem >= totalCustomers) {
-            this.logger.log(
-              `Pagination complete. Processed: ${processedCount}/${totalCustomers} customers`,
-            );
-            break;
-          }
+  //       if (totalCustomers > 0) {
+  //         if (currentItem >= totalCustomers) {
+  //           this.logger.log(
+  //             `Pagination complete. Processed: ${processedCount}/${totalCustomers} customers`,
+  //           );
+  //           break;
+  //         }
 
-          const progressPercentage = (currentItem / totalCustomers) * 100;
-          this.logger.log(
-            `Fetching page ${currentPage} (${currentItem}/${totalCustomers} - ${progressPercentage.toFixed(1)}%)`,
-          );
-        } else {
-          this.logger.log(
-            `Fetching page ${currentPage} (currentItem: ${currentItem})`,
-          );
-        }
+  //         const progressPercentage = (currentItem / totalCustomers) * 100;
+  //         this.logger.log(
+  //           `Fetching page ${currentPage} (${currentItem}/${totalCustomers} - ${progressPercentage.toFixed(1)}%)`,
+  //         );
+  //       } else {
+  //         this.logger.log(
+  //           `Fetching page ${currentPage} (currentItem: ${currentItem})`,
+  //         );
+  //       }
 
-        const lastModifiedDate = new Date();
-        lastModifiedDate.setDate(lastModifiedDate.getDate());
-        const lastDate = lastModifiedDate.toISOString().split('T')[0];
+  //       const lastModifiedDate = new Date();
+  //       lastModifiedDate.setDate(lastModifiedDate.getDate());
+  //       const lastDate = lastModifiedDate.toISOString().split('T')[0];
 
-        const dateEnd = new Date();
-        dateEnd.setDate(dateEnd.getDate() + 1);
-        const dateEndStr = dateEnd.toISOString().split('T')[0];
+  //       const dateEnd = new Date();
+  //       dateEnd.setDate(dateEnd.getDate() + 1);
+  //       const dateEndStr = dateEnd.toISOString().split('T')[0];
 
-        try {
-          const customerListResponse = await this.fetchCustomersListWithRetry({
-            currentItem,
-            pageSize: this.PAGE_SIZE,
-            orderBy: 'id',
-            orderDirection: 'DESC',
-            includeTotal: true,
-            includeCustomerGroup: true,
-            includeCustomerSocial: true,
-            lastModifiedFrom: lastDate,
-            toDate: dateEndStr,
-          });
+  //       try {
+  //         const customerListResponse = await this.fetchCustomersListWithRetry({
+  //           currentItem,
+  //           pageSize: this.PAGE_SIZE,
+  //           orderBy: 'id',
+  //           orderDirection: 'DESC',
+  //           includeTotal: true,
+  //           includeCustomerGroup: true,
+  //           includeCustomerSocial: true,
+  //           lastModifiedFrom: lastDate,
+  //           toDate: dateEndStr,
+  //         });
 
-          if (!customerListResponse) {
-            this.logger.warn('Received null response from KiotViet API');
-            consecutiveEmptyPages++;
+  //         if (!customerListResponse) {
+  //           this.logger.warn('Received null response from KiotViet API');
+  //           consecutiveEmptyPages++;
 
-            if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
-              this.logger.log(
-                `🔚 Reached end after ${consecutiveEmptyPages} empty pages`,
-              );
-              break;
-            }
+  //           if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
+  //             this.logger.log(
+  //               `🔚 Reached end after ${consecutiveEmptyPages} empty pages`,
+  //             );
+  //             break;
+  //           }
 
-            await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
-            continue;
-          }
+  //           await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+  //           continue;
+  //         }
 
-          consecutiveEmptyPages = 0;
-          consecutiveErrorPages = 0;
+  //         consecutiveEmptyPages = 0;
+  //         consecutiveErrorPages = 0;
 
-          const { total, data: customers } = customerListResponse;
+  //         const { total, data: customers } = customerListResponse;
 
-          if (total !== undefined && total !== null) {
-            if (totalCustomers === 0) {
-              this.logger.log(
-                `Total customers detected: ${total}. Starting processing...`,
-              );
+  //         if (total !== undefined && total !== null) {
+  //           if (totalCustomers === 0) {
+  //             this.logger.log(
+  //               `Total customers detected: ${total}. Starting processing...`,
+  //             );
 
-              totalCustomers = total;
-            } else if (total !== totalCustomers) {
-              this.logger.warn(
-                `Total count changed: ${totalCustomers} -> ${total}. Using latest.`,
-              );
-              totalCustomers = total;
-            }
-            lastValidTotal = total;
-          }
+  //             totalCustomers = total;
+  //           } else if (total !== totalCustomers) {
+  //             this.logger.warn(
+  //               `Total count changed: ${totalCustomers} -> ${total}. Using latest.`,
+  //             );
+  //             totalCustomers = total;
+  //           }
+  //           lastValidTotal = total;
+  //         }
 
-          if (!customers || customers.length === 0) {
-            this.logger.warn(`Empty page received at position ${currentItem}`);
-            consecutiveEmptyPages++;
+  //         if (!customers || customers.length === 0) {
+  //           this.logger.warn(`Empty page received at position ${currentItem}`);
+  //           consecutiveEmptyPages++;
 
-            if (totalCustomers > 0 && currentItem >= totalCustomers) {
-              this.logger.log('Reached end of data (empty page past total)');
-              break;
-            }
+  //           if (totalCustomers > 0 && currentItem >= totalCustomers) {
+  //             this.logger.log('Reached end of data (empty page past total)');
+  //             break;
+  //           }
 
-            if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
-              this.logger.log(
-                `🔚 Stopping after ${consecutiveEmptyPages} consecutive empty pages`,
-              );
-              break;
-            }
+  //           if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
+  //             this.logger.log(
+  //               `🔚 Stopping after ${consecutiveEmptyPages} consecutive empty pages`,
+  //             );
+  //             break;
+  //           }
 
-            currentItem += this.PAGE_SIZE;
-            continue;
-          }
+  //           currentItem += this.PAGE_SIZE;
+  //           continue;
+  //         }
 
-          const existingCustomerIds = new Set(
-            (
-              await this.prismaService.customer.findMany({
-                select: { kiotVietId: true },
-              })
-            ).map((c) => Number(c.kiotVietId)),
-          );
+  //         const existingCustomerIds = new Set(
+  //           (
+  //             await this.prismaService.customer.findMany({
+  //               select: { kiotVietId: true },
+  //             })
+  //           ).map((c) => Number(c.kiotVietId)),
+  //         );
 
-          const newCustomers = customers.filter((customer) => {
-            if (
-              !existingCustomerIds.has(customer.id) &&
-              !processedCustomerIds.has(customer.id)
-            ) {
-              processedCustomerIds.add(customer.id);
-              return true;
-            }
-            return false;
-          });
+  //         const newCustomers = customers.filter((customer) => {
+  //           if (
+  //             !existingCustomerIds.has(customer.id) &&
+  //             !processedCustomerIds.has(customer.id)
+  //           ) {
+  //             processedCustomerIds.add(customer.id);
+  //             return true;
+  //           }
+  //           return false;
+  //         });
 
-          const existingCustomers = customers.filter((customer) => {
-            if (
-              existingCustomerIds.has(customer.id) &&
-              !processedCustomerIds.has(customer.id)
-            ) {
-              processedCustomerIds.add(customer.id);
-              return true;
-            }
-            return false;
-          });
+  //         const existingCustomers = customers.filter((customer) => {
+  //           if (
+  //             existingCustomerIds.has(customer.id) &&
+  //             !processedCustomerIds.has(customer.id)
+  //           ) {
+  //             processedCustomerIds.add(customer.id);
+  //             return true;
+  //           }
+  //           return false;
+  //         });
 
-          if (newCustomers.length === 0 && existingCustomers.length === 0) {
-            this.logger.log(
-              `Skipping page ${currentPage} - all customers already processed in this run`,
-            );
-            currentItem += this.PAGE_SIZE;
-            continue;
-          }
+  //         if (newCustomers.length === 0 && existingCustomers.length === 0) {
+  //           this.logger.log(
+  //             `Skipping page ${currentPage} - all customers already processed in this run`,
+  //           );
+  //           currentItem += this.PAGE_SIZE;
+  //           continue;
+  //         }
 
-          let pageProcessedCount = 0;
-          let allSavedCustomers: any[] = [];
+  //         let pageProcessedCount = 0;
+  //         let allSavedCustomers: any[] = [];
 
-          if (newCustomers.length > 0) {
-            this.logger.log(
-              `Processing ${newCustomers.length} NEW customers from page ${currentPage}...`,
-            );
-            const savedCustomers =
-              await this.saveCustomersToDatabase(newCustomers);
-            pageProcessedCount += savedCustomers.length;
-            allSavedCustomers.push(...savedCustomers);
-          }
+  //         if (newCustomers.length > 0) {
+  //           this.logger.log(
+  //             `Processing ${newCustomers.length} NEW customers from page ${currentPage}...`,
+  //           );
+  //           const savedCustomers =
+  //             await this.saveCustomersToDatabase(newCustomers);
+  //           pageProcessedCount += savedCustomers.length;
+  //           allSavedCustomers.push(...savedCustomers);
+  //         }
 
-          if (existingCustomers.length > 0) {
-            this.logger.log(
-              `Processing ${existingCustomers.length} EXISTING customers from page ${currentPage}...`,
-            );
-            const savedCustomers =
-              await this.saveCustomersToDatabase(existingCustomers);
-            pageProcessedCount += savedCustomers.length;
-            allSavedCustomers.push(...savedCustomers);
-          }
+  //         if (existingCustomers.length > 0) {
+  //           this.logger.log(
+  //             `Processing ${existingCustomers.length} EXISTING customers from page ${currentPage}...`,
+  //           );
+  //           const savedCustomers =
+  //             await this.saveCustomersToDatabase(existingCustomers);
+  //           pageProcessedCount += savedCustomers.length;
+  //           allSavedCustomers.push(...savedCustomers);
+  //         }
 
-          processedCount += pageProcessedCount;
-          currentItem += this.PAGE_SIZE;
+  //         processedCount += pageProcessedCount;
+  //         currentItem += this.PAGE_SIZE;
 
-          if (allSavedCustomers.length > 0) {
-            try {
-              await this.syncCustomersToLarkBase(allSavedCustomers);
-              this.logger.log(
-                `Synced ${allSavedCustomers.length} customers to LarkBase`,
-              );
-            } catch (larkError) {
-              this.logger.warn(
-                `LarkBase sync failed for page ${currentPage}: ${larkError.message}`,
-              );
-            }
-          }
+  //         if (allSavedCustomers.length > 0) {
+  //           try {
+  //             await this.syncCustomersToLarkBase(allSavedCustomers);
+  //             this.logger.log(
+  //               `Synced ${allSavedCustomers.length} customers to LarkBase`,
+  //             );
+  //           } catch (larkError) {
+  //             this.logger.warn(
+  //               `LarkBase sync failed for page ${currentPage}: ${larkError.message}`,
+  //             );
+  //           }
+  //         }
 
-          if (totalCustomers > 0) {
-            const completionPercentage =
-              (processedCount / totalCustomers) * 100;
-            this.logger.log(
-              `Progress: ${processedCount}/${totalCustomers} (${completionPercentage.toFixed(1)}%)`,
-            );
+  //         if (totalCustomers > 0) {
+  //           const completionPercentage =
+  //             (processedCount / totalCustomers) * 100;
+  //           this.logger.log(
+  //             `Progress: ${processedCount}/${totalCustomers} (${completionPercentage.toFixed(1)}%)`,
+  //           );
 
-            if (processedCount >= totalCustomers) {
-              this.logger.log('All customers processed successfully!');
-              break;
-            }
-          }
+  //           if (processedCount >= totalCustomers) {
+  //             this.logger.log('All customers processed successfully!');
+  //             break;
+  //           }
+  //         }
 
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        } catch (error) {
-          consecutiveErrorPages++;
-          totalRetries++;
+  //         await new Promise((resolve) => setTimeout(resolve, 100));
+  //       } catch (error) {
+  //         consecutiveErrorPages++;
+  //         totalRetries++;
 
-          this.logger.error(
-            `API error on page ${currentPage}: ${error.message}`,
-          );
+  //         this.logger.error(
+  //           `API error on page ${currentPage}: ${error.message}`,
+  //         );
 
-          if (consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES) {
-            throw new Error(
-              `Multiple consecutive API failures: ${error.message}`,
-            );
-          }
+  //         if (consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES) {
+  //           throw new Error(
+  //             `Multiple consecutive API failures: ${error.message}`,
+  //           );
+  //         }
 
-          if (totalRetries >= MAX_TOTAL_RETRIES) {
-            throw new Error(`Maximum total retries exceeded: ${error.message}`);
-          }
+  //         if (totalRetries >= MAX_TOTAL_RETRIES) {
+  //           throw new Error(`Maximum total retries exceeded: ${error.message}`);
+  //         }
 
-          const delay = RETRY_DELAY_MS * Math.pow(2, consecutiveErrorPages - 1);
-          this.logger.log(`Retrying after ${delay}ms delay...`);
-          await new Promise((resolve) => setTimeout(resolve, delay));
-        }
-      }
+  //         const delay = RETRY_DELAY_MS * Math.pow(2, consecutiveErrorPages - 1);
+  //         this.logger.log(`Retrying after ${delay}ms delay...`);
+  //         await new Promise((resolve) => setTimeout(resolve, delay));
+  //       }
+  //     }
 
-      await this.updateSyncControl(syncName, {
-        isRunning: false,
-        isEnabled: false,
-        status: 'completed',
-        completedAt: new Date(),
-        lastRunAt: new Date(),
-        progress: { processedCount, expectedTotal: totalCustomers },
-      });
+  //     await this.updateSyncControl(syncName, {
+  //       isRunning: false,
+  //       isEnabled: false,
+  //       status: 'completed',
+  //       completedAt: new Date(),
+  //       lastRunAt: new Date(),
+  //       progress: { processedCount, expectedTotal: totalCustomers },
+  //     });
 
-      await this.updateSyncControl('customer_recent', {
-        isEnabled: true,
-        isRunning: false,
-        status: 'idle',
-      });
+  //     await this.updateSyncControl('customer_recent', {
+  //       isEnabled: true,
+  //       isRunning: false,
+  //       status: 'idle',
+  //     });
 
-      const completionRate =
-        totalCustomers > 0 ? (processedCount / totalCustomers) * 100 : 100;
-      this.logger.log(
-        `Recent customer sync completed: ${processedCount}/${totalCustomers} (${completionRate.toFixed(1)}% completion rate)`,
-      );
-    } catch (error) {
-      this.logger.error(`Recent customer sync failed: ${error.message}`);
+  //     const completionRate =
+  //       totalCustomers > 0 ? (processedCount / totalCustomers) * 100 : 100;
+  //     this.logger.log(
+  //       `Recent customer sync completed: ${processedCount}/${totalCustomers} (${completionRate.toFixed(1)}% completion rate)`,
+  //     );
+  //   } catch (error) {
+  //     this.logger.error(`Recent customer sync failed: ${error.message}`);
 
-      await this.updateSyncControl(syncName, {
-        isRunning: false,
-        status: 'failed',
-        error: error.message,
-        progress: { processedCount, expectedTotal: totalCustomers },
-      });
+  //     await this.updateSyncControl(syncName, {
+  //       isRunning: false,
+  //       status: 'failed',
+  //       error: error.message,
+  //       progress: { processedCount, expectedTotal: totalCustomers },
+  //     });
 
-      throw error;
-    }
-  }
+  //     throw error;
+  //   }
+  // }
 
   async fetchRecentCustomers(fromDate: Date): Promise<KiotVietCustomer[]> {
     const headers = await this.authService.getRequestHeaders();

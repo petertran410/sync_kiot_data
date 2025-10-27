@@ -112,7 +112,7 @@ export class KiotVietOrderService {
         where: {
           OR: [
             { name: 'order_historical' },
-            { name: 'order_recent' },
+            // { name: 'order_recent' },
             { name: 'order_lark_sync' },
           ],
           isRunning: true,
@@ -148,14 +148,14 @@ export class KiotVietOrderService {
         return;
       }
 
-      if (recentSync?.isEnabled && !recentSync.isRunning) {
-        this.logger.log('Starting recent order sync...');
-        await this.syncRecentOrders();
-        return;
-      }
+      // if (recentSync?.isEnabled && !recentSync.isRunning) {
+      //   this.logger.log('Starting recent order sync...');
+      //   await this.syncRecentOrders();
+      //   return;
+      // }
 
-      this.logger.log('Running default recent order sync...');
-      await this.syncRecentOrders();
+      // this.logger.log('Running default recent order sync...');
+      // await this.syncRecentOrders();
     } catch (error) {
       this.logger.error(`Sync check failed: ${error.message}`);
       throw error;
@@ -237,7 +237,7 @@ export class KiotVietOrderService {
             orderDirection: 'DESC',
             includePayment: true,
             includeOrderDelivery: true,
-            lastModifiedFrom: dateStartStr,
+            lastModifiedFrom: '2024-12-1',
             toDate: dateEndStr,
           });
 
@@ -449,279 +449,279 @@ export class KiotVietOrderService {
     }
   }
 
-  async syncRecentOrders(): Promise<void> {
-    const syncName = 'order_recent';
+  // async syncRecentOrders(): Promise<void> {
+  //   const syncName = 'order_recent';
 
-    let currentItem = 0;
-    let processedCount = 0;
-    let totalOrders = 0;
-    let consecutiveEmptyPages = 0;
-    let consecutiveErrorPages = 0;
-    let lastValidTotal = 0;
-    let processedOrderIds = new Set<number>();
+  //   let currentItem = 0;
+  //   let processedCount = 0;
+  //   let totalOrders = 0;
+  //   let consecutiveEmptyPages = 0;
+  //   let consecutiveErrorPages = 0;
+  //   let lastValidTotal = 0;
+  //   let processedOrderIds = new Set<number>();
 
-    try {
-      await this.updateSyncControl(syncName, {
-        isRunning: true,
-        status: 'running',
-        startedAt: new Date(),
-        error: null,
-      });
+  //   try {
+  //     await this.updateSyncControl(syncName, {
+  //       isRunning: true,
+  //       status: 'running',
+  //       startedAt: new Date(),
+  //       error: null,
+  //     });
 
-      this.logger.log('Starting recent order sync...');
+  //     this.logger.log('Starting recent order sync...');
 
-      const MAX_CONSECUTIVE_EMPTY_PAGES = 5;
-      const MAX_CONSECUTIVE_ERROR_PAGES = 3;
-      const RETRY_DELAY_MS = 2000;
-      const MAX_TOTAL_RETRIES = 10;
+  //     const MAX_CONSECUTIVE_EMPTY_PAGES = 5;
+  //     const MAX_CONSECUTIVE_ERROR_PAGES = 3;
+  //     const RETRY_DELAY_MS = 2000;
+  //     const MAX_TOTAL_RETRIES = 10;
 
-      let totalRetries = 0;
+  //     let totalRetries = 0;
 
-      while (true) {
-        const currentPage = Math.floor(currentItem / this.PAGE_SIZE) + 1;
+  //     while (true) {
+  //       const currentPage = Math.floor(currentItem / this.PAGE_SIZE) + 1;
 
-        if (totalOrders > 0) {
-          if (currentItem >= totalOrders) {
-            this.logger.log(
-              `Pagination complete. Processed: ${processedCount}/${totalOrders} orders`,
-            );
-            break;
-          }
+  //       if (totalOrders > 0) {
+  //         if (currentItem >= totalOrders) {
+  //           this.logger.log(
+  //             `Pagination complete. Processed: ${processedCount}/${totalOrders} orders`,
+  //           );
+  //           break;
+  //         }
 
-          const progressPercentage = (currentItem / totalOrders) * 100;
-          this.logger.log(
-            `Fetching page ${currentPage} (${currentItem}/${totalOrders} - ${progressPercentage.toFixed(1)}%)`,
-          );
-        } else {
-          this.logger.log(
-            `Fetching page ${currentPage} (currentItem: ${currentItem})`,
-          );
-        }
+  //         const progressPercentage = (currentItem / totalOrders) * 100;
+  //         this.logger.log(
+  //           `Fetching page ${currentPage} (${currentItem}/${totalOrders} - ${progressPercentage.toFixed(1)}%)`,
+  //         );
+  //       } else {
+  //         this.logger.log(
+  //           `Fetching page ${currentPage} (currentItem: ${currentItem})`,
+  //         );
+  //       }
 
-        const dateStart = new Date();
-        dateStart.setDate(dateStart.getDate());
-        const dateStartStr = dateStart.toISOString().split('T')[0];
+  //       const dateStart = new Date();
+  //       dateStart.setDate(dateStart.getDate());
+  //       const dateStartStr = dateStart.toISOString().split('T')[0];
 
-        const dateEnd = new Date();
-        dateEnd.setDate(dateEnd.getDate() + 1);
-        const dateEndStr = dateEnd.toISOString().split('T')[0];
+  //       const dateEnd = new Date();
+  //       dateEnd.setDate(dateEnd.getDate() + 1);
+  //       const dateEndStr = dateEnd.toISOString().split('T')[0];
 
-        try {
-          const orderListResponse = await this.fetchOrdersListWithRetry({
-            currentItem,
-            pageSize: this.PAGE_SIZE,
-            orderBy: 'id',
-            orderDirection: 'DESC',
-            includePayment: true,
-            includeOrderDelivery: true,
-            lastModifiedFrom: dateStartStr,
-            toDate: dateEndStr,
-          });
+  //       try {
+  //         const orderListResponse = await this.fetchOrdersListWithRetry({
+  //           currentItem,
+  //           pageSize: this.PAGE_SIZE,
+  //           orderBy: 'id',
+  //           orderDirection: 'DESC',
+  //           includePayment: true,
+  //           includeOrderDelivery: true,
+  //           lastModifiedFrom: dateStartStr,
+  //           toDate: dateEndStr,
+  //         });
 
-          if (!orderListResponse) {
-            this.logger.warn('Received null response from KiotViet API');
-            consecutiveEmptyPages++;
+  //         if (!orderListResponse) {
+  //           this.logger.warn('Received null response from KiotViet API');
+  //           consecutiveEmptyPages++;
 
-            if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
-              this.logger.log(
-                `🔚 Reached end after ${consecutiveEmptyPages} empty pages`,
-              );
-              break;
-            }
+  //           if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
+  //             this.logger.log(
+  //               `🔚 Reached end after ${consecutiveEmptyPages} empty pages`,
+  //             );
+  //             break;
+  //           }
 
-            await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
-            continue;
-          }
+  //           await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+  //           continue;
+  //         }
 
-          consecutiveEmptyPages = 0;
-          consecutiveErrorPages = 0;
+  //         consecutiveEmptyPages = 0;
+  //         consecutiveErrorPages = 0;
 
-          const { total, data: orders } = orderListResponse;
+  //         const { total, data: orders } = orderListResponse;
 
-          if (total !== undefined && total !== null) {
-            if (totalOrders === 0) {
-              this.logger.log(
-                `Total orders detected: ${total}. Starting processing...`,
-              );
+  //         if (total !== undefined && total !== null) {
+  //           if (totalOrders === 0) {
+  //             this.logger.log(
+  //               `Total orders detected: ${total}. Starting processing...`,
+  //             );
 
-              totalOrders = total;
-            } else if (total !== totalOrders) {
-              this.logger.warn(
-                `Total count changed: ${totalOrders} -> ${total}. Using latest.`,
-              );
-              totalOrders = total;
-            }
-            lastValidTotal = total;
-          }
+  //             totalOrders = total;
+  //           } else if (total !== totalOrders) {
+  //             this.logger.warn(
+  //               `Total count changed: ${totalOrders} -> ${total}. Using latest.`,
+  //             );
+  //             totalOrders = total;
+  //           }
+  //           lastValidTotal = total;
+  //         }
 
-          if (!orders || orders.length === 0) {
-            this.logger.warn(`Empty page received at position ${currentItem}`);
-            consecutiveEmptyPages++;
+  //         if (!orders || orders.length === 0) {
+  //           this.logger.warn(`Empty page received at position ${currentItem}`);
+  //           consecutiveEmptyPages++;
 
-            if (totalOrders > 0 && currentItem >= totalOrders) {
-              this.logger.log('Reached end of data (empty page past total)');
-              break;
-            }
+  //           if (totalOrders > 0 && currentItem >= totalOrders) {
+  //             this.logger.log('Reached end of data (empty page past total)');
+  //             break;
+  //           }
 
-            if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
-              this.logger.log(
-                `🔚 Stopping after ${consecutiveEmptyPages} consecutive empty pages`,
-              );
-              break;
-            }
+  //           if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
+  //             this.logger.log(
+  //               `🔚 Stopping after ${consecutiveEmptyPages} consecutive empty pages`,
+  //             );
+  //             break;
+  //           }
 
-            currentItem += this.PAGE_SIZE;
-            continue;
-          }
+  //           currentItem += this.PAGE_SIZE;
+  //           continue;
+  //         }
 
-          const existingOrderIds = new Set(
-            (
-              await this.prismaService.order.findMany({
-                select: { kiotVietId: true },
-              })
-            ).map((c) => Number(c.kiotVietId)),
-          );
+  //         const existingOrderIds = new Set(
+  //           (
+  //             await this.prismaService.order.findMany({
+  //               select: { kiotVietId: true },
+  //             })
+  //           ).map((c) => Number(c.kiotVietId)),
+  //         );
 
-          const newOrders = orders.filter((order) => {
-            if (
-              !existingOrderIds.has(order.id) &&
-              !processedOrderIds.has(order.id)
-            ) {
-              processedOrderIds.add(order.id);
-              return true;
-            }
-            return false;
-          });
+  //         const newOrders = orders.filter((order) => {
+  //           if (
+  //             !existingOrderIds.has(order.id) &&
+  //             !processedOrderIds.has(order.id)
+  //           ) {
+  //             processedOrderIds.add(order.id);
+  //             return true;
+  //           }
+  //           return false;
+  //         });
 
-          const existingOrders = orders.filter((order) => {
-            if (
-              existingOrderIds.has(order.id) &&
-              !processedOrderIds.has(order.id)
-            ) {
-              processedOrderIds.add(order.id);
-              return true;
-            }
-            return false;
-          });
+  //         const existingOrders = orders.filter((order) => {
+  //           if (
+  //             existingOrderIds.has(order.id) &&
+  //             !processedOrderIds.has(order.id)
+  //           ) {
+  //             processedOrderIds.add(order.id);
+  //             return true;
+  //           }
+  //           return false;
+  //         });
 
-          if (newOrders.length === 0 && existingOrders.length === 0) {
-            this.logger.log(
-              `Skipping page ${currentPage} - all orders already processed in this run`,
-            );
-            currentItem += this.PAGE_SIZE;
-            continue;
-          }
+  //         if (newOrders.length === 0 && existingOrders.length === 0) {
+  //           this.logger.log(
+  //             `Skipping page ${currentPage} - all orders already processed in this run`,
+  //           );
+  //           currentItem += this.PAGE_SIZE;
+  //           continue;
+  //         }
 
-          let pageProcessedCount = 0;
-          let allSavedOrders: any[] = [];
+  //         let pageProcessedCount = 0;
+  //         let allSavedOrders: any[] = [];
 
-          if (newOrders.length > 0) {
-            this.logger.log(
-              `Processing ${newOrders.length} NEW orders from page ${currentPage}...`,
-            );
+  //         if (newOrders.length > 0) {
+  //           this.logger.log(
+  //             `Processing ${newOrders.length} NEW orders from page ${currentPage}...`,
+  //           );
 
-            const savedOrders = await this.saveOrdersToDatabase(newOrders);
-            pageProcessedCount += savedOrders.length;
-            allSavedOrders.push(...savedOrders);
-          }
+  //           const savedOrders = await this.saveOrdersToDatabase(newOrders);
+  //           pageProcessedCount += savedOrders.length;
+  //           allSavedOrders.push(...savedOrders);
+  //         }
 
-          if (existingOrders.length > 0) {
-            this.logger.log(
-              `Processing ${existingOrders.length} EXISTING orders from page ${currentPage}`,
-            );
+  //         if (existingOrders.length > 0) {
+  //           this.logger.log(
+  //             `Processing ${existingOrders.length} EXISTING orders from page ${currentPage}`,
+  //           );
 
-            const savedOrders = await this.saveOrdersToDatabase(existingOrders);
-            pageProcessedCount += savedOrders.length;
-            allSavedOrders.push(...savedOrders);
-          }
+  //           const savedOrders = await this.saveOrdersToDatabase(existingOrders);
+  //           pageProcessedCount += savedOrders.length;
+  //           allSavedOrders.push(...savedOrders);
+  //         }
 
-          processedCount += pageProcessedCount;
-          currentItem += this.PAGE_SIZE;
+  //         processedCount += pageProcessedCount;
+  //         currentItem += this.PAGE_SIZE;
 
-          if (allSavedOrders.length > 0) {
-            try {
-              await this.syncOrdersToLarkBase(allSavedOrders);
-              this.logger.log(
-                `Synced ${allSavedOrders.length} orders to LarkBase`,
-              );
-            } catch (error) {
-              this.logger.warn(
-                `LarkBase sync failed for page ${currentPage}: ${error.message}`,
-              );
-            }
-          }
+  //         if (allSavedOrders.length > 0) {
+  //           try {
+  //             await this.syncOrdersToLarkBase(allSavedOrders);
+  //             this.logger.log(
+  //               `Synced ${allSavedOrders.length} orders to LarkBase`,
+  //             );
+  //           } catch (error) {
+  //             this.logger.warn(
+  //               `LarkBase sync failed for page ${currentPage}: ${error.message}`,
+  //             );
+  //           }
+  //         }
 
-          if (totalOrders > 0) {
-            const completionPercentage = (processedCount / totalOrders) * 100;
-            this.logger.log(
-              `Progress: ${processedCount}/${totalOrders} (${completionPercentage.toFixed(1)}%)`,
-            );
+  //         if (totalOrders > 0) {
+  //           const completionPercentage = (processedCount / totalOrders) * 100;
+  //           this.logger.log(
+  //             `Progress: ${processedCount}/${totalOrders} (${completionPercentage.toFixed(1)}%)`,
+  //           );
 
-            if (processedCount >= totalOrders) {
-              this.logger.log('All orders procesed successfully!');
-              break;
-            }
-          }
+  //           if (processedCount >= totalOrders) {
+  //             this.logger.log('All orders procesed successfully!');
+  //             break;
+  //           }
+  //         }
 
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        } catch (error) {
-          consecutiveErrorPages++;
-          totalRetries++;
+  //         await new Promise((resolve) => setTimeout(resolve, 100));
+  //       } catch (error) {
+  //         consecutiveErrorPages++;
+  //         totalRetries++;
 
-          this.logger.error(
-            `API error on page ${currentPage}: ${error.message}`,
-          );
+  //         this.logger.error(
+  //           `API error on page ${currentPage}: ${error.message}`,
+  //         );
 
-          if (consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES) {
-            throw new Error(
-              `Multiple consecutive API failures: ${error.message}`,
-            );
-          }
+  //         if (consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES) {
+  //           throw new Error(
+  //             `Multiple consecutive API failures: ${error.message}`,
+  //           );
+  //         }
 
-          if (totalRetries >= MAX_TOTAL_RETRIES) {
-            throw new Error(`Maximum total retries exceeded: ${error.message}`);
-          }
+  //         if (totalRetries >= MAX_TOTAL_RETRIES) {
+  //           throw new Error(`Maximum total retries exceeded: ${error.message}`);
+  //         }
 
-          const delay = RETRY_DELAY_MS * Math.pow(2, consecutiveErrorPages - 1);
-          this.logger.log(`Retrying after ${delay}ms delay...`);
-          await new Promise((resolve) => setTimeout(resolve, delay));
-        }
-      }
+  //         const delay = RETRY_DELAY_MS * Math.pow(2, consecutiveErrorPages - 1);
+  //         this.logger.log(`Retrying after ${delay}ms delay...`);
+  //         await new Promise((resolve) => setTimeout(resolve, delay));
+  //       }
+  //     }
 
-      await this.updateSyncControl(syncName, {
-        isRunning: false,
-        isEnabled: false,
-        status: 'completed',
-        completedAt: new Date(),
-        lastRunAt: new Date(),
-        progress: { processedCount, expectedTotal: totalOrders },
-      });
+  //     await this.updateSyncControl(syncName, {
+  //       isRunning: false,
+  //       isEnabled: false,
+  //       status: 'completed',
+  //       completedAt: new Date(),
+  //       lastRunAt: new Date(),
+  //       progress: { processedCount, expectedTotal: totalOrders },
+  //     });
 
-      await this.updateSyncControl('order_recent', {
-        isEnabled: true,
-        isRunning: false,
-        status: 'idle',
-      });
+  //     await this.updateSyncControl('order_recent', {
+  //       isEnabled: true,
+  //       isRunning: false,
+  //       status: 'idle',
+  //     });
 
-      const completionRate =
-        totalOrders > 0 ? (processedCount / totalOrders) * 100 : 100;
+  //     const completionRate =
+  //       totalOrders > 0 ? (processedCount / totalOrders) * 100 : 100;
 
-      this.logger.log(
-        `Recent order sync completed: ${processedCount}/${totalOrders} (${completionRate.toFixed(1)}% completion rate)`,
-      );
-    } catch (error) {
-      this.logger.error(`Recent order sync failed: ${error.message}`);
+  //     this.logger.log(
+  //       `Recent order sync completed: ${processedCount}/${totalOrders} (${completionRate.toFixed(1)}% completion rate)`,
+  //     );
+  //   } catch (error) {
+  //     this.logger.error(`Recent order sync failed: ${error.message}`);
 
-      await this.updateSyncControl(syncName, {
-        isRunning: false,
-        status: 'failed',
-        error: error.message,
-        progress: { processedCount, expectedTotal: totalOrders },
-      });
+  //     await this.updateSyncControl(syncName, {
+  //       isRunning: false,
+  //       status: 'failed',
+  //       error: error.message,
+  //       progress: { processedCount, expectedTotal: totalOrders },
+  //     });
 
-      throw error;
-    }
-  }
+  //     throw error;
+  //   }
+  // }
 
   async fetchOrdersListWithRetry(
     params: {

@@ -53,55 +53,6 @@ export class SyncController {
     private readonly larkDemandSyncService: LarkDemandSyncService,
   ) {}
 
-  @Post('reset')
-  async resetAllSyncs() {
-    try {
-      const count = await this.busScheduler.resetAllSyncs();
-      return {
-        success: true,
-        message: `Reset ${count} sync(s) to idle state`,
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: error.message,
-      };
-    }
-  }
-
-  @Post('stop')
-  async forceStopAllSyncs() {
-    try {
-      const count = await this.busScheduler.forceStopAllSyncs();
-      return {
-        success: true,
-        message: `Force stopped ${count} running sync(s)`,
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: error.message,
-      };
-    }
-  }
-
-  @Post('cleanup-stuck')
-  async cleanupStuckSyncs() {
-    try {
-      const cleanedCount = await this.busScheduler.cleanupStuckSyncs();
-      return {
-        success: true,
-        message: `Cleaned up ${cleanedCount} stuck sync(s)`,
-        cleanedCount,
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: error.message,
-      };
-    }
-  }
-
   @Post('customer/historical')
   async triggerHistoricalCustomer() {
     try {
@@ -129,39 +80,6 @@ export class SyncController {
       };
     } catch (error) {
       this.logger.error(`Manual historical sync failed: ${error.message}`);
-      return {
-        success: false,
-        error: error.message,
-        timestamp: new Date().toISOString(),
-      };
-    }
-  }
-
-  @Post('customer/recent')
-  async triggerRecentCustomer() {
-    try {
-      this.logger.log('Manual recent customer sync triggered');
-
-      await this.customerService.syncRecentCustomers();
-
-      const customersToSync = await this.prismaService.customer.findMany({
-        where: {
-          OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
-        },
-        take: 1000,
-      });
-
-      await this.larkCustomerSyncService.syncCustomersToLarkBase(
-        customersToSync,
-      );
-
-      return {
-        success: true,
-        message: `Recent customer sync enabled and started`,
-        timestamp: new Date().toISOString(),
-      };
-    } catch (error) {
-      this.logger.error(`Manual recent customer sync failed: ${error.message}`);
       return {
         success: false,
         error: error.message,
@@ -205,26 +123,6 @@ export class SyncController {
     }
   }
 
-  @Post('invoice/recent')
-  async triggerRecentInvoice() {
-    try {
-      await this.invoiceService.syncRecentInvoices();
-
-      return {
-        success: true,
-        message: `Recent invoice sync completed)`,
-        timestamp: new Date().toISOString(),
-      };
-    } catch (error) {
-      this.logger.error(`Manual recent invoice sync failed: ${error.message}`);
-      return {
-        success: false,
-        error: error.message,
-        timestamp: new Date().toISOString(),
-      };
-    }
-  }
-
   @Post('order/historical')
   async triggerHistoricalOrder() {
     try {
@@ -260,370 +158,310 @@ export class SyncController {
     }
   }
 
-  @Post('order/recent')
-  async triggerRecentOrder() {
-    try {
-      this.logger.log('Manual recent order sync triggered');
-
-      await this.orderService.syncRecentOrders();
-
-      const ordersToSync = await this.prismaService.order.findMany({
-        where: {
-          OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
-        },
-        take: 1000,
-      });
-
-      await this.larkOrderSyncService.syncOrdersToLarkBase(ordersToSync);
-
-      return {
-        success: true,
-        message: 'Recent order sync enabled and started',
-        timestamp: new Date().toISOString(),
-      };
-    } catch (error) {
-      this.logger.error(`Manual recent order sync failed: ${error.message}`);
-      return {
-        success: false,
-        error: error.message,
-        timestamp: new Date().toISOString(),
-      };
-    }
-  }
-
-  // @Post('product/historical')
-  // async triggerHistoricalProduct() {
+  // @Post('trademarks')
+  // async syncTrademarks() {
   //   try {
-  //     this.logger.log('🔧 Manual historical product sync triggered');
+  //     this.logger.log('🗂️ Starting trademark sync...');
 
-  //     await this.productService.enableHistoricalSync();
+  //     await this.trademarkService.enableHistoricalSync();
+
+  //     await this.trademarkService.syncHistoricalTradeMarks();
 
   //     return {
   //       success: true,
-  //       message: 'Historical product sync enabled and started',
-  //       estimatedDuration: '15-30 minutes',
-  //       phases: [
-  //         'Product sync',
-  //         'Nested data processing',
-  //         'LarkBase integration',
-  //       ],
+  //       message: 'Trademark sync completed successfully',
+  //       timestamp: new Date().toISOString(),
   //     };
   //   } catch (error) {
-  //     this.logger.error(
-  //       `Manual historical product sync failed: ${error.message}`,
-  //     );
+  //     this.logger.error(`❌ Trademark sync failed: ${error.message}`);
   //     return {
   //       success: false,
   //       error: error.message,
-  //       stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
+  //       timestamp: new Date().toISOString(),
   //     };
   //   }
   // }
 
-  @Post('trademarks')
-  async syncTrademarks() {
-    try {
-      this.logger.log('🗂️ Starting trademark sync...');
+  // @Post('categories')
+  // async syncCategories() {
+  //   try {
+  //     this.logger.log('🗂️ Starting category sync...');
 
-      await this.trademarkService.enableHistoricalSync();
+  //     await this.categoryService.enableHistoricalSync();
 
-      await this.trademarkService.syncHistoricalTradeMarks();
+  //     await this.categoryService.syncHistoricalCategories();
 
-      return {
-        success: true,
-        message: 'Trademark sync completed successfully',
-        timestamp: new Date().toISOString(),
-      };
-    } catch (error) {
-      this.logger.error(`❌ Trademark sync failed: ${error.message}`);
-      return {
-        success: false,
-        error: error.message,
-        timestamp: new Date().toISOString(),
-      };
-    }
-  }
+  //     return {
+  //       success: true,
+  //       message: 'Category sync completed successfully',
+  //       timestamp: new Date().toISOString(),
+  //     };
+  //   } catch (error) {
+  //     this.logger.error(`❌ Category sync failed: ${error.message}`);
+  //     return {
+  //       success: false,
+  //       error: error.message,
+  //       timestamp: new Date().toISOString(),
+  //     };
+  //   }
+  // }
 
-  @Post('categories')
-  async syncCategories() {
-    try {
-      this.logger.log('🗂️ Starting category sync...');
+  // @Post('customer-groups')
+  // async syncCustomerGroups() {
+  //   try {
+  //     this.logger.log('👥 Starting customer group sync...');
 
-      await this.categoryService.enableHistoricalSync();
+  //     await this.customerGroupService.enableHistoricalSync();
 
-      await this.categoryService.syncHistoricalCategories();
+  //     await this.customerGroupService.syncHistoricalCustomerGroups();
 
-      return {
-        success: true,
-        message: 'Category sync completed successfully',
-        timestamp: new Date().toISOString(),
-      };
-    } catch (error) {
-      this.logger.error(`❌ Category sync failed: ${error.message}`);
-      return {
-        success: false,
-        error: error.message,
-        timestamp: new Date().toISOString(),
-      };
-    }
-  }
+  //     return {
+  //       success: true,
+  //       message: 'Customer group sync completed successfully',
+  //       timestamp: new Date().toISOString(),
+  //     };
+  //   } catch (error) {
+  //     this.logger.error(`❌ Customer group sync failed: ${error.message}`);
+  //     return {
+  //       success: false,
+  //       error: error.message,
+  //       timestamp: new Date().toISOString(),
+  //     };
+  //   }
+  // }
 
-  @Post('customer-groups')
-  async syncCustomerGroups() {
-    try {
-      this.logger.log('👥 Starting customer group sync...');
+  // @Post('returns')
+  // async syncReturns() {
+  //   try {
+  //     this.logger.log('👥 Starting return sync...');
 
-      await this.customerGroupService.enableHistoricalSync();
+  //     await this.returnService.enableHistoricalSync();
 
-      await this.customerGroupService.syncHistoricalCustomerGroups();
+  //     await this.returnService.syncHistoricalReturns();
 
-      return {
-        success: true,
-        message: 'Customer group sync completed successfully',
-        timestamp: new Date().toISOString(),
-      };
-    } catch (error) {
-      this.logger.error(`❌ Customer group sync failed: ${error.message}`);
-      return {
-        success: false,
-        error: error.message,
-        timestamp: new Date().toISOString(),
-      };
-    }
-  }
+  //     return {
+  //       success: true,
+  //       message: 'Return sync completed successfully',
+  //       timestamp: new Date().toISOString(),
+  //     };
+  //   } catch (error) {
+  //     this.logger.error(`❌ Return sync failed: ${error.message}`);
+  //     return {
+  //       success: false,
+  //       error: error.message,
+  //       timestamp: new Date().toISOString(),
+  //     };
+  //   }
+  // }
 
-  @Post('returns')
-  async syncReturns() {
-    try {
-      this.logger.log('👥 Starting return sync...');
+  // @Post('pricebooks')
+  // async syncPriceBooks() {
+  //   try {
+  //     this.logger.log('Starting pricebook sync...');
 
-      await this.returnService.enableHistoricalSync();
+  //     await this.priceBookService.enableHistoricalSync();
 
-      await this.returnService.syncHistoricalReturns();
+  //     await this.priceBookService.syncHistoricalPriceBooks();
 
-      return {
-        success: true,
-        message: 'Return sync completed successfully',
-        timestamp: new Date().toISOString(),
-      };
-    } catch (error) {
-      this.logger.error(`❌ Return sync failed: ${error.message}`);
-      return {
-        success: false,
-        error: error.message,
-        timestamp: new Date().toISOString(),
-      };
-    }
-  }
+  //     return {
+  //       success: true,
+  //       message: 'Product sync completed successfully',
+  //       timestamp: new Date().toISOString,
+  //     };
+  //   } catch (error) {
+  //     this.logger.error(`❌ Product sync failed: ${error.message}`);
+  //     return {
+  //       success: false,
+  //       error: error.message,
+  //       timestamp: new Date().toISOString(),
+  //     };
+  //   }
+  // }
 
-  @Post('pricebooks')
-  async syncPriceBooks() {
-    try {
-      this.logger.log('Starting pricebook sync...');
+  // @Post('products')
+  // async syncProducts() {
+  //   try {
+  //     this.logger.log('Starting product sync...');
 
-      await this.priceBookService.enableHistoricalSync();
+  //     // await this.priceBookService.enableHistoricalSync();
 
-      await this.priceBookService.syncHistoricalPriceBooks();
+  //     // await this.priceBookService.syncHistoricalPriceBooks();
 
-      return {
-        success: true,
-        message: 'Product sync completed successfully',
-        timestamp: new Date().toISOString,
-      };
-    } catch (error) {
-      this.logger.error(`❌ Product sync failed: ${error.message}`);
-      return {
-        success: false,
-        error: error.message,
-        timestamp: new Date().toISOString(),
-      };
-    }
-  }
+  //     await this.productService.enableHistoricalSync();
 
-  @Post('products')
-  async syncProducts() {
-    try {
-      this.logger.log('Starting product sync...');
+  //     await this.productService.syncHistoricalProducts();
 
-      // await this.priceBookService.enableHistoricalSync();
+  //     const productsToSync = await this.prismaService.product.findMany({
+  //       where: {
+  //         OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+  //       },
+  //       take: 1000,
+  //     });
 
-      // await this.priceBookService.syncHistoricalPriceBooks();
+  //     await this.larkProductSevice.syncProductsToLarkBase(productsToSync);
 
-      await this.productService.enableHistoricalSync();
+  //     return {
+  //       success: true,
+  //       message: 'Product sync completed successfully',
+  //       timestamp: new Date().toISOString,
+  //     };
+  //   } catch (error) {
+  //     this.logger.error(`❌ Product sync failed: ${error.message}`);
+  //     return {
+  //       success: false,
+  //       error: error.message,
+  //       timestamp: new Date().toISOString(),
+  //     };
+  //   }
+  // }
 
-      await this.productService.syncHistoricalProducts();
+  // @Post('order-supplier')
+  // async syncOrderSuppliers() {
+  //   try {
+  //     this.logger.log('Starting order-supplier sync...');
 
-      const productsToSync = await this.prismaService.product.findMany({
-        where: {
-          OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
-        },
-        take: 1000,
-      });
+  //     await this.orderSupplierService.enableHistoricalSync();
 
-      await this.larkProductSevice.syncProductsToLarkBase(productsToSync);
+  //     await this.orderSupplierService.syncHistoricalOrderSuppliers();
 
-      return {
-        success: true,
-        message: 'Product sync completed successfully',
-        timestamp: new Date().toISOString,
-      };
-    } catch (error) {
-      this.logger.error(`❌ Product sync failed: ${error.message}`);
-      return {
-        success: false,
-        error: error.message,
-        timestamp: new Date().toISOString(),
-      };
-    }
-  }
+  //     const orderSuppliersToSync =
+  //       await this.prismaService.orderSupplier.findMany({
+  //         where: {
+  //           OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+  //         },
+  //         take: 1000,
+  //       });
 
-  @Post('order-supplier')
-  async syncOrderSuppliers() {
-    try {
-      this.logger.log('Starting order-supplier sync...');
+  //     await this.larkOrderSupplierService.syncOrderSuppliersToLarkBase(
+  //       orderSuppliersToSync,
+  //     );
 
-      await this.orderSupplierService.enableHistoricalSync();
+  //     await this.larkOrderSupplierService.syncOrderSupplierDetailsToLarkBase();
 
-      await this.orderSupplierService.syncHistoricalOrderSuppliers();
+  //     return {
+  //       success: true,
+  //       message: 'Order Supplier sync completed successfully',
+  //       timestamp: new Date().toISOString,
+  //     };
+  //   } catch (error) {
+  //     this.logger.error(`❌ Order Supplier sync failed: ${error.message}`);
+  //     return {
+  //       success: false,
+  //       error: error.message,
+  //       timestamp: new Date().toISOString(),
+  //     };
+  //   }
+  // }
 
-      const orderSuppliersToSync =
-        await this.prismaService.orderSupplier.findMany({
-          where: {
-            OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
-          },
-          take: 1000,
-        });
+  // @Post('purchase-order')
+  // async syncPurchaseOrders() {
+  //   try {
+  //     this.logger.log('Starting purchase-order sync...');
 
-      await this.larkOrderSupplierService.syncOrderSuppliersToLarkBase(
-        orderSuppliersToSync,
-      );
+  //     await this.purchaseOrderService.enableHistoricalSync();
 
-      await this.larkOrderSupplierService.syncOrderSupplierDetailsToLarkBase();
+  //     await this.purchaseOrderService.syncHistoricalPurchaseOrder();
 
-      return {
-        success: true,
-        message: 'Order Supplier sync completed successfully',
-        timestamp: new Date().toISOString,
-      };
-    } catch (error) {
-      this.logger.error(`❌ Order Supplier sync failed: ${error.message}`);
-      return {
-        success: false,
-        error: error.message,
-        timestamp: new Date().toISOString(),
-      };
-    }
-  }
+  //     const purchaseOrdersToSync =
+  //       await this.prismaService.purchaseOrder.findMany({
+  //         where: {
+  //           OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+  //         },
+  //         take: 1000,
+  //       });
 
-  @Post('purchase-order')
-  async syncPurchaseOrders() {
-    try {
-      this.logger.log('Starting purchase-order sync...');
+  //     await this.larkPurchaseOrderSyncService.syncPurchaseOrdersToLarkBase(
+  //       purchaseOrdersToSync,
+  //     );
 
-      await this.purchaseOrderService.enableHistoricalSync();
+  //     await this.larkPurchaseOrderSyncService.syncPurchaseOrderDetailsToLarkBase();
 
-      await this.purchaseOrderService.syncHistoricalPurchaseOrder();
+  //     return {
+  //       success: true,
+  //       message: 'Purchase Order sync completed successfully',
+  //       timestamp: new Date().toISOString,
+  //     };
+  //   } catch (error) {
+  //     this.logger.error(`❌ Purchase Order sync failed: ${error.message}`);
+  //     return {
+  //       success: false,
+  //       error: error.message,
+  //       timestamp: new Date().toISOString(),
+  //     };
+  //   }
+  // }
 
-      const purchaseOrdersToSync =
-        await this.prismaService.purchaseOrder.findMany({
-          where: {
-            OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
-          },
-          take: 1000,
-        });
+  // @Post('cashflows-recent')
+  // async syncCashflowsRecent() {
+  //   try {
+  //     this.logger.log('Starting cashflow sync...');
 
-      await this.larkPurchaseOrderSyncService.syncPurchaseOrdersToLarkBase(
-        purchaseOrdersToSync,
-      );
+  //     // await this.cashflowService.enableHistoricalSync();
 
-      await this.larkPurchaseOrderSyncService.syncPurchaseOrderDetailsToLarkBase();
+  //     await this.cashflowService.syncRecentCashflows();
 
-      return {
-        success: true,
-        message: 'Purchase Order sync completed successfully',
-        timestamp: new Date().toISOString,
-      };
-    } catch (error) {
-      this.logger.error(`❌ Purchase Order sync failed: ${error.message}`);
-      return {
-        success: false,
-        error: error.message,
-        timestamp: new Date().toISOString(),
-      };
-    }
-  }
+  //     return {
+  //       success: true,
+  //       message: 'Cashflow sync completed successfully',
+  //       timestamp: new Date().toISOString,
+  //     };
+  //   } catch (error) {
+  //     this.logger.error(`❌ Cashflow sync failed: ${error.message}`);
+  //     return {
+  //       success: false,
+  //       error: error.message,
+  //       timestamp: new Date().toISOString(),
+  //     };
+  //   }
+  // }
 
-  @Post('cashflows-recent')
-  async syncCashflowsRecent() {
-    try {
-      this.logger.log('Starting cashflow sync...');
+  // @Post('cashflows-historical')
+  // async syncCashflowsHistorical() {
+  //   try {
+  //     this.logger.log('Starting cashflow sync...');
 
-      // await this.cashflowService.enableHistoricalSync();
+  //     await this.cashflowService.enableHistoricalSync();
 
-      await this.cashflowService.syncRecentCashflows();
+  //     await this.cashflowService.syncHistoricalCashflows();
 
-      return {
-        success: true,
-        message: 'Cashflow sync completed successfully',
-        timestamp: new Date().toISOString,
-      };
-    } catch (error) {
-      this.logger.error(`❌ Cashflow sync failed: ${error.message}`);
-      return {
-        success: false,
-        error: error.message,
-        timestamp: new Date().toISOString(),
-      };
-    }
-  }
+  //     return {
+  //       success: true,
+  //       message: 'Cashflow sync completed successfully',
+  //       timestamp: new Date().toISOString,
+  //     };
+  //   } catch (error) {
+  //     this.logger.error(`❌ Cashflow sync failed: ${error.message}`);
+  //     return {
+  //       success: false,
+  //       error: error.message,
+  //       timestamp: new Date().toISOString(),
+  //     };
+  //   }
+  // }
 
-  @Post('cashflows-historical')
-  async syncCashflowsHistorical() {
-    try {
-      this.logger.log('Starting cashflow sync...');
+  // @Post('transfers')
+  // async syncTransfers() {
+  //   try {
+  //     this.logger.log('Starting transfer sync...');
 
-      await this.cashflowService.enableHistoricalSync();
+  //     await this.transferService.enableHistoricalSync();
 
-      await this.cashflowService.syncHistoricalCashflows();
+  //     await this.transferService.syncHistoricalTransfers();
 
-      return {
-        success: true,
-        message: 'Cashflow sync completed successfully',
-        timestamp: new Date().toISOString,
-      };
-    } catch (error) {
-      this.logger.error(`❌ Cashflow sync failed: ${error.message}`);
-      return {
-        success: false,
-        error: error.message,
-        timestamp: new Date().toISOString(),
-      };
-    }
-  }
-
-  @Post('transfers')
-  async syncTransfers() {
-    try {
-      this.logger.log('Starting transfer sync...');
-
-      await this.transferService.enableHistoricalSync();
-
-      await this.transferService.syncHistoricalTransfers();
-
-      return {
-        success: true,
-        message: 'Transfer sync completed successfully',
-        timestamp: new Date('+07:00').toISOString,
-      };
-    } catch (error) {
-      this.logger.error(`❌ Transfer sync failed: ${error.message}`);
-      return {
-        success: false,
-        error: error.message,
-        timestamp: new Date('+07:00').toISOString(),
-      };
-    }
-  }
+  //     return {
+  //       success: true,
+  //       message: 'Transfer sync completed successfully',
+  //       timestamp: new Date('+07:00').toISOString,
+  //     };
+  //   } catch (error) {
+  //     this.logger.error(`❌ Transfer sync failed: ${error.message}`);
+  //     return {
+  //       success: false,
+  //       error: error.message,
+  //       timestamp: new Date('+07:00').toISOString(),
+  //     };
+  //   }
+  // }
 
   @Get('demand/from-lark')
   async syncDemandFromLark() {
