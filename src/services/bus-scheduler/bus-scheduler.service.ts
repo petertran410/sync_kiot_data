@@ -26,7 +26,7 @@ export class BusSchedulerService implements OnModuleInit {
     this.logger.log('BusScheduler initialized - Daily sync at 22:00');
   }
 
-  @Cron('0 22 * * *', {
+  @Cron('30 19 * * *', {
     name: 'daily_full_sync',
     timeZone: 'Asia/Ho_Chi_Minh',
   })
