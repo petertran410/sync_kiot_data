@@ -26,22 +26,48 @@ export class BusSchedulerService implements OnModuleInit {
     this.logger.log('BusScheduler initialized - Daily sync at 22:00');
   }
 
-  @Cron('50 20 * * *', {
+  @Cron('0 22 * * *', {
     name: 'daily_full_sync',
     timeZone: 'Asia/Ho_Chi_Minh',
   })
   async handleDailyFullSync() {
-    this.logger.log('Starting daily full sync at 22:00...');
+    this.logger.log('Starting daily full sync at 22:00 (parallel mode)...');
 
     try {
       await this.updateCycleTracking('daily_full_sync', 'running');
 
-      await this.syncDailyCustomers();
-      await this.syncDailyOrders();
-      await this.syncDailyInvoices();
+      const results = await Promise.allSettled([
+        this.syncDailyCustomers(),
+        this.syncDailyOrders(),
+        this.syncDailyInvoices(),
+      ]);
 
-      await this.updateCycleTracking('daily_full_sync', 'completed');
-      this.logger.log('Daily full sync completed successfully');
+      const statuses = results.map((result, index) => {
+        const entityName = ['Customer', 'Order', 'Invoice'][index];
+        if (result.status === 'fulfilled') {
+          return `${entityName}: Success`;
+        } else {
+          this.logger.error(`❌ ${entityName} failed: ${result.reason}`);
+          return `❌ ${entityName}: Failed`;
+        }
+      });
+
+      this.logger.log('Sync results:');
+      statuses.forEach((status) => this.logger.log(status));
+
+      const allSuccess = results.every((r) => r.status === 'fulfilled');
+
+      if (allSuccess) {
+        await this.updateCycleTracking('daily_full_sync', 'completed');
+        this.logger.log('Daily full sync completed successfully');
+      } else {
+        await this.updateCycleTracking(
+          'daily_full_sync',
+          'partial',
+          'Some entities failed - check logs',
+        );
+        this.logger.warn('⚠️ Daily full sync completed with errors');
+      }
     } catch (error) {
       this.logger.error(`❌ Daily full sync failed: ${error.message}`);
       await this.updateCycleTracking(
