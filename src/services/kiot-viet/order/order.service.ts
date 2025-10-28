@@ -890,6 +890,9 @@ export class KiotVietOrderService {
           });
         }
 
+        const orderCode = orderData.code;
+        const shouldSyncToLark = orderCode && orderCode.includes('DH0');
+
         const order = await this.prismaService.order.upsert({
           where: { kiotVietId: BigInt(orderData.id) },
           update: {
@@ -919,7 +922,7 @@ export class KiotVietOrderService {
               ? new Date(orderData.modifiedDate)
               : new Date(),
             lastSyncedAt: new Date(),
-            larkSyncStatus: 'PENDING',
+            larkSyncStatus: shouldSyncToLark ? 'PENDING' : 'SKIP',
           },
           create: {
             kiotVietId: BigInt(orderData.id),
@@ -949,7 +952,7 @@ export class KiotVietOrderService {
               ? new Date(orderData.modifiedDate)
               : new Date(),
             lastSyncedAt: new Date(),
-            larkSyncStatus: 'PENDING',
+            larkSyncStatus: shouldSyncToLark ? 'PENDING' : 'SKIP',
           },
         });
 

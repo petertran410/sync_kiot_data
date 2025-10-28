@@ -1040,6 +1040,9 @@ export class KiotVietInvoiceService {
             })
           : null;
 
+        const invoiceCode = invoiceData.Code;
+        const shouldSyncToLark = invoiceCode && invoiceCode.includes('HD0');
+
         const invoice = await this.prismaService.invoice.upsert({
           where: { kiotVietId: BigInt(invoiceData.id) },
           update: {
@@ -1070,7 +1073,7 @@ export class KiotVietInvoiceService {
               : new Date(),
             retailerId: 310831,
             lastSyncedAt: new Date(),
-            larkSyncStatus: 'PENDING',
+            larkSyncStatus: shouldSyncToLark ? 'PENDING' : 'SKIP',
           },
           create: {
             kiotVietId: BigInt(invoiceData.id),
@@ -1101,7 +1104,7 @@ export class KiotVietInvoiceService {
               : new Date(),
             retailerId: 310831,
             lastSyncedAt: new Date(),
-            larkSyncStatus: 'PENDING',
+            larkSyncStatus: shouldSyncToLark ? 'PENDING' : 'SKIP',
           },
         });
 
