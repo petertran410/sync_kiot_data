@@ -87,12 +87,6 @@ export class BusSchedulerService implements OnModuleInit {
     const customersToSync = await this.prismaService.customer.findMany({
       where: {
         OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
-        NOT: {
-          OR: [
-            { code: { contains: 'KHSPE' } },
-            { code: { contains: 'KHTTS' } },
-          ],
-        },
       },
     });
 
@@ -109,12 +103,6 @@ export class BusSchedulerService implements OnModuleInit {
     const ordersToSync = await this.prismaService.order.findMany({
       where: {
         OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
-        NOT: {
-          OR: [
-            { code: { contains: 'DHSPE' } },
-            { code: { contains: 'DHTTS' } },
-          ],
-        },
       },
     });
 
@@ -131,12 +119,6 @@ export class BusSchedulerService implements OnModuleInit {
     const invoicesToSync = await this.prismaService.invoice.findMany({
       where: {
         OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
-        NOT: {
-          OR: [
-            { code: { contains: 'HDSPE' } },
-            { code: { contains: 'HDTTS' } },
-          ],
-        },
       },
     });
 

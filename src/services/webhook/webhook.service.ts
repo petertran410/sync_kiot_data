@@ -149,6 +149,8 @@ export class WebhookService {
       const customerId = await this.findCustomerId(orderData.CustomerId);
       const soldById = orderData.SoldById ? BigInt(orderData.SoldById) : null;
       const saleChannel = await this.findSaleChannelId(orderData.SaleChannelId);
+      const orderCode = orderData.Code;
+      const shouldSyncToLark = orderCode && orderCode.includes('DH0');
 
       const order = await this.prismaService.order.upsert({
         where: { kiotVietId },
@@ -176,7 +178,7 @@ export class WebhookService {
             ? new Date(orderData.ModifiedDate)
             : null,
           lastSyncedAt: new Date(),
-          larkSyncStatus: 'PENDING',
+          larkSyncStatus: shouldSyncToLark ? 'PENDING' : 'SKIP',
         },
         create: {
           kiotVietId,
@@ -207,7 +209,7 @@ export class WebhookService {
           modifiedDate: orderData.ModifiedDate
             ? new Date(orderData.ModifiedDate)
             : null,
-          larkSyncStatus: 'PENDING',
+          larkSyncStatus: shouldSyncToLark ? 'PENDING' : 'SKIP',
         },
       });
 
@@ -399,6 +401,8 @@ export class WebhookService {
       const saleChannel = await this.findSaleChannelId(
         invoiceData.SaleChannelId,
       );
+      const invoiceCode = invoiceData.Code;
+      const shouldSyncToLark = invoiceCode && invoiceCode.includes('HD0');
 
       const invoice = await this.prismaService.invoice.upsert({
         where: { kiotVietId },
@@ -428,7 +432,7 @@ export class WebhookService {
               ? new Date(invoiceData.ModifiedDate)
               : new Date(),
           lastSyncedAt: new Date(),
-          larkSyncStatus: 'PENDING',
+          larkSyncStatus: shouldSyncToLark ? 'PENDING' : 'SKIP',
         },
         create: {
           kiotVietId,
@@ -462,7 +466,7 @@ export class WebhookService {
             : invoiceData.ModifiedDate
               ? new Date(invoiceData.ModifiedDate)
               : new Date(),
-          larkSyncStatus: 'PENDING',
+          larkSyncStatus: shouldSyncToLark ? 'PENDING' : 'SKIP',
         },
       });
 
