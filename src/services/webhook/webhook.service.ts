@@ -17,6 +17,10 @@ export class WebhookService {
     'https://dieptra2018.sg.larksuite.com/base/workflow/webhook/event/P8dQa9E8DwdYXThRnkRlVgcdgnc';
   private readonly LARK_WEBHOOK_STOCK_URL =
     'https://dieptra2018.sg.larksuite.com/base/workflow/webhook/event/KqIvamQWVwPwZghWn7nlAXXzg5V';
+  private readonly LARK_WEBHOOK_PRICEBOOK_URL =
+    'https://dieptra2018.sg.larksuite.com/base/workflow/webhook/event/P6UgaRD1nwkhBVhAU6UlhvpWgXd';
+  private readonly LARK_WEBHOOK_PRICEBOOK_DETAIL_URL =
+    'https://dieptra2018.sg.larksuite.com/base/workflow/webhook/event/IG2qaSfewwlQLmhuNoflfOi5gWf';
 
   constructor(
     private readonly prismaService: PrismaService,
@@ -178,6 +182,70 @@ export class WebhookService {
     }
   }
 
+  async processPriceBookWebhook(webhookData: any): Promise<void> {
+    try {
+      const notifications = webhookData?.Notifications || [];
+
+      for (const notification of notifications) {
+        const data = notification?.Data || [];
+
+        console.log(data);
+
+        for (const priceBookData of data) {
+          const detailedPriceBook = await this.fetchPriceBookDetail(
+            priceBookData.Id,
+          );
+
+          if (detailedPriceBook) {
+            await this.sendToLarkPricebookWebhook(detailedPriceBook);
+          }
+
+          const savedPriceBook = await this.upsertPriceBook(
+            priceBookData,
+            detailedPriceBook,
+          );
+
+          if (savedPriceBook) {
+            this.logger.log(`✅ Upserted pricebook ${savedPriceBook.name}`);
+          }
+        }
+      }
+    } catch (error) {
+      this.logger.error(
+        `❌ Process pricebook webhook failed: ${error.message}`,
+      );
+      throw error;
+    }
+  }
+
+  async processPriceBookDetailWebhook(webhookData: any): Promise<void> {
+    try {
+      const notifications = webhookData?.Notifications || [];
+
+      for (const notification of notifications) {
+        const data = notification?.Data || [];
+
+        console.log(data);
+
+        for (const detailData of data) {
+          const savedDetail = await this.upsertPriceBookDetail(detailData);
+
+          if (savedDetail) {
+            await this.sendToLarkPricebookDetailWebhook(savedDetail);
+            this.logger.log(
+              `✅ Upserted priceBookDetail for product ${savedDetail.productName} in pricebook ${savedDetail.priceBookName}`,
+            );
+          }
+        }
+      }
+    } catch (error) {
+      this.logger.error(
+        `❌ Process pricebook detail webhook failed: ${error.message}`,
+      );
+      throw error;
+    }
+  }
+
   private async sendToLarkWebhook(webhookData: any): Promise<void> {
     try {
       await firstValueFrom(
@@ -227,6 +295,38 @@ export class WebhookService {
         }),
       );
       this.logger.log(`✅ Sent webhook stock data to Lark successfully`);
+    } catch (error) {
+      this.logger.error(`❌ Failed to send to Lark: ${error.message}`);
+    }
+  }
+
+  private async sendToLarkPricebookWebhook(webhookData: any): Promise<void> {
+    try {
+      await firstValueFrom(
+        this.httpService.post(this.LARK_WEBHOOK_PRICEBOOK_URL, webhookData, {
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+      this.logger.log(`✅ Sent webhook pricebook data to Lark successfully`);
+    } catch (error) {
+      this.logger.error(`❌ Failed to send to Lark: ${error.message}`);
+    }
+  }
+
+  private async sendToLarkPricebookDetailWebhook(
+    webhookData: any,
+  ): Promise<void> {
+    try {
+      await firstValueFrom(
+        this.httpService.post(
+          this.LARK_WEBHOOK_PRICEBOOK_DETAIL_URL,
+          webhookData,
+          {
+            headers: { 'Content-Type': 'application/json' },
+          },
+        ),
+      );
+      this.logger.log(`✅ Sent webhook pricebook data to Lark successfully`);
     } catch (error) {
       this.logger.error(`❌ Failed to send to Lark: ${error.message}`);
     }
@@ -1236,6 +1336,290 @@ export class WebhookService {
     }
   }
 
+  private async upsertPriceBook(priceBookData: any, detailedPriceBook: any) {
+    try {
+      const kiotVietId = priceBookData.Id;
+
+      const priceBook = await this.prismaService.priceBook.upsert({
+        where: { kiotVietId },
+        update: {
+          name: priceBookData.Name,
+          isActive: priceBookData.IsActive ?? true,
+          isGlobal: priceBookData.IsGlobal ?? false,
+          startDate: priceBookData.StartDate
+            ? new Date(priceBookData.StartDate)
+            : null,
+          endDate: priceBookData.EndDate
+            ? new Date(priceBookData.EndDate)
+            : null,
+          forAllCusGroup: priceBookData.ForAllCusGroup ?? false,
+          forAllUser: priceBookData.ForAllUser ?? false,
+          retailerId: 310831,
+          modifiedDate: new Date(),
+          lastSyncedAt: new Date(),
+        },
+        create: {
+          kiotVietId,
+          name: priceBookData.Name,
+          isActive: priceBookData.IsActive ?? true,
+          isGlobal: priceBookData.IsGlobal ?? false,
+          startDate: priceBookData.StartDate
+            ? new Date(priceBookData.StartDate)
+            : null,
+          endDate: priceBookData.EndDate
+            ? new Date(priceBookData.EndDate)
+            : null,
+          forAllCusGroup: priceBookData.ForAllCusGroup ?? false,
+          forAllUser: priceBookData.ForAllUser ?? false,
+          retailerId: 310831,
+          lastSyncedAt: new Date(),
+        },
+      });
+
+      if (
+        priceBookData.PriceBookBranches &&
+        priceBookData.PriceBookBranches.length > 0
+      ) {
+        for (let i = 0; i < priceBookData.PriceBookBranches.length; i++) {
+          const branchData = priceBookData.PriceBookBranches[i];
+          const branch = await this.prismaService.branch.findUnique({
+            where: { kiotVietId: branchData.BranchId },
+            select: { id: true },
+          });
+
+          if (branch) {
+            await this.prismaService.priceBookBranch.upsert({
+              where: {
+                priceBookId_lineNumber: {
+                  priceBookId: priceBook.id,
+                  lineNumber: i + 1,
+                },
+              },
+              update: {
+                kiotVietId: BigInt(branchData.Id),
+                branchId: branch.id,
+                branchName: branchData.BranchName,
+                retailerId: branchData.RetailerId ?? null,
+                lastSyncedAt: new Date(),
+              },
+              create: {
+                kiotVietId: BigInt(branchData.Id),
+                priceBookId: priceBook.id,
+                branchId: branch.id,
+                branchName: branchData.BranchName,
+                retailerId: branchData.RetailerId ?? null,
+                lineNumber: i + 1,
+                lastSyncedAt: new Date(),
+              },
+            });
+          }
+        }
+      }
+
+      if (
+        priceBookData.PriceBookCustomerGroups &&
+        priceBookData.PriceBookCustomerGroups.length > 0
+      ) {
+        for (let i = 0; i < priceBookData.PriceBookCustomerGroups.length; i++) {
+          const groupData = priceBookData.PriceBookCustomerGroups[i];
+          const customerGroup =
+            await this.prismaService.customerGroup.findUnique({
+              where: { kiotVietId: groupData.CustomerGroupId },
+              select: { id: true },
+            });
+
+          if (customerGroup) {
+            await this.prismaService.priceBookCustomerGroup.upsert({
+              where: {
+                priceBookId_lineNumber: {
+                  priceBookId: priceBook.id,
+                  lineNumber: i + 1,
+                },
+              },
+              update: {
+                kiotVietId: BigInt(groupData.Id),
+                customerGroupId: customerGroup.id,
+                customerGroupName: groupData.CustomerGroupName,
+                retailerId: groupData.RetailerId ?? null,
+                lastSyncedAt: new Date(),
+              },
+              create: {
+                kiotVietId: BigInt(groupData.Id),
+                priceBookId: priceBook.id,
+                customerGroupId: customerGroup.id,
+                customerGroupName: groupData.CustomerGroupName,
+                retailerId: groupData.RetailerId ?? null,
+                lineNumber: i + 1,
+                lastSyncedAt: new Date(),
+              },
+            });
+          }
+        }
+      }
+
+      if (
+        priceBookData.PriceBookUsers &&
+        priceBookData.PriceBookUsers.length > 0
+      ) {
+        for (let i = 0; i < priceBookData.PriceBookUsers.length; i++) {
+          const userData = priceBookData.PriceBookUsers[i];
+          await this.prismaService.priceBookUser.upsert({
+            where: {
+              priceBookId_lineNumber: {
+                priceBookId: priceBook.id,
+                lineNumber: i + 1,
+              },
+            },
+            update: {
+              kiotVietId: BigInt(userData.Id),
+              userId: BigInt(userData.UserId),
+              userName: userData.UserName,
+              lineNumber: i + 1,
+              lastSyncedAt: new Date(),
+            },
+            create: {
+              kiotVietId: BigInt(userData.Id),
+              priceBookId: priceBook.id,
+              userId: BigInt(userData.UserId),
+              userName: userData.UserName,
+              lineNumber: i + 1,
+              lastSyncedAt: new Date(),
+            },
+          });
+        }
+      }
+
+      return priceBook;
+    } catch (error) {
+      this.logger.error(`❌ Upsert pricebook failed: ${error.message}`);
+      throw error;
+    }
+  }
+
+  private async upsertPriceBookDetail(detailData: any) {
+    try {
+      const priceBook = await this.prismaService.priceBook.findUnique({
+        where: { kiotVietId: detailData.PriceBookId },
+        select: { id: true, name: true },
+      });
+
+      if (!priceBook) {
+        this.logger.warn(`⚠️ PriceBook not found: ${detailData.PriceBookId}`);
+        return null;
+      }
+
+      let product = await this.prismaService.product.findUnique({
+        where: { kiotVietId: BigInt(detailData.ProductId) },
+        select: { id: true, code: true, name: true },
+      });
+
+      if (!product) {
+        this.logger.warn(
+          `⚠️ Product not found: ProductId=${detailData.ProductId}, creating new product...`,
+        );
+
+        const detailedProduct = await this.fetchProductDetail(
+          detailData.ProductId,
+        );
+
+        if (detailedProduct) {
+          await this.sendToLarkProductWebhook(detailedProduct);
+        }
+
+        if (detailedProduct) {
+          const savedProduct = await this.upsertProduct(
+            {
+              Id: detailData.ProductId,
+              Code: detailedProduct.code,
+              Name: detailedProduct.name,
+              FullName: detailedProduct.fullName,
+              CategoryId: detailedProduct.categoryId,
+              CategoryName: detailedProduct.categoryName,
+              AllowsSale: detailedProduct.allowsSale,
+              HasVariants: detailedProduct.hasVariants,
+              BasePrice: detailedProduct.basePrice,
+              Weight: detailedProduct.weight,
+              Unit: detailedProduct.unit,
+              MasterUnitId: detailedProduct.masterUnitId,
+              ConversionValue: detailedProduct.conversionValue,
+              ModifiedDate: detailedProduct.modifiedDate,
+            },
+            detailedProduct,
+          );
+
+          if (savedProduct) {
+            product = await this.prismaService.product.findUnique({
+              where: { kiotVietId: BigInt(detailData.ProductId) },
+              select: { id: true, code: true, name: true },
+            });
+          }
+        }
+
+        if (!product) {
+          this.logger.error(
+            `❌ Failed to create product: ProductId=${detailData.ProductId}`,
+          );
+          return null;
+        }
+      }
+
+      const existingDetail = await this.prismaService.priceBookDetail.findFirst(
+        {
+          where: {
+            priceBookId: priceBook.id,
+            productId: product.id,
+          },
+          select: { lineNumber: true },
+        },
+      );
+
+      let lineNumber: number;
+      if (existingDetail) {
+        lineNumber = existingDetail.lineNumber ?? 1;
+      } else {
+        const maxLineNumber =
+          await this.prismaService.priceBookDetail.findFirst({
+            where: { productId: product.id },
+            orderBy: { lineNumber: 'desc' },
+            select: { lineNumber: true },
+          });
+        lineNumber = (maxLineNumber?.lineNumber ?? 0) + 1;
+      }
+
+      return await this.prismaService.priceBookDetail.upsert({
+        where: {
+          productId_lineNumber: {
+            productId: product.id,
+            lineNumber: lineNumber,
+          },
+        },
+        update: {
+          priceBookId: priceBook.id,
+          priceBookName: priceBook.name,
+          productName: product.name,
+          price: detailData.Price
+            ? new Prisma.Decimal(detailData.Price)
+            : new Prisma.Decimal(0),
+          lastSyncedAt: new Date(),
+        },
+        create: {
+          priceBookId: priceBook.id,
+          priceBookName: priceBook.name,
+          productId: product.id,
+          productName: product.name,
+          price: detailData.Price
+            ? new Prisma.Decimal(detailData.Price)
+            : new Prisma.Decimal(0),
+          lineNumber: lineNumber,
+          lastSyncedAt: new Date(),
+        },
+      });
+    } catch (error) {
+      this.logger.error(`❌ Upsert priceBookDetail failed: ${error.message}`);
+      throw error;
+    }
+  }
+
   private async fetchCustomerDetail(customerId: number): Promise<any> {
     try {
       const accessToken = await this.authService.getAccessToken();
@@ -1345,6 +1729,39 @@ export class WebhookService {
       return response.data;
     } catch (error) {
       this.logger.warn(`⚠️ Could not fetch product detail: ${error.message}`);
+      return null;
+    }
+  }
+
+  private async fetchPriceBookDetail(priceBookId: number): Promise<any> {
+    try {
+      const accessToken = await this.authService.getAccessToken();
+      const baseUrl = this.configService.get<string>('KIOT_BASE_URL');
+      const shopName = this.configService.get<string>('KIOT_SHOP_NAME');
+
+      const queryParams = new URLSearchParams({
+        includePriceBookBranch: 'true',
+        includePriceBookCustomerGroups: 'true',
+        includePriceBookUsers: 'true',
+      });
+
+      const url = `${baseUrl}/pricebooks/${priceBookId}?${queryParams}`;
+
+      const response = await firstValueFrom(
+        this.httpService.get(url, {
+          headers: {
+            Retailer: shopName,
+            Authorization: `Bearer ${accessToken}`,
+          },
+        }),
+      );
+
+      this.logger.log('📦 Fetched pricebook detail:');
+      this.logger.log(JSON.stringify(response.data, null, 2));
+
+      return response.data;
+    } catch (error) {
+      this.logger.warn(`⚠️ Could not fetch pricebook detail: ${error.message}`);
       return null;
     }
   }

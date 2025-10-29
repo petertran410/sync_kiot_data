@@ -78,4 +78,30 @@ export class WebhookController {
       return { success: true };
     }
   }
+
+  @Post('pricebook')
+  @HttpCode(HttpStatus.OK)
+  async handlePriceBookWebhook(@Body() webhookData: any) {
+    try {
+      this.logger.log('📨 Received KiotViet pricebook webhook');
+      await this.webhookService.processPriceBookWebhook(webhookData);
+      return { success: true };
+    } catch (error) {
+      this.logger.error(`❌ PriceBook webhook error: ${error.message}`);
+      return { success: true };
+    }
+  }
+
+  @Post('pricebookdetail')
+  @HttpCode(HttpStatus.OK)
+  async handlePriceBookDetailWebhook(@Body() webhookData: any) {
+    try {
+      this.logger.log('📨 Received KiotViet pricebook detail webhook');
+      await this.webhookService.processPriceBookDetailWebhook(webhookData);
+      return { success: true };
+    } catch (error) {
+      this.logger.error(`❌ PriceBook detail webhook error: ${error.message}`);
+      return { success: true };
+    }
+  }
 }
