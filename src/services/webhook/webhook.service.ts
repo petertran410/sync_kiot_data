@@ -1110,14 +1110,66 @@ export class WebhookService {
 
   private async upsertStock(stockData: any) {
     try {
-      const product = await this.prismaService.product.findUnique({
+      let product = await this.prismaService.product.findUnique({
         where: { kiotVietId: BigInt(stockData.ProductId) },
         select: { id: true, code: true, name: true },
       });
 
       if (!product) {
-        this.logger.warn(`⚠️ Product not found: ${stockData.ProductCode}`);
-        return null;
+        this.logger.warn(
+          `⚠️ Product not found: ${stockData.ProductCode}, creating new product...`,
+        );
+
+        const detailedProduct = await this.fetchProductDetail(
+          stockData.ProductId,
+        );
+
+        if (detailedProduct) {
+          await this.sendToLarkProductWebhook(detailedProduct);
+        }
+
+        if (detailedProduct) {
+          await this.upsertProduct(
+            {
+              Id: stockData.ProductId,
+              Code: stockData.ProductCode,
+              Name: stockData.ProductName,
+              FullName: detailedProduct.fullName,
+              CategoryId: detailedProduct.categoryId,
+              CategoryName: detailedProduct.categoryName,
+              AllowsSale: detailedProduct.allowsSale,
+              HasVariants: detailedProduct.hasVariants,
+              BasePrice: detailedProduct.basePrice,
+              Weight: detailedProduct.weight,
+              Unit: detailedProduct.unit,
+              MasterUnitId: detailedProduct.masterUnitId,
+              ConversionValue: detailedProduct.conversionValue,
+              ModifiedDate: detailedProduct.modifiedDate,
+            },
+            detailedProduct,
+          );
+
+          product = await this.prismaService.product.findUnique({
+            where: { kiotVietId: BigInt(stockData.ProductId) },
+            select: { id: true, code: true, name: true },
+          });
+
+          if (!product) {
+            this.logger.error(
+              `❌ Failed to create product: ${stockData.ProductCode}`,
+            );
+            return null;
+          }
+
+          this.logger.log(
+            `✅ Created new product: ${stockData.ProductCode}, now updating stock...`,
+          );
+        } else {
+          this.logger.error(
+            `❌ Could not fetch product detail: ${stockData.ProductCode}`,
+          );
+          return null;
+        }
       }
 
       const branch = await this.prismaService.branch.findFirst({
