@@ -65,4 +65,17 @@ export class WebhookController {
       return { success: true };
     }
   }
+
+  @Post('stock')
+  @HttpCode(HttpStatus.OK)
+  async handleStockWebhook(@Body() webhookData: any) {
+    try {
+      this.logger.log('📨 Received KiotViet stock webhook');
+      await this.webhookService.processStockWebhook(webhookData);
+      return { success: true };
+    } catch (error) {
+      this.logger.error(`❌ Stock webhook error: ${error.message}`);
+      return { success: true };
+    }
+  }
 }

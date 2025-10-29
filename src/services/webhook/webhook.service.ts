@@ -15,6 +15,8 @@ export class WebhookService {
     'https://dieptra2018.sg.larksuite.com/base/workflow/webhook/event/PjojaSOgJwMtLJhk8NXl3eYFgqf';
   private readonly LARK_WEBHOOK_PRODUCT_URL =
     'https://dieptra2018.sg.larksuite.com/base/workflow/webhook/event/P8dQa9E8DwdYXThRnkRlVgcdgnc';
+  private readonly LARK_WEBHOOK_STOCK_URL =
+    'https://dieptra2018.sg.larksuite.com/base/workflow/webhook/event/KqIvamQWVwPwZghWn7nlAXXzg5V';
 
   constructor(
     private readonly prismaService: PrismaService,
@@ -150,6 +152,32 @@ export class WebhookService {
     }
   }
 
+  async processStockWebhook(webhookData: any): Promise<void> {
+    try {
+      const notifications = webhookData?.Notifications || [];
+
+      for (const notification of notifications) {
+        const data = notification?.Data || [];
+
+        console.log(data);
+
+        for (const stockData of data) {
+          const savedStock = await this.upsertStock(stockData);
+
+          if (savedStock) {
+            await this.sendToLarkStockWebhook(savedStock);
+            this.logger.log(
+              `✅ Upserted stock for product ${stockData.ProductCode}`,
+            );
+          }
+        }
+      }
+    } catch (error) {
+      this.logger.error(`❌ Process stock webhook failed: ${error.message}`);
+      throw error;
+    }
+  }
+
   private async sendToLarkWebhook(webhookData: any): Promise<void> {
     try {
       await firstValueFrom(
@@ -186,6 +214,19 @@ export class WebhookService {
         }),
       );
       this.logger.log(`✅ Sent webhook product data to Lark successfully`);
+    } catch (error) {
+      this.logger.error(`❌ Failed to send to Lark: ${error.message}`);
+    }
+  }
+
+  private async sendToLarkStockWebhook(webhookData: any): Promise<void> {
+    try {
+      await firstValueFrom(
+        this.httpService.post(this.LARK_WEBHOOK_STOCK_URL, webhookData, {
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+      this.logger.log(`✅ Sent webhook stock data to Lark successfully`);
     } catch (error) {
       this.logger.error(`❌ Failed to send to Lark: ${error.message}`);
     }
@@ -1063,6 +1104,82 @@ export class WebhookService {
       return product;
     } catch (error) {
       this.logger.error(`❌ Upsert product failed: ${error.message}`);
+      throw error;
+    }
+  }
+
+  private async upsertStock(stockData: any) {
+    try {
+      const product = await this.prismaService.product.findUnique({
+        where: { kiotVietId: BigInt(stockData.ProductId) },
+        select: { id: true, code: true, name: true },
+      });
+
+      if (!product) {
+        this.logger.warn(`⚠️ Product not found: ${stockData.ProductCode}`);
+        return null;
+      }
+
+      const branch = await this.prismaService.branch.findFirst({
+        where: { kiotVietId: stockData.BranchId },
+        select: { id: true, name: true },
+      });
+
+      if (!branch) {
+        this.logger.warn(`⚠️ Branch not found: ${stockData.BranchId}`);
+        return null;
+      }
+
+      const existingInventory =
+        await this.prismaService.productInventory.findFirst({
+          where: {
+            productId: product.id,
+            branchId: branch.id,
+          },
+        });
+
+      if (existingInventory) {
+        return await this.prismaService.productInventory.update({
+          where: {
+            id: existingInventory.id,
+          },
+          data: {
+            branchName: stockData.BranchName ?? branch.name,
+            productCode: stockData.ProductCode ?? product.code,
+            productName: stockData.ProductName ?? product.name,
+            onHand: stockData.OnHand ?? 0,
+            reserved: stockData.Reserved ?? 0,
+            cost: stockData.Cost ? new Prisma.Decimal(stockData.Cost) : null,
+            lastSyncedAt: new Date(),
+          },
+        });
+      } else {
+        const maxLineNumber =
+          await this.prismaService.productInventory.findFirst({
+            where: { productId: product.id },
+            orderBy: { lineNumber: 'desc' },
+            select: { lineNumber: true },
+          });
+
+        const newLineNumber = (maxLineNumber?.lineNumber ?? 0) + 1;
+
+        return await this.prismaService.productInventory.create({
+          data: {
+            productId: product.id,
+            branchId: branch.id,
+            branchName: stockData.BranchName ?? branch.name,
+            productCode: stockData.ProductCode ?? product.code,
+            productName: stockData.ProductName ?? product.name,
+            onHand: stockData.OnHand ?? 0,
+            reserved: stockData.Reserved ?? 0,
+            cost: stockData.Cost ? new Prisma.Decimal(stockData.Cost) : null,
+            lineNumber: newLineNumber,
+            lastSyncedAt: new Date(),
+          },
+        });
+      }
+    } catch (error) {
+      this.logger.error(`❌ Upsert stock failed: ${error.message}`);
       throw error;
     }
   }
