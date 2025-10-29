@@ -1040,7 +1040,7 @@ export class KiotVietInvoiceService {
             })
           : null;
 
-        const invoiceCode = invoiceData.Code;
+        const invoiceCode = invoiceData.code;
         const shouldSyncToLark = invoiceCode && invoiceCode.includes('HD0');
 
         const invoice = await this.prismaService.invoice.upsert({
