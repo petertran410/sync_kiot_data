@@ -130,6 +130,10 @@ export class WebhookService {
         for (const productData of data) {
           const detailedProduct = await this.fetchProductDetail(productData.Id);
 
+          if (detailedProduct) {
+            await this.sendToLarkProductWebhook(detailedProduct);
+          }
+
           const savedProduct = await this.upsertProduct(
             productData,
             detailedProduct,
@@ -206,6 +210,7 @@ export class WebhookService {
           totalPayment: new Prisma.Decimal(orderData.TotalPayment || 0),
           customerCode: detailedOrder?.customerCode ?? orderData.CustomerCode,
           customerName: detailedOrder?.customerName ?? orderData.CustomerName,
+          retailerId: 310831,
           saleChannelId: saleChannel.id,
           saleChannelName: saleChannel.name,
           discount: orderData.Discount
@@ -234,6 +239,7 @@ export class WebhookService {
           customerId,
           customerCode: detailedOrder?.customerCode ?? orderData.CustomerCode,
           customerName: detailedOrder?.customerName ?? orderData.CustomerName,
+          retailerId: 310831,
           saleChannelId: saleChannel.id,
           saleChannelName: saleChannel.name,
           total: new Prisma.Decimal(orderData.Total || 0),
@@ -461,6 +467,7 @@ export class WebhookService {
           orderId,
           discountRatio: invoiceData.DiscountRatio,
           description: detailedInvoice?.description ?? invoiceData.Description,
+          retailerId: 310831,
           usingCod: detailedInvoice?.usingCod ?? false,
           customerCode: detailedInvoice?.customerCode ?? null,
           customerName: detailedInvoice?.customerName ?? null,
@@ -485,6 +492,7 @@ export class WebhookService {
           branchId,
           soldById,
           customerId,
+          retailerId: 310831,
           orderId,
           total: new Prisma.Decimal(invoiceData.Total || 0),
           totalPayment: new Prisma.Decimal(invoiceData.TotalPayment || 0),
@@ -737,6 +745,7 @@ export class WebhookService {
           totalRevenue: detailedCustomer?.totalRevenue
             ? new Prisma.Decimal(detailedCustomer.totalRevenue)
             : null,
+          retailerId: 310831,
           rewardPoint: detailedCustomer?.rewardPoint
             ? BigInt(detailedCustomer.rewardPoint)
             : null,
@@ -767,6 +776,7 @@ export class WebhookService {
           debt: detailedCustomer?.debt
             ? new Prisma.Decimal(detailedCustomer.debt)
             : null,
+          retailerId: 310831,
           totalInvoiced: detailedCustomer?.totalInvoiced
             ? new Prisma.Decimal(detailedCustomer.totalInvoiced)
             : null,
@@ -818,6 +828,11 @@ export class WebhookService {
           branch_name: true,
         },
       });
+      const tradeMarkId = detailedProduct?.tradeMarkId
+        ? await this.findTradeMarkId(detailedProduct.tradeMarkId)
+        : productData.TradeMarkId
+          ? await this.findTradeMarkId(productData.TradeMarkId)
+          : null;
 
       const product = await this.prismaService.product.upsert({
         where: { kiotVietId },
@@ -835,6 +850,10 @@ export class WebhookService {
           basePrice: productData.BasePrice
             ? new Prisma.Decimal(productData.BasePrice)
             : null,
+          retailerId: 310831,
+          tradeMarkId,
+          minQuantity: detailedProduct.minQuantity,
+          maxQuantity: detailedProduct.maxQuantity,
           weight: productData.Weight ?? null,
           unit: productData.Unit ?? null,
           masterProductId: productData.masterProductId
@@ -860,6 +879,7 @@ export class WebhookService {
           fullName: productData.FullName ?? productData.Name,
           categoryId: category?.id ?? null,
           categoryName: productData.CategoryName ?? category?.name ?? null,
+          retailerId: 310831,
           parent_name: category?.parent_name ?? null,
           child_name: category?.child_name ?? null,
           branch_name: category?.branch_name ?? null,
@@ -868,6 +888,9 @@ export class WebhookService {
           basePrice: productData.BasePrice
             ? new Prisma.Decimal(productData.BasePrice)
             : null,
+          tradeMarkId,
+          minQuantity: detailedProduct.minQuantity,
+          maxQuantity: detailedProduct.maxQuantity,
           weight: productData.Weight ?? null,
           unit: productData.Unit ?? null,
           masterProductId: productData.masterProductId
@@ -1246,5 +1269,15 @@ export class WebhookService {
       where: { kiotVietId: BigInt(kiotVietOrderId) },
     });
     return order?.id || null;
+  }
+
+  private async findTradeMarkId(
+    kiotVietTradeMarkId: number,
+  ): Promise<number | null> {
+    if (!kiotVietTradeMarkId) return null;
+    const tradeMark = await this.prismaService.tradeMark.findUnique({
+      where: { kiotVietId: kiotVietTradeMarkId },
+    });
+    return tradeMark?.id || null;
   }
 }
