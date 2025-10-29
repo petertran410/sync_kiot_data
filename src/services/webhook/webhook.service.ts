@@ -13,6 +13,8 @@ export class WebhookService {
     'https://dieptra2018.sg.larksuite.com/base/workflow/webhook/event/UgifaGlVqw56jvh9gx6l6Dhzg6f';
   private readonly LARK_WEBHOOK_CUSTOMER_URL =
     'https://dieptra2018.sg.larksuite.com/base/workflow/webhook/event/PjojaSOgJwMtLJhk8NXl3eYFgqf';
+  private readonly LARK_WEBHOOK_PRODUCT_URL =
+    'https://dieptra2018.sg.larksuite.com/base/workflow/webhook/event/P8dQa9E8DwdYXThRnkRlVgcdgnc';
 
   constructor(
     private readonly prismaService: PrismaService,
@@ -116,6 +118,34 @@ export class WebhookService {
     }
   }
 
+  async processProductWebhook(webhookData: any): Promise<void> {
+    try {
+      const notifications = webhookData?.Notifications || [];
+
+      for (const notification of notifications) {
+        const data = notification?.Data || [];
+
+        console.log(data);
+
+        for (const productData of data) {
+          const detailedProduct = await this.fetchProductDetail(productData.Id);
+
+          const savedProduct = await this.upsertProduct(
+            productData,
+            detailedProduct,
+          );
+
+          if (savedProduct) {
+            this.logger.log(`✅ Upserted product ${savedProduct.code}`);
+          }
+        }
+      }
+    } catch (error) {
+      this.logger.error(`❌ Process product webhook failed: ${error.message}`);
+      throw error;
+    }
+  }
+
   private async sendToLarkWebhook(webhookData: any): Promise<void> {
     try {
       await firstValueFrom(
@@ -123,7 +153,9 @@ export class WebhookService {
           headers: { 'Content-Type': 'application/json' },
         }),
       );
-      this.logger.log(`✅ Sent webhook data to Lark successfully`);
+      this.logger.log(
+        `✅ Sent webhook order & invoice data to Lark successfully`,
+      );
     } catch (error) {
       this.logger.error(`❌ Failed to send to Lark: ${error.message}`);
     }
@@ -136,7 +168,20 @@ export class WebhookService {
           headers: { 'Content-Type': 'application/json' },
         }),
       );
-      this.logger.log(`✅ Sent webhook data to Lark successfully`);
+      this.logger.log(`✅ Sent webhook customer data to Lark successfully`);
+    } catch (error) {
+      this.logger.error(`❌ Failed to send to Lark: ${error.message}`);
+    }
+  }
+
+  private async sendToLarkProductWebhook(webhookData: any): Promise<void> {
+    try {
+      await firstValueFrom(
+        this.httpService.post(this.LARK_WEBHOOK_PRODUCT_URL, webhookData, {
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+      this.logger.log(`✅ Sent webhook product data to Lark successfully`);
     } catch (error) {
       this.logger.error(`❌ Failed to send to Lark: ${error.message}`);
     }
@@ -391,13 +436,11 @@ export class WebhookService {
       const soldById = invoiceData.SoldById
         ? BigInt(invoiceData.SoldById)
         : null;
-      // const orderId = detailedInvoice?.orderId ?? invoiceData.OrderId ?? null;
       const orderId = detailedInvoice?.orderId
         ? await this.findOrderId(detailedInvoice.orderId)
         : invoiceData.OrderId
           ? await this.findOrderId(invoiceData.OrderId)
           : null;
-
       const saleChannel = await this.findSaleChannelId(
         invoiceData.SaleChannelId,
       );
@@ -761,6 +804,246 @@ export class WebhookService {
     }
   }
 
+  private async upsertProduct(productData: any, detailedProduct: any) {
+    try {
+      const kiotVietId = BigInt(productData.Id);
+
+      const category = await this.prismaService.category.findFirst({
+        where: { kiotVietId: productData.CategoryId },
+        select: {
+          id: true,
+          name: true,
+          parent_name: true,
+          child_name: true,
+          branch_name: true,
+        },
+      });
+
+      const product = await this.prismaService.product.upsert({
+        where: { kiotVietId },
+        update: {
+          code: productData.Code,
+          name: productData.Name,
+          fullName: productData.FullName ?? productData.Name,
+          categoryId: category?.id ?? null,
+          categoryName: productData.CategoryName ?? category?.name ?? null,
+          parent_name: category?.parent_name ?? null,
+          child_name: category?.child_name ?? null,
+          branch_name: category?.branch_name ?? null,
+          allowsSale: productData.AllowsSale ?? true,
+          hasVariants: productData.HasVariants ?? false,
+          basePrice: productData.BasePrice
+            ? new Prisma.Decimal(productData.BasePrice)
+            : null,
+          weight: productData.Weight ?? null,
+          unit: productData.Unit ?? null,
+          masterProductId: productData.masterProductId
+            ? BigInt(productData.masterProductId)
+            : null,
+          masterUnitId: productData.MasterUnitId
+            ? BigInt(productData.MasterUnitId)
+            : null,
+          conversionValue: productData.ConversionValue ?? null,
+          createdDate: detailedProduct?.createdDate
+            ? new Date(detailedProduct.createdDate)
+            : new Date(),
+          modifiedDate: productData.ModifiedDate
+            ? new Date(productData.ModifiedDate)
+            : new Date(),
+          lastSyncedAt: new Date(),
+          larkSyncStatus: 'PENDING',
+        },
+        create: {
+          kiotVietId,
+          code: productData.Code,
+          name: productData.Name,
+          fullName: productData.FullName ?? productData.Name,
+          categoryId: category?.id ?? null,
+          categoryName: productData.CategoryName ?? category?.name ?? null,
+          parent_name: category?.parent_name ?? null,
+          child_name: category?.child_name ?? null,
+          branch_name: category?.branch_name ?? null,
+          allowsSale: productData.AllowsSale ?? true,
+          hasVariants: productData.HasVariants ?? false,
+          basePrice: productData.BasePrice
+            ? new Prisma.Decimal(productData.BasePrice)
+            : null,
+          weight: productData.Weight ?? null,
+          unit: productData.Unit ?? null,
+          masterProductId: productData.masterProductId
+            ? BigInt(productData.masterProductId)
+            : null,
+          masterUnitId: productData.MasterUnitId
+            ? BigInt(productData.MasterUnitId)
+            : null,
+          conversionValue: productData.ConversionValue ?? null,
+          createdDate: detailedProduct?.createdDate
+            ? new Date(detailedProduct.createdDate)
+            : new Date(),
+          modifiedDate: productData.ModifiedDate
+            ? new Date(productData.ModifiedDate)
+            : new Date(),
+          larkSyncStatus: 'PENDING',
+        },
+      });
+
+      if (
+        detailedProduct?.attributes &&
+        detailedProduct.attributes.length > 0
+      ) {
+        for (let i = 0; i < detailedProduct.attributes.length; i++) {
+          const attr = detailedProduct.attributes[i];
+          await this.prismaService.productAttribute.upsert({
+            where: {
+              productId_lineNumber: {
+                productId: product.id,
+                lineNumber: i + 1,
+              },
+            },
+            update: {
+              attributeName: attr.attributeName,
+              attributeValue: attr.attributeValue,
+              lastSyncedAt: new Date(),
+              lineNumber: i + 1,
+            },
+            create: {
+              productId: product.id,
+              attributeName: attr.attributeName,
+              attributeValue: attr.attributeValue,
+              lineNumber: i + 1,
+              lastSyncedAt: new Date(),
+            },
+          });
+        }
+      }
+
+      if (
+        detailedProduct?.inventories &&
+        detailedProduct.inventories.length > 0
+      ) {
+        for (let i = 0; i < detailedProduct.inventories.length; i++) {
+          const inv = detailedProduct.inventories[i];
+          const branch = await this.prismaService.branch.findFirst({
+            where: { kiotVietId: inv.branchId },
+            select: { id: true },
+          });
+
+          if (branch) {
+            await this.prismaService.productInventory.upsert({
+              where: {
+                productId_lineNumber: {
+                  productId: product.id,
+                  lineNumber: i + 1,
+                },
+              },
+              update: {
+                branchId: branch.id,
+                branchName: inv.branchName ?? null,
+                productCode: productData.Code,
+                productName: productData.Name,
+                onHand: inv.onHand ?? 0,
+                reserved: inv.reserved ?? 0,
+                minQuantity: inv.minQuantity ?? 0,
+                maxQuantity: inv.maxQuantity ?? 0,
+                cost: inv.cost ? new Prisma.Decimal(inv.cost) : null,
+                lastSyncedAt: new Date(),
+                lineNumber: i + 1,
+              },
+              create: {
+                productId: product.id,
+                branchId: branch.id,
+                branchName: inv.branchName ?? null,
+                productCode: productData.Code,
+                productName: productData.Name,
+                onHand: inv.onHand ?? 0,
+                reserved: inv.reserved ?? 0,
+                minQuantity: inv.minQuantity ?? 0,
+                maxQuantity: inv.maxQuantity ?? 0,
+                cost: inv.cost ? new Prisma.Decimal(inv.cost) : null,
+                lineNumber: i + 1,
+                lastSyncedAt: new Date(),
+              },
+            });
+          }
+        }
+      }
+
+      if (
+        detailedProduct?.priceBooks &&
+        detailedProduct.priceBooks.length > 0
+      ) {
+        for (let i = 0; i < detailedProduct.priceBooks.length; i++) {
+          const pb = detailedProduct.priceBooks[i];
+
+          const priceBook = await this.prismaService.priceBook.findFirst({
+            where: { kiotVietId: pb.priceBookId },
+            select: { id: true, name: true },
+          });
+
+          if (priceBook) {
+            await this.prismaService.priceBookDetail.upsert({
+              where: {
+                productId_lineNumber: {
+                  productId: product.id,
+                  lineNumber: i + 1,
+                },
+              },
+              update: {
+                priceBookId: priceBook.id,
+                priceBookName: pb.priceBookName ?? priceBook.name,
+                productName: productData.Name,
+                price: pb.price
+                  ? new Prisma.Decimal(pb.price)
+                  : new Prisma.Decimal(0),
+                lastSyncedAt: new Date(),
+              },
+              create: {
+                productId: product.id,
+                priceBookId: priceBook.id,
+                priceBookName: pb.priceBookName ?? priceBook.name,
+                productName: productData.Name,
+                price: pb.price
+                  ? new Prisma.Decimal(pb.price)
+                  : new Prisma.Decimal(0),
+                lineNumber: i + 1,
+                lastSyncedAt: new Date(),
+              },
+            });
+          }
+        }
+      }
+
+      if (detailedProduct?.images && detailedProduct.images.length > 0) {
+        for (let i = 0; i < detailedProduct.images.length; i++) {
+          const img = detailedProduct.images[i];
+          await this.prismaService.productImage.upsert({
+            where: {
+              productId_lineNumber: {
+                productId: product.id,
+                lineNumber: i + 1,
+              },
+            },
+            update: {
+              imageUrl: img.image ? { url: img.image } : Prisma.JsonNull,
+              lastSyncedAt: new Date(),
+            },
+            create: {
+              productId: product.id,
+              imageUrl: img.image ? { url: img.image } : Prisma.JsonNull,
+              lineNumber: i + 1,
+              lastSyncedAt: new Date(),
+            },
+          });
+        }
+      }
+
+      return product;
+    } catch (error) {
+      this.logger.error(`❌ Upsert product failed: ${error.message}`);
+      throw error;
+    }
+  }
+
   private async fetchCustomerDetail(customerId: number): Promise<any> {
     try {
       const accessToken = await this.authService.getAccessToken();
@@ -838,6 +1121,38 @@ export class WebhookService {
       return response.data;
     } catch (error) {
       this.logger.warn(`⚠️ Could not fetch invoice detail: ${error.message}`);
+      return null;
+    }
+  }
+
+  private async fetchProductDetail(productId: number): Promise<any> {
+    try {
+      const accessToken = await this.authService.getAccessToken();
+      const baseUrl = this.configService.get<string>('KIOT_BASE_URL');
+      const shopName = this.configService.get<string>('KIOT_SHOP_NAME');
+
+      const queryParams = new URLSearchParams({
+        includeInventory: 'true',
+        includePricebook: 'true',
+      });
+
+      const url = `${baseUrl}/products/${productId}?${queryParams}`;
+
+      const response = await firstValueFrom(
+        this.httpService.get(url, {
+          headers: {
+            Retailer: shopName,
+            Authorization: `Bearer ${accessToken}`,
+          },
+        }),
+      );
+
+      this.logger.log('📦 Fetched product detail:');
+      this.logger.log(JSON.stringify(response.data, null, 2));
+
+      return response.data;
+    } catch (error) {
+      this.logger.warn(`⚠️ Could not fetch product detail: ${error.message}`);
       return null;
     }
   }

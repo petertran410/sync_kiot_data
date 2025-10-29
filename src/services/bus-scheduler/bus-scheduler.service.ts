@@ -26,7 +26,7 @@ export class BusSchedulerService implements OnModuleInit {
     this.logger.log('BusScheduler initialized - Daily sync at 22:00');
   }
 
-  @Cron('15 9 * * *', {
+  @Cron('0 22 * * *', {
     name: 'daily_full_sync',
     timeZone: 'Asia/Ho_Chi_Minh',
   })
@@ -37,7 +37,6 @@ export class BusSchedulerService implements OnModuleInit {
       await this.updateCycleTracking('daily_full_sync', 'running');
 
       const results = await Promise.allSettled([
-        this.syncDailyCustomers(),
         this.syncDailyOrders(),
         this.syncDailyInvoices(),
       ]);
@@ -76,22 +75,6 @@ export class BusSchedulerService implements OnModuleInit {
         error.message,
       );
     }
-  }
-
-  private async syncDailyCustomers() {
-    this.logger.log('Syncing customers...');
-
-    await this.customerService.enableHistoricalSync();
-    await this.customerService.syncHistoricalCustomers();
-
-    const customersToSync = await this.prismaService.customer.findMany({
-      where: {
-        OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
-      },
-    });
-
-    await this.larkCustomerSyncService.syncCustomersToLarkBase(customersToSync);
-    this.logger.log(`Synced ${customersToSync.length} customers to LarkBase`);
   }
 
   private async syncDailyOrders() {
@@ -135,7 +118,7 @@ export class BusSchedulerService implements OnModuleInit {
       where: { name },
       create: {
         name,
-        entities: ['customer', 'order', 'invoice'],
+        entities: ['order', 'invoice'],
         syncMode: 'historical',
         isEnabled: false,
         isRunning: status === 'running',

@@ -222,7 +222,7 @@ export class KiotVietOrderService {
         }
 
         const dateStart = new Date();
-        dateStart.setDate(dateStart.getDate() - 90);
+        dateStart.setDate(dateStart.getDate() - 70);
         const dateStartStr = dateStart.toISOString().split('T')[0];
 
         const dateEnd = new Date();
@@ -237,7 +237,7 @@ export class KiotVietOrderService {
             orderDirection: 'DESC',
             includePayment: true,
             includeOrderDelivery: true,
-            lastModifiedFrom: '2024-12-1',
+            lastModifiedFrom: dateStartStr,
             toDate: dateEndStr,
           });
 

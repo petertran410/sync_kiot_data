@@ -52,4 +52,17 @@ export class WebhookController {
       return { success: true };
     }
   }
+
+  @Post('product')
+  @HttpCode(HttpStatus.OK)
+  async handleProductWebhook(@Body() webhookData: any) {
+    try {
+      this.logger.log('📨 Received KiotViet product webhook');
+      await this.webhookService.processProductWebhook(webhookData);
+      return { success: true };
+    } catch (error) {
+      this.logger.error(`❌ Product webhook error: ${error.message}`);
+      return { success: true };
+    }
+  }
 }
