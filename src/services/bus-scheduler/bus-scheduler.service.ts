@@ -14,8 +14,6 @@ export class BusSchedulerService implements OnModuleInit {
 
   constructor(
     private readonly prismaService: PrismaService,
-    private readonly customerService: KiotVietCustomerService,
-    private readonly larkCustomerSyncService: LarkCustomerSyncService,
     private readonly invoiceService: KiotVietInvoiceService,
     private readonly larkInvoiceSyncService: LarkInvoiceSyncService,
     private readonly orderService: KiotVietOrderService,
