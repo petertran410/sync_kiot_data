@@ -317,16 +317,24 @@ export class WebhookService {
     webhookData: any,
   ): Promise<void> {
     try {
+      const sanitizedData = JSON.parse(
+        JSON.stringify(webhookData, (key, value) =>
+          typeof value === 'bigint' ? value.toString() : value,
+        ),
+      );
+
       await firstValueFrom(
         this.httpService.post(
           this.LARK_WEBHOOK_PRICEBOOK_DETAIL_URL,
-          webhookData,
+          sanitizedData,
           {
             headers: { 'Content-Type': 'application/json' },
           },
         ),
       );
-      this.logger.log(`✅ Sent webhook pricebook data to Lark successfully`);
+      this.logger.log(
+        `✅ Sent webhook pricebook detail data to Lark successfully`,
+      );
     } catch (error) {
       this.logger.error(`❌ Failed to send to Lark: ${error.message}`);
     }
@@ -1598,7 +1606,7 @@ export class WebhookService {
           priceBookName: priceBook.name,
           productName: product.name,
           productId: product.id,
-          productKiotId: BigInt(product.kiotVietId),
+          productKiotId: product.kiotVietId,
           price: detailData.Price
             ? new Prisma.Decimal(detailData.Price)
             : new Prisma.Decimal(0),
@@ -1608,7 +1616,7 @@ export class WebhookService {
           priceBookId: priceBook.id,
           priceBookName: priceBook.name,
           productId: product.id,
-          productKiotId: BigInt(product.kiotVietId),
+          productKiotId: product.kiotVietId,
           productName: product.name,
           price: detailData.Price
             ? new Prisma.Decimal(detailData.Price)
