@@ -1598,7 +1598,7 @@ export class WebhookService {
           priceBookName: priceBook.name,
           productName: product.name,
           productId: product.id,
-          productKiotId: product.kiotVietId,
+          productKiotId: BigInt(product.kiotVietId),
           price: detailData.Price
             ? new Prisma.Decimal(detailData.Price)
             : new Prisma.Decimal(0),
@@ -1608,7 +1608,7 @@ export class WebhookService {
           priceBookId: priceBook.id,
           priceBookName: priceBook.name,
           productId: product.id,
-          productKiotId: product.kiotVietId,
+          productKiotId: BigInt(product.kiotVietId),
           productName: product.name,
           price: detailData.Price
             ? new Prisma.Decimal(detailData.Price)
