@@ -1860,16 +1860,6 @@ export class WebhookService {
     return order?.id || null;
   }
 
-  private async findOrderIdForPriceBookDetail(
-    kiotVietOrderId: number,
-  ): Promise<bigint | null> {
-    if (!kiotVietOrderId) return null;
-    const order = await this.prismaService.order.findUnique({
-      where: { kiotVietId: BigInt(kiotVietOrderId) },
-    });
-    return order?.kiotVietId || null;
-  }
-
   private async findTradeMarkId(
     kiotVietTradeMarkId: number,
   ): Promise<number | null> {
