@@ -1510,7 +1510,7 @@ export class WebhookService {
 
       let product = await this.prismaService.product.findUnique({
         where: { kiotVietId: BigInt(detailData.ProductId) },
-        select: { id: true, code: true, name: true },
+        select: { id: true, code: true, name: true, kiotVietId: true },
       });
 
       if (!product) {
@@ -1550,7 +1550,7 @@ export class WebhookService {
           if (savedProduct) {
             product = await this.prismaService.product.findUnique({
               where: { kiotVietId: BigInt(detailData.ProductId) },
-              select: { id: true, code: true, name: true },
+              select: { id: true, code: true, name: true, kiotVietId: true },
             });
           }
         }
@@ -1597,6 +1597,8 @@ export class WebhookService {
           priceBookId: priceBook.id,
           priceBookName: priceBook.name,
           productName: product.name,
+          productId: product.id,
+          productKiotId: product.kiotVietId,
           price: detailData.Price
             ? new Prisma.Decimal(detailData.Price)
             : new Prisma.Decimal(0),
@@ -1606,6 +1608,7 @@ export class WebhookService {
           priceBookId: priceBook.id,
           priceBookName: priceBook.name,
           productId: product.id,
+          productKiotId: product.kiotVietId,
           productName: product.name,
           price: detailData.Price
             ? new Prisma.Decimal(detailData.Price)
@@ -1855,6 +1858,16 @@ export class WebhookService {
       where: { kiotVietId: BigInt(kiotVietOrderId) },
     });
     return order?.id || null;
+  }
+
+  private async findOrderIdForPriceBookDetail(
+    kiotVietOrderId: number,
+  ): Promise<bigint | null> {
+    if (!kiotVietOrderId) return null;
+    const order = await this.prismaService.order.findUnique({
+      where: { kiotVietId: BigInt(kiotVietOrderId) },
+    });
+    return order?.kiotVietId || null;
   }
 
   private async findTradeMarkId(

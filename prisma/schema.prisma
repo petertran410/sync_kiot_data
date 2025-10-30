@@ -916,6 +916,7 @@ model PriceBookDetail {
   id            Int        @id @default(autoincrement())
   priceBookId   Int?
   productId     Int
+  productKiotId BigInt?
   price         Decimal    @db.Decimal(15, 2)
   lastSyncedAt  DateTime   @default(now())
   lineNumber    Int?
