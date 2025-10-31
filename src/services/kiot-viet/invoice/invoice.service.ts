@@ -267,7 +267,7 @@ export class KiotVietInvoiceService {
 
             if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
               this.logger.log(
-                `🔚 Reached end after ${consecutiveEmptyPages} empty pages`,
+                `Reached end after ${consecutiveEmptyPages} empty pages`,
               );
               break;
             }
@@ -746,110 +746,6 @@ export class KiotVietInvoiceService {
   //   }
   // }
 
-  private async fetchInvoicesByCreatedDate(
-    fromDate: string,
-    toDate: string,
-  ): Promise<any[]> {
-    const allInvoices: any[] = [];
-    let currentItem = 0;
-    let hasMore = true;
-
-    while (hasMore) {
-      const response = await this.fetchInvoicesListWithRetry({
-        currentItem,
-        pageSize: this.PAGE_SIZE,
-        orderBy: 'createdDate',
-        orderDirection: 'DESC',
-        includeInvoiceDelivery: true,
-        includePayment: true,
-        includeTotal: true,
-      });
-
-      if (!response || !response.data || response.data.length === 0) {
-        hasMore = false;
-        break;
-      }
-
-      const invoicesInWindow = response.data.filter((invoice) => {
-        if (!invoice.createdDate) return false;
-        const createdDate = new Date(invoice.createdDate)
-          .toISOString()
-          .split('T')[0];
-        return createdDate >= fromDate && createdDate <= toDate;
-      });
-
-      allInvoices.push(...invoicesInWindow);
-
-      if (invoicesInWindow.length === 0 && allInvoices.length > 0) {
-        hasMore = false;
-        break;
-      }
-
-      currentItem += this.PAGE_SIZE;
-
-      if (currentItem > 5000) {
-        this.logger.warn(
-          'Reached safety limit of 5000 items for created date query',
-        );
-        hasMore = false;
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-
-    return allInvoices;
-  }
-
-  private async fetchInvoicesByModifiedDate(
-    fromDate: string,
-    toDate: string,
-  ): Promise<any[]> {
-    const allInvoices: any[] = [];
-    let currentItem = 0;
-    let hasMore = true;
-
-    while (hasMore) {
-      const response = await this.fetchInvoicesListWithRetry({
-        currentItem,
-        pageSize: this.PAGE_SIZE,
-        orderBy: 'createdDate',
-        orderDirection: 'DESC',
-        includeInvoiceDelivery: true,
-        includePayment: true,
-        includeTotal: true,
-        // lastModifiedFrom: fromDate,
-        // toDate: toDate,
-        fromPurchaseDate: fromDate,
-        toPurchaseDate: toDate,
-      });
-
-      if (!response || !response.data || response.data.length === 0) {
-        hasMore = false;
-        break;
-      }
-
-      allInvoices.push(...response.data);
-
-      if (response.total && currentItem + this.PAGE_SIZE >= response.total) {
-        hasMore = false;
-        break;
-      }
-
-      currentItem += this.PAGE_SIZE;
-
-      if (currentItem > 5000) {
-        this.logger.warn(
-          'Reached safety limit of 5000 items for modified date query',
-        );
-        hasMore = false;
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-
-    return allInvoices;
-  }
-
   async fetchInvoicesListWithRetry(
     params: {
       currentItem?: number;
@@ -967,35 +863,6 @@ export class KiotVietInvoiceService {
     );
 
     return response.data?.data || [];
-  }
-
-  private async enrichInvoicesWithDetails(): Promise<KiotVietInvoice[]> {
-    this.logger.log(`🔍 Enriching  invoices with details...`);
-
-    const enrichedInvoices: any[] = [];
-
-    try {
-      const headers = await this.authService.getRequestHeaders();
-      const response = await firstValueFrom(
-        this.httpService.get(`${this.baseUrl}/invoices}`, {
-          headers,
-        }),
-      );
-
-      if (response.data) {
-        enrichedInvoices.push(response.data);
-      } else {
-        // enrichedInvoices.push(invoice);
-        console.log('No invoice');
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    } catch (error) {
-      this.logger.warn(`Failed to enrich invoice: ${error.message}`);
-      // enrichedInvoices.push(invoice);
-    }
-
-    return enrichedInvoices;
   }
 
   private async saveInvoicesToDatabase(invoices: any[]): Promise<any[]> {

@@ -463,6 +463,30 @@ export class SyncController {
   //   }
   // }
 
+  @Post('return-historical')
+  async syncReturnsHistorical() {
+    try {
+      this.logger.log('Starting return sync...');
+
+      await this.returnService.enableHistoricalSync();
+
+      await this.returnService.syncHistoricalReturns();
+
+      return {
+        success: true,
+        message: 'Returns sync completed successfully',
+        timestamp: new Date().toISOString,
+      };
+    } catch (error) {
+      this.logger.error(`❌ Cashflow sync failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
+
   @Get('demand/from-lark')
   async syncDemandFromLark() {
     try {
