@@ -7,6 +7,7 @@ import { KiotVietInvoiceService } from '../kiot-viet/invoice/invoice.service';
 import { LarkInvoiceSyncService } from '../lark/invoice/lark-invoice-sync.service';
 import { KiotVietOrderService } from '../kiot-viet/order/order.service';
 import { LarkOrderSyncService } from '../lark/order/lark-order-sync.service';
+import { KiotVietReturnService } from '../kiot-viet/returns/return.service';
 
 @Injectable()
 export class BusSchedulerService implements OnModuleInit {
@@ -17,6 +18,7 @@ export class BusSchedulerService implements OnModuleInit {
     private readonly invoiceService: KiotVietInvoiceService,
     private readonly larkInvoiceSyncService: LarkInvoiceSyncService,
     private readonly orderService: KiotVietOrderService,
+    private readonly returnService: KiotVietReturnService,
     private readonly larkOrderSyncService: LarkOrderSyncService,
   ) {}
 
@@ -72,6 +74,30 @@ export class BusSchedulerService implements OnModuleInit {
         'failed',
         error.message,
       );
+    }
+  }
+
+  @Cron('0 7 * * 0', { timeZone: 'Asia/Ho_Chi_Minh' })
+  async syncAllReturns() {
+    try {
+      this.logger.log('Starting return sync...');
+
+      await this.returnService.enableHistoricalSync();
+
+      await this.returnService.syncHistoricalReturns();
+
+      return {
+        success: true,
+        message: 'Returns sync completed successfully',
+        timestamp: new Date().toISOString,
+      };
+    } catch (error) {
+      this.logger.error(`❌ Cashflow sync failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
     }
   }
 

@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
-import { async, firstValueFrom, of } from 'rxjs';
+import { async, firstValueFrom } from 'rxjs';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { KiotVietAuthService } from '../auth.service';
 import { LarkInvoiceSyncService } from '../../lark/invoice/lark-invoice-sync.service';
