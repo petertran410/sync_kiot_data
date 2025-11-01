@@ -1331,16 +1331,14 @@ export class LarkPurchaseOrderSyncService {
         const response = await firstValueFrom(
           this.httpService.put(
             url,
-            {
-              fields: this.mapPurchaseOrderDetailToLarkBase(detail),
-            },
+            { fields: this.mapPurchaseOrderDetailToLarkBase(detail) },
             { headers, timeout: 15000 },
           ),
         );
 
         if (response.data.code === 0) {
           this.logger.debug(
-            `Updated record ${detail.larkRecordId} for purchase_order_detail ${detail.code}`,
+            `Updated record ${detail.larkRecordId} for purchase_order_detail ${detail.uniqueKey}`,
           );
           return true;
         }
@@ -1362,7 +1360,7 @@ export class LarkPurchaseOrderSyncService {
           continue;
         }
 
-        if (error?.response?.status === 404) {
+        if (error.response?.status === 404) {
           this.logger.warn(`Record not found: ${detail.larkRecordId}`);
           return false;
         }
