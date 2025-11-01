@@ -1802,10 +1802,6 @@ export class LarkPurchaseOrderSyncService {
           larkSyncRetries: status === 'FAILED' ? { increment: 1 } : 0,
         },
       });
-
-      this.logger.debug(
-        `✅ Updated ${detailIds.length} purchase order details to ${status}`,
-      );
     } catch (error) {
       this.logger.error(
         `❌ Failed to update detail database status: ${error.message}`,

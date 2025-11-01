@@ -678,7 +678,7 @@ export class WebhookService {
           const detail = detailedInvoice.invoiceDetails[i];
           const product = await this.prismaService.product.findUnique({
             where: { kiotVietId: BigInt(detail.productId) },
-            select: { id: true, code: true, name: true },
+            select: { id: true, code: true, name: true, kiotVietId: true },
           });
 
           if (product) {
@@ -690,6 +690,8 @@ export class WebhookService {
                 },
               },
               update: {
+                invoiceId: Number(invoice.kiotVietId),
+                productId: Number(product.kiotVietId),
                 quantity: detail.quantity,
                 price: new Prisma.Decimal(detail.price),
                 discount: detail.discount
@@ -705,8 +707,8 @@ export class WebhookService {
                 productName: product.name,
               },
               create: {
-                invoiceId: invoice.id,
-                productId: product.id,
+                invoiceId: Number(invoice.kiotVietId),
+                productId: Number(product.kiotVietId),
                 productCode: product.code,
                 productName: product.name,
                 quantity: detail.quantity,
