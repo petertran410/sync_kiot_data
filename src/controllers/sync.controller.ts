@@ -29,17 +29,21 @@ export class SyncController {
   private readonly logger = new Logger(SyncController.name);
 
   constructor(
-    private readonly busScheduler: BusSchedulerService,
     private readonly customerService: KiotVietCustomerService,
+    private readonly customerGroupService: KiotVietCustomerGroupService,
     private readonly larkCustomerSyncService: LarkCustomerSyncService,
+
     private readonly invoiceService: KiotVietInvoiceService,
     private readonly larkInvoiceSyncService: LarkInvoiceSyncService,
     private readonly larkInvoiceDetailSyncService: LarkInvoiceDetailSyncService,
+
     private readonly orderService: KiotVietOrderService,
     private readonly larkOrderSyncService: LarkOrderSyncService,
+
     private readonly productService: KiotVietProductService,
+
     private readonly categoryService: KiotVietCategoryService,
-    private readonly customerGroupService: KiotVietCustomerGroupService,
+
     private readonly returnService: KiotVietReturnService,
     private readonly priceBookService: KiotVietPriceBookService,
     private readonly larkProductSevice: LarkProductSyncService,

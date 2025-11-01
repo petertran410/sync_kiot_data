@@ -109,6 +109,14 @@ export class KiotVietInvoiceService {
   private readonly baseUrl: string;
   private readonly PAGE_SIZE = 100;
 
+  private readonly INVOICE_DETAIL_SYNC_KEYWORDS = [
+    'lỗi',
+    'date',
+    'thanh lý',
+    'rách',
+    'bục',
+  ];
+
   constructor(
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
@@ -189,6 +197,16 @@ export class KiotVietInvoiceService {
     });
 
     this.logger.log('Historical invoice sync enabled');
+  }
+
+  private shouldSyncInvoiceDetail(note: string | null): boolean {
+    if (!note) return false;
+
+    const noteLower = note.toLowerCase().trim();
+
+    return this.INVOICE_DETAIL_SYNC_KEYWORDS.some((keyword) =>
+      noteLower.includes(keyword.toLowerCase()),
+    );
   }
 
   async syncHistoricalInvoices(): Promise<void> {
@@ -987,8 +1005,7 @@ export class KiotVietInvoiceService {
 
             const acsNumber: number = i + 1;
 
-            const shouldSyncDetail =
-              detail.note && detail.note.toLowerCase().includes('thanh lý');
+            const shouldSyncDetail = this.shouldSyncInvoiceDetail(detail.note);
 
             const detailLarkSyncStatus = shouldSyncDetail ? 'PENDING' : 'SKIP';
 

@@ -12,6 +12,7 @@ import { KiotVietOrderSupplierService } from '../kiot-viet/order-supplier/order-
 import { LarkOrderSupplierSyncService } from '../lark/order-supplier/lark-order-supplier-sync.service';
 import { KiotVietPurchaseOrderService } from '../kiot-viet/purchase-order/purchase-order.service';
 import { LarkPurchaseOrderSyncService } from '../lark/purchase-order/lark-purchase-order-sync.service';
+import { LarkInvoiceDetailSyncService } from '../lark/invoice-detail/lark-invoice-detail-sync.service';
 
 @Injectable()
 export class BusSchedulerService implements OnModuleInit {
@@ -21,6 +22,7 @@ export class BusSchedulerService implements OnModuleInit {
     private readonly prismaService: PrismaService,
     private readonly invoiceService: KiotVietInvoiceService,
     private readonly larkInvoiceSyncService: LarkInvoiceSyncService,
+    private readonly larkInvoiceDetailSyncService: LarkInvoiceDetailSyncService,
 
     private readonly orderService: KiotVietOrderService,
     private readonly larkOrderSyncService: LarkOrderSyncService,
@@ -214,6 +216,8 @@ export class BusSchedulerService implements OnModuleInit {
     });
 
     await this.larkInvoiceSyncService.syncInvoicesToLarkBase(invoicesToSync);
+
+    await this.larkInvoiceDetailSyncService.syncInvoiceDetailsToLarkBase();
     this.logger.log(`Synced ${invoicesToSync.length} invoices to LarkBase`);
   }
 
