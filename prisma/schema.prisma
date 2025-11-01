@@ -568,6 +568,7 @@ model InvoiceDetail {
   lineNumber    Int?
   productCode   String?
   productName   String?
+  uniqueKey     String?                    @unique
   invoice       Invoice  @relation(fields: [invoiceId], references: [id])
   product       Product  @relation(fields: [productId], references: [id])
 

@@ -253,11 +253,12 @@ export class KiotVietInvoiceService {
             currentItem,
             pageSize: this.PAGE_SIZE,
             orderBy: 'id',
-            orderDirection: 'DESC',
+            orderDirection: 'ASC',
             includeInvoiceDelivery: true,
             includePayment: true,
             includeTotal: true,
-            fromPurchaseDate: dateStartStr,
+            // fromPurchaseDate: dateStartStr,
+            fromPurchaseDate: '2024-12-1',
             toPurchaseDate: dateEndStr,
           });
 
@@ -984,6 +985,8 @@ export class KiotVietInvoiceService {
               select: { id: true, name: true, code: true, kiotVietId: true },
             });
 
+            const acsNumber: number = i + 1;
+
             if (product) {
               await this.prismaService.invoiceDetail.upsert({
                 where: {
@@ -1000,6 +1003,7 @@ export class KiotVietInvoiceService {
                   productCode: product.code,
                   productName: product.name,
                   quantity: detail.quantity,
+                  uniqueKey: invoice.id + '.' + acsNumber,
                   price: new Prisma.Decimal(detail.price),
                   discount: detail.discount
                     ? new Prisma.Decimal(detail.discount)
@@ -1018,6 +1022,7 @@ export class KiotVietInvoiceService {
                   productCode: product.code,
                   productName: product.name,
                   quantity: detail.quantity,
+                  uniqueKey: invoice.id + '.' + acsNumber,
                   price: new Prisma.Decimal(detail.price),
                   discount: detail.discount
                     ? new Prisma.Decimal(detail.discount)
