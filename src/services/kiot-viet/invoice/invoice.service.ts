@@ -981,7 +981,7 @@ export class KiotVietInvoiceService {
             const detail = invoiceData.invoiceDetails[i];
             const product = await this.prismaService.product.findFirst({
               where: { kiotVietId: BigInt(detail.productId) },
-              select: { id: true, name: true, code: true },
+              select: { id: true, name: true, code: true, kiotVietId: true },
             });
 
             if (product) {
@@ -993,7 +993,10 @@ export class KiotVietInvoiceService {
                   },
                 },
                 update: {
+                  invoiceId: invoice.id,
                   productId: product.id,
+                  invoiceKiotVietId: invoice.kiotVietId,
+                  productKiotVietId: product.kiotVietId,
                   productCode: product.code,
                   productName: product.name,
                   quantity: detail.quantity,
@@ -1010,6 +1013,8 @@ export class KiotVietInvoiceService {
                 create: {
                   invoiceId: invoice.id,
                   productId: product.id,
+                  invoiceKiotVietId: invoice.kiotVietId,
+                  productKiotVietId: product.kiotVietId,
                   productCode: product.code,
                   productName: product.name,
                   quantity: detail.quantity,

@@ -556,6 +556,8 @@ model InvoiceDetail {
   id            Int      @id @default(autoincrement())
   invoiceId     Int
   productId     Int
+  invoiceKiotVietId   BigInt?
+  productKiotVietId   BigInt?
   quantity      Float
   price         Decimal  @db.Decimal(15, 2)
   discount      Decimal? @db.Decimal(15, 2)
@@ -573,6 +575,8 @@ model InvoiceDetail {
   @@index([invoiceId])
   @@index([productId])
   @@index([invoiceId, productId])
+  @@index([invoiceKiotVietId])
+  @@index([productKiotVietId])
 }
 
 model InvoiceDelivery {

@@ -692,6 +692,8 @@ export class WebhookService {
               update: {
                 invoiceId: invoice.id,
                 productId: product.id,
+                invoiceKiotVietId: invoice.kiotVietId,
+                productKiotVietId: product.kiotVietId,
                 quantity: detail.quantity,
                 price: new Prisma.Decimal(detail.price),
                 discount: detail.discount
@@ -709,6 +711,8 @@ export class WebhookService {
               create: {
                 invoiceId: invoice.id,
                 productId: product.id,
+                invoiceKiotVietId: invoice.kiotVietId,
+                productKiotVietId: product.kiotVietId,
                 productCode: product.code,
                 productName: product.name,
                 quantity: detail.quantity,
