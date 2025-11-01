@@ -571,7 +571,7 @@ export class LarkOrderSupplierSyncService {
           }
 
           totalLoaded += records.length;
-          pageToken = response.data.data?.page_token || '';
+          pageToken = response.data.data?.page_token;
 
           if (totalLoaded % 1500 === 0 || !pageToken) {
             this.logger.log(
@@ -661,7 +661,7 @@ export class LarkOrderSupplierSyncService {
           }
 
           totalDetailLoaded += records.length;
-          pageToken = response.data.data?.page_token || '';
+          pageToken = response.data.data?.page_token;
 
           if (totalDetailLoaded % 1500 === 0 || !pageToken) {
             this.logger.log(
