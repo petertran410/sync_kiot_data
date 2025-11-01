@@ -8,6 +8,10 @@ import { LarkInvoiceSyncService } from '../lark/invoice/lark-invoice-sync.servic
 import { KiotVietOrderService } from '../kiot-viet/order/order.service';
 import { LarkOrderSyncService } from '../lark/order/lark-order-sync.service';
 import { KiotVietReturnService } from '../kiot-viet/returns/return.service';
+import { KiotVietOrderSupplierService } from '../kiot-viet/order-supplier/order-supplier.service';
+import { LarkOrderSupplierSyncService } from '../lark/order-supplier/lark-order-supplier-sync.service';
+import { KiotVietPurchaseOrderService } from '../kiot-viet/purchase-order/purchase-order.service';
+import { LarkPurchaseOrderSyncService } from '../lark/purchase-order/lark-purchase-order-sync.service';
 
 @Injectable()
 export class BusSchedulerService implements OnModuleInit {
@@ -17,9 +21,17 @@ export class BusSchedulerService implements OnModuleInit {
     private readonly prismaService: PrismaService,
     private readonly invoiceService: KiotVietInvoiceService,
     private readonly larkInvoiceSyncService: LarkInvoiceSyncService,
+
     private readonly orderService: KiotVietOrderService,
-    private readonly returnService: KiotVietReturnService,
     private readonly larkOrderSyncService: LarkOrderSyncService,
+
+    private readonly returnService: KiotVietReturnService,
+
+    private readonly orderSupplierService: KiotVietOrderSupplierService,
+    private readonly larkOrderSupplierService: LarkOrderSupplierSyncService,
+
+    private readonly purchaseOrderService: KiotVietPurchaseOrderService,
+    private readonly larkPurchaseOrderSyncService: LarkPurchaseOrderSyncService,
   ) {}
 
   async onModuleInit() {
@@ -93,6 +105,78 @@ export class BusSchedulerService implements OnModuleInit {
       };
     } catch (error) {
       this.logger.error(`❌ Cashflow sync failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
+
+  @Cron('0 8 * * 0', { timeZone: 'Asia/Ho_Chi_Minh' })
+  async syncOrderSuppliers() {
+    try {
+      this.logger.log('Starting order-supplier sync...');
+
+      await this.orderSupplierService.enableHistoricalSync();
+      await this.orderSupplierService.syncHistoricalOrderSuppliers();
+
+      const orderSuppliersToSync =
+        await this.prismaService.orderSupplier.findMany({
+          where: {
+            OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+          },
+        });
+
+      await this.larkOrderSupplierService.syncOrderSuppliersToLarkBase(
+        orderSuppliersToSync,
+      );
+
+      await this.larkOrderSupplierService.syncOrderSupplierDetailsToLarkBase();
+
+      return {
+        success: true,
+        message: 'Order supplier and detail sync completed',
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error) {
+      this.logger.error(`Order supplier sync failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
+
+  @Cron('0 9 * * 0', { timeZone: 'Asia/Ho_Chi_Minh' })
+  async syncPurchaseOrders() {
+    try {
+      this.logger.log('Starting purchase-order sync...');
+
+      await this.purchaseOrderService.enableHistoricalSync();
+      await this.purchaseOrderService.syncHistoricalPurchaseOrder();
+
+      const purchaseOrdersToSync =
+        await this.prismaService.purchaseOrder.findMany({
+          where: {
+            OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+          },
+        });
+
+      await this.larkPurchaseOrderSyncService.syncPurchaseOrdersToLarkBase(
+        purchaseOrdersToSync,
+      );
+
+      await this.larkPurchaseOrderSyncService.syncPurchaseOrderDetailsToLarkBase();
+
+      return {
+        success: true,
+        message: 'Purchase Order and Purchase Order Detail sync completed',
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error) {
+      this.logger.error(`Purchase Order sync failed: ${error.message}`);
       return {
         success: false,
         error: error.message,

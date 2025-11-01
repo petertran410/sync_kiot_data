@@ -461,6 +461,42 @@ export class SyncController {
     }
   }
 
+  @Post('purchase-order')
+  async syncPurchaseOrders() {
+    try {
+      this.logger.log('Starting purchase-order sync...');
+
+      await this.purchaseOrderService.enableHistoricalSync();
+      await this.purchaseOrderService.syncHistoricalPurchaseOrder();
+
+      const purchaseOrdersToSync =
+        await this.prismaService.purchaseOrder.findMany({
+          where: {
+            OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+          },
+        });
+
+      await this.larkPurchaseOrderSyncService.syncPurchaseOrdersToLarkBase(
+        purchaseOrdersToSync,
+      );
+
+      await this.larkPurchaseOrderSyncService.syncPurchaseOrderDetailsToLarkBase();
+
+      return {
+        success: true,
+        message: 'Purchase Order and Purchase Order Detail sync completed',
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error) {
+      this.logger.error(`Purchase Order sync failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
+
   @Post('return-historical')
   async syncReturnsHistorical() {
     try {
