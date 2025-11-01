@@ -316,6 +316,19 @@ export class KiotVietOrderSupplierService {
           processedCount += pageProcessedCount;
           currentItem += this.PAGE_SIZE;
 
+          if (allSavedOrderSuppliers.length > 0) {
+            try {
+              await this.syncOrderSuppliersToLarkBase(allSavedOrderSuppliers);
+              this.logger.log(
+                `Synced ${allSavedOrderSuppliers.length} order-suppliers to LarkBase`,
+              );
+            } catch (error) {
+              this.logger.warn(
+                `LarkBase sync failed for page ${currentPage}: ${error.message}`,
+              );
+            }
+          }
+
           if (totalOrderSuppliers > 0) {
             const completionPercentage =
               (processedCount / totalOrderSuppliers) * 100;
