@@ -20,6 +20,9 @@ export class LarkAuthService {
   private invoiceAccessToken: string | null = null;
   private invoiceTokenExpiry: Date | null = null;
 
+  private invoiceDetailAccessToken: string | null = null;
+  private invoiceDetailTokenExpiry: Date | null = null;
+
   private orderAccessToken: string | null = null;
   private orderTokenExpiry: Date | null = null;
 
@@ -56,6 +59,7 @@ export class LarkAuthService {
     service:
       | 'customer'
       | 'invoice'
+      | 'invoiceDetail'
       | 'order'
       | 'product'
       | 'supplier'
@@ -71,6 +75,8 @@ export class LarkAuthService {
         return await this.getCustomerAccessToken();
       case 'invoice':
         return await this.getInvoiceAccessToken();
+      case 'invoiceDetail':
+        return await this.getInvoiceDetailAccessToken();
       case 'order':
         return await this.getOrderAccessToken();
       case 'product':
@@ -266,6 +272,97 @@ export class LarkAuthService {
     this.invoiceAccessToken = null;
     this.invoiceTokenExpiry = null;
     await this.refreshInvoiceToken();
+  }
+
+  // ============================================================================
+  // INVOICE DETAIL TOKEN MANAGEMENT
+  // ============================================================================
+
+  async getInvoiceDetailHeaders(): Promise<Record<string, string>> {
+    const token = await this.getInvoiceDetailAccessToken();
+    return {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    };
+  }
+
+  private async getInvoiceDetailAccessToken(): Promise<string> {
+    if (
+      this.invoiceDetailAccessToken &&
+      this.invoiceDetailTokenExpiry &&
+      this.invoiceDetailTokenExpiry > new Date(Date.now() + 5 * 60 * 1000)
+    ) {
+      return this.invoiceDetailAccessToken;
+    }
+
+    return await this.refreshInvoiceDetailToken();
+  }
+
+  private async refreshInvoiceDetailToken(): Promise<string> {
+    try {
+      this.logger.log('🔄 Refreshing LarkBase invoice detail access token...');
+
+      const appId = this.configService.get<string>(
+        'LARK_INVOICE_DETAIL_SYNC_APP_ID',
+      );
+      const appSecret = this.configService.get<string>(
+        'LARK_INVOICE_DETAIL_SYNC_APP_SECRET',
+      );
+
+      if (!appId || !appSecret) {
+        throw new Error('LarkBase invoice detail credentials not configured');
+      }
+
+      const url =
+        'https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal';
+
+      const response = await firstValueFrom(
+        this.httpService.post<TenantAccessTokenResponse>(
+          url,
+          {
+            app_id: appId,
+            app_secret: appSecret,
+          },
+          {
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            timeout: 10000,
+          },
+        ),
+      );
+
+      if (response.data.code !== 0) {
+        throw new Error(
+          `LarkBase auth failed: ${response.data.msg} (code: ${response.data.code})`,
+        );
+      }
+
+      this.invoiceDetailAccessToken = response.data.tenant_access_token;
+      this.invoiceDetailTokenExpiry = new Date(
+        Date.now() + response.data.expire * 1000,
+      );
+
+      this.logger.log(
+        '✅ LarkBase invoice detail token refreshed successfully',
+      );
+      return this.invoiceDetailAccessToken;
+    } catch (error) {
+      this.logger.error(
+        `❌ Failed to refresh invoice detail token: ${error.message}`,
+      );
+
+      this.invoiceDetailAccessToken = null;
+      this.invoiceDetailTokenExpiry = null;
+
+      throw new Error(`Token refresh failed: ${error.message}`);
+    }
+  }
+
+  async forceRefreshInvoiceDetailToken(): Promise<void> {
+    this.invoiceDetailAccessToken = null;
+    this.invoiceDetailTokenExpiry = null;
+    await this.refreshInvoiceDetailToken();
   }
 
   // ============================================================================

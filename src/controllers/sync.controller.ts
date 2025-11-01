@@ -22,6 +22,7 @@ import { KiotVietCashflowService } from 'src/services/kiot-viet/cashflow/cashflo
 import { LarkCashflowSyncService } from 'src/services/lark/cashflow/lark-cashflow-sync.service';
 import { KiotVietTransferService } from 'src/services/kiot-viet/transfer/transfer.service';
 import { LarkDemandSyncService } from 'src/services/lark/demand/lark-demand-sync.service';
+import { LarkInvoiceDetailSyncService } from 'src/services/lark/invoice-detail/lark-invoice-detail-sync.service';
 
 @Controller('sync')
 export class SyncController {
@@ -33,6 +34,7 @@ export class SyncController {
     private readonly larkCustomerSyncService: LarkCustomerSyncService,
     private readonly invoiceService: KiotVietInvoiceService,
     private readonly larkInvoiceSyncService: LarkInvoiceSyncService,
+    private readonly larkInvoiceDetailSyncService: LarkInvoiceDetailSyncService,
     private readonly orderService: KiotVietOrderService,
     private readonly larkOrderSyncService: LarkOrderSyncService,
     private readonly productService: KiotVietProductService,
@@ -101,10 +103,12 @@ export class SyncController {
         where: {
           OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
         },
-        take: 1000,
+        take: 10000,
       });
 
       await this.larkInvoiceSyncService.syncInvoicesToLarkBase(invoicesToSync);
+
+      await this.larkInvoiceDetailSyncService.syncInvoiceDetailsToLarkBase();
 
       return {
         success: true,

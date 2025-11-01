@@ -257,8 +257,8 @@ export class KiotVietInvoiceService {
             includeInvoiceDelivery: true,
             includePayment: true,
             includeTotal: true,
-            // fromPurchaseDate: dateStartStr,
-            fromPurchaseDate: '2024-12-1',
+            // fromPurchaseDate: '2024-12-1',
+            fromPurchaseDate: dateStartStr,
             toPurchaseDate: dateEndStr,
           });
 
@@ -987,6 +987,11 @@ export class KiotVietInvoiceService {
 
             const acsNumber: number = i + 1;
 
+            const shouldSyncDetail =
+              detail.note && detail.note.toLowerCase().includes('thanh lý');
+
+            const detailLarkSyncStatus = shouldSyncDetail ? 'PENDING' : 'SKIP';
+
             if (product) {
               await this.prismaService.invoiceDetail.upsert({
                 where: {
@@ -1013,6 +1018,7 @@ export class KiotVietInvoiceService {
                   serialNumbers: detail.serialNumbers,
                   lineNumber: i + 1,
                   subTotal: new Prisma.Decimal(detail.subTotal),
+                  larkSyncStatus: detailLarkSyncStatus,
                 },
                 create: {
                   invoiceId: invoice.id,
@@ -1032,6 +1038,7 @@ export class KiotVietInvoiceService {
                   serialNumbers: detail.serialNumbers,
                   lineNumber: i + 1,
                   subTotal: new Prisma.Decimal(detail.subTotal),
+                  larkSyncStatus: detailLarkSyncStatus,
                 },
               });
             }

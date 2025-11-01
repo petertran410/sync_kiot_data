@@ -681,6 +681,13 @@ export class WebhookService {
             select: { id: true, code: true, name: true, kiotVietId: true },
           });
 
+          const acsNumber: number = i + 1;
+
+          const shouldSyncDetail =
+            detail.note && detail.note.toLowerCase().includes('thanh lý');
+
+          const detailLarkSyncStatus = shouldSyncDetail ? 'PENDING' : 'SKIP';
+
           if (product) {
             await this.prismaService.invoiceDetail.upsert({
               where: {
@@ -694,6 +701,8 @@ export class WebhookService {
                 productId: product.id,
                 invoiceKiotVietId: invoice.kiotVietId,
                 productKiotVietId: product.kiotVietId,
+                productCode: product.code,
+                productName: product.name,
                 quantity: detail.quantity,
                 price: new Prisma.Decimal(detail.price),
                 discount: detail.discount
@@ -705,8 +714,9 @@ export class WebhookService {
                 subTotal: new Prisma.Decimal(
                   detail.price * detail.quantity - (detail.discount || 0),
                 ),
-                productCode: product.code,
-                productName: product.name,
+                lineNumber: i + 1,
+                larkSyncStatus: detailLarkSyncStatus,
+                uniqueKey: invoice.id + '.' + acsNumber,
               },
               create: {
                 invoiceId: invoice.id,
@@ -727,6 +737,8 @@ export class WebhookService {
                   detail.price * detail.quantity - (detail.discount || 0),
                 ),
                 lineNumber: i + 1,
+                larkSyncStatus: detailLarkSyncStatus,
+                uniqueKey: invoice.id + '.' + acsNumber,
               },
             });
           }
