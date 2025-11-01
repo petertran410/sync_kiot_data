@@ -315,44 +315,6 @@ export class SyncController {
   //   }
   // }
 
-  // @Post('order-supplier')
-  // async syncOrderSuppliers() {
-  //   try {
-  //     this.logger.log('Starting order-supplier sync...');
-
-  //     await this.orderSupplierService.enableHistoricalSync();
-
-  //     await this.orderSupplierService.syncHistoricalOrderSuppliers();
-
-  //     const orderSuppliersToSync =
-  //       await this.prismaService.orderSupplier.findMany({
-  //         where: {
-  //           OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
-  //         },
-  //         take: 1000,
-  //       });
-
-  //     await this.larkOrderSupplierService.syncOrderSuppliersToLarkBase(
-  //       orderSuppliersToSync,
-  //     );
-
-  //     await this.larkOrderSupplierService.syncOrderSupplierDetailsToLarkBase();
-
-  //     return {
-  //       success: true,
-  //       message: 'Order Supplier sync completed successfully',
-  //       timestamp: new Date().toISOString,
-  //     };
-  //   } catch (error) {
-  //     this.logger.error(`❌ Order Supplier sync failed: ${error.message}`);
-  //     return {
-  //       success: false,
-  //       error: error.message,
-  //       timestamp: new Date().toISOString(),
-  //     };
-  //   }
-  // }
-
   // @Post('purchase-order')
   // async syncPurchaseOrders() {
   //   try {
@@ -462,6 +424,42 @@ export class SyncController {
   //     };
   //   }
   // }
+
+  @Post('order-supplier')
+  async syncOrderSuppliers() {
+    try {
+      this.logger.log('Starting order-supplier sync...');
+
+      await this.orderSupplierService.enableHistoricalSync();
+      await this.orderSupplierService.syncHistoricalOrderSuppliers();
+
+      const orderSuppliersToSync =
+        await this.prismaService.orderSupplier.findMany({
+          where: {
+            OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+          },
+        });
+
+      await this.larkOrderSupplierService.syncOrderSuppliersToLarkBase(
+        orderSuppliersToSync,
+      );
+
+      await this.larkOrderSupplierService.syncOrderSupplierDetailsToLarkBase();
+
+      return {
+        success: true,
+        message: 'Order supplier and detail sync completed',
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error) {
+      this.logger.error(`Order supplier sync failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
 
   @Post('return-historical')
   async syncReturnsHistorical() {
