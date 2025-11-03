@@ -286,43 +286,6 @@ export class SyncController {
   //   }
   // }
 
-  // @Post('products')
-  // async syncProducts() {
-  //   try {
-  //     this.logger.log('Starting product sync...');
-
-  //     // await this.priceBookService.enableHistoricalSync();
-
-  //     // await this.priceBookService.syncHistoricalPriceBooks();
-
-  //     await this.productService.enableHistoricalSync();
-
-  //     await this.productService.syncHistoricalProducts();
-
-  //     const productsToSync = await this.prismaService.product.findMany({
-  //       where: {
-  //         OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
-  //       },
-  //       take: 1000,
-  //     });
-
-  //     await this.larkProductSevice.syncProductsToLarkBase(productsToSync);
-
-  //     return {
-  //       success: true,
-  //       message: 'Product sync completed successfully',
-  //       timestamp: new Date().toISOString,
-  //     };
-  //   } catch (error) {
-  //     this.logger.error(`❌ Product sync failed: ${error.message}`);
-  //     return {
-  //       success: false,
-  //       error: error.message,
-  //       timestamp: new Date().toISOString(),
-  //     };
-  //   }
-  // }
-
   // @Post('purchase-order')
   // async syncPurchaseOrders() {
   //   try {
@@ -432,6 +395,34 @@ export class SyncController {
   //     };
   //   }
   // }
+
+  @Post('products')
+  async syncProducts() {
+    try {
+      this.logger.log('Starting product sync...');
+
+      // await this.priceBookService.enableHistoricalSync();
+
+      // await this.priceBookService.syncHistoricalPriceBooks();
+
+      await this.productService.enableHistoricalSync();
+
+      await this.productService.syncHistoricalProducts();
+
+      return {
+        success: true,
+        message: 'Product sync completed successfully',
+        timestamp: new Date().toISOString,
+      };
+    } catch (error) {
+      this.logger.error(`❌ Product sync failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
 
   @Post('order-supplier')
   async syncOrderSuppliers() {

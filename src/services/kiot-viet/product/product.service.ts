@@ -257,7 +257,7 @@ export class KiotVietProductService {
             currentItem,
             pageSize: this.PAGE_SIZE,
             orderBy: 'id',
-            orderDirection: 'DESC',
+            orderDirection: 'ASC',
             includeInventory: true,
             includePricebook: true,
             includeSerials: true,
@@ -393,18 +393,18 @@ export class KiotVietProductService {
           processedCount += pageProcessedCount;
           currentItem += this.PAGE_SIZE;
 
-          if (allSavedProducts.length > 0) {
-            try {
-              await this.syncProductsToLarkBase(allSavedProducts);
-              this.logger.log(
-                `Synced ${allSavedProducts.length} products to LarkBase`,
-              );
-            } catch (error) {
-              this.logger.warn(
-                `LarkBase sync failed for page${currentPage}: ${error.message}`,
-              );
-            }
-          }
+          // if (allSavedProducts.length > 0) {
+          //   try {
+          //     await this.syncProductsToLarkBase(allSavedProducts);
+          //     this.logger.log(
+          //       `Synced ${allSavedProducts.length} products to LarkBase`,
+          //     );
+          //   } catch (error) {
+          //     this.logger.warn(
+          //       `LarkBase sync failed for page${currentPage}: ${error.message}`,
+          //     );
+          //   }
+          // }
 
           if (totalProducts > 0) {
             const completionPercentage = (processedCount / totalProducts) * 100;
@@ -723,6 +723,12 @@ export class KiotVietProductService {
         if (productData.inventories && productData.inventories.length > 0) {
           for (let i = 0; i < productData.inventories.length; i++) {
             const detail = productData.inventories[i];
+
+            const branch = await this.prismaService.branch.findFirst({
+              where: { kiotVietId: detail.branchId },
+              select: { id: true },
+            });
+
             const inventory = await this.prismaService.productInventory.upsert({
               where: {
                 productId_lineNumber: {
@@ -733,7 +739,7 @@ export class KiotVietProductService {
               update: {
                 productCode: product.code,
                 productName: product.name,
-                branchId: detail.branchId ?? null,
+                branchId: branch?.id ?? null,
                 branchName: detail.branchName ?? null,
                 cost: detail.cost ?? 0,
                 onHand: detail.onHand ?? 0,
@@ -750,7 +756,7 @@ export class KiotVietProductService {
                 productId: product.id,
                 productCode: product.code,
                 productName: product.name,
-                branchId: detail.branchId ?? null,
+                branchId: branch?.id ?? null,
                 branchName: detail.branchName ?? null,
                 cost: detail.cost ?? 0,
                 onHand: detail.onHand ?? 0,
