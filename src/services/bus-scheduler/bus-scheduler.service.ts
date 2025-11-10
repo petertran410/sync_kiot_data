@@ -40,152 +40,152 @@ export class BusSchedulerService implements OnModuleInit {
     this.logger.log('BusScheduler initialized - Daily sync at 22:00');
   }
 
-  @Cron('0 22 * * *', {
-    name: 'daily_full_sync',
-    timeZone: 'Asia/Ho_Chi_Minh',
-  })
-  async handleDailyFullSync() {
-    this.logger.log('Starting daily full sync at 22:00 (parallel mode)...');
+  // @Cron('0 22 * * *', {
+  //   name: 'daily_full_sync',
+  //   timeZone: 'Asia/Ho_Chi_Minh',
+  // })
+  // async handleDailyFullSync() {
+  //   this.logger.log('Starting daily full sync at 22:00 (parallel mode)...');
 
-    try {
-      await this.updateCycleTracking('daily_full_sync', 'running');
+  //   try {
+  //     await this.updateCycleTracking('daily_full_sync', 'running');
 
-      const results = await Promise.allSettled([
-        this.syncDailyOrders(),
-        this.syncDailyInvoices(),
-      ]);
+  //     const results = await Promise.allSettled([
+  //       this.syncDailyOrders(),
+  //       this.syncDailyInvoices(),
+  //     ]);
 
-      const statuses = results.map((result, index) => {
-        const entityName = ['Customer', 'Order', 'Invoice'][index];
-        if (result.status === 'fulfilled') {
-          return `${entityName}: Success`;
-        } else {
-          this.logger.error(`❌ ${entityName} failed: ${result.reason}`);
-          return `❌ ${entityName}: Failed`;
-        }
-      });
+  //     const statuses = results.map((result, index) => {
+  //       const entityName = ['Customer', 'Order', 'Invoice'][index];
+  //       if (result.status === 'fulfilled') {
+  //         return `${entityName}: Success`;
+  //       } else {
+  //         this.logger.error(`❌ ${entityName} failed: ${result.reason}`);
+  //         return `❌ ${entityName}: Failed`;
+  //       }
+  //     });
 
-      this.logger.log('Sync results:');
-      statuses.forEach((status) => this.logger.log(status));
+  //     this.logger.log('Sync results:');
+  //     statuses.forEach((status) => this.logger.log(status));
 
-      const allSuccess = results.every((r) => r.status === 'fulfilled');
+  //     const allSuccess = results.every((r) => r.status === 'fulfilled');
 
-      if (allSuccess) {
-        await this.updateCycleTracking('daily_full_sync', 'completed');
-        this.logger.log('Daily full sync completed successfully');
-      } else {
-        await this.updateCycleTracking(
-          'daily_full_sync',
-          'partial',
-          'Some entities failed - check logs',
-        );
-        this.logger.warn('⚠️ Daily full sync completed with errors');
-      }
-    } catch (error) {
-      this.logger.error(`❌ Daily full sync failed: ${error.message}`);
-      await this.updateCycleTracking(
-        'daily_full_sync',
-        'failed',
-        error.message,
-      );
-    }
-  }
+  //     if (allSuccess) {
+  //       await this.updateCycleTracking('daily_full_sync', 'completed');
+  //       this.logger.log('Daily full sync completed successfully');
+  //     } else {
+  //       await this.updateCycleTracking(
+  //         'daily_full_sync',
+  //         'partial',
+  //         'Some entities failed - check logs',
+  //       );
+  //       this.logger.warn('⚠️ Daily full sync completed with errors');
+  //     }
+  //   } catch (error) {
+  //     this.logger.error(`❌ Daily full sync failed: ${error.message}`);
+  //     await this.updateCycleTracking(
+  //       'daily_full_sync',
+  //       'failed',
+  //       error.message,
+  //     );
+  //   }
+  // }
 
-  @Cron('0 7 * * 0', { timeZone: 'Asia/Ho_Chi_Minh' })
-  async syncAllReturns() {
-    try {
-      this.logger.log('Starting return sync...');
+  // @Cron('0 7 * * 0', { timeZone: 'Asia/Ho_Chi_Minh' })
+  // async syncAllReturns() {
+  //   try {
+  //     this.logger.log('Starting return sync...');
 
-      await this.returnService.enableHistoricalSync();
+  //     await this.returnService.enableHistoricalSync();
 
-      await this.returnService.syncHistoricalReturns();
+  //     await this.returnService.syncHistoricalReturns();
 
-      return {
-        success: true,
-        message: 'Returns sync completed successfully',
-        timestamp: new Date().toISOString,
-      };
-    } catch (error) {
-      this.logger.error(`❌ Cashflow sync failed: ${error.message}`);
-      return {
-        success: false,
-        error: error.message,
-        timestamp: new Date().toISOString(),
-      };
-    }
-  }
+  //     return {
+  //       success: true,
+  //       message: 'Returns sync completed successfully',
+  //       timestamp: new Date().toISOString,
+  //     };
+  //   } catch (error) {
+  //     this.logger.error(`❌ Cashflow sync failed: ${error.message}`);
+  //     return {
+  //       success: false,
+  //       error: error.message,
+  //       timestamp: new Date().toISOString(),
+  //     };
+  //   }
+  // }
 
-  @Cron('0 8 * * 0', { timeZone: 'Asia/Ho_Chi_Minh' })
-  async syncOrderSuppliers() {
-    try {
-      this.logger.log('Starting order-supplier sync...');
+  // @Cron('0 8 * * 0', { timeZone: 'Asia/Ho_Chi_Minh' })
+  // async syncOrderSuppliers() {
+  //   try {
+  //     this.logger.log('Starting order-supplier sync...');
 
-      await this.orderSupplierService.enableHistoricalSync();
-      await this.orderSupplierService.syncHistoricalOrderSuppliers();
+  //     await this.orderSupplierService.enableHistoricalSync();
+  //     await this.orderSupplierService.syncHistoricalOrderSuppliers();
 
-      const orderSuppliersToSync =
-        await this.prismaService.orderSupplier.findMany({
-          where: {
-            OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
-          },
-        });
+  //     const orderSuppliersToSync =
+  //       await this.prismaService.orderSupplier.findMany({
+  //         where: {
+  //           OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+  //         },
+  //       });
 
-      await this.larkOrderSupplierService.syncOrderSuppliersToLarkBase(
-        orderSuppliersToSync,
-      );
+  //     await this.larkOrderSupplierService.syncOrderSuppliersToLarkBase(
+  //       orderSuppliersToSync,
+  //     );
 
-      await this.larkOrderSupplierService.syncOrderSupplierDetailsToLarkBase();
+  //     await this.larkOrderSupplierService.syncOrderSupplierDetailsToLarkBase();
 
-      return {
-        success: true,
-        message: 'Order supplier and detail sync completed',
-        timestamp: new Date().toISOString(),
-      };
-    } catch (error) {
-      this.logger.error(`Order supplier sync failed: ${error.message}`);
-      return {
-        success: false,
-        error: error.message,
-        timestamp: new Date().toISOString(),
-      };
-    }
-  }
+  //     return {
+  //       success: true,
+  //       message: 'Order supplier and detail sync completed',
+  //       timestamp: new Date().toISOString(),
+  //     };
+  //   } catch (error) {
+  //     this.logger.error(`Order supplier sync failed: ${error.message}`);
+  //     return {
+  //       success: false,
+  //       error: error.message,
+  //       timestamp: new Date().toISOString(),
+  //     };
+  //   }
+  // }
 
-  @Cron('0 9 * * 0', { timeZone: 'Asia/Ho_Chi_Minh' })
-  async syncPurchaseOrders() {
-    try {
-      this.logger.log('Starting purchase-order sync...');
+  // @Cron('0 9 * * 0', { timeZone: 'Asia/Ho_Chi_Minh' })
+  // async syncPurchaseOrders() {
+  //   try {
+  //     this.logger.log('Starting purchase-order sync...');
 
-      await this.purchaseOrderService.enableHistoricalSync();
-      await this.purchaseOrderService.syncHistoricalPurchaseOrder();
+  //     await this.purchaseOrderService.enableHistoricalSync();
+  //     await this.purchaseOrderService.syncHistoricalPurchaseOrder();
 
-      const purchaseOrdersToSync =
-        await this.prismaService.purchaseOrder.findMany({
-          where: {
-            OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
-          },
-        });
+  //     const purchaseOrdersToSync =
+  //       await this.prismaService.purchaseOrder.findMany({
+  //         where: {
+  //           OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+  //         },
+  //       });
 
-      await this.larkPurchaseOrderSyncService.syncPurchaseOrdersToLarkBase(
-        purchaseOrdersToSync,
-      );
+  //     await this.larkPurchaseOrderSyncService.syncPurchaseOrdersToLarkBase(
+  //       purchaseOrdersToSync,
+  //     );
 
-      await this.larkPurchaseOrderSyncService.syncPurchaseOrderDetailsToLarkBase();
+  //     await this.larkPurchaseOrderSyncService.syncPurchaseOrderDetailsToLarkBase();
 
-      return {
-        success: true,
-        message: 'Purchase Order and Purchase Order Detail sync completed',
-        timestamp: new Date().toISOString(),
-      };
-    } catch (error) {
-      this.logger.error(`Purchase Order sync failed: ${error.message}`);
-      return {
-        success: false,
-        error: error.message,
-        timestamp: new Date().toISOString(),
-      };
-    }
-  }
+  //     return {
+  //       success: true,
+  //       message: 'Purchase Order and Purchase Order Detail sync completed',
+  //       timestamp: new Date().toISOString(),
+  //     };
+  //   } catch (error) {
+  //     this.logger.error(`Purchase Order sync failed: ${error.message}`);
+  //     return {
+  //       success: false,
+  //       error: error.message,
+  //       timestamp: new Date().toISOString(),
+  //     };
+  //   }
+  // }
 
   private async syncDailyOrders() {
     this.logger.log('Syncing orders...');
