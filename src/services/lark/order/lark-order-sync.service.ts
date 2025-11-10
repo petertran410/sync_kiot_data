@@ -290,7 +290,7 @@ export class LarkOrderSyncService {
       fields[LARK_ORDER_FIELDS.KIOTVIET_ID] = Number(order.kiotVietId);
     }
 
-    if (order.branchId !== null && order.branchId !== undefined) {
+    if (order.branchId) {
       const branchMapping = {
         635934: BRANCH_OPTIONS.CUA_HANG_DIEP_TRA,
         154833: BRANCH_OPTIONS.KHO_HA_NOI,
