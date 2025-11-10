@@ -129,6 +129,8 @@ export class WebhookService {
             detailedProduct,
           );
 
+          console.log(savedProduct);
+
           if (savedProduct) {
             this.logger.log(`✅ Upserted product ${savedProduct.code}`);
 

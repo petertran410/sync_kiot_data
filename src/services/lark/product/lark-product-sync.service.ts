@@ -244,10 +244,6 @@ export class LarkProductSyncService {
     }
   }
 
-  // ============================================================================
-  // DIRECT SYNC METHOD
-  // ============================================================================
-
   async syncSingleProductDirect(product: any): Promise<void> {
     try {
       this.logger.log(`🔄 Syncing product ${product.code} to Lark...`);
@@ -304,10 +300,6 @@ export class LarkProductSyncService {
     }
   }
 
-  // ============================================================================
-  // SEARCH METHOD
-  // ============================================================================
-
   private async searchRecordByCode(code: string): Promise<string | null> {
     try {
       const headers = await this.larkAuthService.getProductHeaders();
@@ -349,10 +341,6 @@ export class LarkProductSyncService {
       return null;
     }
   }
-
-  // ============================================================================
-  // MAPPING METHOD - EXACT như code gốc
-  // ============================================================================
 
   private mapProductToLarkBase(product: any): Record<string, any> {
     const fields: Record<string, any> = {};
@@ -413,7 +401,6 @@ export class LarkProductSyncService {
       fields[LARK_PRODUCT_FIELDS.TYPE] = typeMapping[product.type] || null;
     }
 
-    // Map price books
     if (product.priceBooks && product.priceBooks.length > 0) {
       for (const priceBook of product.priceBooks) {
         const priceBookId = priceBook.priceBookId;
@@ -425,7 +412,6 @@ export class LarkProductSyncService {
       }
     }
 
-    // Map inventories
     if (product.inventories && product.inventories.length > 0) {
       for (const inventory of product.inventories) {
         const branchId = inventory.branchId;
@@ -468,10 +454,6 @@ export class LarkProductSyncService {
 
     return fields;
   }
-
-  // ============================================================================
-  // UTILITY METHODS (giống Order)
-  // ============================================================================
 
   async getSyncProgress(): Promise<any> {
     const total = await this.prismaService.product.count();
