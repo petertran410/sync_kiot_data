@@ -577,7 +577,9 @@ export class WebhookService {
             ? new Prisma.Decimal(invoiceData.Discount)
             : 0,
           orderId,
-          discountRatio: invoiceData.DiscountRatio,
+          discountRatio: invoiceData.DiscountRatio
+            ? invoiceData.DiscountRatio
+            : 0,
           description: detailedInvoice?.description ?? invoiceData.Description,
           retailerId: 310831,
           usingCod: detailedInvoice?.usingCod ?? false,
@@ -611,7 +613,9 @@ export class WebhookService {
           discount: invoiceData.Discount
             ? new Prisma.Decimal(invoiceData.Discount)
             : 0,
-          discountRatio: invoiceData.DiscountRatio,
+          discountRatio: invoiceData.DiscountRatio
+            ? invoiceData.DiscountRatio
+            : 0,
           status: invoiceData.Status,
           statusValue: invoiceData.StatusValue,
           description: detailedInvoice?.description ?? invoiceData.Description,
@@ -1822,7 +1826,7 @@ export class WebhookService {
         where: { id: 1 },
         select: { name: true },
       });
-      return { id: null, name: defaultChannel?.name || 'Bán trực tiếp' };
+      return { id: 1, name: defaultChannel?.name || 'Bán trực tiếp' };
     }
 
     const saleChannel = await this.prismaService.saleChannel.findUnique({

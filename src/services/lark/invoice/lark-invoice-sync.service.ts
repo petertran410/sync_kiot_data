@@ -343,7 +343,8 @@ export class LarkInvoiceSyncService {
     }
 
     if (invoice.saleChannelName) {
-      fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] = invoice.saleChannelName || '';
+      fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] =
+        invoice.saleChannelName || 'Bán Trực Tiếp';
     }
 
     if (invoice.customerName) {
