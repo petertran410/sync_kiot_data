@@ -3,7 +3,7 @@ import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { LarkAuthService } from '../auth/lark-auth.service';
-import { async, firstValueFrom } from 'rxjs';
+import { firstValueFrom } from 'rxjs';
 
 const LARK_PRODUCT_FIELDS = {
   PRIMARY_CODE: 'Mã Hàng Hoá',
@@ -20,7 +20,6 @@ const LARK_PRODUCT_FIELDS = {
   PRODUCT_BUSINESS: 'Hàng Kinh Doanh',
   BASE_PRICE: 'Bảng Giá Chung',
   DESCRIPTION: 'Mô Tả',
-
   SOURCE: 'Nguồn Gốc',
   PRODUCTS_TYPE: 'Loại Hàng',
   SUB_CATEGORY: 'Danh Mục',
@@ -125,11 +124,6 @@ const BRANCH_INVENTORY_MAPPING: Record<number, string> = {
   635935: LARK_PRODUCT_FIELDS.TON_KHO_KHO_BAN_HANG,
 } as const;
 
-interface LarkBaseRecord {
-  record_id?: string;
-  fields: Record<string, any>;
-}
-
 interface LarkBatchResponse {
   code: number;
   msg: string;
@@ -147,27 +141,14 @@ interface LarkBatchResponse {
   };
 }
 
-interface BatchResult {
-  successRecords: any[];
-  failedRecords: any[];
-}
-
 @Injectable()
 export class LarkProductSyncService {
   private readonly logger = new Logger(LarkProductSyncService.name);
   private readonly baseToken: string;
   private readonly tableId: string;
   private readonly batchSize: number = 100;
-  private readonly pendingCreation = new Set<number>();
-
-  private readonly AUTH_ERROR_CODES = [99991663, 99991664, 99991665];
   private readonly MAX_AUTH_RETRIES = 3;
-
-  private existingRecordsCache: Map<number, string> = new Map();
-  private productCodeCache: Map<string, string> = new Map();
-  private cacheLoaded: boolean = false;
-  private lastCacheLoadTime: Date | null = null;
-  private readonly CACHE_VALIDITY_MINUTES = 600;
+  private readonly AUTH_ERROR_CODES = [99991663, 99991664, 99991665];
 
   constructor(
     private readonly httpService: HttpService,
@@ -190,6 +171,10 @@ export class LarkProductSyncService {
     this.tableId = tableId;
   }
 
+  // ============================================================================
+  // MAIN SYNC METHOD
+  // ============================================================================
+
   async syncProductsToLarkBase(products: any[]): Promise<void> {
     const lockKey = `lark_product_sync_lock_${Date.now()}`;
 
@@ -197,603 +182,177 @@ export class LarkProductSyncService {
       await this.acquireSyncLock(lockKey);
 
       this.logger.log(
-        `Starting LarkBase sync for ${products.length} products...`,
+        `🚀 Starting batch sync for ${products.length} products...`,
       );
 
       const productsToSync = products.filter(
-        (o) => o.larkSyncStatus === 'PENDING' || o.larkSyncStatus === 'FAILED',
+        (p) => p.larkSyncStatus === 'PENDING' || p.larkSyncStatus === 'FAILED',
       );
 
       if (productsToSync.length === 0) {
-        this.logger.log('No product need LarkBase sync');
+        this.logger.log('✅ No products need sync');
         await this.releaseSyncLock(lockKey);
         return;
       }
-
-      if (productsToSync.length < 5) {
-        this.logger.log(
-          `Small sync (${productsToSync.length} products) - using lightweight mode`,
-        );
-        await this.syncWithoutCache(productsToSync);
-        await this.releaseSyncLock(lockKey);
-        return;
-      }
-
-      const pendingCount = products.filter(
-        (o) => o.larkSyncStatus === 'PENDING',
-      ).length;
-      const failedCount = products.filter(
-        (o) => o.larkSyncStatus === 'FAILED',
-      ).length;
 
       this.logger.log(
-        `Including: ${pendingCount} PENDING + ${failedCount} FAILED products`,
+        `📊 Syncing ${productsToSync.length} products (PENDING + FAILED)`,
       );
 
       await this.testLarkBaseConnection();
 
-      const cacheLoaded = await this.loadExistingRecordsWithRetry();
+      const BATCH_SIZE = 50;
+      let totalSuccess = 0;
+      let totalFailed = 0;
 
-      if (!cacheLoaded) {
-        this.logger.warn(
-          'Cache loading failed - will use alternative duplicate detection',
+      for (let i = 0; i < productsToSync.length; i += BATCH_SIZE) {
+        const batch = productsToSync.slice(i, i + BATCH_SIZE);
+        const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
+        const totalBatches = Math.ceil(productsToSync.length / BATCH_SIZE);
+
+        this.logger.log(
+          `🔄 Processing batch ${batchNumber}/${totalBatches} (${batch.length} products)`,
         );
-        await this.syncWithoutCache(productsToSync);
-        await this.releaseSyncLock(lockKey);
-        return;
-      }
 
-      const { newProducts, updateProducts } =
-        await this.categorizeProducts(productsToSync);
+        for (const product of batch) {
+          try {
+            await this.syncSingleProductDirect(product);
+            totalSuccess++;
+          } catch (error) {
+            this.logger.error(
+              `❌ Failed to sync product ${product.code}: ${error.message}`,
+            );
+            totalFailed++;
+          }
 
-      this.logger.log(
-        `Categorization: ${newProducts.length} new, ${updateProducts.length} updates`,
-      );
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
 
-      const BATCH_SIZE_FOR_SYNC = 100;
-
-      if (newProducts.length > 0) {
-        for (let i = 0; i < newProducts.length; i += BATCH_SIZE_FOR_SYNC) {
-          const batch = newProducts.slice(i, i + BATCH_SIZE_FOR_SYNC);
-          this.logger.log(
-            `Processing new products batch ${Math.floor(i / BATCH_SIZE_FOR_SYNC) + 1}/${Math.ceil(newProducts.length / BATCH_SIZE_FOR_SYNC)}`,
-          );
-          await this.processNewProducts(batch);
+        if (i + BATCH_SIZE < productsToSync.length) {
+          await new Promise((resolve) => setTimeout(resolve, 2000));
         }
       }
 
-      if (updateProducts.length > 0) {
-        for (let i = 0; i < updateProducts.length; i += BATCH_SIZE_FOR_SYNC) {
-          const batch = updateProducts.slice(i, i + BATCH_SIZE_FOR_SYNC);
-          this.logger.log(
-            `Processing update products batch ${Math.floor(i / BATCH_SIZE_FOR_SYNC) + 1}/${Math.ceil(updateProducts.length / BATCH_SIZE_FOR_SYNC)}`,
-          );
-          await this.processUpdateProducts(batch);
-        }
-      }
-
-      this.logger.log('LarkBase product sync completed!');
+      this.logger.log('🎯 Batch sync completed!');
+      this.logger.log(`✅ Success: ${totalSuccess}`);
+      this.logger.log(`❌ Failed: ${totalFailed}`);
     } catch (error) {
-      this.logger.error(`LarkBase product sync failed: ${error.message}`);
+      this.logger.error(`❌ Batch sync failed: ${error.message}`);
       throw error;
     } finally {
       await this.releaseSyncLock(lockKey);
     }
   }
 
-  private async loadExistingRecordsWithRetry(): Promise<boolean> {
-    const maxRetries = 3;
+  // ============================================================================
+  // DIRECT SYNC METHOD
+  // ============================================================================
 
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        this.logger.log(`Loading cache (attempt ${attempt}/${maxRetries})...`);
-
-        if (this.isCacheValid()) {
-          this.logger.log('Using existing valid cache');
-          return true;
-        }
-
-        if (this.lastCacheLoadTime) {
-          const cacheAgeMinutes =
-            (Date.now() - this.lastCacheLoadTime.getTime()) / (1000 * 60);
-          if (cacheAgeMinutes < 45 && this.existingRecordsCache.size > 500) {
-            this.logger.log(
-              `Recent cache (${cacheAgeMinutes.toFixed(1)}min old, ${this.existingRecordsCache.size} records) - skipping reload`,
-            );
-            return true;
-          }
-        }
-
-        this.clearCache();
-        await this.loadExistingRecords();
-
-        if (this.existingRecordsCache.size > 0) {
-          this.logger.log(
-            `Cache loaded successfully: ${this.existingRecordsCache.size} records`,
-          );
-          this.lastCacheLoadTime = new Date();
-          return true;
-        }
-
-        this.logger.warn(`Cache empty on attempt ${attempt}`);
-      } catch (error) {
-        this.logger.warn(
-          `Cache loading attempt ${attempt} failed: ${error.message}`,
-        );
-        if (attempt < maxRetries) {
-          const delay = attempt * 2000;
-          this.logger.log(`Waiting ${delay / 1000}s before retry...`);
-          await new Promise((resolve) => setTimeout(resolve, delay));
-        }
-      }
-    }
-    return false;
-  }
-
-  private isCacheValid(): boolean {
-    if (!this.cacheLoaded || !this.lastCacheLoadTime) {
-      return false;
-    }
-
-    const cacheAge = Date.now() - this.lastCacheLoadTime.getTime();
-    const maxAge = this.CACHE_VALIDITY_MINUTES * 60 * 1000;
-
-    return cacheAge < maxAge && this.existingRecordsCache.size > 0;
-  }
-
-  private async loadExistingRecords(): Promise<void> {
+  async syncSingleProductDirect(product: any): Promise<void> {
     try {
-      const headers = await this.larkAuthService.getProductHeaders();
-      let pageToken: string | undefined;
-      let totalLoaded = 0;
-      let cacheBuilt = 0;
-      const pageSize = 500;
+      this.logger.log(`🔄 Syncing product ${product.code} to Lark...`);
 
-      do {
+      const existingRecordId = await this.searchRecordByCode(product.code);
+
+      const larkData = this.mapProductToLarkBase(product);
+      const headers = await this.larkAuthService.getProductHeaders();
+
+      if (existingRecordId) {
+        const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/${existingRecordId}`;
+
+        await firstValueFrom(
+          this.httpService.put(
+            url,
+            { fields: larkData },
+            { headers, timeout: 10000 },
+          ),
+        );
+
+        this.logger.log(`✅ Updated product ${product.code} in Lark`);
+      } else {
         const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records`;
 
-        const params = new URLSearchParams({
-          page_size: String(pageSize),
-        });
-
-        if (pageToken) {
-          params.append('page_token', pageToken);
-        }
-
-        const startTime = Date.now();
-
-        const response = await firstValueFrom(
-          this.httpService.get(`${url}?${params}`, {
-            headers,
-            timeout: 90000,
-          }),
+        await firstValueFrom(
+          this.httpService.post(
+            url,
+            { fields: larkData },
+            { headers, timeout: 10000 },
+          ),
         );
 
-        const loadTime = Date.now() - startTime;
+        this.logger.log(`✅ Created product ${product.code} in Lark`);
+      }
 
-        if (response.data.code === 0) {
-          const records = response.data.data?.items || [];
-
-          for (const record of records) {
-            const kiotVietIdField =
-              record.fields[LARK_PRODUCT_FIELDS.PRODUCT_ID];
-
-            if (kiotVietIdField) {
-              const kiotVietId = this.safeBigIntToNumber(kiotVietIdField);
-              if (kiotVietId > 0) {
-                this.existingRecordsCache.set(kiotVietId, record.record_id);
-                cacheBuilt++;
-              }
-            }
-
-            // let kiotVietId = 0;
-
-            // if (kiotVietIdRaw !== null && kiotVietIdRaw !== undefined) {
-            //   if (typeof kiotVietIdRaw === 'string') {
-            //     const trimmed = kiotVietIdRaw.trim();
-            //     if (trimmed !== '') {
-            //       const parsed = parseInt(trimmed, 10);
-            //       if (!isNaN(parsed) && parsed > 0) {
-            //         kiotVietId = parsed;
-            //         cacheBuilt++;
-            //       }
-            //     }
-            //   } else if (typeof kiotVietIdRaw === 'number') {
-            //     kiotVietId = Math.floor(kiotVietIdRaw);
-            //   }
-            // }
-
-            // if (kiotVietId > 0) {
-            //   this.existingRecordsCache.set(kiotVietId, record.record_id);
-            //   cacheBuilt++;
-            // }
-
-            const productCodeField =
-              record.fields[LARK_PRODUCT_FIELDS.PRIMARY_CODE];
-            if (productCodeField) {
-              this.productCodeCache.set(
-                String(productCodeField).trim(),
-                record.record_id,
-              );
-            }
-          }
-
-          totalLoaded += records.length;
-          pageToken = response.data.data?.page_token || '';
-
-          if (totalLoaded % 1500 === 0 || !pageToken) {
-            this.logger.log(
-              `Cache progress: ${cacheBuilt}/${totalLoaded} records (${loadTime}ms/page)`,
-            );
-          }
-        } else {
-          throw new Error(
-            `LarkBase API error: ${response.data.msg} (code: ${response.data.code})`,
-          );
-        }
-      } while (pageToken);
-
-      this.cacheLoaded = true;
-
-      const successRate =
-        totalLoaded > 0 ? Math.round((cacheBuilt / totalLoaded) * 100) : 0;
-
-      this.logger.log(
-        `Cache loaded: ${this.existingRecordsCache.size} by ID, ${this.productCodeCache.size} by code (${successRate}% success)`,
-      );
+      await this.prismaService.product.update({
+        where: { id: product.id },
+        data: { larkSyncStatus: 'SYNCED', larkSyncedAt: new Date() },
+      });
     } catch (error) {
-      this.logger.error(`❌ Cache loading failed: ${error.message}`);
+      this.logger.error(
+        `❌ Sync product ${product.code} failed: ${error.message}`,
+      );
+
+      await this.prismaService.product.update({
+        where: { id: product.id },
+        data: {
+          larkSyncStatus: 'FAILED',
+          larkSyncRetries: { increment: 1 },
+        },
+      });
+
       throw error;
     }
   }
 
-  private async categorizeProducts(products: any[]): Promise<any> {
-    const newProducts: any[] = [];
-    const updateProducts: any[] = [];
+  // ============================================================================
+  // SEARCH METHOD
+  // ============================================================================
 
-    const duplicateDetected = products.filter((product) => {
-      const kiotVietId = this.safeBigIntToNumber(product.kiotVietId);
-      return this.existingRecordsCache.has(kiotVietId);
-    });
-
-    if (duplicateDetected.length > 0) {
-      this.logger.warn(
-        `Detected ${duplicateDetected.length} products already in cache: ${duplicateDetected
-          .map((o) => o.kiotVietId)
-          .slice(0, 5)
-          .join(', ')}`,
-      );
-    }
-
-    for (const product of products) {
-      const kiotVietId = this.safeBigIntToNumber(product.kiotVietId);
-
-      if (this.pendingCreation.has(kiotVietId)) {
-        this.logger.warn(`Product ${kiotVietId} is pending creation, skipping`);
-        continue;
-      }
-
-      let existingRecordId = this.existingRecordsCache.get(kiotVietId);
-
-      if (!existingRecordId && product.code) {
-        existingRecordId = this.productCodeCache.get(
-          String(product.code).trim(),
-        );
-      }
-
-      if (existingRecordId) {
-        updateProducts.push({
-          ...product,
-          larkRecordId: existingRecordId,
-        });
-      } else {
-        this.pendingCreation.add(kiotVietId);
-        newProducts.push(product);
-      }
-    }
-
-    return { newProducts, updateProducts };
-  }
-
-  private async syncWithoutCache(products: any[]): Promise<void> {
-    this.logger.log(`Running lightweight sync without full cache...`);
-
-    const existingProducts = await this.prismaService.product.findMany({
-      where: {
-        kiotVietId: { in: products.map((p) => p.kiotVietId) },
-      },
-      select: { kiotVietId: true, larkRecordId: true },
-    });
-
-    const quickCache = new Map<number, string>();
-    existingProducts.forEach((p) => {
-      if (p.larkRecordId) {
-        quickCache.set(Number(p.kiotVietId), p.larkRecordId);
-      }
-    });
-
-    const originalCache = this.existingRecordsCache;
-    this.existingRecordsCache = quickCache;
-
+  private async searchRecordByCode(code: string): Promise<string | null> {
     try {
-      const { newProducts, updateProducts } =
-        await this.categorizeProducts(products);
+      const headers = await this.larkAuthService.getProductHeaders();
+      const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/search`;
 
-      if (newProducts.length > 0) {
-        await this.processNewProducts(newProducts);
-      }
-
-      if (updateProducts.length > 0) {
-        await this.processUpdateProducts(updateProducts);
-      }
-    } finally {
-      this.existingRecordsCache = originalCache;
-    }
-  }
-
-  private async processNewProducts(products: any[]): Promise<void> {
-    if (products.length === 0) return;
-
-    this.logger.log(`Creating ${products.length} new products...`);
-
-    const batches = this.chunkArray(products, this.batchSize);
-    let totalCreated = 0;
-    let totalFailed = 0;
-
-    for (let i = 0; i < batches.length; i++) {
-      const batch = batches[i];
-
-      const verifiedBatch: any[] = [];
-      for (const product of batch) {
-        const kiotVietId = this.safeBigIntToNumber(product.kiotVietId);
-        if (!this.existingRecordsCache.has(kiotVietId)) {
-          verifiedBatch.push(product);
-        } else {
-          this.logger.warn(
-            `Skipping duplicate product ${kiotVietId} in batch ${i + 1}`,
-          );
-        }
-      }
-
-      if (verifiedBatch.length === 0) {
-        this.logger.log(`Batch ${i + 1} skipped - all products already exist`);
-        continue;
-      }
-
-      this.logger.log(
-        `Creating batch ${i + 1}/${batch.length} (${verifiedBatch.length} products)...`,
-      );
-
-      const { successRecords, failedRecords } =
-        await this.batchCreateProducts(batch);
-
-      totalCreated += successRecords.length;
-      totalFailed += failedRecords.length;
-
-      if (successRecords.length > 0) {
-        await this.updateDatabaseStatus(successRecords, 'SYNCED');
-      }
-
-      if (failedRecords.length > 0) {
-        await this.updateDatabaseStatus(failedRecords, 'FAILED');
-      }
-
-      this.logger.log(
-        `Batch ${i + 1}/${batches.length}: ${successRecords.length}/${batch.length} created`,
-      );
-
-      if (i < batches.length - 1) {
-        await new Promise((resolve) => setTimeout(resolve, 500));
-      }
-    }
-
-    this.logger.log(
-      `Create complete: ${totalCreated} success, ${totalFailed} failed`,
-    );
-  }
-
-  private async processUpdateProducts(products: any[]): Promise<void> {
-    if (products.length === 0) return;
-
-    this.logger.log(`Updating ${products.length} existing products...`);
-
-    let successCount = 0;
-    let failedCount = 0;
-    const createFallbacks: any[] = [];
-
-    const UPDATE_CHUNK_SIZE = 5;
-
-    for (let i = 0; i < products.length; i += UPDATE_CHUNK_SIZE) {
-      const chunk = products.slice(i, i + UPDATE_CHUNK_SIZE);
-
-      await Promise.all(
-        chunk.map(async (product) => {
-          try {
-            const updated = await this.updateSingleProduct(product);
-
-            if (updated) {
-              successCount++;
-              await this.updateDatabaseStatus([product], 'SYNCED');
-            } else {
-              createFallbacks.push(product);
-            }
-          } catch (error) {
-            this.logger.warn(
-              `Update failed for ${product.code}: ${error.message}`,
-            );
-            createFallbacks.push(product);
-          }
-        }),
-      );
-
-      if (i + UPDATE_CHUNK_SIZE < products.length) {
-        await new Promise((resolve) => setTimeout(resolve, 300));
-      }
-    }
-
-    if (createFallbacks.length > 0) {
-      this.logger.log(
-        `Creating ${createFallbacks.length} products that failed update...`,
-      );
-      await this.processNewProducts(createFallbacks);
-    }
-
-    this.logger.log(
-      `Update complete: ${successCount} success, ${failedCount} failed`,
-    );
-  }
-
-  private async batchCreateProducts(products: any[]): Promise<BatchResult> {
-    const records = products.map((product) => ({
-      fields: this.mapProductToLarkBase(product),
-    }));
-
-    let authRetries = 0;
-
-    while (authRetries < this.MAX_AUTH_RETRIES) {
-      try {
-        const headers = await this.larkAuthService.getProductHeaders();
-        const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/batch_create`;
-
-        const response = await firstValueFrom(
-          this.httpService.post<LarkBatchResponse>(
-            url,
-            { records },
-            { headers, timeout: 30000 },
-          ),
-        );
-
-        if (response.data.code === 0) {
-          const createdRecords = response.data.data?.records || [];
-          const successCount = createdRecords.length;
-          const successRecords = products.slice(0, successCount);
-          const failedRecords = products.slice(successCount);
-
-          for (
-            let i = 0;
-            i < Math.min(successRecords.length, createdRecords.length);
-            i++
-          ) {
-            const product = successRecords[i];
-            const createdRecord = createdRecords[i];
-
-            const kiotVietId = this.safeBigIntToNumber(product.kiotVietId);
-            if (kiotVietId > 0) {
-              this.existingRecordsCache.set(
-                kiotVietId,
-                createdRecord.record_id,
-              );
-            }
-
-            successRecords.forEach((product) => {
-              const kiotVietId = this.safeBigIntToNumber(product.kiotVietId);
-              this.pendingCreation.delete(kiotVietId);
-            });
-
-            failedRecords.forEach((product) => {
-              const kiotVietId = this.safeBigIntToNumber(product.kiotVietId);
-              this.pendingCreation.delete(kiotVietId);
-            });
-
-            if (product.code) {
-              this.productCodeCache.set(
-                String(product.code).trim(),
-                createdRecord.record_id,
-              );
-            }
-          }
-
-          return { successRecords, failedRecords };
-        }
-
-        if (this.AUTH_ERROR_CODES.includes(response.data.code)) {
-          authRetries++;
-          await this.forceTokenRefresh();
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-          continue;
-        }
-
-        this.logger.warn(
-          `Batch create failed: ${response.data.msg} (Code: ${response.data.code})`,
-        );
-        return { successRecords: [], failedRecords: products };
-      } catch (error) {
-        this.logger.error('Batch create error details:', {
-          status: error.response?.status,
-          statusText: error.response?.statusText,
-          data: error.response?.data,
-          config: {
-            url: error.config?.url,
-            method: error.config?.method,
-            data: JSON.parse(error.config?.data || '{}'),
+      const response = await firstValueFrom(
+        this.httpService.post(
+          url,
+          {
+            field_names: [LARK_PRODUCT_FIELDS.PRIMARY_CODE],
+            filter: {
+              conjunction: 'and',
+              conditions: [
+                {
+                  field_name: LARK_PRODUCT_FIELDS.PRIMARY_CODE,
+                  operator: 'is',
+                  value: [code],
+                },
+              ],
+            },
           },
-        });
+          {
+            headers,
+            timeout: 10000,
+          },
+        ),
+      );
 
-        if (records && records.length > 0) {
-          this.logger.error(
-            'Sample record being sent:',
-            JSON.stringify(records[0], null, 2),
-          );
+      if (response.data.code === 0) {
+        const items = response.data.data?.items || [];
+        if (items.length > 0) {
+          return items[0].record_id;
         }
-
-        return { successRecords: [], failedRecords: products };
       }
-    }
 
-    return { successRecords: [], failedRecords: products };
+      return null;
+    } catch (error) {
+      this.logger.warn(`Search product by code failed: ${error.message}`);
+      return null;
+    }
   }
 
-  private async updateSingleProduct(product: any): Promise<boolean> {
-    let authRetries = 0;
-
-    while (authRetries < this.MAX_AUTH_RETRIES) {
-      try {
-        const headers = await this.larkAuthService.getProductHeaders();
-        const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/${product.larkRecordId}`;
-
-        const response = await firstValueFrom(
-          this.httpService.put(
-            url,
-            { fields: this.mapProductToLarkBase(product) },
-            { headers, timeout: 15000 },
-          ),
-        );
-
-        if (response.data.code === 0) {
-          this.logger.debug(
-            `Updated record ${product.larkRecordId} for product ${product.code}`,
-          );
-          return true;
-        }
-
-        if (this.AUTH_ERROR_CODES.includes(response.data.code)) {
-          authRetries++;
-          await this.larkAuthService.forceRefreshProductToken();
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-          continue;
-        }
-
-        this.logger.warn(`Update failed: ${response.data.msg}`);
-        return false;
-      } catch (error) {
-        if (error.response?.status === 401 || error.response?.status === 403) {
-          authRetries++;
-          await this.forceTokenRefresh();
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-          continue;
-        }
-
-        if (error.response?.status === 404) {
-          this.logger.warn(`Record not found: ${product.larkRecordId}`);
-          return false;
-        }
-
-        throw error;
-      }
-    }
-
-    return false;
-  }
+  // ============================================================================
+  // MAPPING METHOD - EXACT như code gốc
+  // ============================================================================
 
   private mapProductToLarkBase(product: any): Record<string, any> {
     const fields: Record<string, any> = {};
@@ -803,9 +362,7 @@ export class LarkProductSyncService {
     }
 
     if (product.kiotVietId !== null && product.kiotVietId !== undefined) {
-      fields[LARK_PRODUCT_FIELDS.PRODUCT_ID] = this.safeBigIntToNumber(
-        product.kiotVietId,
-      );
+      fields[LARK_PRODUCT_FIELDS.PRODUCT_ID] = Number(product.kiotVietId || 0);
     }
 
     if (product.description !== null && product.description !== undefined) {
@@ -856,72 +413,29 @@ export class LarkProductSyncService {
       fields[LARK_PRODUCT_FIELDS.TYPE] = typeMapping[product.type] || null;
     }
 
+    // Map price books
     if (product.priceBooks && product.priceBooks.length > 0) {
       for (const priceBook of product.priceBooks) {
         const priceBookId = priceBook.priceBookId;
+        const larkField = PRICEBOOK_FIELD_MAPPING[priceBookId];
 
-        const priceBookMapping = {
-          1: LARK_PRODUCT_FIELDS.PRICE_LE_HCM,
-          2: LARK_PRODUCT_FIELDS.PRICE_BUON_HCM,
-          3: LARK_PRODUCT_FIELDS.PRICE_CHIEN_LUOC,
-          4: LARK_PRODUCT_FIELDS.PRICE_LASIMI_SAI_GON,
-          5: LARK_PRODUCT_FIELDS.PRICE_BUON_HN,
-          6: LARK_PRODUCT_FIELDS.PRICE_EM_HOAI_ROYALTEA,
-          7: LARK_PRODUCT_FIELDS.PRICE_DO_MINH_TAN,
-          8: LARK_PRODUCT_FIELDS.PRICE_DO_MINH_TAN_8,
-          9: LARK_PRODUCT_FIELDS.PRICE_HOANG_QUAN_HN,
-          10: LARK_PRODUCT_FIELDS.PRICE_HOC_VIEN_CAFE,
-          11: LARK_PRODUCT_FIELDS.PRICE_CHUOI_LABOONG,
-          12: LARK_PRODUCT_FIELDS.PRICE_CONG_TAC_VIEN,
-          13: LARK_PRODUCT_FIELDS.PRICE_SUB_D,
-          14: LARK_PRODUCT_FIELDS.PRICE_CHEESE_COFFEE,
-          15: LARK_PRODUCT_FIELDS.PRICE_CHUOI_SHANCHA,
-          16: LARK_PRODUCT_FIELDS.PRICE_SHOPEE,
-          17: LARK_PRODUCT_FIELDS.PRICE_KAFFA,
-          18: LARK_PRODUCT_FIELDS.PRICE_CING_HU_TANG,
-          19: LARK_PRODUCT_FIELDS.PRICE_DO_DO,
-          20: LARK_PRODUCT_FIELDS.PRICE_SUNDAY_BASIC,
-          21: LARK_PRODUCT_FIELDS.PRICE_HADILAO,
-          22: LARK_PRODUCT_FIELDS.PRICE_TRA_NON,
-          23: LARK_PRODUCT_FIELDS.PRICE_HOANG_QUAN_HCM,
-          24: LARK_PRODUCT_FIELDS.PRICE_HOC_VIEN_CAFE_HN,
-        };
-
-        const larkField = priceBookMapping[priceBookId];
         if (larkField && larkField !== 'undefined') {
           fields[larkField] = Number(priceBook.price) || 0;
         }
       }
     }
 
+    // Map inventories
     if (product.inventories && product.inventories.length > 0) {
       for (const inventory of product.inventories) {
         const branchId = inventory.branchId;
 
-        const branchCostMapping = {
-          635934: LARK_PRODUCT_FIELDS.COST_PRICE_CUA_HANG_DIEP_TRA,
-          154833: LARK_PRODUCT_FIELDS.COST_PRICE_KHO_HA_NOI,
-          402819: LARK_PRODUCT_FIELDS.COST_PRICE_KHO_SAI_GON,
-          631164: LARK_PRODUCT_FIELDS.COST_PRICE_VAN_PHONG_HA_NOI,
-          631163: LARK_PRODUCT_FIELDS.COST_PRICE_KHO_HA_NOI_2,
-          635935: LARK_PRODUCT_FIELDS.COST_PRICE_KHO_BAN_HANG,
-        };
-
-        const branchInventoryMapping = {
-          635934: LARK_PRODUCT_FIELDS.TON_KHO_CUA_HANG_DIEP_TRA,
-          154833: LARK_PRODUCT_FIELDS.TON_KHO_KHO_HA_NOI,
-          402819: LARK_PRODUCT_FIELDS.TON_KHO_KHO_SAI_GON,
-          631164: LARK_PRODUCT_FIELDS.TON_KHO_VAN_PHONG_HA_NOI,
-          631163: LARK_PRODUCT_FIELDS.TON_KHO_KHO_HA_NOI_2,
-          635935: LARK_PRODUCT_FIELDS.TON_KHO_KHO_BAN_HANG,
-        };
-
-        const costField = branchCostMapping[branchId];
+        const costField = BRANCH_COST_MAPPING[branchId];
         if (costField) {
           fields[costField] = Number(inventory.cost) || 0;
         }
 
-        const inventoryField = branchInventoryMapping[branchId];
+        const inventoryField = BRANCH_INVENTORY_MAPPING[branchId];
         if (inventoryField) {
           fields[inventoryField] = Number(inventory.onHand) || 0;
         }
@@ -955,50 +469,89 @@ export class LarkProductSyncService {
     return fields;
   }
 
-  private safeBigIntToNumber(value: any): number {
-    if (typeof value === 'bigint') {
-      return Number(value);
-    }
-    if (typeof value === 'number') {
-      return value;
-    }
-    if (typeof value === 'string') {
-      const parsed = parseInt(value, 10);
-      return isNaN(parsed) ? 0 : parsed;
-    }
-    return 0;
-  }
+  // ============================================================================
+  // UTILITY METHODS (giống Order)
+  // ============================================================================
 
-  private chunkArray<T>(array: T[], chunkSize: number): T[][] {
-    const chunks: T[][] = [];
-    for (let i = 0; i < array.length; i += chunkSize) {
-      chunks.push(array.slice(i, i + chunkSize));
-    }
-    return chunks;
-  }
+  async getSyncProgress(): Promise<any> {
+    const total = await this.prismaService.product.count();
+    const synced = await this.prismaService.product.count({
+      where: { larkSyncStatus: 'SYNCED' },
+    });
+    const pending = await this.prismaService.product.count({
+      where: { larkSyncStatus: 'PENDING' },
+    });
+    const failed = await this.prismaService.product.count({
+      where: { larkSyncStatus: 'FAILED' },
+    });
 
-  private async updateDatabaseStatus(
-    products: any[],
-    status: 'SYNCED' | 'FAILED',
-  ): Promise<void> {
-    if (products.length === 0) return;
+    const progress = total > 0 ? Math.round((synced / total) * 100) : 0;
 
-    const productIds = products.map((p) => p.id);
-    const updateData = {
-      larkSyncStatus: status,
-      larkSyncedAt: new Date(),
-      ...(status === 'FAILED' && { larkSyncRetries: { increment: 1 } }),
-      ...(status === 'SYNCED' && { larkSyncRetries: 0 }),
+    return {
+      total,
+      synced,
+      pending,
+      failed,
+      progress,
+      canRetryFailed: failed > 0,
+      summary: `${synced}/${total} synced (${progress}%)`,
     };
+  }
+
+  async retryFailedProductSyncs(): Promise<void> {
+    this.logger.log('🔄 Retrying failed product syncs...');
+
+    const failedProducts = await this.prismaService.product.findMany({
+      where: {
+        larkSyncStatus: 'FAILED',
+        larkSyncRetries: { lt: 3 },
+      },
+      take: 100,
+      include: {
+        inventories: true,
+        priceBooks: true,
+      },
+    });
+
+    if (failedProducts.length === 0) {
+      this.logger.log('✅ No failed products to retry');
+      return;
+    }
+
+    this.logger.log(`Found ${failedProducts.length} failed products to retry`);
 
     await this.prismaService.product.updateMany({
-      where: { id: { in: productIds } },
-      data: updateData,
+      where: { id: { in: failedProducts.map((p) => p.id) } },
+      data: { larkSyncStatus: 'PENDING' },
     });
+
+    await this.syncProductsToLarkBase(failedProducts);
+  }
+
+  async getProductSyncStats(): Promise<{
+    pending: number;
+    synced: number;
+    failed: number;
+    total: number;
+  }> {
+    const [pending, synced, failed, total] = await Promise.all([
+      this.prismaService.product.count({
+        where: { larkSyncStatus: 'PENDING' },
+      }),
+      this.prismaService.product.count({
+        where: { larkSyncStatus: 'SYNCED' },
+      }),
+      this.prismaService.product.count({
+        where: { larkSyncStatus: 'FAILED' },
+      }),
+      this.prismaService.product.count(),
+    ]);
+
+    return { pending, synced, failed, total };
   }
 
   private async testLarkBaseConnection(): Promise<void> {
-    const maxRetries = 10;
+    const maxRetries = 3;
 
     for (let retryCount = 0; retryCount <= maxRetries; retryCount++) {
       try {
@@ -1031,7 +584,7 @@ export class LarkProductSyncService {
         if (retryCount < maxRetries) {
           const delay = (retryCount + 1) * 2000;
           this.logger.warn(
-            `⚠️ Connection attempt ${retryCount + 1} failed: ${error.message}`,
+            `⚠️  Connection attempt ${retryCount + 1} failed: ${error.message}`,
           );
           this.logger.log(`🔄 Retrying in ${delay / 1000}s...`);
           await new Promise((resolve) => setTimeout(resolve, delay));
@@ -1045,14 +598,12 @@ export class LarkProductSyncService {
     }
   }
 
+  // Lock management (giống Order/Customer)
   private async acquireSyncLock(lockKey: string): Promise<void> {
     const syncName = 'product_lark_sync';
 
     const existingLock = await this.prismaService.syncControl.findFirst({
-      where: {
-        name: syncName,
-        isRunning: true,
-      },
+      where: { name: syncName, isRunning: true },
     });
 
     if (existingLock && existingLock.startedAt) {
@@ -1060,7 +611,6 @@ export class LarkProductSyncService {
 
       if (lockAge < 10 * 60 * 1000) {
         const isProcessActive = await this.isLockProcessActive(existingLock);
-
         if (isProcessActive) {
           throw new Error('Another sync is already running');
         } else {
@@ -1190,7 +740,9 @@ export class LarkProductSyncService {
       lockRecord.progress.lockKey === lockKey
     ) {
       await this.prismaService.syncControl.update({
-        where: { id: lockRecord.id },
+        where: {
+          id: lockRecord.id,
+        },
         data: {
           isRunning: false,
           status: 'completed',
@@ -1201,26 +753,5 @@ export class LarkProductSyncService {
 
       this.logger.debug(`🔓 Released sync lock: ${lockKey}`);
     }
-  }
-
-  private async forceTokenRefresh(): Promise<void> {
-    try {
-      this.logger.debug('🔄 Forcing LarkBase token refresh...');
-      (this.larkAuthService as any).accessToken = null;
-      (this.larkAuthService as any).tokenExpiry = null;
-      await this.larkAuthService.getProductHeaders();
-      this.logger.debug('✅ LarkBase token refreshed successfully');
-    } catch (error) {
-      this.logger.error(`❌ Token refresh failed: ${error.message}`);
-      throw error;
-    }
-  }
-
-  private clearCache(): void {
-    this.existingRecordsCache.clear();
-    this.productCodeCache.clear();
-    this.cacheLoaded = false;
-    this.lastCacheLoadTime = null;
-    this.logger.debug('🧹 Cache cleared');
   }
 }

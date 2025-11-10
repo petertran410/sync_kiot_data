@@ -66,7 +66,7 @@ model Product {
   createdDate          DateTime                 @default(now())
   modifiedDate         DateTime                 @updatedAt
   lastSyncedAt         DateTime                 @default(now())
-  larkRecordId         String?
+  larkRecordId         String?                  @unique
   larkSyncRetries      Int                      @default(0)
   larkSyncStatus       LarkSyncStatus           @default(PENDING)
   larkSyncedAt         DateTime?
@@ -168,7 +168,7 @@ model Customer {
   createdDate           DateTime?
   modifiedDate          DateTime?
   lastSyncedAt          DateTime                @default(now())
-  larkRecordId          String?
+  larkRecordId          String?                 @unique
   larkSyncRetries       Int                     @default(0)
   larkSyncStatus        LarkSyncStatus          @default(PENDING)
   larkSyncedAt          DateTime?
@@ -288,7 +288,7 @@ model Order {
   createdDate      DateTime?
   modifiedDate     DateTime?
   lastSyncedAt     DateTime         @default(now())
-  larkRecordId     String?
+  larkRecordId     String?          @unique
   larkSyncRetries  Int              @default(0)
   larkSyncStatus   LarkSyncStatus   @default(PENDING)
   larkSyncedAt     DateTime?
@@ -521,7 +521,7 @@ model Invoice {
   createdDate       DateTime?
   modifiedDate      DateTime?
   lastSyncedAt      DateTime           @default(now())
-  larkRecordId      String?
+  larkRecordId      String?            @unique
   larkSyncRetries   Int                @default(0)
   larkSyncStatus    LarkSyncStatus     @default(PENDING)
   larkSyncedAt      DateTime?

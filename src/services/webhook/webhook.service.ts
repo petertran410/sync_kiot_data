@@ -1,32 +1,26 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { Prisma } from '@prisma/client';
-import { HttpService } from '@nestjs/axios';
-import { firstValueFrom } from 'rxjs';
 import { KiotVietAuthService } from '../kiot-viet/auth.service';
 import { ConfigService } from '@nestjs/config';
+import { LarkOrderSyncService } from '../lark/order/lark-order-sync.service';
+import { LarkInvoiceSyncService } from '../lark/invoice/lark-invoice-sync.service';
+import { LarkCustomerSyncService } from '../lark/customer/lark-customer-sync.service';
+import { LarkProductSyncService } from '../lark/product/lark-product-sync.service';
+import { Prisma } from '@prisma/client';
+import { firstValueFrom } from 'rxjs';
 
 @Injectable()
 export class WebhookService {
   private readonly logger = new Logger(WebhookService.name);
-  private readonly LARK_WEBHOOK_URL =
-    'https://dieptra2018.sg.larksuite.com/base/workflow/webhook/event/UgifaGlVqw56jvh9gx6l6Dhzg6f';
-  private readonly LARK_WEBHOOK_CUSTOMER_URL =
-    'https://dieptra2018.sg.larksuite.com/base/workflow/webhook/event/PjojaSOgJwMtLJhk8NXl3eYFgqf';
-  private readonly LARK_WEBHOOK_PRODUCT_URL =
-    'https://dieptra2018.sg.larksuite.com/base/workflow/webhook/event/P8dQa9E8DwdYXThRnkRlVgcdgnc';
-  // private readonly LARK_WEBHOOK_STOCK_URL =
-  //   'https://dieptra2018.sg.larksuite.com/base/workflow/webhook/event/KqIvamQWVwPwZghWn7nlAXXzg5V';
-  private readonly LARK_WEBHOOK_PRICEBOOK_URL =
-    'https://dieptra2018.sg.larksuite.com/base/workflow/webhook/event/P6UgaRD1nwkhBVhAU6UlhvpWgXd';
-  private readonly LARK_WEBHOOK_PRICEBOOK_DETAIL_URL =
-    'https://dieptra2018.sg.larksuite.com/base/workflow/webhook/event/IG2qaSfewwlQLmhuNoflfOi5gWf';
 
   constructor(
     private readonly prismaService: PrismaService,
-    private readonly httpService: HttpService,
     private readonly authService: KiotVietAuthService,
     private readonly configService: ConfigService,
+    private readonly larkOrderSyncService: LarkOrderSyncService,
+    private readonly larkInvoiceSyncService: LarkInvoiceSyncService,
+    private readonly larkCustomerSyncService: LarkCustomerSyncService,
+    private readonly larkProductSyncService: LarkProductSyncService,
   ) {}
 
   async processOrderWebhook(webhookData: any): Promise<void> {
@@ -36,19 +30,14 @@ export class WebhookService {
       for (const notification of notifications) {
         const data = notification?.Data || [];
 
-        console.log(data);
-
         for (const orderData of data) {
           const detailedOrder = await this.fetchOrderDetail(orderData.Id);
-
-          if (detailedOrder) {
-            await this.sendToLarkWebhook(detailedOrder);
-          }
-
           const savedOrder = await this.upsertOrder(orderData, detailedOrder);
 
           if (savedOrder) {
             this.logger.log(`✅ Upserted order ${savedOrder.code}`);
+
+            await this.larkOrderSyncService.syncSingleOrderDirect(savedOrder);
           }
         }
       }
@@ -65,15 +54,8 @@ export class WebhookService {
       for (const notification of notifications) {
         const data = notification?.Data || [];
 
-        console.log(data);
-
         for (const invoiceData of data) {
           const detailedInvoice = await this.fetchInvoiceDetail(invoiceData.Id);
-
-          if (detailedInvoice) {
-            await this.sendToLarkWebhook(detailedInvoice);
-          }
-
           const savedInvoice = await this.upsertInvoice(
             invoiceData,
             detailedInvoice,
@@ -81,6 +63,11 @@ export class WebhookService {
 
           if (savedInvoice) {
             this.logger.log(`✅ Upserted invoice ${savedInvoice.code}`);
+
+            // Sync directly to Lark using bot
+            await this.larkInvoiceSyncService.syncSingleInvoiceDirect(
+              savedInvoice,
+            );
           }
         }
       }
@@ -97,17 +84,10 @@ export class WebhookService {
       for (const notification of notifications) {
         const data = notification?.Data || [];
 
-        console.log(data);
-
         for (const customerData of data) {
           const detailedCustomer = await this.fetchCustomerDetail(
             customerData.Id,
           );
-
-          if (detailedCustomer) {
-            await this.sendToLarkCustomerWebhook(detailedCustomer);
-          }
-
           const savedCustomer = await this.upsertCustomer(
             customerData,
             detailedCustomer,
@@ -115,6 +95,11 @@ export class WebhookService {
 
           if (savedCustomer) {
             this.logger.log(`✅ Upserted customer ${savedCustomer.code}`);
+
+            // Sync directly to Lark using bot
+            await this.larkCustomerSyncService.syncSingleCustomerDirect(
+              savedCustomer,
+            );
           }
         }
       }
@@ -131,15 +116,8 @@ export class WebhookService {
       for (const notification of notifications) {
         const data = notification?.Data || [];
 
-        console.log(data);
-
         for (const productData of data) {
           const detailedProduct = await this.fetchProductDetail(productData.Id);
-
-          if (detailedProduct) {
-            await this.sendToLarkProductWebhook(detailedProduct);
-          }
-
           const savedProduct = await this.upsertProduct(
             productData,
             detailedProduct,
@@ -147,6 +125,11 @@ export class WebhookService {
 
           if (savedProduct) {
             this.logger.log(`✅ Upserted product ${savedProduct.code}`);
+
+            // Sync directly to Lark using bot
+            await this.larkProductSyncService.syncSingleProductDirect(
+              savedProduct,
+            );
           }
         }
       }
@@ -156,32 +139,6 @@ export class WebhookService {
     }
   }
 
-  // async processStockWebhook(webhookData: any): Promise<void> {
-  //   try {
-  //     const notifications = webhookData?.Notifications || [];
-
-  //     for (const notification of notifications) {
-  //       const data = notification?.Data || [];
-
-  //       console.log(data);
-
-  //       for (const stockData of data) {
-  //         const savedStock = await this.upsertStock(stockData);
-
-  //         if (savedStock) {
-  //           await this.sendToLarkStockWebhook(savedStock);
-  //           this.logger.log(
-  //             `✅ Upserted stock for product ${stockData.ProductCode}`,
-  //           );
-  //         }
-  //       }
-  //     }
-  //   } catch (error) {
-  //     this.logger.error(`❌ Process stock webhook failed: ${error.message}`);
-  //     throw error;
-  //   }
-  // }
-
   async processPriceBookWebhook(webhookData: any): Promise<void> {
     try {
       const notifications = webhookData?.Notifications || [];
@@ -189,17 +146,10 @@ export class WebhookService {
       for (const notification of notifications) {
         const data = notification?.Data || [];
 
-        console.log(data);
-
         for (const priceBookData of data) {
           const detailedPriceBook = await this.fetchPriceBookDetail(
             priceBookData.Id,
           );
-
-          if (detailedPriceBook) {
-            await this.sendToLarkPricebookWebhook(detailedPriceBook);
-          }
-
           const savedPriceBook = await this.upsertPriceBook(
             priceBookData,
             detailedPriceBook,
@@ -225,15 +175,12 @@ export class WebhookService {
       for (const notification of notifications) {
         const data = notification?.Data || [];
 
-        console.log(data);
-
         for (const detailData of data) {
           const savedDetail = await this.upsertPriceBookDetail(detailData);
 
           if (savedDetail) {
-            await this.sendToLarkPricebookDetailWebhook(savedDetail);
             this.logger.log(
-              `✅ Upserted priceBookDetail for product ${savedDetail.productName} in pricebook ${savedDetail.priceBookName}`,
+              `✅ Upserted priceBookDetail for product ${savedDetail.productName}`,
             );
           }
         }
