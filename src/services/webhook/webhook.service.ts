@@ -15,8 +15,8 @@ export class WebhookService {
     'https://dieptra2018.sg.larksuite.com/base/workflow/webhook/event/PjojaSOgJwMtLJhk8NXl3eYFgqf';
   private readonly LARK_WEBHOOK_PRODUCT_URL =
     'https://dieptra2018.sg.larksuite.com/base/workflow/webhook/event/P8dQa9E8DwdYXThRnkRlVgcdgnc';
-  private readonly LARK_WEBHOOK_STOCK_URL =
-    'https://dieptra2018.sg.larksuite.com/base/workflow/webhook/event/KqIvamQWVwPwZghWn7nlAXXzg5V';
+  // private readonly LARK_WEBHOOK_STOCK_URL =
+  //   'https://dieptra2018.sg.larksuite.com/base/workflow/webhook/event/KqIvamQWVwPwZghWn7nlAXXzg5V';
   private readonly LARK_WEBHOOK_PRICEBOOK_URL =
     'https://dieptra2018.sg.larksuite.com/base/workflow/webhook/event/P6UgaRD1nwkhBVhAU6UlhvpWgXd';
   private readonly LARK_WEBHOOK_PRICEBOOK_DETAIL_URL =
@@ -156,31 +156,31 @@ export class WebhookService {
     }
   }
 
-  async processStockWebhook(webhookData: any): Promise<void> {
-    try {
-      const notifications = webhookData?.Notifications || [];
+  // async processStockWebhook(webhookData: any): Promise<void> {
+  //   try {
+  //     const notifications = webhookData?.Notifications || [];
 
-      for (const notification of notifications) {
-        const data = notification?.Data || [];
+  //     for (const notification of notifications) {
+  //       const data = notification?.Data || [];
 
-        console.log(data);
+  //       console.log(data);
 
-        for (const stockData of data) {
-          const savedStock = await this.upsertStock(stockData);
+  //       for (const stockData of data) {
+  //         const savedStock = await this.upsertStock(stockData);
 
-          if (savedStock) {
-            await this.sendToLarkStockWebhook(savedStock);
-            this.logger.log(
-              `✅ Upserted stock for product ${stockData.ProductCode}`,
-            );
-          }
-        }
-      }
-    } catch (error) {
-      this.logger.error(`❌ Process stock webhook failed: ${error.message}`);
-      throw error;
-    }
-  }
+  //         if (savedStock) {
+  //           await this.sendToLarkStockWebhook(savedStock);
+  //           this.logger.log(
+  //             `✅ Upserted stock for product ${stockData.ProductCode}`,
+  //           );
+  //         }
+  //       }
+  //     }
+  //   } catch (error) {
+  //     this.logger.error(`❌ Process stock webhook failed: ${error.message}`);
+  //     throw error;
+  //   }
+  // }
 
   async processPriceBookWebhook(webhookData: any): Promise<void> {
     try {
@@ -287,18 +287,18 @@ export class WebhookService {
     }
   }
 
-  private async sendToLarkStockWebhook(webhookData: any): Promise<void> {
-    try {
-      await firstValueFrom(
-        this.httpService.post(this.LARK_WEBHOOK_STOCK_URL, webhookData, {
-          headers: { 'Content-Type': 'application/json' },
-        }),
-      );
-      this.logger.log(`✅ Sent webhook stock data to Lark successfully`);
-    } catch (error) {
-      this.logger.error(`❌ Failed to send to Lark: ${error.message}`);
-    }
-  }
+  // private async sendToLarkStockWebhook(webhookData: any): Promise<void> {
+  //   try {
+  //     await firstValueFrom(
+  //       this.httpService.post(this.LARK_WEBHOOK_STOCK_URL, webhookData, {
+  //         headers: { 'Content-Type': 'application/json' },
+  //       }),
+  //     );
+  //     this.logger.log(`✅ Sent webhook stock data to Lark successfully`);
+  //   } catch (error) {
+  //     this.logger.error(`❌ Failed to send to Lark: ${error.message}`);
+  //   }
+  // }
 
   private async sendToLarkPricebookWebhook(webhookData: any): Promise<void> {
     try {
