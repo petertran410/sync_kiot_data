@@ -300,10 +300,10 @@ export class LarkInvoiceSyncService {
 
     if (invoice.branchId !== null && invoice.branchId !== undefined) {
       const branchMapping = {
-        635934: BRANCH_OPTIONS.CUA_HANG_DIEP_TRA,
-        154833: BRANCH_OPTIONS.KHO_HA_NOI,
-        402819: BRANCH_OPTIONS.KHO_SAI_GON,
-        631164: BRANCH_OPTIONS.VAN_PHONG_HA_NOI,
+        1: BRANCH_OPTIONS.CUA_HANG_DIEP_TRA,
+        2: BRANCH_OPTIONS.KHO_HA_NOI,
+        3: BRANCH_OPTIONS.KHO_SAI_GON,
+        4: BRANCH_OPTIONS.VAN_PHONG_HA_NOI,
       };
 
       fields[LARK_INVOICE_FIELDS.BRANCH] =
@@ -342,9 +342,26 @@ export class LarkInvoiceSyncService {
       fields[LARK_INVOICE_FIELDS.CUSTOMER_CODE] = invoice.customerCode;
     }
 
+    if (invoice.usingCod) {
+      if (invoice.usingCod === false) {
+        fields[LARK_INVOICE_FIELDS.APPLY_COD] = 'Không';
+      } else {
+        fields[LARK_INVOICE_FIELDS.APPLY_COD] = 'Có';
+      }
+    }
+
+    if (invoice.isApplyVoucher) {
+      if (invoice.isApplyVoucher === false) {
+        fields[LARK_INVOICE_FIELDS.APPLY_VOUCHER] = 'Không';
+      } else {
+        fields[LARK_INVOICE_FIELDS.APPLY_VOUCHER] = 'Có';
+      }
+    }
+
     if (invoice.saleChannelName) {
-      fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] =
-        invoice.saleChannelName || 'Bán Trực Tiếp';
+      fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] = invoice.saleChannelName;
+    } else {
+      fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] = 'Bán Trực Tiếp';
     }
 
     if (invoice.customerName) {

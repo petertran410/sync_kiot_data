@@ -577,6 +577,7 @@ export class WebhookService {
             ? new Prisma.Decimal(invoiceData.Discount)
             : 0,
           orderId,
+          saleChannelId: saleChannel.id ? saleChannel.id : 1,
           discountRatio: invoiceData.DiscountRatio
             ? invoiceData.DiscountRatio
             : 0,
@@ -622,7 +623,7 @@ export class WebhookService {
           usingCod: detailedInvoice?.usingCod ?? false,
           customerCode: detailedInvoice?.customerCode ?? null,
           customerName: detailedInvoice?.customerName ?? null,
-          saleChannelId: saleChannel.id,
+          saleChannelId: saleChannel.id ? saleChannel.id : 1,
           createdDate: detailedInvoice?.createdDate
             ? new Date(detailedInvoice.createdDate)
             : invoiceData.CreatedDate
