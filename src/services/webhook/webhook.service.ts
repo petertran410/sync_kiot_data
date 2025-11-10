@@ -872,18 +872,18 @@ export class WebhookService {
           comments: customerData.Comments ?? null,
           debt: detailedCustomer?.debt
             ? new Prisma.Decimal(detailedCustomer.debt)
-            : null,
+            : 0,
           totalInvoiced: detailedCustomer?.totalInvoiced
             ? new Prisma.Decimal(detailedCustomer.totalInvoiced)
-            : null,
+            : 0,
           totalPoint: detailedCustomer?.totalPoint ?? null,
           totalRevenue: detailedCustomer?.totalRevenue
             ? new Prisma.Decimal(detailedCustomer.totalRevenue)
-            : null,
+            : 0,
           retailerId: 310831,
           rewardPoint: detailedCustomer?.rewardPoint
             ? BigInt(detailedCustomer.rewardPoint)
-            : null,
+            : 0,
           groups: detailedCustomer?.groups ?? null,
           branchId,
           modifiedDate: customerData.ModifiedDate

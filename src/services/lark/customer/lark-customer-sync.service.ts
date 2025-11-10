@@ -266,7 +266,6 @@ export class LarkCustomerSyncService {
   private mapCustomerToLarkBase(customer: any): Record<string, any> {
     const fields: Record<string, any> = {};
 
-    // EXACT mapping từ code gốc
     fields[LARK_CUSTOMER_FIELDS.KIOTVIET_ID] = Number(customer.kiotVietId || 0);
 
     if (customer.name) {
@@ -282,7 +281,7 @@ export class LarkCustomerSyncService {
     }
 
     if (customer.retailerId) {
-      fields[LARK_CUSTOMER_FIELDS.STORE_ID] = '2svn';
+      fields[LARK_CUSTOMER_FIELDS.STORE_ID] = '310831';
     }
 
     if (customer.organization) {
