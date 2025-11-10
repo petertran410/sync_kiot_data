@@ -1,4 +1,3 @@
-// src/services/lark/invoice/lark-invoice-sync.service.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
@@ -25,6 +24,7 @@ const LARK_INVOICE_FIELDS = {
   APPLY_VOUCHER: 'Áp Mã Voucher',
   CREATED_DATE: 'Ngày Tạo',
   PURCHASE_DATE: 'Ngày Mua',
+  MODIFIED_DATE: 'Thời Gian Cập Nhật',
 } as const;
 
 const BRANCH_OPTIONS = {
@@ -63,29 +63,6 @@ const SALE_NAME = {
   NGUYEN_HUU_TOAN: 'Nguyễn Hữu Toàn',
   LE_BICH_NGOC: 'Lê Bích Ngọc',
   NGUYEN_THI_LOAN: 'Nguyễn Thị Loan',
-};
-
-const SALE_CHANNEL_OPTIONS = {
-  DIRECT: 'Bán Trực Tiếp',
-  LERMAO_SANH_AN: 'LerMao - Sành Ăn Như Gấu',
-  DIEP_TRA_PHA_CHE: 'Diệp Trà - Nguyên Liệu Pha Chế',
-  FACEBOOK: 'Facebook',
-  INSTAGRAM: 'Instagram',
-  DIEPTRA: 'DiepTra',
-  DIEPTRA_OFFICIAL: 'DiepTraOfficial',
-  TIKTOK_LIVE: 'Tiktok Live',
-  DIEPTRA_ROYAL: 'DIỆP TRÀ - ROYALTEA',
-  DIEPTRA_TONGKHO_NGUYENLIEU: 'DIỆP TRÀ  Tổng Kho Nguyên Liệu',
-  DIEPTRA_TONGKHO_NGUYENLIEU_2: 'DIỆP TRÀ  Tổng Kho Nguyên Liệu',
-  DIEPTRA_CHINHANH_MIENNAM: 'Diệp Trà Chi Nhánh Miền Nam',
-  DIEPTRA_CHINHANH_MIENNAM_2: 'Diệp Trà Chi Nhánh Miền Nam',
-  DIEPTRA_SAIGON: 'DIỆP TRÀ SÀI GÒN',
-  MAOMAO_THICH_TRASUA: 'Mao Mao thích Tà Xữa',
-  SHOPEE: 'Shopee',
-  DIEPTRA_ROYAL_2: 'DIỆP TRÀ - ROYALTEA',
-  DIEPTRA_SAIGON_2: 'DIỆP TRÀ SÀI GÒN',
-  WEBSITE: 'Website',
-  OTHER: 'Khác',
 };
 
 interface LarkBatchResponse {
@@ -203,6 +180,11 @@ export class LarkInvoiceSyncService {
 
   async syncSingleInvoiceDirect(invoice: any): Promise<void> {
     try {
+      if (this.shouldSkipSync(invoice.code)) {
+        this.logger.log(`⏭️  Skipping test invoice: ${invoice.code}`);
+        return;
+      }
+
       this.logger.log(`🔄 Syncing invoice ${invoice.code} to Lark...`);
 
       const existingRecordId = await this.searchRecordByCode(invoice.code);
@@ -305,10 +287,6 @@ export class LarkInvoiceSyncService {
     return upperCode.includes('SPE') || upperCode.includes('TTS');
   }
 
-  // ============================================================================
-  // MAPPING METHOD
-  // ============================================================================
-
   private mapInvoiceToLarkBase(invoice: any): Record<string, any> {
     const fields: Record<string, any> = {};
 
@@ -400,13 +378,14 @@ export class LarkInvoiceSyncService {
 
     if (invoice.status) {
       const statusMapping = {
-        1: STATUS_OPTIONS.PHIEU_TAM,
-        2: STATUS_OPTIONS.HOAN_THANH,
-        3: STATUS_OPTIONS.DA_HUY,
+        1: STATUS_OPTIONS.COMPLETED,
+        2: STATUS_OPTIONS.CANCELLED,
+        3: STATUS_OPTIONS.PROCESSING,
+        4: STATUS_OPTIONS.DELIVERY_FAILED,
       };
 
       fields[LARK_INVOICE_FIELDS.STATUS] =
-        statusMapping[invoice.status] || STATUS_OPTIONS.PHIEU_TAM;
+        statusMapping[invoice.status] || STATUS_OPTIONS.PROCESSING;
     }
 
     if (invoice.description !== null && invoice.description !== undefined) {
@@ -414,7 +393,7 @@ export class LarkInvoiceSyncService {
     }
 
     if (invoice.purchaseDate) {
-      fields[LARK_INVOICE_FIELDS.INVOICE_DATE] = new Date(
+      fields[LARK_INVOICE_FIELDS.PURCHASE_DATE] = new Date(
         invoice.purchaseDate,
       ).getTime();
     }
@@ -433,10 +412,6 @@ export class LarkInvoiceSyncService {
 
     return fields;
   }
-
-  // ============================================================================
-  // UTILITY METHODS
-  // ============================================================================
 
   async getSyncProgress(): Promise<any> {
     const total = await this.prismaService.invoice.count();
@@ -461,55 +436,6 @@ export class LarkInvoiceSyncService {
       canRetryFailed: failed > 0,
       summary: `${synced}/${total} synced (${progress}%)`,
     };
-  }
-
-  async retryFailedInvoiceSyncs(): Promise<void> {
-    this.logger.log('🔄 Retrying failed invoice syncs...');
-
-    const failedInvoices = await this.prismaService.invoice.findMany({
-      where: {
-        larkSyncStatus: 'FAILED',
-        larkSyncRetries: { lt: 3 },
-      },
-      take: 100,
-    });
-
-    if (failedInvoices.length === 0) {
-      this.logger.log('✅ No failed invoices to retry');
-      return;
-    }
-
-    this.logger.log(`Found ${failedInvoices.length} failed invoices to retry`);
-
-    // Reset to PENDING
-    await this.prismaService.invoice.updateMany({
-      where: { id: { in: failedInvoices.map((i) => i.id) } },
-      data: { larkSyncStatus: 'PENDING' },
-    });
-
-    await this.syncInvoicesToLarkBase(failedInvoices);
-  }
-
-  async getInvoiceSyncStats(): Promise<{
-    pending: number;
-    synced: number;
-    failed: number;
-    total: number;
-  }> {
-    const [pending, synced, failed, total] = await Promise.all([
-      this.prismaService.invoice.count({
-        where: { larkSyncStatus: 'PENDING' },
-      }),
-      this.prismaService.invoice.count({
-        where: { larkSyncStatus: 'SYNCED' },
-      }),
-      this.prismaService.invoice.count({
-        where: { larkSyncStatus: 'FAILED' },
-      }),
-      this.prismaService.invoice.count(),
-    ]);
-
-    return { pending, synced, failed, total };
   }
 
   private async testLarkBaseConnection(): Promise<void> {
@@ -559,10 +485,6 @@ export class LarkInvoiceSyncService {
       }
     }
   }
-
-  // ============================================================================
-  // LOCK MANAGEMENT
-  // ============================================================================
 
   private async acquireSyncLock(lockKey: string): Promise<void> {
     const syncName = 'invoice_lark_sync';
@@ -635,23 +557,24 @@ export class LarkInvoiceSyncService {
 
   private async isLockProcessActive(lockRecord: any): Promise<boolean> {
     try {
-      if (!lockRecord.progress?.processId) {
+      if (!lockRecord.progress || typeof lockRecord.progress !== 'object') {
         return false;
       }
 
+      const { processId, hostname } = lockRecord.progress;
       const currentHostname = require('os').hostname();
-      if (lockRecord.progress.hostname !== currentHostname) {
+
+      if (hostname !== currentHostname) {
         return false;
       }
 
-      const lockAge = Date.now() - lockRecord.startedAt.getTime();
-      if (lockAge > 5 * 60 * 1000) {
+      if (!processId) {
         return false;
       }
 
+      process.kill(processId, 0);
       return true;
     } catch (error) {
-      this.logger.warn(`Could not verify lock process: ${error.message}`);
       return false;
     }
   }

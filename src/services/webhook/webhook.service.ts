@@ -8,6 +8,7 @@ import { LarkCustomerSyncService } from '../lark/customer/lark-customer-sync.ser
 import { LarkProductSyncService } from '../lark/product/lark-product-sync.service';
 import { Prisma } from '@prisma/client';
 import { firstValueFrom } from 'rxjs';
+import { HttpService } from '@nestjs/axios';
 
 @Injectable()
 export class WebhookService {
@@ -17,6 +18,7 @@ export class WebhookService {
     private readonly prismaService: PrismaService,
     private readonly authService: KiotVietAuthService,
     private readonly configService: ConfigService,
+    private readonly httpService: HttpService,
     private readonly larkOrderSyncService: LarkOrderSyncService,
     private readonly larkInvoiceSyncService: LarkInvoiceSyncService,
     private readonly larkCustomerSyncService: LarkCustomerSyncService,
@@ -64,7 +66,6 @@ export class WebhookService {
           if (savedInvoice) {
             this.logger.log(`✅ Upserted invoice ${savedInvoice.code}`);
 
-            // Sync directly to Lark using bot
             await this.larkInvoiceSyncService.syncSingleInvoiceDirect(
               savedInvoice,
             );
@@ -96,7 +97,6 @@ export class WebhookService {
           if (savedCustomer) {
             this.logger.log(`✅ Upserted customer ${savedCustomer.code}`);
 
-            // Sync directly to Lark using bot
             await this.larkCustomerSyncService.syncSingleCustomerDirect(
               savedCustomer,
             );
@@ -126,7 +126,6 @@ export class WebhookService {
           if (savedProduct) {
             this.logger.log(`✅ Upserted product ${savedProduct.code}`);
 
-            // Sync directly to Lark using bot
             await this.larkProductSyncService.syncSingleProductDirect(
               savedProduct,
             );
@@ -193,99 +192,86 @@ export class WebhookService {
     }
   }
 
-  private async sendToLarkWebhook(webhookData: any): Promise<void> {
-    try {
-      await firstValueFrom(
-        this.httpService.post(this.LARK_WEBHOOK_URL, webhookData, {
-          headers: { 'Content-Type': 'application/json' },
-        }),
-      );
-      this.logger.log(
-        `✅ Sent webhook order & invoice data to Lark successfully`,
-      );
-    } catch (error) {
-      this.logger.error(`❌ Failed to send to Lark: ${error.message}`);
-    }
-  }
-
-  private async sendToLarkCustomerWebhook(webhookData: any): Promise<void> {
-    try {
-      await firstValueFrom(
-        this.httpService.post(this.LARK_WEBHOOK_CUSTOMER_URL, webhookData, {
-          headers: { 'Content-Type': 'application/json' },
-        }),
-      );
-      this.logger.log(`✅ Sent webhook customer data to Lark successfully`);
-    } catch (error) {
-      this.logger.error(`❌ Failed to send to Lark: ${error.message}`);
-    }
-  }
-
-  private async sendToLarkProductWebhook(webhookData: any): Promise<void> {
-    try {
-      await firstValueFrom(
-        this.httpService.post(this.LARK_WEBHOOK_PRODUCT_URL, webhookData, {
-          headers: { 'Content-Type': 'application/json' },
-        }),
-      );
-      this.logger.log(`✅ Sent webhook product data to Lark successfully`);
-    } catch (error) {
-      this.logger.error(`❌ Failed to send to Lark: ${error.message}`);
-    }
-  }
-
-  // private async sendToLarkStockWebhook(webhookData: any): Promise<void> {
+  // private async sendToLarkWebhook(webhookData: any): Promise<void> {
   //   try {
   //     await firstValueFrom(
-  //       this.httpService.post(this.LARK_WEBHOOK_STOCK_URL, webhookData, {
+  //       this.httpService.post(this.LARK_WEBHOOK_URL, webhookData, {
   //         headers: { 'Content-Type': 'application/json' },
   //       }),
   //     );
-  //     this.logger.log(`✅ Sent webhook stock data to Lark successfully`);
+  //     this.logger.log(
+  //       `✅ Sent webhook order & invoice data to Lark successfully`,
+  //     );
   //   } catch (error) {
   //     this.logger.error(`❌ Failed to send to Lark: ${error.message}`);
   //   }
   // }
 
-  private async sendToLarkPricebookWebhook(webhookData: any): Promise<void> {
-    try {
-      await firstValueFrom(
-        this.httpService.post(this.LARK_WEBHOOK_PRICEBOOK_URL, webhookData, {
-          headers: { 'Content-Type': 'application/json' },
-        }),
-      );
-      this.logger.log(`✅ Sent webhook pricebook data to Lark successfully`);
-    } catch (error) {
-      this.logger.error(`❌ Failed to send to Lark: ${error.message}`);
-    }
-  }
+  // private async sendToLarkCustomerWebhook(webhookData: any): Promise<void> {
+  //   try {
+  //     await firstValueFrom(
+  //       this.httpService.post(this.LARK_WEBHOOK_CUSTOMER_URL, webhookData, {
+  //         headers: { 'Content-Type': 'application/json' },
+  //       }),
+  //     );
+  //     this.logger.log(`✅ Sent webhook customer data to Lark successfully`);
+  //   } catch (error) {
+  //     this.logger.error(`❌ Failed to send to Lark: ${error.message}`);
+  //   }
+  // }
 
-  private async sendToLarkPricebookDetailWebhook(
-    webhookData: any,
-  ): Promise<void> {
-    try {
-      const sanitizedData = JSON.parse(
-        JSON.stringify(webhookData, (key, value) =>
-          typeof value === 'bigint' ? value.toString() : value,
-        ),
-      );
+  // private async sendToLarkProductWebhook(webhookData: any): Promise<void> {
+  //   try {
+  //     await firstValueFrom(
+  //       this.httpService.post(this.LARK_WEBHOOK_PRODUCT_URL, webhookData, {
+  //         headers: { 'Content-Type': 'application/json' },
+  //       }),
+  //     );
+  //     this.logger.log(`✅ Sent webhook product data to Lark successfully`);
+  //   } catch (error) {
+  //     this.logger.error(`❌ Failed to send to Lark: ${error.message}`);
+  //   }
+  // }
 
-      await firstValueFrom(
-        this.httpService.post(
-          this.LARK_WEBHOOK_PRICEBOOK_DETAIL_URL,
-          sanitizedData,
-          {
-            headers: { 'Content-Type': 'application/json' },
-          },
-        ),
-      );
-      this.logger.log(
-        `✅ Sent webhook pricebook detail data to Lark successfully`,
-      );
-    } catch (error) {
-      this.logger.error(`❌ Failed to send to Lark: ${error.message}`);
-    }
-  }
+  // private async sendToLarkPricebookWebhook(webhookData: any): Promise<void> {
+  //   try {
+  //     await firstValueFrom(
+  //       this.httpService.post(this.LARK_WEBHOOK_PRICEBOOK_URL, webhookData, {
+  //         headers: { 'Content-Type': 'application/json' },
+  //       }),
+  //     );
+  //     this.logger.log(`✅ Sent webhook pricebook data to Lark successfully`);
+  //   } catch (error) {
+  //     this.logger.error(`❌ Failed to send to Lark: ${error.message}`);
+  //   }
+  // }
+
+  // private async sendToLarkPricebookDetailWebhook(
+  //   webhookData: any,
+  // ): Promise<void> {
+  //   try {
+  //     const sanitizedData = JSON.parse(
+  //       JSON.stringify(webhookData, (key, value) =>
+  //         typeof value === 'bigint' ? value.toString() : value,
+  //       ),
+  //     );
+
+  //     await firstValueFrom(
+  //       this.httpService.post(
+  //         this.LARK_WEBHOOK_PRICEBOOK_DETAIL_URL,
+  //         sanitizedData,
+  //         {
+  //           headers: { 'Content-Type': 'application/json' },
+  //         },
+  //       ),
+  //     );
+  //     this.logger.log(
+  //       `✅ Sent webhook pricebook detail data to Lark successfully`,
+  //     );
+  //   } catch (error) {
+  //     this.logger.error(`❌ Failed to send to Lark: ${error.message}`);
+  //   }
+  // }
 
   private async upsertOrder(orderData: any, detailedOrder: any) {
     try {
@@ -1197,9 +1183,9 @@ export class WebhookService {
           stockData.ProductId,
         );
 
-        if (detailedProduct) {
-          await this.sendToLarkProductWebhook(detailedProduct);
-        }
+        // if (detailedProduct) {
+        //   await this.sendToLarkProductWebhook(detailedProduct);
+        // }
 
         if (detailedProduct) {
           await this.upsertProduct(
@@ -1495,9 +1481,9 @@ export class WebhookService {
           detailData.ProductId,
         );
 
-        if (detailedProduct) {
-          await this.sendToLarkProductWebhook(detailedProduct);
-        }
+        // if (detailedProduct) {
+        //   await this.sendToLarkProductWebhook(detailedProduct);
+        // }
 
         if (detailedProduct) {
           const savedProduct = await this.upsertProduct(

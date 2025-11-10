@@ -1,11 +1,9 @@
-// src/services/lark/order/lark-order-sync.service.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { LarkAuthService } from '../auth/lark-auth.service';
-import { delay, firstValueFrom } from 'rxjs';
-import { create } from 'domain';
+import { firstValueFrom } from 'rxjs';
 
 const LARK_ORDER_FIELDS = {
   PRIMARY_CODE: 'Mã Đơn Hàng',
@@ -87,9 +85,6 @@ export class LarkOrderSyncService {
   private readonly logger = new Logger(LarkOrderSyncService.name);
   private readonly baseToken: string;
   private readonly tableId: string;
-  private readonly batchSize = 100;
-  private readonly MAX_AUTH_RETRIES = 3;
-  private readonly AUTH_ERROR_CODES = [99991663, 99991664, 99991665];
 
   constructor(
     private readonly httpService: HttpService,
@@ -109,10 +104,6 @@ export class LarkOrderSyncService {
     this.baseToken = baseToken;
     this.tableId = tableId;
   }
-
-  // ============================================================================
-  // MAIN SYNC METHOD - For batch sync (scheduled jobs)
-  // ============================================================================
 
   async syncOrdersToLarkBase(orders: any[]): Promise<void> {
     const lockKey = `lark_order_sync_lock_${Date.now()}`;
@@ -138,8 +129,7 @@ export class LarkOrderSyncService {
 
       await this.testLarkBaseConnection();
 
-      // Process in batches
-      const BATCH_SIZE = 50; // Smaller batch for search-based sync
+      const BATCH_SIZE = 50;
       let totalSuccess = 0;
       let totalFailed = 0;
 
@@ -152,7 +142,6 @@ export class LarkOrderSyncService {
           `🔄 Processing batch ${batchNumber}/${totalBatches} (${batch.length} orders)`,
         );
 
-        // Sync each order in the batch
         for (const order of batch) {
           try {
             await this.syncSingleOrderDirect(order);
@@ -164,11 +153,9 @@ export class LarkOrderSyncService {
             totalFailed++;
           }
 
-          // Small delay between orders to avoid rate limiting
           await new Promise((resolve) => setTimeout(resolve, 100));
         }
 
-        // Delay between batches
         if (i + BATCH_SIZE < ordersToSync.length) {
           await new Promise((resolve) => setTimeout(resolve, 2000));
         }
@@ -185,13 +172,8 @@ export class LarkOrderSyncService {
     }
   }
 
-  // ============================================================================
-  // DIRECT SYNC METHOD - For webhook realtime sync
-  // ============================================================================
-
   async syncSingleOrderDirect(order: any): Promise<void> {
     try {
-      // Filter out test data
       if (this.shouldSkipSync(order.code)) {
         this.logger.log(`⏭️  Skipping test order: ${order.code}`);
         return;
@@ -199,14 +181,12 @@ export class LarkOrderSyncService {
 
       this.logger.log(`🔄 Syncing order ${order.code} to Lark...`);
 
-      // Search if record exists in Lark by code
       const existingRecordId = await this.searchRecordByCode(order.code);
 
       const larkData = this.mapOrderToLarkBase(order);
       const headers = await this.larkAuthService.getOrderHeaders();
 
       if (existingRecordId) {
-        // Update existing record
         const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/${existingRecordId}`;
 
         await firstValueFrom(
@@ -219,7 +199,6 @@ export class LarkOrderSyncService {
 
         this.logger.log(`✅ Updated order ${order.code} in Lark`);
       } else {
-        // Create new record
         const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records`;
 
         await firstValueFrom(
@@ -233,7 +212,6 @@ export class LarkOrderSyncService {
         this.logger.log(`✅ Created order ${order.code} in Lark`);
       }
 
-      // Update database status
       await this.prismaService.order.update({
         where: { id: order.id },
         data: { larkSyncStatus: 'SYNCED', larkSyncedAt: new Date() },
@@ -241,7 +219,6 @@ export class LarkOrderSyncService {
     } catch (error) {
       this.logger.error(`❌ Sync order ${order.code} failed: ${error.message}`);
 
-      // Update database status to FAILED
       await this.prismaService.order.update({
         where: { id: order.id },
         data: {
@@ -291,7 +268,7 @@ export class LarkOrderSyncService {
 
       return null;
     } catch (error) {
-      this.logger.warn(`Search by code failed: ${error.message}`);
+      this.logger.warn(`Search order by code failed: ${error.message}`);
       return null;
     }
   }
@@ -398,9 +375,9 @@ export class LarkOrderSyncService {
       fields[LARK_ORDER_FIELDS.COMMENT] = order.description || '';
     }
 
-    if (order.purchaseDate) {
+    if (order.orderDate) {
       fields[LARK_ORDER_FIELDS.ORDER_DATE] = new Date(
-        order.purchaseDate,
+        order.orderDate,
       ).getTime();
     }
 
@@ -444,49 +421,6 @@ export class LarkOrderSyncService {
     };
   }
 
-  async retryFailedOrderSyncs(): Promise<void> {
-    this.logger.log('🔄 Retrying failed order syncs...');
-
-    const failedOrders = await this.prismaService.order.findMany({
-      where: {
-        larkSyncStatus: 'FAILED',
-        larkSyncRetries: { lt: 3 },
-      },
-      take: 100,
-    });
-
-    if (failedOrders.length === 0) {
-      this.logger.log('✅ No failed orders to retry');
-      return;
-    }
-
-    this.logger.log(`Found ${failedOrders.length} failed orders to retry`);
-
-    // Reset to PENDING
-    await this.prismaService.order.updateMany({
-      where: { id: { in: failedOrders.map((o) => o.id) } },
-      data: { larkSyncStatus: 'PENDING' },
-    });
-
-    await this.syncOrdersToLarkBase(failedOrders);
-  }
-
-  async getOrderSyncStats(): Promise<{
-    pending: number;
-    synced: number;
-    failed: number;
-    total: number;
-  }> {
-    const [pending, synced, failed, total] = await Promise.all([
-      this.prismaService.order.count({ where: { larkSyncStatus: 'PENDING' } }),
-      this.prismaService.order.count({ where: { larkSyncStatus: 'SYNCED' } }),
-      this.prismaService.order.count({ where: { larkSyncStatus: 'FAILED' } }),
-      this.prismaService.order.count(),
-    ]);
-
-    return { pending, synced, failed, total };
-  }
-
   private async testLarkBaseConnection(): Promise<void> {
     const maxRetries = 3;
 
@@ -521,7 +455,7 @@ export class LarkOrderSyncService {
         if (retryCount < maxRetries) {
           const delay = (retryCount + 1) * 2000;
           this.logger.warn(
-            `⚠️  Connection attempt ${retryCount + 1} failed: ${error.message}`,
+            `⚠️ Connection attempt ${retryCount + 1} failed: ${error.message}`,
           );
           this.logger.log(`🔄 Retrying in ${delay / 1000}s...`);
           await new Promise((resolve) => setTimeout(resolve, delay));
@@ -534,10 +468,6 @@ export class LarkOrderSyncService {
       }
     }
   }
-
-  // ============================================================================
-  // LOCK MANAGEMENT
-  // ============================================================================
 
   private async acquireSyncLock(lockKey: string): Promise<void> {
     const syncName = 'order_lark_sync';
@@ -610,23 +540,24 @@ export class LarkOrderSyncService {
 
   private async isLockProcessActive(lockRecord: any): Promise<boolean> {
     try {
-      if (!lockRecord.progress?.processId) {
+      if (!lockRecord.progress || typeof lockRecord.progress !== 'object') {
         return false;
       }
 
+      const { processId, hostname } = lockRecord.progress;
       const currentHostname = require('os').hostname();
-      if (lockRecord.progress.hostname !== currentHostname) {
+
+      if (hostname !== currentHostname) {
         return false;
       }
 
-      const lockAge = Date.now() - lockRecord.startedAt.getTime();
-      if (lockAge > 5 * 60 * 1000) {
+      if (!processId) {
         return false;
       }
 
+      process.kill(processId, 0);
       return true;
     } catch (error) {
-      this.logger.warn(`Could not verify lock process: ${error.message}`);
       return false;
     }
   }
@@ -684,9 +615,7 @@ export class LarkOrderSyncService {
       lockRecord.progress.lockKey === lockKey
     ) {
       await this.prismaService.syncControl.update({
-        where: {
-          id: lockRecord.id,
-        },
+        where: { id: lockRecord.id },
         data: {
           isRunning: false,
           status: 'completed',

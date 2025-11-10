@@ -509,7 +509,7 @@ export class LarkProductSyncService {
       take: 100,
       include: {
         inventories: true,
-        priceBooks: true,
+        // priceBooks: true,
       },
     });
 
