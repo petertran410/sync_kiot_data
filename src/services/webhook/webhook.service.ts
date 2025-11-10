@@ -303,19 +303,25 @@ export class WebhookService {
       const order = await this.prismaService.order.upsert({
         where: { kiotVietId },
         update: {
-          status: orderData.Status,
-          statusValue: orderData.StatusValue,
-          total: new Prisma.Decimal(orderData.Total || 0),
-          totalPayment: new Prisma.Decimal(orderData.TotalPayment || 0),
+          kiotVietId,
+          code: orderData.Code,
+          purchaseDate: new Date(orderData.PurchaseDate),
+          branchId,
+          soldById,
+          customerId,
           customerCode: detailedOrder?.customerCode ?? orderData.CustomerCode,
           customerName: detailedOrder?.customerName ?? orderData.CustomerName,
           retailerId: 310831,
           saleChannelId: saleChannel.id,
           saleChannelName: saleChannel.name,
+          total: new Prisma.Decimal(orderData.Total || 0),
+          totalPayment: new Prisma.Decimal(orderData.TotalPayment || 0),
           discount: orderData.Discount
             ? new Prisma.Decimal(orderData.Discount)
             : null,
           discountRatio: orderData.DiscountRatio,
+          status: orderData.Status,
+          statusValue: orderData.StatusValue,
           description: detailedOrder?.description ?? orderData.Description,
           usingCod: detailedOrder?.usingCod ?? false,
           createdDate: detailedOrder?.createdDate
@@ -326,7 +332,6 @@ export class WebhookService {
           modifiedDate: orderData.ModifiedDate
             ? new Date(orderData.ModifiedDate)
             : null,
-          lastSyncedAt: new Date(),
           larkSyncStatus: shouldSyncToLark ? 'PENDING' : 'SKIP',
         },
         create: {
