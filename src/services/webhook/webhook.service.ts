@@ -39,6 +39,8 @@ export class WebhookService {
           if (savedOrder) {
             this.logger.log(`✅ Upserted order ${savedOrder.code}`);
 
+            console.log(savedOrder);
+
             await this.larkOrderSyncService.syncSingleOrderDirect(savedOrder);
           }
         }
