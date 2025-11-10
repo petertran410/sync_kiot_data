@@ -375,9 +375,9 @@ export class LarkOrderSyncService {
       fields[LARK_ORDER_FIELDS.COMMENT] = order.description || '';
     }
 
-    if (order.orderDate) {
+    if (order.purchaseDate) {
       fields[LARK_ORDER_FIELDS.ORDER_DATE] = new Date(
-        order.orderDate,
+        order.purchaseDate,
       ).getTime();
     }
 
