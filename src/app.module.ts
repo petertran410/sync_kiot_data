@@ -9,9 +9,7 @@ import { KiotVietModule } from './services/kiot-viet/kiot-viet.module';
 import { BusSchedulerModule } from './services/bus-scheduler/bus-scheduler.module';
 import { SyncController } from './controllers/sync.controller';
 import { LarkModule } from './services/lark/lark.module';
-import { HealthController } from './controllers/health.controller';
 import { WebhookModule } from './services/webhook/webhook.module';
-import { WebhookController } from './controllers/webhook.controller';
 
 @Module({
   imports: [
@@ -23,12 +21,7 @@ import { WebhookController } from './controllers/webhook.controller';
     LarkModule,
     WebhookModule,
   ],
-  controllers: [
-    AppController,
-    SyncController,
-    HealthController,
-    WebhookController,
-  ],
+  controllers: [AppController, SyncController],
   providers: [AppService],
 })
 export class AppModule {}

@@ -192,6 +192,23 @@ export class WebhookService {
     }
   }
 
+  async processStockWebhook(webhookData: any): Promise<void> {
+    try {
+      const notifications = webhookData?.Notifications || [];
+
+      for (const notification of notifications) {
+        const data = notification?.Data || [];
+
+        for (const stockData of data) {
+          await this.upsertStock(stockData);
+        }
+      }
+    } catch (error) {
+      this.logger.error(`❌ Process stock webhook failed: ${error.message}`);
+      throw error;
+    }
+  }
+
   // private async sendToLarkWebhook(webhookData: any): Promise<void> {
   //   try {
   //     await firstValueFrom(
