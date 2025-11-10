@@ -292,10 +292,10 @@ export class LarkOrderSyncService {
 
     if (order.branchId) {
       const branchMapping = {
-        635934: BRANCH_OPTIONS.CUA_HANG_DIEP_TRA,
-        154833: BRANCH_OPTIONS.KHO_HA_NOI,
-        402819: BRANCH_OPTIONS.KHO_SAI_GON,
-        631164: BRANCH_OPTIONS.VAN_PHONG_HA_NOI,
+        1: BRANCH_OPTIONS.CUA_HANG_DIEP_TRA,
+        2: BRANCH_OPTIONS.KHO_HA_NOI,
+        3: BRANCH_OPTIONS.KHO_SAI_GON,
+        4: BRANCH_OPTIONS.VAN_PHONG_HA_NOI,
       };
 
       fields[LARK_ORDER_FIELDS.BRANCH] = branchMapping[order.branchId] || '';

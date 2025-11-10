@@ -68,6 +68,8 @@ export class WebhookService {
           if (savedInvoice) {
             this.logger.log(`✅ Upserted invoice ${savedInvoice.code}`);
 
+            console.log(savedInvoice);
+
             await this.larkInvoiceSyncService.syncSingleInvoiceDirect(
               savedInvoice,
             );
@@ -99,6 +101,8 @@ export class WebhookService {
           if (savedCustomer) {
             this.logger.log(`✅ Upserted customer ${savedCustomer.code}`);
 
+            console.log(savedCustomer);
+
             await this.larkCustomerSyncService.syncSingleCustomerDirect(
               savedCustomer,
             );
@@ -127,6 +131,8 @@ export class WebhookService {
 
           if (savedProduct) {
             this.logger.log(`✅ Upserted product ${savedProduct.code}`);
+
+            console.log(savedProduct);
 
             await this.larkProductSyncService.syncSingleProductDirect(
               savedProduct,
