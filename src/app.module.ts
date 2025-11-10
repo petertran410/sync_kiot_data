@@ -10,6 +10,7 @@ import { BusSchedulerModule } from './services/bus-scheduler/bus-scheduler.modul
 import { SyncController } from './controllers/sync.controller';
 import { LarkModule } from './services/lark/lark.module';
 import { WebhookModule } from './services/webhook/webhook.module';
+import { WebhookController } from './controllers/webhook.controller';
 
 @Module({
   imports: [
@@ -21,7 +22,7 @@ import { WebhookModule } from './services/webhook/webhook.module';
     LarkModule,
     WebhookModule,
   ],
-  controllers: [AppController, SyncController],
+  controllers: [AppController, SyncController, WebhookController],
   providers: [AppService],
 })
 export class AppModule {}
