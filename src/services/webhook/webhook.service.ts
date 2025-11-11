@@ -150,16 +150,54 @@ export class WebhookService {
             detailedProduct,
           );
 
-          console.log(savedProduct);
-
           if (savedProduct) {
             this.logger.log(`✅ Upserted product ${savedProduct.code}`);
 
-            console.log(savedProduct);
+            const productWithRelations =
+              await this.prismaService.product.findUnique({
+                where: { id: savedProduct.id },
+                include: {
+                  inventories: true,
+                  priceBookDetails: {
+                    include: {
+                      priceBook: {
+                        select: { kiotVietId: true },
+                      },
+                    },
+                  },
+                },
+              });
 
-            await this.larkProductSyncService.syncSingleProductDirect(
-              savedProduct,
-            );
+            console.log(productWithRelations);
+
+            if (productWithRelations) {
+              const branchIds = productWithRelations.inventories
+                .map((inv) => inv.branchId)
+                .filter((id): id is number => id !== null);
+
+              if (branchIds.length > 0) {
+                const branches = await this.prismaService.branch.findMany({
+                  where: { id: { in: branchIds } },
+                  select: { id: true, kiotVietId: true },
+                });
+
+                const branchMap = new Map(
+                  branches.map((b) => [b.id, b.kiotVietId]),
+                );
+
+                productWithRelations.inventories =
+                  productWithRelations.inventories.map((inv) => ({
+                    ...inv,
+                    branchKiotVietId: inv.branchId
+                      ? branchMap.get(inv.branchId) || null
+                      : null,
+                  }));
+              }
+
+              await this.larkProductSyncService.syncSingleProductDirect(
+                productWithRelations,
+              );
+            }
           }
         }
       }
@@ -212,6 +250,52 @@ export class WebhookService {
             this.logger.log(
               `✅ Upserted priceBookDetail for product ${savedDetail.productName}`,
             );
+
+            const productWithRelations =
+              await this.prismaService.product.findUnique({
+                where: { id: savedDetail.productId },
+                include: {
+                  inventories: true,
+                  priceBookDetails: {
+                    include: {
+                      priceBook: {
+                        select: { kiotVietId: true },
+                      },
+                    },
+                  },
+                },
+              });
+
+            console.log(productWithRelations);
+
+            if (productWithRelations) {
+              const branchIds = productWithRelations.inventories
+                .map((inv) => inv.branchId)
+                .filter((id): id is number => id !== null);
+
+              if (branchIds.length > 0) {
+                const branches = await this.prismaService.branch.findMany({
+                  where: { id: { in: branchIds } },
+                  select: { id: true, kiotVietId: true },
+                });
+
+                const branchMap = new Map(
+                  branches.map((b) => [b.id, b.kiotVietId]),
+                );
+
+                productWithRelations.inventories =
+                  productWithRelations.inventories.map((inv) => ({
+                    ...inv,
+                    branchKiotVietId: inv.branchId
+                      ? branchMap.get(inv.branchId) || null
+                      : null,
+                  }));
+              }
+
+              await this.larkProductSyncService.syncSingleProductDirect(
+                productWithRelations,
+              );
+            }
           }
         }
       }
@@ -231,7 +315,59 @@ export class WebhookService {
         const data = notification?.Data || [];
 
         for (const stockData of data) {
-          await this.upsertStock(stockData);
+          const savedStock = await this.upsertStock(stockData);
+
+          if (savedStock) {
+            this.logger.log(
+              `✅ Upserted stock for product ${savedStock.productCode}`,
+            );
+
+            const productWithRelations =
+              await this.prismaService.product.findUnique({
+                where: { id: savedStock.productId },
+                include: {
+                  inventories: true,
+                  priceBookDetails: {
+                    include: {
+                      priceBook: {
+                        select: { kiotVietId: true },
+                      },
+                    },
+                  },
+                },
+              });
+
+            console.log(productWithRelations);
+
+            if (productWithRelations) {
+              const branchIds = productWithRelations.inventories
+                .map((inv) => inv.branchId)
+                .filter((id): id is number => id !== null);
+
+              if (branchIds.length > 0) {
+                const branches = await this.prismaService.branch.findMany({
+                  where: { id: { in: branchIds } },
+                  select: { id: true, kiotVietId: true },
+                });
+
+                const branchMap = new Map(
+                  branches.map((b) => [b.id, b.kiotVietId]),
+                );
+
+                productWithRelations.inventories =
+                  productWithRelations.inventories.map((inv) => ({
+                    ...inv,
+                    branchKiotVietId: inv.branchId
+                      ? branchMap.get(inv.branchId) || null
+                      : null,
+                  }));
+              }
+
+              await this.larkProductSyncService.syncSingleProductDirect(
+                productWithRelations,
+              );
+            }
+          }
         }
       }
     } catch (error) {
@@ -1240,10 +1376,6 @@ export class WebhookService {
         const detailedProduct = await this.fetchProductDetail(
           stockData.ProductId,
         );
-
-        // if (detailedProduct) {
-        //   await this.sendToLarkProductWebhook(detailedProduct);
-        // }
 
         if (detailedProduct) {
           await this.upsertProduct(

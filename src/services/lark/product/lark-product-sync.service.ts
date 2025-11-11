@@ -397,29 +397,34 @@ export class LarkProductSyncService {
       fields[LARK_PRODUCT_FIELDS.TYPE] = typeMapping[product.type] || null;
     }
 
-    if (product.priceBooks && product.priceBooks.length > 0) {
-      for (const priceBook of product.priceBooks) {
-        const priceBookId = priceBook.priceBookId;
-        const larkField = PRICEBOOK_FIELD_MAPPING[priceBookId];
+    if (product.priceBookDetails && product.priceBookDetails.length > 0) {
+      for (const priceBookDetail of product.priceBookDetails) {
+        const priceBookKiotVietId = priceBookDetail.priceBook?.kiotVietId;
 
-        if (larkField && larkField !== 'undefined') {
-          fields[larkField] = Number(priceBook.price) || 0;
+        if (priceBookKiotVietId) {
+          const larkField = PRICEBOOK_FIELD_MAPPING[priceBookKiotVietId];
+
+          if (larkField && larkField !== 'undefined') {
+            fields[larkField] = Number(priceBookDetail.price) || 0;
+          }
         }
       }
     }
 
     if (product.inventories && product.inventories.length > 0) {
       for (const inventory of product.inventories) {
-        const branchId = inventory.branchId;
+        const branchKiotVietId = inventory.branchKiotVietId;
 
-        const costField = BRANCH_COST_MAPPING[branchId];
-        if (costField) {
-          fields[costField] = Number(inventory.cost) || 0;
-        }
+        if (branchKiotVietId) {
+          const costField = BRANCH_COST_MAPPING[branchKiotVietId];
+          if (costField) {
+            fields[costField] = Number(inventory.cost) || 0;
+          }
 
-        const inventoryField = BRANCH_INVENTORY_MAPPING[branchId];
-        if (inventoryField) {
-          fields[inventoryField] = Number(inventory.onHand) || 0;
+          const inventoryField = BRANCH_INVENTORY_MAPPING[branchKiotVietId];
+          if (inventoryField) {
+            fields[inventoryField] = Number(inventory.onHand) || 0;
+          }
         }
       }
     }
@@ -576,7 +581,6 @@ export class LarkProductSyncService {
     }
   }
 
-  // Lock management (giống Order/Customer)
   private async acquireSyncLock(lockKey: string): Promise<void> {
     const syncName = 'product_lark_sync';
 
