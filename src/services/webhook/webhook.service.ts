@@ -1146,6 +1146,9 @@ export class WebhookService {
             : null,
           retailerId: 310831,
           tradeMarkId,
+          tradeMarkName: productData.tradeMarkName
+            ? productData.tradeMarkName
+            : '',
           minQuantity: detailedProduct.minQuantity,
           maxQuantity: detailedProduct.maxQuantity,
           weight: productData.Weight ?? null,
@@ -1183,6 +1186,9 @@ export class WebhookService {
             ? new Prisma.Decimal(productData.BasePrice)
             : null,
           tradeMarkId,
+          tradeMarkName: productData.tradeMarkName
+            ? productData.tradeMarkName
+            : '',
           minQuantity: detailedProduct.minQuantity,
           maxQuantity: detailedProduct.maxQuantity,
           weight: productData.Weight ?? null,
