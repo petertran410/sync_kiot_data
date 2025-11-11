@@ -492,35 +492,94 @@ export class LarkProductSyncService {
     }
 
     if (product.priceBookDetails && product.priceBookDetails.length > 0) {
+      this.logger.debug(
+        `📋 Processing ${product.priceBookDetails.length} priceBookDetails for ${product.code}`,
+      );
+
       for (const priceBookDetail of product.priceBookDetails) {
-        const priceBookKiotVietId = priceBookDetail.priceBook?.kiotVietId;
+        let priceBookKiotVietId: number | null = null;
 
-        if (priceBookKiotVietId) {
-          const larkField = PRICEBOOK_FIELD_MAPPING[priceBookKiotVietId];
+        if (priceBookDetail.priceBook && priceBookDetail.priceBook.kiotVietId) {
+          priceBookKiotVietId = Number(priceBookDetail.priceBook.kiotVietId);
+        } else if (priceBookDetail.priceBookId) {
+          priceBookKiotVietId = priceBookDetail.priceBookId;
+        }
 
-          if (larkField && larkField !== 'undefined') {
-            fields[larkField] = Number(priceBookDetail.price) || 0;
-          }
+        if (!priceBookKiotVietId) {
+          this.logger.warn(
+            `⚠️ Cannot determine priceBook kiotVietId for product ${product.code}, priceBook: ${priceBookDetail.priceBookName}`,
+          );
+          continue;
+        }
+
+        const larkField = PRICEBOOK_FIELD_MAPPING[priceBookKiotVietId];
+
+        if (larkField && larkField !== 'undefined') {
+          const priceValue = Number(priceBookDetail.price) || 0;
+          fields[larkField] = priceValue;
+
+          this.logger.debug(
+            `✅ Mapped price ${priceValue} to field ${larkField} (kiotVietId: ${priceBookKiotVietId})`,
+          );
+        } else {
+          this.logger.warn(
+            `⚠️ No Lark field mapping found for priceBook kiotVietId: ${priceBookKiotVietId}, name: ${priceBookDetail.priceBookName}`,
+          );
         }
       }
+    } else {
+      this.logger.debug(`ℹ️ No priceBookDetails for product ${product.code}`);
     }
 
     if (product.inventories && product.inventories.length > 0) {
+      this.logger.debug(
+        `📦 Processing ${product.inventories.length} inventories for ${product.code}`,
+      );
+
       for (const inventory of product.inventories) {
-        const branchKiotVietId = inventory.branchKiotVietId;
+        let branchKiotVietId: number | null = null;
 
-        if (branchKiotVietId) {
-          const costField = BRANCH_COST_MAPPING[branchKiotVietId];
-          if (costField) {
-            fields[costField] = Number(inventory.cost) || 0;
-          }
+        if (inventory.branchKiotVietId) {
+          branchKiotVietId = Number(inventory.branchKiotVietId);
+        } else if (inventory.branchId) {
+          branchKiotVietId = inventory.branchId;
+        }
 
-          const inventoryField = BRANCH_INVENTORY_MAPPING[branchKiotVietId];
-          if (inventoryField) {
-            fields[inventoryField] = Number(inventory.onHand) || 0;
-          }
+        if (!branchKiotVietId) {
+          this.logger.warn(
+            `⚠️ Cannot determine branch kiotVietId for product ${product.code}, branch: ${inventory.branchName}`,
+          );
+          continue;
+        }
+
+        const costField = BRANCH_COST_MAPPING[branchKiotVietId];
+        if (costField) {
+          const costValue = Number(inventory.cost) || 0;
+          fields[costField] = costValue;
+          this.logger.debug(
+            `✅ Mapped cost ${costValue} to ${costField} (branchId: ${branchKiotVietId})`,
+          );
+        } else {
+          this.logger.warn(
+            `⚠️ No cost field mapping for branchId: ${branchKiotVietId}`,
+          );
+        }
+
+        const inventoryField = BRANCH_INVENTORY_MAPPING[branchKiotVietId];
+        if (inventoryField) {
+          const onHandValue = Number(inventory.onHand) || 0;
+          fields[inventoryField] = onHandValue;
+          this.logger.debug(
+            `✅ Mapped inventory ${onHandValue} to ${inventoryField} (branchId: ${branchKiotVietId})`,
+          );
+        } else {
+          this.logger.warn(
+            `⚠️ No inventory field mapping for branchId: ${branchKiotVietId}`,
+          );
         }
       }
+    } else {
+      this.logger.debug(`ℹ️ No inventories for product ${product.code}`);
     }
 
     if (product.basePrice) {

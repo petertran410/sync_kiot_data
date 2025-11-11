@@ -1122,11 +1122,18 @@ export class WebhookService {
           branch_name: true,
         },
       });
-      const tradeMarkId = detailedProduct?.tradeMarkId
+
+      const tradeMarkInfo = detailedProduct?.tradeMarkId
         ? await this.findTradeMarkId(detailedProduct.tradeMarkId)
         : productData.TradeMarkId
           ? await this.findTradeMarkId(productData.TradeMarkId)
-          : null;
+          : { id: null, name: null };
+
+      const minQuantity =
+        detailedProduct?.minQuantity ?? productData.MinQuantity ?? null;
+
+      const maxQuantity =
+        detailedProduct?.maxQuantity ?? productData.MaxQuantity ?? null;
 
       const product = await this.prismaService.product.upsert({
         where: { kiotVietId },
@@ -1145,12 +1152,10 @@ export class WebhookService {
             ? new Prisma.Decimal(productData.BasePrice)
             : null,
           retailerId: 310831,
-          tradeMarkId,
-          tradeMarkName: productData.tradeMarkName
-            ? productData.tradeMarkName
-            : '',
-          minQuantity: detailedProduct.minQuantity,
-          maxQuantity: detailedProduct.maxQuantity,
+          tradeMarkId: tradeMarkInfo.id,
+          tradeMarkName: tradeMarkInfo.name || '',
+          minQuantity,
+          maxQuantity,
           weight: productData.Weight ?? null,
           unit: productData.Unit ?? null,
           masterProductId: productData.masterProductId
@@ -1185,12 +1190,10 @@ export class WebhookService {
           basePrice: productData.BasePrice
             ? new Prisma.Decimal(productData.BasePrice)
             : null,
-          tradeMarkId,
-          tradeMarkName: productData.tradeMarkName
-            ? productData.tradeMarkName
-            : '',
-          minQuantity: detailedProduct.minQuantity,
-          maxQuantity: detailedProduct.maxQuantity,
+          tradeMarkId: tradeMarkInfo.id,
+          tradeMarkName: tradeMarkInfo.name || '',
+          minQuantity,
+          maxQuantity,
           weight: productData.Weight ?? null,
           unit: productData.Unit ?? null,
           masterProductId: productData.masterProductId
@@ -2017,11 +2020,17 @@ export class WebhookService {
 
   private async findTradeMarkId(
     kiotVietTradeMarkId: number,
-  ): Promise<number | null> {
-    if (!kiotVietTradeMarkId) return null;
+  ): Promise<{ id: number | null; name: string | null }> {
+    if (!kiotVietTradeMarkId) return { id: null, name: null };
+
     const tradeMark = await this.prismaService.tradeMark.findUnique({
       where: { kiotVietId: kiotVietTradeMarkId },
+      select: { id: true, name: true },
     });
-    return tradeMark?.id || null;
+
+    return {
+      id: tradeMark?.id || null,
+      name: tradeMark?.name || null,
+    };
   }
 }
