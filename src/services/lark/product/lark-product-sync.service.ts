@@ -143,6 +143,9 @@ export class LarkProductSyncService {
   private readonly baseToken: string;
   private readonly tableId: string;
 
+  // In-memory lock to prevent concurrent syncs for the same product code
+  private readonly productSyncLocks = new Map<string, Promise<void>>();
+
   constructor(
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
@@ -237,7 +240,41 @@ export class LarkProductSyncService {
     }
   }
 
+  /**
+   * Sync a single product to Larkbase with locking to prevent duplicate creation
+   * This method ensures only one sync operation runs per product code at a time
+   */
   async syncSingleProductDirect(product: any): Promise<void> {
+    const productCode = product.code;
+
+    // Check if there's already a sync in progress for this product
+    const existingLock = this.productSyncLocks.get(productCode);
+    if (existingLock) {
+      this.logger.log(
+        `⏳ Product ${productCode} sync already in progress, waiting...`,
+      );
+      await existingLock;
+      this.logger.log(`✅ Product ${productCode} sync completed by another process`);
+      return;
+    }
+
+    // Create a new sync promise for this product
+    const syncPromise = this.performProductSync(product);
+    this.productSyncLocks.set(productCode, syncPromise);
+
+    try {
+      await syncPromise;
+    } finally {
+      // Always clean up the lock, even if sync failed
+      this.productSyncLocks.delete(productCode);
+    }
+  }
+
+  /**
+   * Internal method that performs the actual product sync
+   * Should only be called from syncSingleProductDirect with proper locking
+   */
+  private async performProductSync(product: any): Promise<void> {
     try {
       this.logger.log(`🔄 Syncing product ${product.code} to Lark...`);
 
