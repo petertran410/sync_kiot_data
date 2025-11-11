@@ -142,6 +142,9 @@ export class LarkProductSyncService {
   private readonly logger = new Logger(LarkProductSyncService.name);
   private readonly baseToken: string;
   private readonly tableId: string;
+  private readonly productSyncLocks = new Map<string, Promise<void>>();
+  private readonly pendingSyncTimers = new Map<string, NodeJS.Timeout>();
+  private readonly DEBOUNCE_MS = 2000;
 
   constructor(
     private readonly httpService: HttpService,
@@ -163,10 +166,6 @@ export class LarkProductSyncService {
     this.baseToken = baseToken;
     this.tableId = tableId;
   }
-
-  // ============================================================================
-  // MAIN SYNC METHOD
-  // ============================================================================
 
   async syncProductsToLarkBase(products: any[]): Promise<void> {
     const lockKey = `lark_product_sync_lock_${Date.now()}`;
@@ -238,101 +237,199 @@ export class LarkProductSyncService {
   }
 
   async syncSingleProductDirect(product: any): Promise<void> {
-    try {
-      this.logger.log(`🔄 Syncing product ${product.code} to Lark...`);
+    if (!product?.code) {
+      this.logger.warn('⚠️ Product missing code, skipping sync');
+      return;
+    }
 
-      const existingRecordId = await this.searchRecordByCode(product.code);
+    const productCode = product.code;
 
-      const larkData = this.mapProductToLarkBase(product);
-      const headers = await this.larkAuthService.getProductHeaders();
+    const existingTimer = this.pendingSyncTimers.get(productCode);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+      this.logger.debug(`🔄 Debouncing sync for ${productCode}`);
+    }
 
-      if (existingRecordId) {
-        const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/${existingRecordId}`;
+    const timer = setTimeout(() => {
+      this.pendingSyncTimers.delete(productCode);
+      this.executeSyncWithLock(product);
+    }, this.DEBOUNCE_MS);
 
-        await firstValueFrom(
-          this.httpService.put(
-            url,
-            { fields: larkData },
-            { headers, timeout: 10000 },
-          ),
-        );
+    this.pendingSyncTimers.set(productCode, timer);
+  }
 
-        this.logger.log(`✅ Updated product ${product.code} in Lark`);
-      } else {
-        const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records`;
+  private async executeSyncWithLock(product: any): Promise<void> {
+    const productCode = product.code;
 
-        await firstValueFrom(
-          this.httpService.post(
-            url,
-            { fields: larkData },
-            { headers, timeout: 10000 },
-          ),
-        );
-
-        this.logger.log(`✅ Created product ${product.code} in Lark`);
-      }
-
-      await this.prismaService.product.update({
-        where: { id: product.id },
-        data: { larkSyncStatus: 'SYNCED', larkSyncedAt: new Date() },
-      });
-    } catch (error) {
-      this.logger.error(
-        `❌ Sync product ${product.code} failed: ${error.message}`,
+    const existingLock = this.productSyncLocks.get(productCode);
+    if (existingLock) {
+      this.logger.debug(
+        `⏳ Product ${productCode} is already syncing, waiting...`,
       );
+      try {
+        await existingLock;
+        this.logger.debug(`✅ Previous sync completed for ${productCode}`);
+        return;
+      } catch (error) {
+        this.logger.warn(`Previous sync failed for ${productCode}, will retry`);
+      }
+    }
 
-      await this.prismaService.product.update({
-        where: { id: product.id },
-        data: {
-          larkSyncStatus: 'FAILED',
-          larkSyncRetries: { increment: 1 },
-        },
-      });
+    const syncPromise = this.performSync(product);
+    this.productSyncLocks.set(productCode, syncPromise);
 
-      throw error;
+    try {
+      await syncPromise;
+    } finally {
+      this.productSyncLocks.delete(productCode);
     }
   }
 
-  private async searchRecordByCode(code: string): Promise<string | null> {
-    try {
-      const headers = await this.larkAuthService.getProductHeaders();
-      const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/search`;
+  private async performSync(product: any): Promise<void> {
+    const productCode = product.code;
+    const maxRetries = 3;
+    let lastError: Error | null = null;
 
-      const response = await firstValueFrom(
-        this.httpService.post(
-          url,
-          {
-            field_names: [LARK_PRODUCT_FIELDS.PRIMARY_CODE],
-            filter: {
-              conjunction: 'and',
-              conditions: [
-                {
-                  field_name: LARK_PRODUCT_FIELDS.PRIMARY_CODE,
-                  operator: 'is',
-                  value: [code],
-                },
-              ],
-            },
-          },
-          {
-            headers,
-            timeout: 10000,
-          },
-        ),
-      );
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        this.logger.log(
+          `🔄 Syncing product ${productCode} to Lark (attempt ${attempt}/${maxRetries})...`,
+        );
 
-      if (response.data.code === 0) {
-        const items = response.data.data?.items || [];
-        if (items.length > 0) {
-          return items[0].record_id;
+        const existingRecordId =
+          await this.searchRecordByCodeWithRetry(productCode);
+
+        const larkData = this.mapProductToLarkBase(product);
+        const headers = await this.larkAuthService.getProductHeaders();
+
+        if (existingRecordId) {
+          const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/${existingRecordId}`;
+
+          await firstValueFrom(
+            this.httpService.put(
+              url,
+              { fields: larkData },
+              { headers, timeout: 15000 },
+            ),
+          );
+
+          this.logger.log(`✅ Updated product ${productCode} in Lark`);
+        } else {
+          const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records`;
+
+          await firstValueFrom(
+            this.httpService.post(
+              url,
+              { fields: larkData },
+              { headers, timeout: 15000 },
+            ),
+          );
+
+          this.logger.log(`✅ Created product ${productCode} in Lark`);
+        }
+
+        await this.prismaService.product.update({
+          where: { id: product.id },
+          data: { larkSyncStatus: 'SYNCED', larkSyncedAt: new Date() },
+        });
+
+        return;
+      } catch (error) {
+        lastError = error;
+        this.logger.error(
+          `❌ Sync product ${productCode} failed (attempt ${attempt}/${maxRetries}): ${error.message}`,
+        );
+
+        if (attempt < maxRetries) {
+          const waitTime = attempt * 1000;
+          await new Promise((resolve) => setTimeout(resolve, waitTime));
         }
       }
-
-      return null;
-    } catch (error) {
-      this.logger.warn(`Search product by code failed: ${error.message}`);
-      return null;
     }
+
+    this.logger.error(
+      `❌ All retry attempts failed for product ${productCode}`,
+    );
+    await this.prismaService.product.update({
+      where: { id: product.id },
+      data: {
+        larkSyncStatus: 'FAILED',
+        larkSyncRetries: { increment: 1 },
+      },
+    });
+
+    throw lastError || new Error(`Sync failed after ${maxRetries} attempts`);
+  }
+
+  private async searchRecordByCodeWithRetry(
+    code: string,
+    maxRetries: number = 3,
+  ): Promise<string | null> {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const headers = await this.larkAuthService.getProductHeaders();
+        const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/search`;
+
+        const response = await firstValueFrom(
+          this.httpService.post(
+            url,
+            {
+              field_names: [LARK_PRODUCT_FIELDS.PRIMARY_CODE],
+              filter: {
+                conjunction: 'and',
+                conditions: [
+                  {
+                    field_name: LARK_PRODUCT_FIELDS.PRIMARY_CODE,
+                    operator: 'is',
+                    value: [code],
+                  },
+                ],
+              },
+            },
+            {
+              headers,
+              timeout: 15000,
+            },
+          ),
+        );
+
+        if (response.data.code === 0) {
+          const items = response.data.data?.items || [];
+          if (items.length > 0) {
+            this.logger.debug(`✅ Found existing record for ${code}`);
+            return items[0].record_id;
+          }
+        }
+
+        this.logger.debug(`ℹ️ No existing record found for ${code}`);
+        return null;
+      } catch (error) {
+        const errorMessage = error.message || 'Unknown error';
+        const statusCode = error.response?.status;
+
+        this.logger.warn(
+          `Search product by code failed (attempt ${attempt}/${maxRetries}): ${errorMessage} (Status: ${statusCode})`,
+        );
+
+        if (statusCode === 400 && attempt < maxRetries) {
+          await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
+          continue;
+        }
+
+        if (attempt === maxRetries) {
+          this.logger.error(
+            `❌ Search failed after ${maxRetries} attempts for ${code}, will attempt to create new record`,
+          );
+          return null;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  private async searchRecordByCode(code: string): Promise<string | null> {
+    return this.searchRecordByCodeWithRetry(code);
   }
 
   private mapProductToLarkBase(product: any): Record<string, any> {
