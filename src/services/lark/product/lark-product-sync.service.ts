@@ -142,9 +142,6 @@ export class LarkProductSyncService {
   private readonly logger = new Logger(LarkProductSyncService.name);
   private readonly baseToken: string;
   private readonly tableId: string;
-  private readonly batchSize: number = 100;
-  private readonly MAX_AUTH_RETRIES = 3;
-  private readonly AUTH_ERROR_CODES = [99991663, 99991664, 99991665];
 
   constructor(
     private readonly httpService: HttpService,
