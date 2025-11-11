@@ -497,33 +497,27 @@ export class LarkProductSyncService {
       );
 
       for (const priceBookDetail of product.priceBookDetails) {
-        let priceBookKiotVietId: number | null = null;
+        const priceBookId = priceBookDetail.priceBookId;
 
-        if (priceBookDetail.priceBook && priceBookDetail.priceBook.kiotVietId) {
-          priceBookKiotVietId = Number(priceBookDetail.priceBook.kiotVietId);
-        } else if (priceBookDetail.priceBookId) {
-          priceBookKiotVietId = priceBookDetail.priceBookId;
-        }
-
-        if (!priceBookKiotVietId) {
+        if (!priceBookId) {
           this.logger.warn(
-            `⚠️ Cannot determine priceBook kiotVietId for product ${product.code}, priceBook: ${priceBookDetail.priceBookName}`,
+            `⚠️ Cannot determine priceBookId for product ${product.code}, priceBook: ${priceBookDetail.priceBookName}`,
           );
           continue;
         }
 
-        const larkField = PRICEBOOK_FIELD_MAPPING[priceBookKiotVietId];
+        const larkField = PRICEBOOK_FIELD_MAPPING[priceBookId];
 
         if (larkField && larkField !== 'undefined') {
           const priceValue = Number(priceBookDetail.price) || 0;
           fields[larkField] = priceValue;
 
           this.logger.debug(
-            `✅ Mapped price ${priceValue} to field ${larkField} (kiotVietId: ${priceBookKiotVietId})`,
+            `✅ Mapped price ${priceValue} to field ${larkField} (priceBookId: ${priceBookId}, name: ${priceBookDetail.priceBookName})`,
           );
         } else {
           this.logger.warn(
-            `⚠️ No Lark field mapping found for priceBook kiotVietId: ${priceBookKiotVietId}, name: ${priceBookDetail.priceBookName}`,
+            `⚠️ No Lark field mapping found for priceBookId: ${priceBookId}, name: ${priceBookDetail.priceBookName}`,
           );
         }
       }
@@ -539,15 +533,16 @@ export class LarkProductSyncService {
       for (const inventory of product.inventories) {
         let branchKiotVietId: number | null = null;
 
-        if (inventory.branchKiotVietId) {
+        if (
+          inventory.branchKiotVietId !== undefined &&
+          inventory.branchKiotVietId !== null
+        ) {
           branchKiotVietId = Number(inventory.branchKiotVietId);
-        } else if (inventory.branchId) {
-          branchKiotVietId = inventory.branchId;
         }
 
         if (!branchKiotVietId) {
           this.logger.warn(
-            `⚠️ Cannot determine branch kiotVietId for product ${product.code}, branch: ${inventory.branchName}`,
+            `⚠️ Cannot determine branchKiotVietId for product ${product.code}, branch: ${inventory.branchName} (branchId: ${inventory.branchId})`,
           );
           continue;
         }
@@ -557,11 +552,11 @@ export class LarkProductSyncService {
           const costValue = Number(inventory.cost) || 0;
           fields[costField] = costValue;
           this.logger.debug(
-            `✅ Mapped cost ${costValue} to ${costField} (branchId: ${branchKiotVietId})`,
+            `✅ Mapped cost ${costValue} to ${costField} (branchKiotVietId: ${branchKiotVietId})`,
           );
         } else {
           this.logger.warn(
-            `⚠️ No cost field mapping for branchId: ${branchKiotVietId}`,
+            `⚠️ No cost field mapping for branchKiotVietId: ${branchKiotVietId}, branch: ${inventory.branchName}`,
           );
         }
 
@@ -570,11 +565,11 @@ export class LarkProductSyncService {
           const onHandValue = Number(inventory.onHand) || 0;
           fields[inventoryField] = onHandValue;
           this.logger.debug(
-            `✅ Mapped inventory ${onHandValue} to ${inventoryField} (branchId: ${branchKiotVietId})`,
+            `✅ Mapped inventory ${onHandValue} to ${inventoryField} (branchKiotVietId: ${branchKiotVietId})`,
           );
         } else {
           this.logger.warn(
-            `⚠️ No inventory field mapping for branchId: ${branchKiotVietId}`,
+            `⚠️ No inventory field mapping for branchKiotVietId: ${branchKiotVietId}, branch: ${inventory.branchName}`,
           );
         }
       }
