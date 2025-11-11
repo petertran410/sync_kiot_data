@@ -103,9 +103,30 @@ export class WebhookService {
 
             console.log(savedCustomer);
 
-            await this.larkCustomerSyncService.syncSingleCustomerDirect(
-              savedCustomer,
-            );
+            const hasSpecialCode =
+              savedCustomer.code?.includes('KHSPE') ||
+              savedCustomer.code?.includes('KHTTS');
+
+            let shouldSyncToLark = true;
+
+            if (hasSpecialCode) {
+              shouldSyncToLark = !!(
+                savedCustomer.locationName && savedCustomer.wardName
+              );
+
+              if (!shouldSyncToLark) {
+                this.logger.log(
+                  `⏭️  Skipping LarkBase sync for customer ${savedCustomer.code}: ` +
+                    `Special code with missing locationName or wardName`,
+                );
+              }
+            }
+
+            if (shouldSyncToLark) {
+              await this.larkCustomerSyncService.syncSingleCustomerDirect(
+                savedCustomer,
+              );
+            }
           }
         }
       }
