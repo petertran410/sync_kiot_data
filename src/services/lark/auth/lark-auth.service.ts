@@ -23,6 +23,9 @@ export class LarkAuthService {
   private invoiceDetailAccessToken: string | null = null;
   private invoiceDetailTokenExpiry: Date | null = null;
 
+  private invoiceHistoricalAccessToken: string | null = null;
+  private invoiceHistoricalTokenExpiry: Date | null = null;
+
   private orderAccessToken: string | null = null;
   private orderTokenExpiry: Date | null = null;
 
@@ -60,6 +63,7 @@ export class LarkAuthService {
       | 'customer'
       | 'invoice'
       | 'invoiceDetail'
+      | 'invoiceHistorical'
       | 'order'
       | 'product'
       | 'supplier'
@@ -75,6 +79,8 @@ export class LarkAuthService {
         return await this.getCustomerAccessToken();
       case 'invoice':
         return await this.getInvoiceAccessToken();
+      case 'invoiceHistorical':
+        return await this.getInvoiceHistoricalAccessToken();
       case 'invoiceDetail':
         return await this.getInvoiceDetailAccessToken();
       case 'order':
@@ -113,7 +119,6 @@ export class LarkAuthService {
   }
 
   private async getCustomerAccessToken(): Promise<string> {
-    // Check if token is still valid (with 5 minute buffer)
     if (
       this.customerAccessToken &&
       this.customerTokenExpiry &&
@@ -122,7 +127,6 @@ export class LarkAuthService {
       return this.customerAccessToken;
     }
 
-    // Get new token
     return await this.refreshCustomerToken();
   }
 
@@ -363,6 +367,101 @@ export class LarkAuthService {
     this.invoiceDetailAccessToken = null;
     this.invoiceDetailTokenExpiry = null;
     await this.refreshInvoiceDetailToken();
+  }
+
+  // ============================================================================
+  // INVOICE HISTORICAL TOKEN MANAGEMENT
+  // ============================================================================
+
+  async getInvoiceHistoricalHeaders(): Promise<Record<string, string>> {
+    const token = await this.getInvoiceHistoricalAccessToken();
+    return {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    };
+  }
+
+  private async getInvoiceHistoricalAccessToken(): Promise<string> {
+    if (
+      this.invoiceHistoricalAccessToken &&
+      this.invoiceHistoricalTokenExpiry &&
+      this.invoiceHistoricalTokenExpiry > new Date(Date.now() + 5 * 60 * 1000)
+    ) {
+      return this.invoiceHistoricalAccessToken;
+    }
+
+    return await this.refreshInvoiceHistoricalToken();
+  }
+
+  private async refreshInvoiceHistoricalToken(): Promise<string> {
+    try {
+      this.logger.log(
+        '🔄 Refreshing LarkBase invoice historical access token...',
+      );
+
+      const appId = this.configService.get<string>(
+        'LARK_INVOICE_HISTORICAL_SYNC_APP_ID',
+      );
+      const appSecret = this.configService.get<string>(
+        'LARK_INVOICE_HISTORICAL_SYNC_APP_SECRET',
+      );
+
+      if (!appId || !appSecret) {
+        throw new Error(
+          'LarkBase invoice historical credentials not configured',
+        );
+      }
+
+      const url =
+        'https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal';
+
+      const response = await firstValueFrom(
+        this.httpService.post<TenantAccessTokenResponse>(
+          url,
+          {
+            app_id: appId,
+            app_secret: appSecret,
+          },
+          {
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            timeout: 10000,
+          },
+        ),
+      );
+
+      if (response.data.code !== 0) {
+        throw new Error(
+          `LarkBase auth failed: ${response.data.msg} (code: ${response.data.code})`,
+        );
+      }
+
+      this.invoiceHistoricalAccessToken = response.data.tenant_access_token;
+      this.invoiceHistoricalTokenExpiry = new Date(
+        Date.now() + response.data.expire * 1000,
+      );
+
+      this.logger.log(
+        '✅ LarkBase invoice historical token refreshed successfully',
+      );
+      return this.invoiceHistoricalAccessToken;
+    } catch (error) {
+      this.logger.error(
+        `❌ Failed to refresh invoice historical token: ${error.message}`,
+      );
+
+      this.invoiceHistoricalAccessToken = null;
+      this.invoiceHistoricalTokenExpiry = null;
+
+      throw new Error(`Token refresh failed: ${error.message}`);
+    }
+  }
+
+  async forceRefreshInvoiceHistoricalToken(): Promise<void> {
+    this.invoiceHistoricalAccessToken = null;
+    this.invoiceHistoricalTokenExpiry = null;
+    await this.refreshInvoiceHistoricalToken();
   }
 
   // ============================================================================

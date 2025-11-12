@@ -13,11 +13,12 @@ import { LarkPurchaseOrderSyncService } from './purchase-order/lark-purchase-ord
 import { LarkDemandSyncService } from './demand/lark-demand-sync.service';
 import { LarkCashflowSyncService } from './cashflow/lark-cashflow-sync.service';
 import { LarkInvoiceDetailSyncService } from './invoice-detail/lark-invoice-detail-sync.service';
+import { LarkInvoiceHistoricalSyncService } from './invoice-historical/lark-invoice-historical-sync.service';
 
 @Module({
   imports: [
     HttpModule.register({
-      timeout: 30000,
+      timeout: 60000,
       maxRedirects: 20,
     }),
     ConfigModule,
@@ -27,6 +28,7 @@ import { LarkInvoiceDetailSyncService } from './invoice-detail/lark-invoice-deta
     LarkAuthService,
     LarkCustomerSyncService,
     LarkInvoiceSyncService,
+    LarkInvoiceHistoricalSyncService,
     LarkInvoiceDetailSyncService,
     LarkOrderSyncService,
     LarkProductSyncService,
@@ -40,6 +42,7 @@ import { LarkInvoiceDetailSyncService } from './invoice-detail/lark-invoice-deta
     LarkAuthService,
     LarkCustomerSyncService,
     LarkInvoiceSyncService,
+    LarkInvoiceHistoricalSyncService,
     LarkInvoiceDetailSyncService,
     LarkOrderSyncService,
     LarkProductSyncService,

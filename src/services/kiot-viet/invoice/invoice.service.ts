@@ -4,7 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { async, firstValueFrom } from 'rxjs';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { KiotVietAuthService } from '../auth.service';
-import { LarkInvoiceSyncService } from '../../lark/invoice/lark-invoice-sync.service';
+import { LarkInvoiceHistoricalSyncService } from '../../lark/invoice-historical/lark-invoice-historical-sync.service';
 import { Prisma } from '@prisma/client';
 
 interface KiotVietInvoice {
@@ -122,7 +122,7 @@ export class KiotVietInvoiceService {
     private readonly configService: ConfigService,
     private readonly prismaService: PrismaService,
     private readonly authService: KiotVietAuthService,
-    private readonly larkInvoiceSyncService: LarkInvoiceSyncService,
+    private readonly larkInvoiceHistoricalSyncService: LarkInvoiceHistoricalSyncService,
   ) {
     const baseUrl = this.configService.get<string>('KIOT_BASE_URL');
     if (!baseUrl) {
@@ -136,11 +136,7 @@ export class KiotVietInvoiceService {
       const runningInvoiceSyncs = await this.prismaService.syncControl.findMany(
         {
           where: {
-            OR: [
-              { name: 'invoice_historical' },
-              // { name: 'invoice_recent' },
-              { name: 'invoice_lark_sync' },
-            ],
+            OR: [{ name: 'invoice_historical' }, { name: 'invoice_lark_sync' }],
             isRunning: true,
           },
         },
@@ -158,10 +154,6 @@ export class KiotVietInvoiceService {
         where: { name: 'invoice_historical' },
       });
 
-      const recentSync = await this.prismaService.syncControl.findFirst({
-        where: { name: 'invoice_recent' },
-      });
-
       if (historicalSync?.isEnabled && !historicalSync.isRunning) {
         this.logger.log('Starting historical invoice sync...');
         await this.syncHistoricalInvoices();
@@ -174,15 +166,6 @@ export class KiotVietInvoiceService {
         );
         return;
       }
-
-      // if (recentSync?.isEnabled && !recentSync.isRunning) {
-      //   this.logger.log('Starting recent invoice sync...');
-      //   await this.syncRecentInvoices();
-      //   return;
-      // }
-
-      // this.logger.log('Running default recent invoice sync...');
-      // await this.syncRecentInvoices();
     } catch (error) {
       this.logger.error(`Sync check failed: ${error.message}`);
       throw error;
@@ -488,283 +471,6 @@ export class KiotVietInvoiceService {
     }
   }
 
-  // async syncRecentInvoices(): Promise<void> {
-  //   const syncName = 'invoice_recent';
-
-  //   let currentItem = 0;
-  //   let processedCount = 0;
-  //   let totalInvoices = 0;
-  //   let consecutiveEmptyPages = 0;
-  //   let consecutiveErrorPages = 0;
-  //   let lastValidTotal = 0;
-  //   let processedInvoiceIds = new Set<number>();
-
-  //   try {
-  //     await this.updateSyncControl(syncName, {
-  //       isRunning: true,
-  //       status: 'running',
-  //       startedAt: new Date(),
-  //       error: null,
-  //     });
-
-  //     this.logger.log('Starting recent invoice sync...');
-
-  //     const MAX_CONSECUTIVE_EMPTY_PAGES = 5;
-  //     const MAX_CONSECUTIVE_ERROR_PAGES = 3;
-  //     const RETRY_DELAY_MS = 2000;
-  //     const MAX_TOTAL_RETRIES = 10;
-
-  //     let totalRetries = 0;
-
-  //     while (true) {
-  //       const currentPage = Math.floor(currentItem / this.PAGE_SIZE) + 1;
-
-  //       if (totalInvoices > 0) {
-  //         if (currentItem >= totalInvoices) {
-  //           this.logger.log(
-  //             `Pagination complete. Processed: ${processedCount}/${totalInvoices} customers`,
-  //           );
-  //           break;
-  //         }
-
-  //         const progressPercentage = (currentItem / totalInvoices) * 100;
-  //         this.logger.log(
-  //           `Fetching page ${currentPage} (${currentItem}/${totalInvoices} - ${progressPercentage.toFixed(1)}%)`,
-  //         );
-  //       } else {
-  //         this.logger.log(
-  //           `Fetching page ${currentPage} (currentItem: ${currentItem})`,
-  //         );
-  //       }
-
-  //       const dateStart = new Date();
-  //       dateStart.setDate(dateStart.getDate());
-  //       const dateStartStr = dateStart.toISOString().split('T')[0];
-
-  //       const dateEnd = new Date();
-  //       dateEnd.setDate(dateEnd.getDate() + 1);
-  //       const dateEndStr = dateEnd.toISOString().split('T')[0];
-
-  //       try {
-  //         const invoiceListResponse = await this.fetchInvoicesListWithRetry({
-  //           currentItem,
-  //           pageSize: this.PAGE_SIZE,
-  //           orderBy: 'id',
-  //           orderDirection: 'DESC',
-  //           includeInvoiceDelivery: true,
-  //           includePayment: true,
-  //           includeTotal: true,
-  //           // lastModifiedFrom: dateStartStr,
-  //           // toDate: dateEndStr,
-  //           fromPurchaseDate: dateStartStr,
-  //           toPurchaseDate: dateEndStr,
-  //         });
-
-  //         if (!invoiceListResponse) {
-  //           this.logger.warn('Received null response from KiotViet API');
-  //           consecutiveEmptyPages++;
-
-  //           if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
-  //             this.logger.log(
-  //               `🔚 Reached end after ${consecutiveEmptyPages} empty pages`,
-  //             );
-  //             break;
-  //           }
-
-  //           await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
-  //           continue;
-  //         }
-
-  //         consecutiveEmptyPages = 0;
-  //         consecutiveErrorPages = 0;
-
-  //         const { total, data: invoices } = invoiceListResponse;
-
-  //         if (total !== undefined && total !== null) {
-  //           if (totalInvoices === 0) {
-  //             this.logger.log(`Total invoices detected: ${totalInvoices}`);
-
-  //             totalInvoices = total;
-  //           } else if (total !== totalInvoices) {
-  //             this.logger.warn(
-  //               `Total count changed: ${totalInvoices} -> ${total}. Using latest.`,
-  //             );
-  //             totalInvoices = total;
-  //           }
-  //           lastValidTotal = total;
-  //         }
-
-  //         if (!invoices || invoices.length === 0) {
-  //           this.logger.warn(`Empty page received at position ${currentItem}`);
-  //           consecutiveEmptyPages++;
-
-  //           if (totalInvoices > 0 && currentItem >= totalInvoices) {
-  //             this.logger.log('Reached end of data (empty page past total)');
-  //             break;
-  //           }
-
-  //           if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
-  //             this.logger.log(
-  //               `🔚 Stopping after ${consecutiveEmptyPages} consecutive empty pages`,
-  //             );
-  //             break;
-  //           }
-
-  //           currentItem += this.PAGE_SIZE;
-  //           continue;
-  //         }
-
-  //         const existingInvoiceIds = new Set(
-  //           (
-  //             await this.prismaService.invoice.findMany({
-  //               select: { kiotVietId: true },
-  //             })
-  //           ).map((c) => Number(c.kiotVietId)),
-  //         );
-
-  //         const newInvoices = invoices.filter((invoice) => {
-  //           if (
-  //             !existingInvoiceIds.has(invoice.id) &&
-  //             !processedInvoiceIds.has(invoice.id)
-  //           ) {
-  //             processedInvoiceIds.add(invoice.id);
-  //             return true;
-  //           }
-  //           return false;
-  //         });
-
-  //         const existingInvoices = invoices.filter((invoice) => {
-  //           if (
-  //             existingInvoiceIds.has(invoice.id) &&
-  //             !processedInvoiceIds.has(invoice.id)
-  //           ) {
-  //             processedInvoiceIds.add(invoice.id);
-  //             return true;
-  //           }
-  //           return false;
-  //         });
-
-  //         if (newInvoices.length === 0 && existingInvoices.length === 0) {
-  //           this.logger.log(
-  //             `Skipping page ${currentPage} - all invoices already processed in this run`,
-  //           );
-  //           currentItem += this.PAGE_SIZE;
-  //           continue;
-  //         }
-
-  //         let pageProcessedCount = 0;
-  //         let allSavedInvoices: any[] = [];
-
-  //         if (newInvoices.length > 0) {
-  //           this.logger.log(
-  //             `Processing ${newInvoices.length} NEW invoices from page ${currentPage}...`,
-  //           );
-
-  //           const savedInvoices =
-  //             await this.saveInvoicesToDatabase(newInvoices);
-  //           pageProcessedCount += savedInvoices.length;
-  //           allSavedInvoices.push(...savedInvoices);
-  //         }
-
-  //         if (existingInvoices.length > 0) {
-  //           this.logger.log(
-  //             `Processin ${existingInvoices.length} EXISTING invoices from page ${currentPage}`,
-  //           );
-
-  //           const savedInvoices =
-  //             await this.saveInvoicesToDatabase(existingInvoices);
-  //           pageProcessedCount += savedInvoices.length;
-  //           allSavedInvoices.push(...savedInvoices);
-  //         }
-
-  //         processedCount += pageProcessedCount;
-  //         currentItem += this.PAGE_SIZE;
-
-  //         if (allSavedInvoices.length > 0) {
-  //           try {
-  //             await this.syncInvoicesToLarkBase(allSavedInvoices);
-  //             this.logger.log(
-  //               `Synced ${allSavedInvoices.length} invoices to LarkBase`,
-  //             );
-  //           } catch (error) {
-  //             this.logger.warn(
-  //               `LarkBase sync failed for page ${currentPage}: ${error.message}`,
-  //             );
-  //           }
-  //         }
-
-  //         if (totalInvoices > 0) {
-  //           const completionPercentage = (processedCount / totalInvoices) * 100;
-  //           this.logger.log(
-  //             `Progress: ${processedCount}/${totalInvoices} (${completionPercentage.toFixed(1)}%)`,
-  //           );
-
-  //           if (processedCount >= totalInvoices) {
-  //             this.logger.log('All invoices processed successfully');
-  //             break;
-  //           }
-  //         }
-
-  //         await new Promise((resolve) => setTimeout(resolve, 100));
-  //       } catch (error) {
-  //         consecutiveErrorPages++;
-  //         totalRetries++;
-
-  //         this.logger.error(
-  //           `API error on page ${currentPage}: ${error.message}`,
-  //         );
-
-  //         if (consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES) {
-  //           throw new Error(
-  //             `Multiple consecutive API failures: ${error.message}`,
-  //           );
-  //         }
-
-  //         if (totalRetries >= MAX_TOTAL_RETRIES) {
-  //           throw new Error(`Maximum total retries exceeded: ${error.message}`);
-  //         }
-
-  //         const delay = RETRY_DELAY_MS * Math.pow(2, consecutiveErrorPages - 1);
-  //         this.logger.log(`Retrying after ${delay}ms delay...`);
-  //         await new Promise((resolve) => setTimeout(resolve, delay));
-  //       }
-  //     }
-
-  //     await this.updateSyncControl(syncName, {
-  //       isRunning: false,
-  //       isEnabled: false,
-  //       status: 'completed',
-  //       completedAt: new Date(),
-  //       lastRunAt: new Date(),
-  //       progress: { processedCount, expectedTotal: totalInvoices },
-  //     });
-
-  //     await this.updateSyncControl('invoice_recent', {
-  //       isEnabled: true,
-  //       isRunning: false,
-  //       status: 'idle',
-  //     });
-
-  //     const completionRate =
-  //       totalInvoices > 0 ? (processedCount / totalInvoices) * 100 : 100;
-
-  //     this.logger.log(
-  //       `Recent invoice sync completed: ${processedCount}/${totalInvoices} (${completionRate.toFixed(1)}% completion rate)`,
-  //     );
-  //   } catch (error) {
-  //     this.logger.error(`Recent invoice sync failed: ${error.message}`);
-
-  //     await this.updateSyncControl(syncName, {
-  //       isRunning: false,
-  //       status: 'failed',
-  //       error: error.message,
-  //       progress: { processedCount, expectedTotal: totalInvoices },
-  //     });
-
-  //     throw error;
-  //   }
-  // }
-
   async fetchInvoicesListWithRetry(
     params: {
       currentItem?: number;
@@ -852,36 +558,6 @@ export class KiotVietInvoiceService {
     );
 
     return response.data;
-  }
-
-  async fetchRecentInvoices(fromDate: Date): Promise<KiotVietInvoice[]> {
-    const headers = await this.authService.getRequestHeaders();
-    const fromDateStr = fromDate.toISOString();
-    const today = new Date();
-    const todayDateStr = today.toISOString();
-
-    const queryParams = new URLSearchParams({
-      fromPurchaseDate: fromDateStr,
-      toPurchaseDate: todayDateStr,
-      // lastModifiedFrom: fromDateStr,
-      // toDate: todayDateStr,
-      currentItem: '0',
-      pageSize: '100',
-      orderBy: 'purchaseDate',
-      orderDirection: 'DESC',
-      includeInvoiceDelivery: 'true',
-      includePayment: 'true',
-      includeTotal: 'true',
-    });
-
-    const response = await firstValueFrom(
-      this.httpService.get(`${this.baseUrl}/invoices?${queryParams}`, {
-        headers,
-        timeout: 60000,
-      }),
-    );
-
-    return response.data?.data || [];
   }
 
   private async saveInvoicesToDatabase(invoices: any[]): Promise<any[]> {
@@ -1217,7 +893,9 @@ export class KiotVietInvoiceService {
         return;
       }
 
-      await this.larkInvoiceSyncService.syncInvoicesToLarkBase(invoicesToSync);
+      await this.larkInvoiceHistoricalSyncService.syncInvoicesToLarkBase(
+        invoicesToSync,
+      );
       this.logger.log(`LarkBase sync completed successfully`);
     } catch (error) {
       this.logger.error(`LarkBase sync FAILED: ${error.message}`);

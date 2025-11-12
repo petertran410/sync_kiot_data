@@ -1,10 +1,9 @@
 import { LarkPurchaseOrderSyncService } from './../services/lark/purchase-order/lark-purchase-order-sync.service';
 import { Controller, Get, Post, Query, Logger } from '@nestjs/common';
-import { BusSchedulerService } from '../services/bus-scheduler/bus-scheduler.service';
 import { KiotVietCustomerService } from '../services/kiot-viet/customer/customer.service';
 import { LarkCustomerSyncService } from 'src/services/lark/customer/lark-customer-sync.service';
 import { KiotVietInvoiceService } from '../services/kiot-viet/invoice/invoice.service';
-import { LarkInvoiceSyncService } from 'src/services/lark/invoice/lark-invoice-sync.service';
+import { LarkInvoiceHistoricalSyncService } from 'src/services/lark/invoice-historical/lark-invoice-historical-sync.service';
 import { KiotVietOrderService } from 'src/services/kiot-viet/order/order.service';
 import { LarkOrderSyncService } from './../services/lark/order/lark-order-sync.service';
 import { KiotVietProductService } from 'src/services/kiot-viet/product/product.service';
@@ -30,11 +29,10 @@ export class SyncController {
 
   constructor(
     private readonly customerService: KiotVietCustomerService,
-    private readonly customerGroupService: KiotVietCustomerGroupService,
     private readonly larkCustomerSyncService: LarkCustomerSyncService,
 
     private readonly invoiceService: KiotVietInvoiceService,
-    private readonly larkInvoiceSyncService: LarkInvoiceSyncService,
+    private readonly larkInvoiceSyncService: LarkInvoiceHistoricalSyncService,
     private readonly larkInvoiceDetailSyncService: LarkInvoiceDetailSyncService,
 
     private readonly orderService: KiotVietOrderService,
@@ -94,25 +92,25 @@ export class SyncController {
     }
   }
 
-  @Post('invoice/historical')
+  @Get('invoice/historical')
   async triggerHistoricalInvoice() {
     try {
       this.logger.log('Manual historical invoice sync triggered');
 
       await this.invoiceService.enableHistoricalSync();
-
       await this.invoiceService.syncHistoricalInvoices();
 
       const invoicesToSync = await this.prismaService.invoice.findMany({
         where: {
           OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
         },
-        take: 10000,
       });
 
       await this.larkInvoiceSyncService.syncInvoicesToLarkBase(invoicesToSync);
 
       await this.larkInvoiceDetailSyncService.syncInvoiceDetailsToLarkBase();
+
+      this.logger.log(`Synced ${invoicesToSync.length} invoices to LarkBase`);
 
       return {
         success: true,
