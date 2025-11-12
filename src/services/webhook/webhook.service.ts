@@ -1138,6 +1138,7 @@ export class WebhookService {
       const product = await this.prismaService.product.upsert({
         where: { kiotVietId },
         update: {
+          kiotVietId,
           code: productData.Code,
           name: productData.Name,
           fullName: productData.FullName ?? productData.Name,

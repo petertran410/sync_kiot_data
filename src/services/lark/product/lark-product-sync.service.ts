@@ -295,11 +295,19 @@ export class LarkProductSyncService {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         this.logger.log(
-          `🔄 Syncing product ${productCode} to Lark (attempt ${attempt}/${maxRetries})...`,
+          `🔄 [Attempt ${attempt}/${maxRetries}] Syncing product ${productCode}`,
         );
 
-        const existingRecordId =
-          await this.searchRecordByCodeWithRetry(productCode);
+        let existingRecordId = await this.searchRecordByCode(productCode);
+
+        if (!existingRecordId && product.kiotVietId) {
+          this.logger.log(
+            `🔍 Code not found, trying kiotVietId: ${product.kiotVietId}`,
+          );
+          existingRecordId = await this.searchRecordByKiotVietId(
+            product.kiotVietId,
+          );
+        }
 
         const larkData = this.mapProductToLarkBase(product);
         const headers = await this.larkAuthService.getProductHeaders();
@@ -327,7 +335,7 @@ export class LarkProductSyncService {
             ),
           );
 
-          this.logger.log(`✅ Created product ${productCode} in Lark`);
+          this.logger.log(`✅ Created new product ${productCode} in Lark`);
         }
 
         await this.prismaService.product.update({
@@ -339,19 +347,17 @@ export class LarkProductSyncService {
       } catch (error) {
         lastError = error;
         this.logger.error(
-          `❌ Sync product ${productCode} failed (attempt ${attempt}/${maxRetries}): ${error.message}`,
+          `❌ [Attempt ${attempt}/${maxRetries}] Sync failed for ${productCode}: ${error.message}`,
         );
 
         if (attempt < maxRetries) {
-          const waitTime = attempt * 1000;
-          await new Promise((resolve) => setTimeout(resolve, waitTime));
+          await new Promise((resolve) =>
+            setTimeout(resolve, 2000 * Math.pow(2, attempt - 1)),
+          );
         }
       }
     }
 
-    this.logger.error(
-      `❌ All retry attempts failed for product ${productCode}`,
-    );
     await this.prismaService.product.update({
       where: { id: product.id },
       data: {
@@ -361,6 +367,75 @@ export class LarkProductSyncService {
     });
 
     throw lastError || new Error(`Sync failed after ${maxRetries} attempts`);
+  }
+
+  private async searchRecordByKiotVietId(
+    kiotVietId: bigint,
+    maxRetries: number = 3,
+  ): Promise<string | null> {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const headers = await this.larkAuthService.getProductHeaders();
+        const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/search`;
+
+        const response = await firstValueFrom(
+          this.httpService.post(
+            url,
+            {
+              field_names: [LARK_PRODUCT_FIELDS.PRODUCT_ID],
+              filter: {
+                conjunction: 'and',
+                conditions: [
+                  {
+                    field_name: LARK_PRODUCT_FIELDS.PRODUCT_ID,
+                    operator: 'is',
+                    value: [Number(kiotVietId)],
+                  },
+                ],
+              },
+            },
+            {
+              headers,
+              timeout: 15000,
+            },
+          ),
+        );
+
+        if (response.data.code === 0) {
+          const items = response.data.data?.items || [];
+          if (items.length > 0) {
+            this.logger.debug(
+              `✅ Found existing record by kiotVietId: ${kiotVietId}`,
+            );
+            return items[0].record_id;
+          }
+        }
+
+        this.logger.debug(`ℹ️ No record found by kiotVietId: ${kiotVietId}`);
+        return null;
+      } catch (error) {
+        const errorMessage = error.message || 'Unknown error';
+        const statusCode = error.response?.status;
+
+        this.logger.warn(
+          `Search by kiotVietId failed (attempt ${attempt}/${maxRetries}): ${errorMessage} (Status: ${statusCode})`,
+        );
+
+        if (statusCode === 400 && attempt < maxRetries) {
+          await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
+          continue;
+        }
+
+        if (attempt === maxRetries) {
+          this.logger.error(
+            `❌ Search by kiotVietId failed after ${maxRetries} attempts for ${kiotVietId}`,
+          );
+          return null;
+        }
+      }
+    }
+
+    return null;
   }
 
   private async searchRecordByCodeWithRetry(

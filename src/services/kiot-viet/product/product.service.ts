@@ -798,6 +798,7 @@ export class KiotVietProductService {
                   lastSyncedAt: new Date(),
                   productId: product.id,
                   productName: product.name,
+                  productKiotId: product.kiotVietId,
                 },
                 create: {
                   lineNumber: i + 1,
@@ -807,6 +808,7 @@ export class KiotVietProductService {
                   lastSyncedAt: new Date(),
                   productId: product.id,
                   productName: product.name,
+                  productKiotId: product.kiotVietId,
                 },
               });
             priceBooks.push(priceBookDetail);
@@ -829,28 +831,28 @@ export class KiotVietProductService {
     return savedProducts;
   }
 
-  async syncProductsToLarkBase(products: any[]): Promise<void> {
-    try {
-      this.logger.log(
-        `Starting LarkBase sync for ${products.length} products...`,
-      );
+  // async syncProductsToLarkBase(products: any[]): Promise<void> {
+  //   try {
+  //     this.logger.log(
+  //       `Starting LarkBase sync for ${products.length} products...`,
+  //     );
 
-      const productsToSync = products.filter(
-        (p) => p.larkSyncStatus === 'PENDING' || p.larkSyncStatus === 'FAILED',
-      );
+  //     const productsToSync = products.filter(
+  //       (p) => p.larkSyncStatus === 'PENDING' || p.larkSyncStatus === 'FAILED',
+  //     );
 
-      if (productsToSync.length === 0) {
-        this.logger.log('No products need LarkBase sync');
-        return;
-      }
+  //     if (productsToSync.length === 0) {
+  //       this.logger.log('No products need LarkBase sync');
+  //       return;
+  //     }
 
-      await this.larkProductSyncService.syncProductsToLarkBase(productsToSync);
-      this.logger.log('✅ LarkBase product sync completed');
-    } catch (error) {
-      this.logger.error(`LarkBase sync failed: ${error.message}`);
-      throw error;
-    }
-  }
+  //     await this.larkProductSyncService.syncProductsToLarkBase(productsToSync);
+  //     this.logger.log('✅ LarkBase product sync completed');
+  //   } catch (error) {
+  //     this.logger.error(`LarkBase sync failed: ${error.message}`);
+  //     throw error;
+  //   }
+  // }
 
   private async updateSyncControl(name: string, data: any): Promise<void> {
     try {
