@@ -346,30 +346,6 @@ export class SyncController {
   //   }
   // }
 
-  // @Post('cashflows-historical')
-  // async syncCashflowsHistorical() {
-  //   try {
-  //     this.logger.log('Starting cashflow sync...');
-
-  //     await this.cashflowService.enableHistoricalSync();
-
-  //     await this.cashflowService.syncHistoricalCashflows();
-
-  //     return {
-  //       success: true,
-  //       message: 'Cashflow sync completed successfully',
-  //       timestamp: new Date().toISOString,
-  //     };
-  //   } catch (error) {
-  //     this.logger.error(`❌ Cashflow sync failed: ${error.message}`);
-  //     return {
-  //       success: false,
-  //       error: error.message,
-  //       timestamp: new Date().toISOString(),
-  //     };
-  //   }
-  // }
-
   // @Post('transfers')
   // async syncTransfers() {
   //   try {
@@ -393,6 +369,30 @@ export class SyncController {
   //     };
   //   }
   // }
+
+  @Get('cashflows-historical')
+  async syncCashflowsHistorical() {
+    try {
+      this.logger.log('Starting cashflow sync...');
+
+      await this.cashflowService.enableHistoricalSync();
+
+      await this.cashflowService.syncHistoricalCashflows();
+
+      return {
+        success: true,
+        message: 'Cashflow sync completed successfully',
+        timestamp: new Date().toISOString,
+      };
+    } catch (error) {
+      this.logger.error(`❌ Cashflow sync failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
 
   @Post('products')
   async syncProducts() {
@@ -509,7 +509,7 @@ export class SyncController {
         timestamp: new Date().toISOString,
       };
     } catch (error) {
-      this.logger.error(`❌ Cashflow sync failed: ${error.message}`);
+      this.logger.error(`❌ Return Historical sync failed: ${error.message}`);
       return {
         success: false,
         error: error.message,

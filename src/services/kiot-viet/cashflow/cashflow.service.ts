@@ -722,28 +722,6 @@ export class KiotVietCashflowService {
     return response.data;
   }
 
-  private async enrichCashflowsWithDetails(): Promise<KiotVietCashflow[]> {
-    this.logger.log(`Enrich cashflows with details`);
-
-    const enrichedCashflows: any[] = [];
-    try {
-      const headers = await this.authService.getRequestHeaders();
-      const response = await firstValueFrom(
-        this.httpService.get(`${this.baseUrl}/cashflow`, { headers }),
-      );
-      if (response.data) {
-        enrichedCashflows.push(response.data);
-      } else {
-        console.log('No cashflow');
-      }
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    } catch (error) {
-      this.logger.warn(`Failed to enrich cashflow: ${error.message}`);
-    }
-
-    return enrichedCashflows;
-  }
-
   private async saveCashflowsToDatabase(
     cashflows: KiotVietCashflow[],
   ): Promise<any[]> {

@@ -295,19 +295,10 @@ export class LarkProductSyncService {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         this.logger.log(
-          `🔄 [Attempt ${attempt}/${maxRetries}] Syncing product ${productCode}`,
+          `🔄 [Attempt ${attempt}/${maxRetries}] Syncing product ${productCode} to Lark...`,
         );
 
-        let existingRecordId = await this.searchRecordByCode(productCode);
-
-        if (!existingRecordId && product.kiotVietId) {
-          this.logger.log(
-            `🔍 Code not found, trying kiotVietId: ${product.kiotVietId}`,
-          );
-          existingRecordId = await this.searchRecordByKiotVietId(
-            product.kiotVietId,
-          );
-        }
+        const existingRecordId = await this.findExistingRecord(product);
 
         const larkData = this.mapProductToLarkBase(product);
         const headers = await this.larkAuthService.getProductHeaders();
@@ -319,7 +310,7 @@ export class LarkProductSyncService {
             this.httpService.put(
               url,
               { fields: larkData },
-              { headers, timeout: 15000 },
+              { headers, timeout: 10000 },
             ),
           );
 
@@ -331,11 +322,11 @@ export class LarkProductSyncService {
             this.httpService.post(
               url,
               { fields: larkData },
-              { headers, timeout: 15000 },
+              { headers, timeout: 10000 },
             ),
           );
 
-          this.logger.log(`✅ Created new product ${productCode} in Lark`);
+          this.logger.log(`✅ Created product ${productCode} in Lark`);
         }
 
         await this.prismaService.product.update({
@@ -346,17 +337,29 @@ export class LarkProductSyncService {
         return;
       } catch (error) {
         lastError = error;
+        const errorMessage = error.message || 'Unknown error';
+        const statusCode = error.response?.status;
+
         this.logger.error(
-          `❌ [Attempt ${attempt}/${maxRetries}] Sync failed for ${productCode}: ${error.message}`,
+          `❌ [Attempt ${attempt}/${maxRetries}] Sync failed for ${productCode}: ${errorMessage} (Status: ${statusCode})`,
         );
 
-        if (attempt < maxRetries) {
-          await new Promise((resolve) =>
-            setTimeout(resolve, 2000 * Math.pow(2, attempt - 1)),
-          );
+        if (statusCode === 429 || statusCode >= 500) {
+          if (attempt < maxRetries) {
+            const delayMs = 1000 * Math.pow(2, attempt - 1); // Exponential backoff
+            this.logger.log(`⏳ Retrying in ${delayMs}ms...`);
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+            continue;
+          }
+        } else {
+          break;
         }
       }
     }
+
+    this.logger.error(
+      `❌ All attempts failed for product ${productCode}. Last error: ${lastError?.message}`,
+    );
 
     await this.prismaService.product.update({
       where: { id: product.id },
@@ -366,7 +369,23 @@ export class LarkProductSyncService {
       },
     });
 
-    throw lastError || new Error(`Sync failed after ${maxRetries} attempts`);
+    throw lastError;
+  }
+
+  private async findExistingRecord(product: any): Promise<string | null> {
+    let recordId = await this.searchRecordByCode(product.code);
+    if (recordId) {
+      return recordId;
+    }
+
+    if (product.kiotVietId) {
+      recordId = await this.searchRecordByKiotVietId(product.kiotVietId);
+      if (recordId) {
+        return recordId;
+      }
+    }
+
+    return null;
   }
 
   private async searchRecordByKiotVietId(
@@ -960,5 +979,39 @@ export class LarkProductSyncService {
 
       this.logger.debug(`🔓 Released sync lock: ${lockKey}`);
     }
+  }
+
+  async onModuleDestroy() {
+    this.logger.log('🧹 Cleaning up LarkProductSyncService...');
+
+    for (const timer of this.pendingSyncTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.pendingSyncTimers.clear();
+
+    const activeSyncs = Array.from(this.productSyncLocks.values());
+    if (activeSyncs.length > 0) {
+      this.logger.log(
+        `⏳ Waiting for ${activeSyncs.length} active syncs to complete...`,
+      );
+      await Promise.allSettled(activeSyncs);
+    }
+
+    this.productSyncLocks.clear();
+    this.logger.log('✅ LarkProductSyncService cleanup completed');
+  }
+
+  getActiveSyncStatus(): {
+    pendingTimers: number;
+    activeLocks: number;
+    pendingProducts: string[];
+    syncingProducts: string[];
+  } {
+    return {
+      pendingTimers: this.pendingSyncTimers.size,
+      activeLocks: this.productSyncLocks.size,
+      pendingProducts: Array.from(this.pendingSyncTimers.keys()),
+      syncingProducts: Array.from(this.productSyncLocks.keys()),
+    };
   }
 }
