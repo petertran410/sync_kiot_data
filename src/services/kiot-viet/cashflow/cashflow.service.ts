@@ -436,7 +436,7 @@ export class KiotVietCashflowService {
         }
 
         const dateStart = new Date();
-        dateStart.setDate(dateStart.getDate() - 1);
+        dateStart.setDate(dateStart.getDate() - 60);
         const dateStartStr = dateStart.toISOString().split('T')[0];
 
         const dateEnd = new Date();
@@ -839,17 +839,73 @@ export class KiotVietCashflowService {
         `Starting LarkBase sync for ${cashflows.length} cashflows...`,
       );
 
+      // Filter only records with PENDING or FAILED status
       const cashflowToSync = cashflows.filter(
         (c) => c.larkSyncStatus === 'PENDING' || c.larkSyncStatus === 'FAILED',
       );
 
-      if (cashflowToSync.length === 0) {
-        this.logger.log('No cashflows need LarkBase sync');
+      // Apply Larkbase filters: partnerType = 'C', partnerName contains 'sale', transDate within 60 days
+      const twoMonthsAgo = new Date();
+      twoMonthsAgo.setDate(twoMonthsAgo.getDate() - 60);
+
+      const filteredForLark = cashflowToSync.filter((c) => {
+        // Filter by partnerType = 'C'
+        const isCustomer = c.partnerType === 'C';
+
+        // Filter by partnerName contains 'sale' (case insensitive)
+        const hasSaleInName =
+          c.partnerName &&
+          c.partnerName.toLowerCase().includes('sale');
+
+        // Filter by transDate within last 60 days
+        const isWithinTwoMonths =
+          c.transDate && new Date(c.transDate) >= twoMonthsAgo;
+
+        return isCustomer && hasSaleInName && isWithinTwoMonths;
+      });
+
+      if (filteredForLark.length === 0) {
+        this.logger.log('No cashflows match Larkbase filter criteria (partnerType=C, partnerName contains "sale", transDate within 60 days)');
+
+        // Mark filtered out records as SKIP
+        const skippedIds = cashflowToSync
+          .filter(c => !filteredForLark.includes(c))
+          .map(c => c.id);
+
+        if (skippedIds.length > 0) {
+          await this.prismaService.cashflow.updateMany({
+            where: { id: { in: skippedIds } },
+            data: {
+              larkSyncStatus: 'SKIP',
+              lastSyncedAt: new Date(),
+            },
+          });
+          this.logger.log(`Marked ${skippedIds.length} cashflows as SKIP (did not meet filter criteria)`);
+        }
+
         return;
       }
 
-      await this.larkCashflowSyncService.syncCashflowToLarkBase(cashflowToSync);
+      this.logger.log(
+        `Syncing ${filteredForLark.length} cashflows to LarkBase (filtered from ${cashflowToSync.length} total)`,
+      );
+
+      await this.larkCashflowSyncService.syncCashflowToLarkBase(filteredForLark);
       this.logger.log(`LarkBase sync completed successfully`);
+
+      // Mark filtered out records as SKIP
+      const skippedRecords = cashflowToSync.filter(c => !filteredForLark.includes(c));
+      if (skippedRecords.length > 0) {
+        const skippedIds = skippedRecords.map(c => c.id);
+        await this.prismaService.cashflow.updateMany({
+          where: { id: { in: skippedIds } },
+          data: {
+            larkSyncStatus: 'SKIP',
+            lastSyncedAt: new Date(),
+          },
+        });
+        this.logger.log(`Marked ${skippedIds.length} cashflows as SKIP (did not meet filter criteria)`);
+      }
     } catch (error) {
       this.logger.error(`LarkBase sync FAILED: ${error.message}`);
       this.logger.error(`STOPPING sync to prevent data duplication`);
