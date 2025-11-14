@@ -170,6 +170,10 @@ export class KiotVietCashflowService {
           );
         }
 
+        const dateStart = new Date();
+        dateStart.setDate(dateStart.getDate() - 2);
+        const dateStartStr = dateStart.toISOString().split('T')[0];
+
         const dateEnd = new Date();
         dateEnd.setDate(dateEnd.getDate() + 1);
         const dateEndStr = dateEnd.toISOString().split('T')[0];
@@ -181,7 +185,7 @@ export class KiotVietCashflowService {
             includeAccount: true,
             includeBranch: true,
             includeUser: true,
-            startDate: '2024-12-1',
+            startDate: dateStartStr,
             endDate: dateEndStr,
           });
 
@@ -436,7 +440,7 @@ export class KiotVietCashflowService {
         }
 
         const dateStart = new Date();
-        dateStart.setDate(dateStart.getDate() - 1);
+        dateStart.setDate(dateStart.getDate() - 2);
         const dateStartStr = dateStart.toISOString().split('T')[0];
 
         const dateEnd = new Date();
