@@ -13,6 +13,8 @@ import { LarkOrderSupplierSyncService } from '../lark/order-supplier/lark-order-
 import { KiotVietPurchaseOrderService } from '../kiot-viet/purchase-order/purchase-order.service';
 import { LarkPurchaseOrderSyncService } from '../lark/purchase-order/lark-purchase-order-sync.service';
 import { LarkInvoiceDetailSyncService } from '../lark/invoice-detail/lark-invoice-detail-sync.service';
+import { KiotVietCashflowService } from '../kiot-viet/cashflow/cashflow.service';
+import { LarkCashflowSyncService } from '../lark/cashflow/lark-cashflow-sync.service';
 
 @Injectable()
 export class BusSchedulerService implements OnModuleInit {
@@ -34,6 +36,9 @@ export class BusSchedulerService implements OnModuleInit {
 
     private readonly purchaseOrderService: KiotVietPurchaseOrderService,
     private readonly larkPurchaseOrderSyncService: LarkPurchaseOrderSyncService,
+
+    private readonly cashflowService: KiotVietCashflowService,
+    private readonly larkCashflowSyncService: LarkCashflowSyncService,
   ) {}
 
   async onModuleInit() {
@@ -89,6 +94,30 @@ export class BusSchedulerService implements OnModuleInit {
         'failed',
         error.message,
       );
+    }
+  }
+
+  @Cron('0 1 * * 0', { timeZone: 'Asia/Ho_Chi_Minh' })
+  async syncCashflowsHistorical() {
+    try {
+      this.logger.log('Starting cashflow sync...');
+
+      await this.cashflowService.enableHistoricalSync();
+
+      await this.cashflowService.syncHistoricalCashflows();
+
+      return {
+        success: true,
+        message: 'Cashflow sync completed successfully',
+        timestamp: new Date().toISOString,
+      };
+    } catch (error) {
+      this.logger.error(`❌ Cashflow sync failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
     }
   }
 

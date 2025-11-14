@@ -726,6 +726,21 @@ export class KiotVietCashflowService {
     return response.data;
   }
 
+  private shouldSyncCashflowToLark(cashflowData: KiotVietCashflow): boolean {
+    if (cashflowData.partnerType !== 'C') {
+      return false;
+    }
+
+    if (!cashflowData.partnerName) {
+      return false;
+    }
+
+    const partnerNameLower = cashflowData.partnerName.toLowerCase();
+    const containsSale = partnerNameLower.includes('sale');
+
+    return containsSale;
+  }
+
   private async saveCashflowsToDatabase(
     cashflows: KiotVietCashflow[],
   ): Promise<any[]> {
@@ -755,6 +770,8 @@ export class KiotVietCashflowService {
         //   where: { kiotVietId: cashflowData.accountId },
         //   select: { id: true, bankName: true },
         // });
+
+        const shouldSyncToLark = this.shouldSyncCashflowToLark(cashflowData);
 
         const cashflow = await this.prismaService.cashflow.upsert({
           where: { kiotVietId: BigInt(cashflowData.id) },
@@ -788,7 +805,7 @@ export class KiotVietCashflowService {
             amount: Number(cashflowData.amount) ?? 0,
             description: cashflowData.description ?? '',
             lastSyncedAt: new Date(),
-            larkSyncStatus: 'PENDING',
+            larkSyncStatus: shouldSyncToLark ? 'PENDING' : 'SKIP',
           },
           create: {
             kiotVietId: BigInt(cashflowData.id),
@@ -821,7 +838,7 @@ export class KiotVietCashflowService {
             amount: Number(cashflowData.amount) ?? 0,
             description: cashflowData.description ?? '',
             lastSyncedAt: new Date(),
-            larkSyncStatus: 'PENDING',
+            larkSyncStatus: shouldSyncToLark ? 'PENDING' : 'SKIP',
           },
         });
 
