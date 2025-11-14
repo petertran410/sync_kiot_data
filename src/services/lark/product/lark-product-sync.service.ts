@@ -142,6 +142,11 @@ interface LarkBatchResponse {
 @Injectable()
 export class LarkProductSyncService {
   private readonly logger = new Logger(LarkProductSyncService.name);
+  private readonly searchCache = new Map<
+    string,
+    { recordId: string | null; timestamp: number }
+  >();
+  private readonly CACHE_TTL_MS = 30000;
   private readonly baseToken: string;
   private readonly tableId: string;
   private readonly productSyncLocks = new Map<string, Promise<void>>();
@@ -167,6 +172,53 @@ export class LarkProductSyncService {
 
     this.baseToken = baseToken;
     this.tableId = tableId;
+  }
+
+  private async searchRecordByKiotVietIdWithCache(
+    kiotVietId: bigint,
+    maxRetries: number = 3,
+  ): Promise<string | null> {
+    const cacheKey = `kiot_${kiotVietId}`;
+    const cached = this.searchCache.get(cacheKey);
+
+    if (cached && Date.now() - cached.timestamp < this.CACHE_TTL_MS) {
+      this.logger.debug(`📋 Cache hit for kiotVietId: ${kiotVietId}`);
+      return cached.recordId;
+    }
+
+    const recordId = await this.searchRecordByKiotVietId(
+      kiotVietId,
+      maxRetries,
+    );
+
+    this.searchCache.set(cacheKey, {
+      recordId,
+      timestamp: Date.now(),
+    });
+
+    return recordId;
+  }
+
+  private async searchRecordByCodeWithCache(
+    code: string,
+    maxRetries: number = 3,
+  ): Promise<string | null> {
+    const cacheKey = `code_${code}`;
+    const cached = this.searchCache.get(cacheKey);
+
+    if (cached && Date.now() - cached.timestamp < this.CACHE_TTL_MS) {
+      this.logger.debug(`📋 Cache hit for code: ${code}`);
+      return cached.recordId;
+    }
+
+    const recordId = await this.searchRecordByCodeWithRetry(code, maxRetries);
+
+    this.searchCache.set(cacheKey, {
+      recordId,
+      timestamp: Date.now(),
+    });
+
+    return recordId;
   }
 
   async syncProductsToLarkBase(products: any[]): Promise<void> {
@@ -373,19 +425,51 @@ export class LarkProductSyncService {
   }
 
   private async findExistingRecord(product: any): Promise<string | null> {
-    let recordId = await this.searchRecordByCode(product.code);
-    if (recordId) {
-      return recordId;
-    }
-
     if (product.kiotVietId) {
-      recordId = await this.searchRecordByKiotVietId(product.kiotVietId);
-      if (recordId) {
-        return recordId;
+      try {
+        const recordByKiotId = await this.searchRecordByKiotVietIdWithCache(
+          product.kiotVietId,
+        );
+        if (recordByKiotId) {
+          this.logger.debug(
+            `✅ Found existing record by kiotVietId: ${product.kiotVietId}`,
+          );
+          return recordByKiotId;
+        }
+      } catch (error) {
+        this.logger.warn(`⚠️ Search by kiotVietId failed: ${error.message}`);
       }
     }
 
+    if (product.code) {
+      try {
+        const recordByCode = await this.searchRecordByCodeWithCache(
+          product.code,
+        );
+        if (recordByCode) {
+          this.logger.debug(
+            `✅ Found existing record by code: ${product.code}`,
+          );
+          return recordByCode;
+        }
+      } catch (error) {
+        this.logger.warn(`⚠️ Search by code failed: ${error.message}`);
+      }
+    }
+
+    this.logger.debug(
+      `ℹ️ No existing record found for product: ${product.code} (kiotVietId: ${product.kiotVietId})`,
+    );
     return null;
+  }
+
+  private cleanupCache(): void {
+    const now = Date.now();
+    for (const [key, value] of this.searchCache.entries()) {
+      if (now - value.timestamp > this.CACHE_TTL_MS) {
+        this.searchCache.delete(key);
+      }
+    }
   }
 
   private async searchRecordByKiotVietId(
