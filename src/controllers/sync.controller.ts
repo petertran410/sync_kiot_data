@@ -92,7 +92,7 @@ export class SyncController {
     }
   }
 
-  @Get('invoice/historical')
+  @Post('invoice/historical')
   async triggerHistoricalInvoice() {
     try {
       this.logger.log('Manual historical invoice sync triggered');
@@ -370,7 +370,7 @@ export class SyncController {
   //   }
   // }
 
-  @Get('cashflows-historical')
+  @Post('cashflows-historical')
   async syncCashflowsHistorical() {
     try {
       this.logger.log('Starting cashflow sync...');
