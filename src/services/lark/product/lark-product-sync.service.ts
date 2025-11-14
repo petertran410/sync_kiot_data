@@ -142,16 +142,18 @@ interface LarkBatchResponse {
 @Injectable()
 export class LarkProductSyncService {
   private readonly logger = new Logger(LarkProductSyncService.name);
+  private readonly baseToken: string;
+  private readonly tableId: string;
+
   private readonly searchCache = new Map<
     string,
     { recordId: string | null; timestamp: number }
   >();
   private readonly CACHE_TTL_MS = 30000;
-  private readonly baseToken: string;
-  private readonly tableId: string;
-  private readonly productSyncLocks = new Map<string, Promise<void>>();
   private readonly pendingSyncTimers = new Map<string, NodeJS.Timeout>();
+  private readonly productSyncLocks = new Map<string, Promise<void>>();
   private readonly DEBOUNCE_MS = 2000;
+  private cacheCleanupTimer: NodeJS.Timeout;
 
   constructor(
     private readonly httpService: HttpService,
@@ -172,6 +174,10 @@ export class LarkProductSyncService {
 
     this.baseToken = baseToken;
     this.tableId = tableId;
+
+    this.cacheCleanupTimer = setInterval(() => {
+      this.cleanupCache();
+    }, 60000);
   }
 
   private async searchRecordByKiotVietIdWithCache(
@@ -398,7 +404,7 @@ export class LarkProductSyncService {
 
         if (statusCode === 429 || statusCode >= 500) {
           if (attempt < maxRetries) {
-            const delayMs = 1000 * Math.pow(2, attempt - 1); // Exponential backoff
+            const delayMs = 1000 * Math.pow(2, attempt - 1);
             this.logger.log(`⏳ Retrying in ${delayMs}ms...`);
             await new Promise((resolve) => setTimeout(resolve, delayMs));
             continue;
@@ -1065,24 +1071,16 @@ export class LarkProductSyncService {
     }
   }
 
-  async onModuleDestroy() {
-    this.logger.log('🧹 Cleaning up LarkProductSyncService...');
+  onModuleDestroy() {
+    if (this.cacheCleanupTimer) {
+      clearInterval(this.cacheCleanupTimer);
+    }
 
+    // Clear all pending timers
     for (const timer of this.pendingSyncTimers.values()) {
       clearTimeout(timer);
     }
     this.pendingSyncTimers.clear();
-
-    const activeSyncs = Array.from(this.productSyncLocks.values());
-    if (activeSyncs.length > 0) {
-      this.logger.log(
-        `⏳ Waiting for ${activeSyncs.length} active syncs to complete...`,
-      );
-      await Promise.allSettled(activeSyncs);
-    }
-
-    this.productSyncLocks.clear();
-    this.logger.log('✅ LarkProductSyncService cleanup completed');
   }
 
   getActiveSyncStatus(): {
