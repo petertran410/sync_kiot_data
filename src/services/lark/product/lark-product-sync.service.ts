@@ -617,9 +617,6 @@ export class LarkProductSyncService {
         if (response.data.code === 0) {
           const items = response.data.data?.items || [];
           if (items.length > 0) {
-            this.logger.debug(
-              `✅ Found existing record by kiotVietId: ${kiotVietId}`,
-            );
             return items[0].record_id;
           }
         }
@@ -829,9 +826,6 @@ export class LarkProductSyncService {
         if (costField) {
           const costValue = Number(inventory.cost) || 0;
           fields[costField] = costValue;
-          this.logger.debug(
-            `✅ Mapped cost ${costValue} to ${costField} (branchKiotVietId: ${branchKiotVietId})`,
-          );
         } else {
           this.logger.warn(
             `⚠️ No cost field mapping for branchKiotVietId: ${branchKiotVietId}, branch: ${inventory.branchName}`,
@@ -842,9 +836,6 @@ export class LarkProductSyncService {
         if (inventoryField) {
           const onHandValue = Number(inventory.onHand) || 0;
           fields[inventoryField] = onHandValue;
-          this.logger.debug(
-            `✅ Mapped inventory ${onHandValue} to ${inventoryField} (branchKiotVietId: ${branchKiotVietId})`,
-          );
         } else {
           this.logger.warn(
             `⚠️ No inventory field mapping for branchKiotVietId: ${branchKiotVietId}, branch: ${inventory.branchName}`,

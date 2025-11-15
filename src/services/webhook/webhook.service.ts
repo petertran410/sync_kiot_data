@@ -1793,9 +1793,6 @@ export class WebhookService {
         }),
       );
 
-      this.logger.log('📦 Fetched customer detail:');
-      this.logger.log(JSON.stringify(response.data, null, 2));
-
       return response.data;
     } catch (error) {
       this.logger.warn(`⚠️ Could not fetch customer detail: ${error.message}`);
@@ -1820,9 +1817,6 @@ export class WebhookService {
         }),
       );
 
-      this.logger.log('📦 Fetched order detail:');
-      this.logger.log(JSON.stringify(response.data, null, 2));
-
       return response.data;
     } catch (error) {
       this.logger.warn(`⚠️ Could not fetch order detail: ${error.message}`);
@@ -1846,9 +1840,6 @@ export class WebhookService {
           },
         }),
       );
-
-      this.logger.log('📦 Fetched invoice detail:');
-      this.logger.log(JSON.stringify(response.data, null, 2));
 
       return response.data;
     } catch (error) {
@@ -1879,9 +1870,6 @@ export class WebhookService {
         }),
       );
 
-      this.logger.log('📦 Fetched product detail:');
-      this.logger.log(JSON.stringify(response.data, null, 2));
-
       return response.data;
     } catch (error) {
       this.logger.warn(`⚠️ Could not fetch product detail: ${error.message}`);
@@ -1911,9 +1899,6 @@ export class WebhookService {
           },
         }),
       );
-
-      this.logger.log('📦 Fetched pricebook detail:');
-      this.logger.log(JSON.stringify(response.data, null, 2));
 
       return response.data;
     } catch (error) {
