@@ -187,9 +187,6 @@ export class LarkProductSyncService {
 
     const existingSync = this.syncQueue.get(productKey);
     if (existingSync) {
-      this.logger.log(
-        `⏭️ Product ${product.code} sync already queued, waiting...`,
-      );
       return existingSync;
     }
 
@@ -203,10 +200,6 @@ export class LarkProductSyncService {
     const syncPromise = new Promise<void>((resolve, reject) => {
       const timer = setTimeout(async () => {
         try {
-          this.logger.log(
-            `🚀 Executing debounced sync for product ${product.code}`,
-          );
-
           this.syncTimers.delete(productKey);
           await this.syncSingleProductDirect(product);
           this.syncQueue.delete(productKey);
@@ -554,9 +547,6 @@ export class LarkProductSyncService {
           product.kiotVietId,
         );
         if (recordByKiotId) {
-          this.logger.debug(
-            `✅ Found existing record by kiotVietId: ${product.kiotVietId}`,
-          );
           return recordByKiotId;
         }
       } catch (error) {
@@ -570,9 +560,6 @@ export class LarkProductSyncService {
           product.code,
         );
         if (recordByCode) {
-          this.logger.debug(
-            `✅ Found existing record by code: ${product.code}`,
-          );
           return recordByCode;
         }
       } catch (error) {
@@ -795,10 +782,6 @@ export class LarkProductSyncService {
     }
 
     if (product.priceBookDetails && product.priceBookDetails.length > 0) {
-      this.logger.debug(
-        `📋 Processing ${product.priceBookDetails.length} priceBookDetails for ${product.code}`,
-      );
-
       for (const priceBookDetail of product.priceBookDetails) {
         const priceBookId = priceBookDetail.priceBookId;
 
@@ -814,10 +797,6 @@ export class LarkProductSyncService {
         if (larkField && larkField !== 'undefined') {
           const priceValue = Number(priceBookDetail.price) || 0;
           fields[larkField] = priceValue;
-
-          this.logger.debug(
-            `✅ Mapped price ${priceValue} to field ${larkField} (priceBookId: ${priceBookId}, name: ${priceBookDetail.priceBookName})`,
-          );
         } else {
           this.logger.warn(
             `⚠️ No Lark field mapping found for priceBookId: ${priceBookId}, name: ${priceBookDetail.priceBookName}`,
@@ -829,10 +808,6 @@ export class LarkProductSyncService {
     }
 
     if (product.inventories && product.inventories.length > 0) {
-      this.logger.debug(
-        `📦 Processing ${product.inventories.length} inventories for ${product.code}`,
-      );
-
       for (const inventory of product.inventories) {
         let branchKiotVietId: number | null = null;
 
