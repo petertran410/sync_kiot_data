@@ -66,8 +66,6 @@ export class WebhookService {
           if (savedInvoice) {
             this.logger.log(`✅ Upserted invoice ${savedInvoice.code}`);
 
-            console.log(savedInvoice);
-
             await this.larkInvoiceSyncService.syncSingleInvoiceDirect(
               savedInvoice,
             );
@@ -98,8 +96,6 @@ export class WebhookService {
 
           if (savedCustomer) {
             this.logger.log(`✅ Upserted customer ${savedCustomer.code}`);
-
-            console.log(savedCustomer);
 
             const hasSpecialCode =
               savedCustomer.code?.includes('KHSPE') ||
