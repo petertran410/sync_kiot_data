@@ -152,7 +152,9 @@ export class LarkProductSyncService {
   private readonly CACHE_TTL_MS = 30000;
   private readonly pendingSyncTimers = new Map<string, NodeJS.Timeout>();
   private readonly productSyncLocks = new Map<string, Promise<void>>();
-  private readonly DEBOUNCE_MS = 2000;
+  private readonly syncQueue: Map<string, Promise<void>> = new Map();
+  private readonly syncTimers: Map<string, NodeJS.Timeout> = new Map();
+  private readonly DEBOUNCE_TIME_MS = 2000;
   private cacheCleanupTimer: NodeJS.Timeout;
 
   constructor(
@@ -175,9 +177,90 @@ export class LarkProductSyncService {
     this.baseToken = baseToken;
     this.tableId = tableId;
 
-    this.cacheCleanupTimer = setInterval(() => {
-      this.cleanupCache();
+    setInterval(() => {
+      this.cleanupPendingSyncs();
     }, 60000);
+  }
+
+  async syncSingleProductDirectDebounced(product: any): Promise<void> {
+    const productKey = `${product.kiotVietId || 'null'}_${product.code || 'null'}`;
+
+    const existingSync = this.syncQueue.get(productKey);
+    if (existingSync) {
+      this.logger.log(
+        `⏭️ Product ${product.code} sync already queued, waiting...`,
+      );
+      return existingSync;
+    }
+
+    const existingTimer = this.syncTimers.get(productKey);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+      this.syncTimers.delete(productKey);
+      this.logger.log(`🔄 Debouncing product ${product.code} sync...`);
+    }
+
+    const syncPromise = new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(async () => {
+        try {
+          this.logger.log(
+            `🚀 Executing debounced sync for product ${product.code}`,
+          );
+
+          this.syncTimers.delete(productKey);
+          await this.syncSingleProductDirect(product);
+          this.syncQueue.delete(productKey);
+
+          resolve();
+        } catch (error) {
+          this.syncQueue.delete(productKey);
+          this.syncTimers.delete(productKey);
+          this.logger.error(
+            `❌ Debounced sync failed for ${product.code}: ${error.message}`,
+          );
+          reject(error);
+        }
+      }, this.DEBOUNCE_TIME_MS);
+
+      this.syncTimers.set(productKey, timer);
+    });
+
+    this.syncQueue.set(productKey, syncPromise);
+    this.logger.log(
+      `⏱️ Product ${product.code} sync queued with ${this.DEBOUNCE_TIME_MS}ms debounce`,
+    );
+
+    return syncPromise;
+  }
+
+  private cleanupPendingSyncs(): void {
+    this.logger.debug(
+      `📊 Queue status - Active: ${this.syncQueue.size}, Timers: ${this.syncTimers.size}`,
+    );
+  }
+
+  async cancelAllPendingSyncs(): Promise<void> {
+    this.logger.log(`🛑 Canceling ${this.syncTimers.size} pending syncs`);
+
+    for (const [key, timer] of this.syncTimers.entries()) {
+      clearTimeout(timer);
+      this.syncTimers.delete(key);
+    }
+
+    this.syncQueue.clear();
+    this.logger.log('✅ All pending syncs canceled');
+  }
+
+  getQueueStatus(): {
+    queueSize: number;
+    timerCount: number;
+    pendingSyncs: string[];
+  } {
+    return {
+      queueSize: this.syncQueue.size,
+      timerCount: this.syncTimers.size,
+      pendingSyncs: Array.from(this.syncQueue.keys()),
+    };
   }
 
   private async searchRecordByKiotVietIdWithCache(
@@ -297,25 +380,59 @@ export class LarkProductSyncService {
   }
 
   async syncSingleProductDirect(product: any): Promise<void> {
-    if (!product?.code) {
-      this.logger.warn('⚠️ Product missing code, skipping sync');
-      return;
+    try {
+      this.logger.log(`🔄 Syncing product ${product.code} to Lark...`);
+
+      const existingRecordId = await this.findExistingRecord(product);
+
+      const larkData = this.mapProductToLarkBase(product);
+      const headers = await this.larkAuthService.getProductHeaders();
+
+      if (existingRecordId) {
+        const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/${existingRecordId}`;
+
+        await firstValueFrom(
+          this.httpService.put(
+            url,
+            { fields: larkData },
+            { headers, timeout: 10000 },
+          ),
+        );
+
+        this.logger.log(`✅ Updated product ${product.code} in Lark`);
+      } else {
+        const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records`;
+
+        await firstValueFrom(
+          this.httpService.post(
+            url,
+            { fields: larkData },
+            { headers, timeout: 10000 },
+          ),
+        );
+
+        this.logger.log(`✅ Created product ${product.code} in Lark`);
+      }
+
+      await this.prismaService.product.update({
+        where: { id: product.id },
+        data: { larkSyncStatus: 'SYNCED', larkSyncedAt: new Date() },
+      });
+    } catch (error) {
+      this.logger.error(
+        `❌ Sync product ${product.code} failed: ${error.message}`,
+      );
+
+      await this.prismaService.product.update({
+        where: { id: product.id },
+        data: {
+          larkSyncStatus: 'FAILED',
+          larkSyncRetries: { increment: 1 },
+        },
+      });
+
+      throw error;
     }
-
-    const productCode = product.code;
-
-    const existingTimer = this.pendingSyncTimers.get(productCode);
-    if (existingTimer) {
-      clearTimeout(existingTimer);
-      this.logger.debug(`🔄 Debouncing sync for ${productCode}`);
-    }
-
-    const timer = setTimeout(() => {
-      this.pendingSyncTimers.delete(productCode);
-      this.executeSyncWithLock(product);
-    }, this.DEBOUNCE_MS);
-
-    this.pendingSyncTimers.set(productCode, timer);
   }
 
   private async executeSyncWithLock(product: any): Promise<void> {
