@@ -162,8 +162,6 @@ export class WebhookService {
                 },
               });
 
-            console.log(productWithRelations);
-
             if (productWithRelations) {
               const branchIds = productWithRelations.inventories
                 .map((inv) => inv.branchId)
@@ -260,8 +258,6 @@ export class WebhookService {
                 },
               });
 
-            console.log(productWithRelations);
-
             if (productWithRelations) {
               const branchIds = productWithRelations.inventories
                 .map((inv) => inv.branchId)
@@ -330,8 +326,6 @@ export class WebhookService {
                   },
                 },
               });
-
-            console.log(productWithRelations);
 
             if (productWithRelations) {
               const branchIds = productWithRelations.inventories

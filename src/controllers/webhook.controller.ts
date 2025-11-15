@@ -70,7 +70,6 @@ export class WebhookController {
   @HttpCode(HttpStatus.OK)
   async handleStockWebhook(@Body() webhookData: any) {
     try {
-      this.logger.log('📨 Received KiotViet stock webhook');
       await this.webhookService.processStockWebhook(webhookData);
       return { success: true };
     } catch (error) {
