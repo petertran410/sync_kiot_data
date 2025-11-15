@@ -194,7 +194,7 @@ export class WebhookService {
                   }));
               }
 
-              await this.larkProductSyncService.syncSingleProductDirect(
+              await this.larkProductSyncService.syncSingleProductDirectDebounced(
                 productWithRelations,
               );
             }
@@ -292,7 +292,7 @@ export class WebhookService {
                   }));
               }
 
-              await this.larkProductSyncService.syncSingleProductDirect(
+              await this.larkProductSyncService.syncSingleProductDirectDebounced(
                 productWithRelations,
               );
             }
@@ -363,7 +363,7 @@ export class WebhookService {
                   }));
               }
 
-              await this.larkProductSyncService.syncSingleProductDirect(
+              await this.larkProductSyncService.syncSingleProductDirectDebounced(
                 productWithRelations,
               );
             }
