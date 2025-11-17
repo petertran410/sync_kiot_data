@@ -171,7 +171,7 @@ export class KiotVietCashflowService {
         }
 
         const dateStart = new Date();
-        dateStart.setDate(dateStart.getDate() - 2);
+        dateStart.setDate(dateStart.getDate() - 7);
         const dateStartStr = dateStart.toISOString().split('T')[0];
 
         const dateEnd = new Date();
