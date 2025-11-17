@@ -155,6 +155,8 @@ export class LarkProductSyncService {
   private readonly syncQueue: Map<string, Promise<void>> = new Map();
   private readonly syncTimers: Map<string, NodeJS.Timeout> = new Map();
   private readonly DEBOUNCE_TIME_MS = 2000;
+  private globalSearchQueue: Promise<any> = Promise.resolve();
+  private readonly SEARCH_DELAY_MS = 1000;
   private cacheCleanupTimer: NodeJS.Timeout;
 
   constructor(
@@ -268,6 +270,13 @@ export class LarkProductSyncService {
       return cached.recordId;
     }
 
+    this.globalSearchQueue = this.globalSearchQueue.then(async () => {
+      await new Promise((resolve) => setTimeout(resolve, this.SEARCH_DELAY_MS));
+      return Promise.resolve();
+    });
+
+    await this.globalSearchQueue;
+
     const recordId = await this.searchRecordByKiotVietId(
       kiotVietId,
       maxRetries,
@@ -292,6 +301,13 @@ export class LarkProductSyncService {
       this.logger.debug(`📋 Cache hit for code: ${code}`);
       return cached.recordId;
     }
+
+    this.globalSearchQueue = this.globalSearchQueue.then(async () => {
+      await new Promise((resolve) => setTimeout(resolve, this.SEARCH_DELAY_MS));
+      return Promise.resolve();
+    });
+
+    await this.globalSearchQueue;
 
     const recordId = await this.searchRecordByCodeWithRetry(code, maxRetries);
 
