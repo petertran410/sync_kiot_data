@@ -97,7 +97,7 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
-  @Cron('0 1 * * *', { timeZone: 'Asia/Ho_Chi_Minh' })
+  @Cron('* 3 * * *', { timeZone: 'Asia/Ho_Chi_Minh' })
   async syncCashflowsHistorical() {
     try {
       this.logger.log('Starting cashflow sync...');
