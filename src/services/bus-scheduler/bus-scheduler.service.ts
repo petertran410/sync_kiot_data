@@ -97,7 +97,7 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
-  @Cron('0 1 * * 0', { timeZone: 'Asia/Ho_Chi_Minh' })
+  @Cron('0 1 * * *', { timeZone: 'Asia/Ho_Chi_Minh' })
   async syncCashflowsHistorical() {
     try {
       this.logger.log('Starting cashflow sync...');
@@ -121,7 +121,7 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
-  @Cron('0 7 * * 0', { timeZone: 'Asia/Ho_Chi_Minh' })
+  @Cron('0 7 * * *', { timeZone: 'Asia/Ho_Chi_Minh' })
   async syncAllReturns() {
     try {
       this.logger.log('Starting return sync...');
@@ -145,7 +145,7 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
-  @Cron('0 8 * * 0', { timeZone: 'Asia/Ho_Chi_Minh' })
+  @Cron('0 8 * * *', { timeZone: 'Asia/Ho_Chi_Minh' })
   async syncOrderSuppliers() {
     try {
       this.logger.log('Starting order-supplier sync...');
@@ -181,7 +181,7 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
-  @Cron('0 9 * * 0', { timeZone: 'Asia/Ho_Chi_Minh' })
+  @Cron('0 9 * * *', { timeZone: 'Asia/Ho_Chi_Minh' })
   async syncPurchaseOrders() {
     try {
       this.logger.log('Starting purchase-order sync...');
