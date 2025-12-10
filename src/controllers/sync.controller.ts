@@ -188,30 +188,6 @@ export class SyncController {
   //   }
   // }
 
-  // @Post('categories')
-  // async syncCategories() {
-  //   try {
-  //     this.logger.log('🗂️ Starting category sync...');
-
-  //     await this.categoryService.enableHistoricalSync();
-
-  //     await this.categoryService.syncHistoricalCategories();
-
-  //     return {
-  //       success: true,
-  //       message: 'Category sync completed successfully',
-  //       timestamp: new Date().toISOString(),
-  //     };
-  //   } catch (error) {
-  //     this.logger.error(`❌ Category sync failed: ${error.message}`);
-  //     return {
-  //       success: false,
-  //       error: error.message,
-  //       timestamp: new Date().toISOString(),
-  //     };
-  //   }
-  // }
-
   // @Post('customer-groups')
   // async syncCustomerGroups() {
   //   try {
@@ -369,6 +345,30 @@ export class SyncController {
   //     };
   //   }
   // }
+
+  @Post('categories')
+  async syncCategories() {
+    try {
+      this.logger.log('🗂️ Starting category sync...');
+
+      await this.categoryService.enableHistoricalSync();
+
+      await this.categoryService.syncHistoricalCategories();
+
+      return {
+        success: true,
+        message: 'Category sync completed successfully',
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error) {
+      this.logger.error(`❌ Category sync failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
 
   @Post('cashflows-historical')
   async syncCashflowsHistorical() {

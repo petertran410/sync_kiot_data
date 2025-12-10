@@ -393,18 +393,18 @@ export class KiotVietProductService {
           processedCount += pageProcessedCount;
           currentItem += this.PAGE_SIZE;
 
-          // if (allSavedProducts.length > 0) {
-          //   try {
-          //     await this.syncProductsToLarkBase(allSavedProducts);
-          //     this.logger.log(
-          //       `Synced ${allSavedProducts.length} products to LarkBase`,
-          //     );
-          //   } catch (error) {
-          //     this.logger.warn(
-          //       `LarkBase sync failed for page${currentPage}: ${error.message}`,
-          //     );
-          //   }
-          // }
+          if (allSavedProducts.length > 0) {
+            try {
+              await this.syncProductsToLarkBase(allSavedProducts);
+              this.logger.log(
+                `Synced ${allSavedProducts.length} products to LarkBase`,
+              );
+            } catch (error) {
+              this.logger.warn(
+                `LarkBase sync failed for page${currentPage}: ${error.message}`,
+              );
+            }
+          }
 
           if (totalProducts > 0) {
             const completionPercentage = (processedCount / totalProducts) * 100;
@@ -564,53 +564,6 @@ export class KiotVietProductService {
     );
 
     return response.data;
-  }
-
-  private async enrichProductsWithDetails(
-    products: KiotVietProduct[],
-  ): Promise<KiotVietProduct[]> {
-    this.logger.log(`🔍 Enriching ${products.length} products with details...`);
-
-    const enrichedProducts: KiotVietProduct[] = [];
-
-    for (const product of products) {
-      try {
-        const headers = await this.authService.getRequestHeaders();
-
-        const queryParams = new URLSearchParams({
-          includeInventory: 'true',
-          includePricebook: 'true',
-          includeSerials: 'true',
-          includeBatchExpires: 'true',
-          includeWarranties: 'true',
-          includeQuantity: 'true',
-          includeMaterial: 'true',
-          includeCombo: 'true',
-        });
-
-        const response = await firstValueFrom(
-          this.httpService.get(
-            `${this.baseUrl}/products/${product.id}?${queryParams}`,
-            { headers, timeout: 30000 },
-          ),
-        );
-
-        if (response.data) {
-          enrichedProducts.push(response.data);
-        } else {
-          enrichedProducts.push(product);
-        }
-
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      } catch (error) {
-        this.logger.warn(
-          `Failed to enrich product ${product.code}: ${error.message}`,
-        );
-        enrichedProducts.push(product);
-      }
-    }
-
-    return enrichedProducts;
   }
 
   private async saveProductsToDatabase(
@@ -831,28 +784,28 @@ export class KiotVietProductService {
     return savedProducts;
   }
 
-  // async syncProductsToLarkBase(products: any[]): Promise<void> {
-  //   try {
-  //     this.logger.log(
-  //       `Starting LarkBase sync for ${products.length} products...`,
-  //     );
+  async syncProductsToLarkBase(products: any[]): Promise<void> {
+    try {
+      this.logger.log(
+        `Starting LarkBase sync for ${products.length} products...`,
+      );
 
-  //     const productsToSync = products.filter(
-  //       (p) => p.larkSyncStatus === 'PENDING' || p.larkSyncStatus === 'FAILED',
-  //     );
+      const productsToSync = products.filter(
+        (p) => p.larkSyncStatus === 'PENDING' || p.larkSyncStatus === 'FAILED',
+      );
 
-  //     if (productsToSync.length === 0) {
-  //       this.logger.log('No products need LarkBase sync');
-  //       return;
-  //     }
+      if (productsToSync.length === 0) {
+        this.logger.log('No products need LarkBase sync');
+        return;
+      }
 
-  //     await this.larkProductSyncService.syncProductsToLarkBase(productsToSync);
-  //     this.logger.log('✅ LarkBase product sync completed');
-  //   } catch (error) {
-  //     this.logger.error(`LarkBase sync failed: ${error.message}`);
-  //     throw error;
-  //   }
-  // }
+      await this.larkProductSyncService.syncProductsToLarkBase(productsToSync);
+      this.logger.log('✅ LarkBase product sync completed');
+    } catch (error) {
+      this.logger.error(`LarkBase sync failed: ${error.message}`);
+      throw error;
+    }
+  }
 
   private async updateSyncControl(name: string, data: any): Promise<void> {
     try {
