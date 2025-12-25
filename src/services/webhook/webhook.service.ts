@@ -94,8 +94,6 @@ export class WebhookService {
             detailedCustomer,
           );
 
-          console.log(savedCustomer);
-
           if (savedCustomer) {
             this.logger.log(`✅ Upserted customer ${savedCustomer.code}`);
 
@@ -107,7 +105,7 @@ export class WebhookService {
 
             if (hasSpecialCode) {
               shouldSyncToLark = !!(
-                savedCustomer.locationName && savedCustomer.wardName
+                savedCustomer.locationName || savedCustomer.wardName
               );
 
               if (!shouldSyncToLark) {
