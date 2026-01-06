@@ -799,7 +799,8 @@ export class WebhookService {
           const acsNumber: number = i + 1;
 
           const shouldSyncDetail =
-            detail.note && detail.note.toLowerCase().includes('thanh lý');
+            (detail.note && detail.note.toLowerCase().includes('thanh lý')) ||
+            product?.code === 'SP007489';
 
           const detailLarkSyncStatus = shouldSyncDetail ? 'PENDING' : 'SKIP';
 

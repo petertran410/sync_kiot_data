@@ -182,7 +182,14 @@ export class KiotVietInvoiceService {
     this.logger.log('Historical invoice sync enabled');
   }
 
-  private shouldSyncInvoiceDetail(note: string | null): boolean {
+  private shouldSyncInvoiceDetail(
+    note: string | null,
+    productCode?: string,
+  ): boolean {
+    if (productCode === 'SP007489') {
+      return true;
+    }
+
     if (!note) return false;
 
     const noteLower = note.toLowerCase().trim();
@@ -681,7 +688,10 @@ export class KiotVietInvoiceService {
 
             const acsNumber: number = i + 1;
 
-            const shouldSyncDetail = this.shouldSyncInvoiceDetail(detail.note);
+            const shouldSyncDetail = this.shouldSyncInvoiceDetail(
+              detail.note,
+              product?.code,
+            );
 
             const detailLarkSyncStatus = shouldSyncDetail ? 'PENDING' : 'SKIP';
 
