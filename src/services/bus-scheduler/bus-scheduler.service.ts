@@ -217,21 +217,21 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
-  private async syncDailyOrders() {
-    this.logger.log('Syncing orders...');
+  // private async syncDailyOrders() {
+  //   this.logger.log('Syncing orders...');
 
-    await this.orderService.enableHistoricalSync();
-    await this.orderService.syncHistoricalOrders();
+  //   await this.orderService.enableHistoricalSync();
+  //   await this.orderService.syncHistoricalOrders();
 
-    const ordersToSync = await this.prismaService.order.findMany({
-      where: {
-        OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
-      },
-    });
+  //   const ordersToSync = await this.prismaService.order.findMany({
+  //     where: {
+  //       OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+  //     },
+  //   });
 
-    await this.larkOrderSyncService.syncOrdersToLarkBase(ordersToSync);
-    this.logger.log(`Synced ${ordersToSync.length} orders to LarkBase`);
-  }
+  //   await this.larkOrderSyncService.syncOrdersToLarkBase(ordersToSync);
+  //   this.logger.log(`Synced ${ordersToSync.length} orders to LarkBase`);
+  // }
 
   private async syncDailyInvoices() {
     this.logger.log('Syncing invoices...');

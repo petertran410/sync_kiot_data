@@ -63,24 +63,9 @@ const SALE_NAME = {
   NGUYEN_HUU_TOAN: 'Nguyễn Hữu Toàn',
   LE_BICH_NGOC: 'Lê Bích Ngọc',
   NGUYEN_THI_LOAN: 'Nguyễn Thị Loan',
+  NGUYEN_VIET_NAM: 'Nguyễn Viết Nam',
+  CUA_HANG_DIEP_TRA_ANH_TUAN: 'Cửa Hàng Diệp Trà Anh Tuấn',
 };
-
-interface LarkBatchResponse {
-  code: number;
-  msg: string;
-  data?: {
-    records?: Array<{
-      record_id: string;
-      fields: Record<string, any>;
-    }>;
-    items?: Array<{
-      record_id: string;
-      fields: Record<string, any>;
-    }>;
-    page_token?: string;
-    total?: number;
-  };
-}
 
 @Injectable()
 export class LarkInvoiceSyncService {
@@ -332,6 +317,8 @@ export class LarkInvoiceSyncService {
         383855: SALE_NAME.NGUYEN_HUU_TOAN,
         1032906: SALE_NAME.LE_BICH_NGOC,
         1032972: SALE_NAME.NGUYEN_THI_LOAN,
+        1034030: SALE_NAME.NGUYEN_VIET_NAM,
+        1030913: SALE_NAME.CUA_HANG_DIEP_TRA_ANH_TUAN,
       };
 
       fields[LARK_INVOICE_FIELDS.SELLER] =
