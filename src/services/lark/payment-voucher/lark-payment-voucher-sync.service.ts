@@ -81,12 +81,16 @@ export class LarkPaymentVoucherSyncService {
       const existingRecordId = await this.searchRecordByPaymentId(payment.id);
 
       const larkData = this.mapPaymentVoucherToLarkBase(payment, order);
+
+      this.logger.debug(`📤 Data being sent to Lark:`);
+      this.logger.debug(JSON.stringify(larkData, null, 2));
+
       const headers = await this.larkAuthService.getVoucherHeaders();
 
       if (existingRecordId) {
         const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/${existingRecordId}`;
 
-        await firstValueFrom(
+        const response = await firstValueFrom(
           this.httpService.put(
             url,
             { fields: larkData },
@@ -94,11 +98,14 @@ export class LarkPaymentVoucherSyncService {
           ),
         );
 
+        this.logger.debug(`📥 Lark API Response (UPDATE):`);
+        this.logger.debug(JSON.stringify(response.data, null, 2));
+
         this.logger.log(`✅ Updated voucher payment ${payment.code} in Lark`);
       } else {
         const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records`;
 
-        await firstValueFrom(
+        const response = await firstValueFrom(
           this.httpService.post(
             url,
             { fields: larkData },
@@ -106,12 +113,29 @@ export class LarkPaymentVoucherSyncService {
           ),
         );
 
+        this.logger.debug(`📥 Lark API Response (CREATE):`);
+        this.logger.debug(JSON.stringify(response.data, null, 2));
+
+        if (response.data.code !== 0) {
+          this.logger.error(
+            `❌ Lark API returned error code: ${response.data.code}`,
+          );
+          this.logger.error(`❌ Error message: ${response.data.msg}`);
+          throw new Error(`Lark API error: ${response.data.msg}`);
+        }
+
         this.logger.log(`✅ Created voucher payment ${payment.code} in Lark`);
       }
     } catch (error) {
       this.logger.error(
         `❌ Sync voucher payment ${payment.code} failed: ${error.message}`,
       );
+
+      if (error.response) {
+        this.logger.error(`📥 Error response from Lark:`);
+        this.logger.error(JSON.stringify(error.response.data, null, 2));
+      }
+
       throw error;
     }
   }
