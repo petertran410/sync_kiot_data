@@ -69,7 +69,6 @@ export class LarkPaymentVoucherSyncService {
     order: any,
   ): Promise<void> {
     try {
-      // Chỉ sync payment có method = "Voucher"
       if (payment.method !== 'Voucher') {
         this.logger.log(
           `⏭️  Skipping non-voucher payment: ${payment.code} (method: ${payment.method})`,
