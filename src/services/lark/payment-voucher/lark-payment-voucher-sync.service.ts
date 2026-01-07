@@ -190,61 +190,57 @@ export class LarkPaymentVoucherSyncService {
   ): Record<string, any> {
     const fields: Record<string, any> = {};
 
-    // Mã Phiếu Thu -> payment.code
     if (payment.code) {
       fields[LARK_VOUCHER_FIELDS.PRIMARY_CODE] = payment.code;
     }
 
-    // Số Tiền -> payment.amount
     if (payment.amount !== null && payment.amount !== undefined) {
       fields[LARK_VOUCHER_FIELDS.AMOUNT] = Number(payment.amount);
     }
 
-    // Phương Thức Thanh Toán -> payment.method
     if (payment.method) {
       fields[LARK_VOUCHER_FIELDS.METHOD] = payment.method;
     }
 
-    // Trạng Thái -> payment.statusValue
     if (payment.statusValue) {
       fields[LARK_VOUCHER_FIELDS.STATUS] = payment.statusValue;
     }
 
-    // Mã Đơn Hàng -> order.code (join từ Order)
     if (order && order.code) {
       fields[LARK_VOUCHER_FIELDS.ORDER_CODE] = order.code;
     }
 
-    // kiotVietId -> payment.kiotVietId
+    if (payment.transDate) {
+      fields[LARK_VOUCHER_FIELDS.USE_DATE] = new Date(
+        payment.transDate,
+      ).getTime();
+    }
+
     if (payment.kiotVietId !== null && payment.kiotVietId !== undefined) {
       fields[LARK_VOUCHER_FIELDS.KIOTVIET_ID] = Number(payment.kiotVietId);
     }
 
-    // Ngày Giao Dịch -> payment.transDate (format yyyy/MM/dd HH:mm)
     if (payment.transDate) {
       fields[LARK_VOUCHER_FIELDS.TRANS_DATE] = new Date(
         payment.transDate,
       ).getTime();
     }
 
-    // Ghi Chú -> payment.description
     if (payment.description) {
       fields[LARK_VOUCHER_FIELDS.DESCRIPTION] = payment.description;
     }
 
-    // OrderId -> payment.orderId
     if (payment.orderId !== null && payment.orderId !== undefined) {
       fields[LARK_VOUCHER_FIELDS.ORDER_ID] = Number(payment.orderId);
     }
 
-    // Id Payment -> payment.id
     if (payment.id !== null && payment.id !== undefined) {
-      fields[LARK_VOUCHER_FIELDS.PAYMENT_ID] = Number(payment.id);
+      fields[LARK_VOUCHER_FIELDS.PAYMENT_ID] = payment.id.toString();
     }
 
-    // kiotVietId Từ Order -> order.kiotVietId (join từ Order)
     if (order && order.kiotVietId !== null && order.kiotVietId !== undefined) {
-      fields[LARK_VOUCHER_FIELDS.ORDER_KIOTVIET_ID] = Number(order.kiotVietId);
+      fields[LARK_VOUCHER_FIELDS.ORDER_KIOTVIET_ID] =
+        order.kiotVietId.toString();
     }
 
     return fields;
