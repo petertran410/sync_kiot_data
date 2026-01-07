@@ -17,7 +17,7 @@ const LARK_VOUCHER_FIELDS = {
   DESCRIPTION: 'Ghi Chú',
   ORDER_ID: 'OrderId',
   PAYMENT_ID: 'Id Payment',
-  ORDER_KIOTVIET_ID: 'kiotVietId Từ Order',
+  ORDER_KIOTVIET_ID: 'ID',
 } as const;
 
 interface LarkBatchResponse {
