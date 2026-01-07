@@ -215,13 +215,6 @@ export class LarkPaymentVoucherSyncService {
       fields[LARK_VOUCHER_FIELDS.ORDER_CODE] = order.code;
     }
 
-    // Ngày Sử Dụng -> payment.transDate (format yyyy/MM/dd)
-    if (payment.transDate) {
-      fields[LARK_VOUCHER_FIELDS.USE_DATE] = new Date(
-        payment.transDate,
-      ).getTime();
-    }
-
     // kiotVietId -> payment.kiotVietId
     if (payment.kiotVietId !== null && payment.kiotVietId !== undefined) {
       fields[LARK_VOUCHER_FIELDS.KIOTVIET_ID] = Number(payment.kiotVietId);
@@ -246,7 +239,7 @@ export class LarkPaymentVoucherSyncService {
 
     // Id Payment -> payment.id
     if (payment.id !== null && payment.id !== undefined) {
-      fields[LARK_VOUCHER_FIELDS.PAYMENT_ID] = payment.id.toString();
+      fields[LARK_VOUCHER_FIELDS.PAYMENT_ID] = Number(payment.id);
     }
 
     // kiotVietId Từ Order -> order.kiotVietId (join từ Order)
