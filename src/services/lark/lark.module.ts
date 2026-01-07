@@ -14,6 +14,7 @@ import { LarkDemandSyncService } from './demand/lark-demand-sync.service';
 import { LarkCashflowSyncService } from './cashflow/lark-cashflow-sync.service';
 import { LarkInvoiceDetailSyncService } from './invoice-detail/lark-invoice-detail-sync.service';
 import { LarkInvoiceHistoricalSyncService } from './invoice-historical/lark-invoice-historical-sync.service';
+import { LarkPaymentVoucherSyncService } from './payment-voucher/lark-payment-voucher-sync.service';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { LarkInvoiceHistoricalSyncService } from './invoice-historical/lark-invo
     LarkPurchaseOrderSyncService,
     LarkDemandSyncService,
     LarkCashflowSyncService,
+    LarkPaymentVoucherSyncService,
   ],
   exports: [
     LarkAuthService,
@@ -51,6 +53,7 @@ import { LarkInvoiceHistoricalSyncService } from './invoice-historical/lark-invo
     LarkPurchaseOrderSyncService,
     LarkDemandSyncService,
     LarkCashflowSyncService,
+    LarkPaymentVoucherSyncService,
   ],
 })
 export class LarkModule {}

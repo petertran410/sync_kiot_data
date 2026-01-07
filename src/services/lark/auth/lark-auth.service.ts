@@ -53,6 +53,9 @@ export class LarkAuthService {
   private cashflowAccessToken: string | null = null;
   private cashflowTokenExpiry: Date | null = null;
 
+  private voucherAccessToken: string | null = null;
+  private voucherTokenExpiry: Date | null = null;
+
   constructor(
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
@@ -72,7 +75,8 @@ export class LarkAuthService {
       | 'purchaseOrder'
       | 'purchaseOrderDetail'
       | 'demand'
-      | 'cashflow',
+      | 'cashflow'
+      | 'voucher',
   ): Promise<string> {
     switch (service) {
       case 'customer':
@@ -101,6 +105,8 @@ export class LarkAuthService {
         return await this.getDemandAccessToken();
       case 'cashflow':
         return await this.getCashflowAccessToken();
+      case 'voucher':
+        return await this.getVoucherAccessToken();
       default:
         throw new Error(`Unknown service: ${service}`);
     }
@@ -1272,5 +1278,81 @@ export class LarkAuthService {
     this.cashflowAccessToken = null;
     this.cashflowTokenExpiry = null;
     await this.forceRefreshCashflowToken();
+  }
+
+  // ============================================================================
+  // VOUCHER TOKEN MANAGEMENT (sử dụng token của Order)
+  // ============================================================================
+
+  async getVoucherHeaders(): Promise<Record<string, string>> {
+    const token = await this.getVoucherAccessToken();
+    return {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    };
+  }
+
+  private async getVoucherAccessToken(): Promise<string> {
+    if (
+      this.voucherAccessToken &&
+      this.voucherTokenExpiry &&
+      this.voucherTokenExpiry > new Date(Date.now() + 5 * 60 * 1000)
+    ) {
+      return this.voucherAccessToken;
+    }
+
+    return await this.refreshVoucherToken();
+  }
+
+  private async refreshVoucherToken(): Promise<string> {
+    try {
+      this.logger.log('🔄 Refreshing LarkBase voucher access token...');
+
+      // Sử dụng token của Order
+      const appId = this.configService.get<string>('LARK_ORDER_SYNC_APP_ID');
+      const appSecret = this.configService.get<string>(
+        'LARK_ORDER_SYNC_APP_SECRET',
+      );
+
+      if (!appId || !appSecret) {
+        throw new Error('LarkBase order credentials not configured');
+      }
+
+      const url =
+        'https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal';
+
+      const response = await firstValueFrom(
+        this.httpService.post<TenantAccessTokenResponse>(
+          url,
+          {
+            app_id: appId,
+            app_secret: appSecret,
+          },
+          {
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            timeout: 10000,
+          },
+        ),
+      );
+
+      if (response.data.code !== 0) {
+        throw new Error(
+          `LarkBase auth failed: ${response.data.msg} (code: ${response.data.code})`,
+        );
+      }
+
+      this.voucherAccessToken = response.data.tenant_access_token;
+      this.voucherTokenExpiry = new Date(
+        Date.now() + response.data.expire * 1000,
+      );
+
+      this.logger.log('✅ LarkBase voucher access token refreshed');
+      return this.voucherAccessToken;
+    } catch (error) {
+      this.logger.error(`❌ Voucher token refresh failed: ${error.message}`);
+      throw error;
+    }
   }
 }

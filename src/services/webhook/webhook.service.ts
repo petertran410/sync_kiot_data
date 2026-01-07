@@ -9,6 +9,7 @@ import { LarkProductSyncService } from '../lark/product/lark-product-sync.servic
 import { Prisma } from '@prisma/client';
 import { firstValueFrom } from 'rxjs';
 import { HttpService } from '@nestjs/axios';
+import { LarkPaymentVoucherSyncService } from '../lark/payment-voucher/lark-payment-voucher-sync.service';
 
 @Injectable()
 export class WebhookService {
@@ -23,6 +24,7 @@ export class WebhookService {
     private readonly larkInvoiceSyncService: LarkInvoiceSyncService,
     private readonly larkCustomerSyncService: LarkCustomerSyncService,
     private readonly larkProductSyncService: LarkProductSyncService,
+    private readonly larkPaymentVoucherSyncService: LarkPaymentVoucherSyncService,
   ) {}
 
   async processOrderWebhook(webhookData: any): Promise<void> {
@@ -618,7 +620,7 @@ export class WebhookService {
               })
             : null;
 
-          await this.prismaService.payment.upsert({
+          const savedPayment = await this.prismaService.payment.upsert({
             where: { kiotVietId: payment.id ? BigInt(payment.id) : BigInt(0) },
             update: {
               orderId: order.id,
@@ -629,6 +631,7 @@ export class WebhookService {
               transDate: new Date(payment.transDate),
               accountId: bankAccount?.id ?? null,
               description: payment.description,
+              statusValue: payment.statusValue,
             },
             create: {
               kiotVietId: payment.id ? BigInt(payment.id) : null,
@@ -640,8 +643,22 @@ export class WebhookService {
               transDate: new Date(payment.transDate),
               accountId: bankAccount?.id ?? null,
               description: payment.description,
+              statusValue: payment.statusValue,
             },
           });
+
+          if (savedPayment.method === 'Voucher') {
+            try {
+              await this.larkPaymentVoucherSyncService.syncSinglePaymentVoucherDirect(
+                savedPayment,
+                order,
+              );
+            } catch (error) {
+              this.logger.error(
+                `❌ Failed to sync voucher payment ${savedPayment.code}: ${error.message}`,
+              );
+            }
+          }
         }
       }
 
