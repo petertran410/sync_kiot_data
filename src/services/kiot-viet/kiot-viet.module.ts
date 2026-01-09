@@ -23,6 +23,7 @@ import { KiotVietCategoryService } from './category/category.service';
 import { KiotVietReturnService } from './returns/return.service';
 import { KiotVietCashflowService } from './cashflow/cashflow.service';
 import { KiotVietTransferService } from './transfer/transfer.service';
+import { KiotVietVoucherCampaign } from './voucher-campaign/voucher-campaign.service';
 
 @Module({
   imports: [
@@ -55,6 +56,7 @@ import { KiotVietTransferService } from './transfer/transfer.service';
     KiotVietReturnService,
     KiotVietCashflowService,
     KiotVietTransferService,
+    KiotVietVoucherCampaign,
   ],
   exports: [
     KiotVietAuthService,
@@ -77,6 +79,7 @@ import { KiotVietTransferService } from './transfer/transfer.service';
     KiotVietReturnService,
     KiotVietCashflowService,
     KiotVietTransferService,
+    KiotVietVoucherCampaign,
   ],
 })
 export class KiotVietModule {}

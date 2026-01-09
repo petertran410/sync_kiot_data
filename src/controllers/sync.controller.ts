@@ -22,6 +22,8 @@ import { LarkCashflowSyncService } from 'src/services/lark/cashflow/lark-cashflo
 import { KiotVietTransferService } from 'src/services/kiot-viet/transfer/transfer.service';
 import { LarkDemandSyncService } from 'src/services/lark/demand/lark-demand-sync.service';
 import { LarkInvoiceDetailSyncService } from 'src/services/lark/invoice-detail/lark-invoice-detail-sync.service';
+import { KiotVietVoucherCampaign } from 'src/services/kiot-viet/voucher-campaign/voucher-campaign.service';
+import { LarkVoucherCampaignSyncService } from 'src/services/lark/voucher-campaign/lark-voucher-campaign-sync.service';
 
 @Controller('sync')
 export class SyncController {
@@ -55,6 +57,8 @@ export class SyncController {
     private readonly larkCashflowSyncService: LarkCashflowSyncService,
     private readonly transferService: KiotVietTransferService,
     private readonly larkDemandSyncService: LarkDemandSyncService,
+    private readonly voucherCampaignService: KiotVietVoucherCampaign,
+    private readonly larkVoucherCampaignSyncService: LarkVoucherCampaignSyncService,
   ) {}
 
   @Post('customer/historical')
@@ -531,6 +535,28 @@ export class SyncController {
     } catch (error) {
       this.logger.error(`❌ Demand sync failed: ${error.message}`);
       throw error;
+    }
+  }
+
+  @Post('voucher-campaign')
+  async syncVoucherCampaigns() {
+    try {
+      this.logger.log('🎫 Starting voucher campaign sync...');
+
+      await this.voucherCampaignService.syncAllVoucherCampaigns();
+
+      return {
+        success: true,
+        message: 'Voucher campaign sync completed successfully',
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error) {
+      this.logger.error(`❌ Voucher campaign sync failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
     }
   }
 }
