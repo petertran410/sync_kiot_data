@@ -1098,17 +1098,12 @@ model VoucherCampaign {
   isActive                 Boolean                   @default(true)
   startDate                DateTime
   endDate                  DateTime
-  expireTime               Int?
   prereqPrice              Decimal?                  @db.Decimal(15, 2)
   quantity                 Int
   price                    Decimal                   @db.Decimal(15, 2)
-  useVoucherCombineInvoice Boolean                   @default(false)
   isGlobal                 Boolean                   @default(false)
   forAllCusGroup           Boolean                   @default(false)
   forAllUser               Boolean                   @default(false)
-  retailerId               Int?
-  createdDate              DateTime                  @default(now())
-  modifiedDate             DateTime                  @updatedAt
   lastSyncedAt             DateTime                  @default(now())
   vouchers                 Voucher[]
   branches                 VoucherCampaignBranch[]
