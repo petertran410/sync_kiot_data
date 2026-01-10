@@ -113,6 +113,37 @@ export class LarkInvoiceDetailSyncService {
     }
   }
 
+  private safeBigIntToNumber(value: any): number {
+    if (value === null || value === undefined) return 0;
+
+    if (typeof value === 'bigint') {
+      return Number(value);
+    }
+
+    if (typeof value === 'number') {
+      return Math.floor(value);
+    }
+
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (trimmed === '') return 0;
+      const parsed = parseInt(trimmed, 10);
+      return isNaN(parsed) ? 0 : parsed;
+    }
+
+    if (typeof value === 'boolean') {
+      return value ? 1 : 0;
+    }
+
+    try {
+      const asString = String(value).trim();
+      const parsed = parseInt(asString, 10);
+      return isNaN(parsed) ? 0 : parsed;
+    } catch {
+      return 0;
+    }
+  }
+
   async syncInvoiceDetailsByInvoiceId(invoiceId: number): Promise<void> {
     try {
       this.logger.log(
@@ -231,22 +262,45 @@ export class LarkInvoiceDetailSyncService {
     const headers = await this.larkAuthService.getInvoiceDetailHeaders();
     const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/batch_create`;
 
-    const response = await firstValueFrom(
-      this.httpService.post<LarkBatchResponse>(
-        url,
-        { records },
-        { headers, timeout: 30000 },
-      ),
-    );
+    try {
+      const response = await firstValueFrom(
+        this.httpService.post<LarkBatchResponse>(
+          url,
+          { records },
+          { headers, timeout: 30000 },
+        ),
+      );
 
-    if (response.data.code !== 0) {
-      throw new Error(`Lark API error: ${response.data.msg}`);
+      if (response.data.code !== 0) {
+        this.logger.error('❌ LarkBase API Error:', {
+          code: response.data.code,
+          msg: response.data.msg,
+          data: response.data.data,
+        });
+        throw new Error(`Lark API error: ${response.data.msg}`);
+      }
+
+      return {
+        successRecords: details,
+        failedRecords: [],
+      };
+    } catch (error) {
+      this.logger.error('❌ Batch create error details:', {
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data,
+        message: error.message,
+      });
+
+      if (records && records.length > 0) {
+        this.logger.error(
+          'Sample record being sent:',
+          JSON.stringify(records[0], null, 2),
+        );
+      }
+
+      throw error;
     }
-
-    return {
-      successRecords: details,
-      failedRecords: [],
-    };
   }
 
   private async updateSingleDetail(
@@ -308,15 +362,13 @@ export class LarkInvoiceDetailSyncService {
     }
 
     if (detail.invoiceKiotVietId) {
-      fields[LARK_INVOICE_DETAIL_FIELDS.INVOICE_KIOTVIET_ID] = Number(
-        detail.invoiceKiotVietId,
-      );
+      fields[LARK_INVOICE_DETAIL_FIELDS.INVOICE_KIOTVIET_ID] =
+        this.safeBigIntToNumber(detail.invoiceKiotVietId);
     }
 
     if (detail.productKiotVietId) {
-      fields[LARK_INVOICE_DETAIL_FIELDS.PRODUCT_KIOTVIET_ID] = Number(
-        detail.productKiotVietId,
-      );
+      fields[LARK_INVOICE_DETAIL_FIELDS.PRODUCT_KIOTVIET_ID] =
+        this.safeBigIntToNumber(detail.productKiotVietId);
     }
 
     if (detail.productName) {
