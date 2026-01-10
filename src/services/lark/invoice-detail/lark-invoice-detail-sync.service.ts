@@ -113,6 +113,58 @@ export class LarkInvoiceDetailSyncService {
     }
   }
 
+  async syncInvoiceDetailsByInvoiceId(invoiceId: number): Promise<void> {
+    try {
+      this.logger.log(
+        `🔄 Starting realtime sync for invoice details of invoice ID: ${invoiceId}`,
+      );
+
+      const invoiceDetails = await this.prismaService.invoiceDetail.findMany({
+        where: {
+          invoiceId: invoiceId,
+          larkSyncStatus: 'PENDING',
+        },
+      });
+
+      if (invoiceDetails.length === 0) {
+        this.logger.log(
+          `⏭️  No PENDING invoice details to sync for invoice ID: ${invoiceId}`,
+        );
+        return;
+      }
+
+      this.logger.log(
+        `📦 Found ${invoiceDetails.length} PENDING invoice details for invoice ID: ${invoiceId}`,
+      );
+
+      await this.loadExistingRecords();
+
+      const { newDetails, updateDetails } =
+        this.categorizeDetails(invoiceDetails);
+
+      this.logger.log(
+        `📊 Categorized: ${newDetails.length} new, ${updateDetails.length} updates`,
+      );
+
+      if (newDetails.length > 0) {
+        await this.processNewDetails(newDetails);
+      }
+
+      if (updateDetails.length > 0) {
+        await this.processUpdateDetails(updateDetails);
+      }
+
+      this.logger.log(
+        `✅ Realtime sync completed for invoice ID: ${invoiceId}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `❌ Realtime sync failed for invoice ID ${invoiceId}: ${error.message}`,
+      );
+      throw error;
+    }
+  }
+
   private categorizeDetails(details: any[]): {
     newDetails: any[];
     updateDetails: any[];

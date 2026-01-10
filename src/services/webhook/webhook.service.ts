@@ -10,10 +10,20 @@ import { Prisma } from '@prisma/client';
 import { firstValueFrom } from 'rxjs';
 import { HttpService } from '@nestjs/axios';
 import { LarkPaymentVoucherSyncService } from '../lark/payment-voucher/lark-payment-voucher-sync.service';
+import { LarkInvoiceDetailSyncService } from '../lark/invoice-detail/lark-invoice-detail-sync.service';
 
 @Injectable()
 export class WebhookService {
   private readonly logger = new Logger(WebhookService.name);
+
+  private readonly INVOICE_DETAIL_SYNC_KEYWORDS = [
+    'lỗi',
+    'date',
+    'thanh lý',
+    'rách',
+    'bục',
+    '3m',
+  ];
 
   constructor(
     private readonly prismaService: PrismaService,
@@ -25,7 +35,25 @@ export class WebhookService {
     private readonly larkCustomerSyncService: LarkCustomerSyncService,
     private readonly larkProductSyncService: LarkProductSyncService,
     private readonly larkPaymentVoucherSyncService: LarkPaymentVoucherSyncService,
+    private readonly larkInvoiceDetailSyncService: LarkInvoiceDetailSyncService,
   ) {}
+
+  private shouldSyncInvoiceDetail(
+    note: string | null,
+    productCode?: string,
+  ): boolean {
+    if (productCode === 'SP007489') {
+      return true;
+    }
+
+    if (!note) return false;
+
+    const noteLower = note.toLowerCase().trim();
+
+    return this.INVOICE_DETAIL_SYNC_KEYWORDS.some((keyword) =>
+      noteLower.includes(keyword.toLowerCase()),
+    );
+  }
 
   async processOrderWebhook(webhookData: any): Promise<void> {
     try {
@@ -70,6 +98,14 @@ export class WebhookService {
 
             await this.larkInvoiceSyncService.syncSingleInvoiceDirect(
               savedInvoice,
+            );
+
+            await this.larkInvoiceDetailSyncService.syncInvoiceDetailsByInvoiceId(
+              savedInvoice.id,
+            );
+
+            this.logger.log(
+              `✅ Synced invoice details for invoice ${savedInvoice.code}`,
             );
           }
         }
@@ -815,9 +851,10 @@ export class WebhookService {
 
           const acsNumber: number = i + 1;
 
-          const shouldSyncDetail =
-            (detail.note && detail.note.toLowerCase().includes('thanh lý')) ||
-            product?.code === 'SP007489';
+          const shouldSyncDetail = this.shouldSyncInvoiceDetail(
+            detail.note,
+            product?.code,
+          );
 
           const detailLarkSyncStatus = shouldSyncDetail ? 'PENDING' : 'SKIP';
 

@@ -115,6 +115,7 @@ export class KiotVietInvoiceService {
     'thanh lý',
     'rách',
     'bục',
+    '3m',
   ];
 
   constructor(
