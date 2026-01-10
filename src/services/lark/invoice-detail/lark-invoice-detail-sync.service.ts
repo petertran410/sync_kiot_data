@@ -62,6 +62,116 @@ export class LarkInvoiceDetailSyncService {
     this.tableId = tableId;
   }
 
+  private async searchRecordByUniqueKey(
+    uniqueKey: string,
+  ): Promise<string | null> {
+    try {
+      const headers = await this.larkAuthService.getInvoiceDetailHeaders();
+      const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/search`;
+
+      const response = await firstValueFrom(
+        this.httpService.post(
+          url,
+          {
+            field_names: [LARK_INVOICE_DETAIL_FIELDS.UNIQUE_KEY],
+            filter: {
+              conjunction: 'and',
+              conditions: [
+                {
+                  field_name: LARK_INVOICE_DETAIL_FIELDS.UNIQUE_KEY,
+                  operator: 'is',
+                  value: [uniqueKey],
+                },
+              ],
+            },
+          },
+          {
+            headers,
+            timeout: 10000,
+          },
+        ),
+      );
+
+      if (response.data.code === 0) {
+        const items = response.data.data?.items || [];
+        if (items.length > 0) {
+          return items[0].record_id;
+        }
+      }
+
+      return null;
+    } catch (error) {
+      this.logger.warn(
+        `Search invoice detail by uniqueKey failed: ${error.message}`,
+      );
+      return null;
+    }
+  }
+
+  async syncSingleInvoiceDetailDirect(detail: any): Promise<void> {
+    try {
+      this.logger.log(
+        `🔄 Syncing invoice detail ${detail.uniqueKey} to Lark...`,
+      );
+
+      const existingRecordId = await this.searchRecordByUniqueKey(
+        detail.uniqueKey,
+      );
+
+      const larkData = this.mapDetailToLarkBase(detail);
+      const headers = await this.larkAuthService.getInvoiceDetailHeaders();
+
+      if (existingRecordId) {
+        const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/${existingRecordId}`;
+
+        await firstValueFrom(
+          this.httpService.put(
+            url,
+            { fields: larkData },
+            { headers, timeout: 10000 },
+          ),
+        );
+
+        this.logger.log(
+          `✅ Updated invoice detail ${detail.uniqueKey} in Lark`,
+        );
+      } else {
+        const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records`;
+
+        await firstValueFrom(
+          this.httpService.post(
+            url,
+            { fields: larkData },
+            { headers, timeout: 10000 },
+          ),
+        );
+
+        this.logger.log(
+          `✅ Created invoice detail ${detail.uniqueKey} in Lark`,
+        );
+      }
+
+      await this.prismaService.invoiceDetail.update({
+        where: { id: detail.id },
+        data: { larkSyncStatus: 'SYNCED', larkSyncedAt: new Date() },
+      });
+    } catch (error) {
+      this.logger.error(
+        `❌ Sync invoice detail ${detail.uniqueKey} failed: ${error.message}`,
+      );
+
+      await this.prismaService.invoiceDetail.update({
+        where: { id: detail.id },
+        data: {
+          larkSyncStatus: 'FAILED',
+          larkSyncRetries: { increment: 1 },
+        },
+      });
+
+      throw error;
+    }
+  }
+
   async syncInvoiceDetailsToLarkBase(): Promise<void> {
     const lockKey = `lark_invoice_detail_sync_lock_${Date.now()}`;
 
@@ -168,25 +278,25 @@ export class LarkInvoiceDetailSyncService {
         `📦 Found ${invoiceDetails.length} PENDING invoice details for invoice ID: ${invoiceId}`,
       );
 
-      await this.loadExistingRecords();
+      let successCount = 0;
+      let failCount = 0;
 
-      const { newDetails, updateDetails } =
-        this.categorizeDetails(invoiceDetails);
+      for (const detail of invoiceDetails) {
+        try {
+          await this.syncSingleInvoiceDetailDirect(detail);
+          successCount++;
 
-      this.logger.log(
-        `📊 Categorized: ${newDetails.length} new, ${updateDetails.length} updates`,
-      );
-
-      if (newDetails.length > 0) {
-        await this.processNewDetails(newDetails);
+          await new Promise((resolve) => setTimeout(resolve, 150));
+        } catch (error) {
+          this.logger.error(
+            `❌ Failed to sync detail ${detail.uniqueKey}: ${error.message}`,
+          );
+          failCount++;
+        }
       }
 
-      if (updateDetails.length > 0) {
-        await this.processUpdateDetails(updateDetails);
-      }
-
       this.logger.log(
-        `✅ Realtime sync completed for invoice ID: ${invoiceId}`,
+        `✅ Realtime sync completed for invoice ID: ${invoiceId} - Success: ${successCount}, Failed: ${failCount}`,
       );
     } catch (error) {
       this.logger.error(
