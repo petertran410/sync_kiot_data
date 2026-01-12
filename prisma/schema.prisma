@@ -816,7 +816,6 @@ model Transfer {
   description       String?
   dispatchedDate    DateTime?
   fromBranchId      Int?
-  isActive          Boolean?
   receivedDate      DateTime?
   retailerId        Int?
   status            Int?

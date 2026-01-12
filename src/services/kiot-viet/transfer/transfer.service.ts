@@ -11,7 +11,6 @@ interface KiotVietTransfer {
   description?: string;
   dispatchedDate?: string;
   fromBranchId?: number;
-  isActive?: boolean;
   receivedDate?: string;
   retailerId?: number;
   status?: number;
@@ -456,7 +455,6 @@ export class KiotVietTransferService {
               ? new Date(transferData.dispatchedDate)
               : new Date(),
             fromBranchId: transferData?.fromBranchId ?? null,
-            isActive: transferData.isActive ?? false,
             receivedDate: transferData.receivedDate
               ? new Date(transferData.receivedDate)
               : new Date(),
@@ -473,7 +471,6 @@ export class KiotVietTransferService {
               ? new Date(transferData.dispatchedDate)
               : new Date(),
             fromBranchId: transferData?.fromBranchId ?? null,
-            isActive: transferData.isActive ?? false,
             receivedDate: transferData.receivedDate
               ? new Date(transferData.receivedDate)
               : new Date(),
