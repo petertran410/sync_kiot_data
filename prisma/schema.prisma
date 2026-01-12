@@ -841,6 +841,7 @@ model TransferDetail {
   price               Int?
   transferId          Int
   lineNumber          Int?
+  uniqueKey     String?                    @unique
   product             Product?  @relation(fields: [productId], references: [id])
   transfer            Transfer @relation(fields: [transferId], references: [id])
 
