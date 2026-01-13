@@ -288,7 +288,7 @@ export class LarkPurchaseOrderSyncService {
         `PurchaseOrderDetail Categorization: ${newPurchaseOrdersDetails.length} new, ${updatePurchaseOrdersDetails.length} updates`,
       );
 
-      const BATCH_SIZE_FOR_SYNC = 100;
+      const BATCH_SIZE_FOR_SYNC = 500;
 
       if (newPurchaseOrdersDetails.length > 0) {
         for (
@@ -374,7 +374,7 @@ export class LarkPurchaseOrderSyncService {
           `Cache loading attempt ${attempt} failed: ${error.message}`,
         );
         if (attempt < maxRetries) {
-          const delay = attempt * 2000;
+          const delay = attempt * 1500;
           this.logger.log(`Waiting ${delay / 1000}s before retry...`);
           await new Promise((resolve) => setTimeout(resolve, delay));
         }
@@ -429,7 +429,7 @@ export class LarkPurchaseOrderSyncService {
           `Cache loading attempt ${attempt} failed: ${error.message}`,
         );
         if (attempt < maxRetries) {
-          const delay = attempt * 2000;
+          const delay = attempt * 1500;
           this.logger.log(`Waiting ${delay / 1000}s before retry...`);
           await new Promise((resolve) => setTimeout(resolve, delay));
         }
@@ -888,9 +888,9 @@ export class LarkPurchaseOrderSyncService {
         `Batch ${i + 1}/${batches.length}: ${successRecords.length}/${batch.length} created`,
       );
 
-      if (i < batches.length - 1) {
-        await new Promise((resolve) => setTimeout(resolve, 500));
-      }
+      // if (i < batches.length - 1) {
+      //   await new Promise((resolve) => setTimeout(resolve, 500));
+      // }
     }
 
     this.logger.log(
@@ -957,9 +957,9 @@ export class LarkPurchaseOrderSyncService {
         `Batch ${i + 1}/${batches.length}: ${successDetailsRecords.length}/${batch.length} created`,
       );
 
-      if (i < batches.length - 1) {
-        await new Promise((resolve) => setTimeout(resolve, 500));
-      }
+      // if (i < batches.length - 1) {
+      //   await new Promise((resolve) => setTimeout(resolve, 500));
+      // }
 
       this.logger.log(
         `Create complete: ${totalDetailsCreated} success, ${totalDetailsFailed} failed`,
@@ -980,7 +980,7 @@ export class LarkPurchaseOrderSyncService {
     let failedCount = 0;
     const createFallbacks: any[] = [];
 
-    const UPDATE_CHUNK_SIZE = 5;
+    const UPDATE_CHUNK_SIZE = 20;
 
     for (let i = 0; i < purchase_orders.length; i += UPDATE_CHUNK_SIZE) {
       const chunk = purchase_orders.slice(i, i + UPDATE_CHUNK_SIZE);
@@ -1006,9 +1006,9 @@ export class LarkPurchaseOrderSyncService {
         }),
       );
 
-      if (i + UPDATE_CHUNK_SIZE < purchase_orders.length) {
-        await new Promise((resolve) => setTimeout(resolve, 300));
-      }
+      // if (i + UPDATE_CHUNK_SIZE < purchase_orders.length) {
+      //   await new Promise((resolve) => setTimeout(resolve, 300));
+      // }
     }
 
     if (createFallbacks.length > 0) {
@@ -1036,7 +1036,7 @@ export class LarkPurchaseOrderSyncService {
     let failedDetailCount = 0;
     const createDetailFallbacks: any[] = [];
 
-    const UPDATE_CHUNK_SIZE = 5;
+    const UPDATE_CHUNK_SIZE = 20;
 
     for (let i = 0; i < purchase_orders_detail.length; i += UPDATE_CHUNK_SIZE) {
       const chunk = purchase_orders_detail.slice(i, i + UPDATE_CHUNK_SIZE);
@@ -1066,9 +1066,9 @@ export class LarkPurchaseOrderSyncService {
         }),
       );
 
-      if (i + UPDATE_CHUNK_SIZE < purchase_orders_detail.length) {
-        await new Promise((resolve) => setTimeout(resolve, 300));
-      }
+      // if (i + UPDATE_CHUNK_SIZE < purchase_orders_detail.length) {
+      //   await new Promise((resolve) => setTimeout(resolve, 300));
+      // }
     }
 
     if (createDetailFallbacks.length > 0) {
@@ -1143,7 +1143,7 @@ export class LarkPurchaseOrderSyncService {
         if (this.AUTH_ERROR_CODES.includes(response.data.code)) {
           authRetries++;
           await this.forceTokenRefresh();
-          await new Promise((resolve) => setTimeout(resolve, 2000));
+          await new Promise((resolve) => setTimeout(resolve, 500));
           continue;
         }
 
@@ -1231,7 +1231,7 @@ export class LarkPurchaseOrderSyncService {
         if (this.AUTH_ERROR_CODES.includes(response.data.code)) {
           authRetries++;
           await this.forceDetailTokenRefresh();
-          await new Promise((resolve) => setTimeout(resolve, 2000));
+          await new Promise((resolve) => setTimeout(resolve, 500));
           continue;
         }
 
@@ -1293,7 +1293,7 @@ export class LarkPurchaseOrderSyncService {
         if (this.AUTH_ERROR_CODES.includes(response.data.code)) {
           authRetries++;
           await this.forceTokenRefresh();
-          await new Promise((resolve) => setTimeout(resolve, 2000));
+          await new Promise((resolve) => setTimeout(resolve, 500));
           continue;
         }
 
@@ -1303,7 +1303,7 @@ export class LarkPurchaseOrderSyncService {
         if (error.response?.status === 401 || error.response?.status === 403) {
           authRetries++;
           await this.forceTokenRefresh();
-          await new Promise((resolve) => setTimeout(resolve, 2000));
+          await new Promise((resolve) => setTimeout(resolve, 500));
           continue;
         }
 
@@ -1346,7 +1346,7 @@ export class LarkPurchaseOrderSyncService {
         if (this.AUTH_ERROR_CODES.includes(response.data.code)) {
           authRetries++;
           await this.forceDetailTokenRefresh();
-          await new Promise((resolve) => setTimeout(resolve, 2000));
+          await new Promise((resolve) => setTimeout(resolve, 500));
           continue;
         }
 
@@ -1356,7 +1356,7 @@ export class LarkPurchaseOrderSyncService {
         if (error.response?.status === 401 || error.response?.status === 403) {
           authRetries++;
           await this.forceTokenRefresh();
-          await new Promise((resolve) => setTimeout(resolve, 2000));
+          await new Promise((resolve) => setTimeout(resolve, 500));
           continue;
         }
 
@@ -1404,7 +1404,7 @@ export class LarkPurchaseOrderSyncService {
         throw new Error(`Connection test failed: ${response.data.msg}`);
       } catch (error) {
         if (retryCount < maxRetries) {
-          const delay = (retryCount + 1) * 2000;
+          const delay = (retryCount + 1) * 1500;
           this.logger.warn(
             `⚠️ Connection attempt ${retryCount + 1} failed: ${error.message}`,
           );
@@ -1452,7 +1452,7 @@ export class LarkPurchaseOrderSyncService {
         throw new Error(`Connection test failed: ${response.data.msg}`);
       } catch (error) {
         if (retryCount < maxRetries) {
-          const delay = (retryCount + 1) * 2000;
+          const delay = (retryCount + 1) * 1500;
           this.logger.warn(
             `⚠️ Connection attempt ${retryCount + 1} failed: ${error.message}`,
           );
@@ -1647,7 +1647,7 @@ export class LarkPurchaseOrderSyncService {
       this.logger.debug(
         `⏳ Waiting for lock release... (${Math.round((Date.now() - startTime) / 1000)}s)`,
       );
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      await new Promise((resolve) => setTimeout(resolve, 500));
     }
 
     throw new Error(`Lock wait timeout after ${maxWaitMs / 1000}s`);

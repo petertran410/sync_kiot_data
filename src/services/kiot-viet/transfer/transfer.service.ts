@@ -1,3 +1,4 @@
+import { LarkTransferSyncService } from './../../lark/transfer/lark-transfer-sync.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
@@ -38,6 +39,7 @@ export class KiotVietTransferService {
     private readonly configService: ConfigService,
     private readonly prismaService: PrismaService,
     private readonly authService: KiotVietAuthService,
+    private readonly larkTransferSyncService: LarkTransferSyncService,
   ) {
     const baseUrl = this.configService.get<string>('KIOT_BASE_URL');
     if (!baseUrl) {
@@ -51,7 +53,10 @@ export class KiotVietTransferService {
       const runningTransferSyncs =
         await this.prismaService.syncControl.findMany({
           where: {
-            OR: [{ name: 'transfer_historical' }],
+            OR: [
+              { name: 'transfer_historical' },
+              { name: 'transfer_lark_sync' },
+            ],
             isRunning: true,
           },
         });
@@ -154,10 +159,10 @@ export class KiotVietTransferService {
           const response = await this.fetchTransfersListWithRetry({
             currentItem,
             pageSize: this.PAGE_SIZE,
-            fromReceivedDate: '2024-12-1',
-            toReceivedDate: dateEndStr,
-            fromTransferDate: '2024-12-1',
-            toTransferDate: dateEndStr,
+            // fromReceivedDate: '2024-12-1',
+            // toReceivedDate: dateEndStr,
+            // fromTransferDate: '2024-12-1',
+            // toTransferDate: dateEndStr,
           });
 
           if (!response) {
@@ -283,6 +288,19 @@ export class KiotVietTransferService {
           processedCount += pageProcessedCount;
           currentItem += this.PAGE_SIZE;
 
+          if (allSavedTransfers.length > 0) {
+            try {
+              await this.syncTransfersToLarkBase(allSavedTransfers);
+              this.logger.log(
+                `Synced ${allSavedTransfers.length} transfers to LarkBase`,
+              );
+            } catch (error) {
+              this.logger.warn(
+                `LarkBase sync failed for page ${currentPage}: ${error.message}`,
+              );
+            }
+          }
+
           if (totalTransfers > 0) {
             const completionPercentage =
               (processedCount / totalTransfers) * 100;
@@ -354,10 +372,10 @@ export class KiotVietTransferService {
     params: {
       currentItem?: number;
       pageSize?: number;
-      fromReceivedDate: string;
-      toReceivedDate: string;
-      fromTransferDate: string;
-      toTransferDate: string;
+      // fromReceivedDate?: string;
+      // toReceivedDate?: string;
+      // fromTransferDate?: string;
+      // toTransferDate?: string;
     },
     maxRetries: number = 5,
   ): Promise<any> {
@@ -386,10 +404,10 @@ export class KiotVietTransferService {
   async fetchTransfersList(params: {
     currentItem?: number;
     pageSize?: number;
-    fromReceivedDate: string;
-    toReceivedDate: string;
-    fromTransferDate: string;
-    toTransferDate: string;
+    // fromReceivedDate: string;
+    // toReceivedDate: string;
+    // fromTransferDate: string;
+    // toTransferDate: string;
   }): Promise<any> {
     const headers = await this.authService.getRequestHeaders();
 
@@ -398,21 +416,21 @@ export class KiotVietTransferService {
       pageSize: (params.pageSize || this.PAGE_SIZE).toString(),
     });
 
-    if (params.fromReceivedDate) {
-      queryParams.append('fromReceivedDate', params.fromReceivedDate);
-    }
+    // if (params.fromReceivedDate) {
+    //   queryParams.append('fromReceivedDate', params.fromReceivedDate);
+    // }
 
-    if (params.toReceivedDate) {
-      queryParams.append('toReceivedDate', params.toReceivedDate);
-    }
+    // if (params.toReceivedDate) {
+    //   queryParams.append('toReceivedDate', params.toReceivedDate);
+    // }
 
-    if (params.fromTransferDate) {
-      queryParams.append('fromTransferDate', params.fromTransferDate);
-    }
+    // if (params.fromTransferDate) {
+    //   queryParams.append('fromTransferDate', params.fromTransferDate);
+    // }
 
-    if (params.toTransferDate) {
-      queryParams.append('toTransferDate', params.toTransferDate);
-    }
+    // if (params.toTransferDate) {
+    //   queryParams.append('toTransferDate', params.toTransferDate);
+    // }
 
     const response = await firstValueFrom(
       this.httpService.get(`${this.baseUrl}/transfers?${queryParams}`, {
@@ -496,37 +514,44 @@ export class KiotVietTransferService {
                 code: true,
               },
             });
-            await this.prismaService.transferDetail.upsert({
-              where: {
-                transferId_lineNumber: {
-                  transferId: transfer.id,
-                  lineNumber: i + 1,
+
+            const acsNumber: number = i + 1;
+
+            if (product) {
+              await this.prismaService.transferDetail.upsert({
+                where: {
+                  transferId_lineNumber: {
+                    transferId: transfer.id,
+                    lineNumber: i + 1,
+                  },
                 },
-              },
-              update: {
-                productId: product?.id,
-                productCode: product?.code,
-                productName: product?.name,
-                sendQuantity: detail.sendQuantity ?? 0,
-                receivedQuantity: detail.receiveQuantity ?? 0,
-                sendPrice: detail.sendPrice ?? 0,
-                receivePrice: detail.receivePrice ?? 0,
-                price: detail.price ?? 0,
-                lineNumber: i + 1,
-              },
-              create: {
-                transferId: transfer.id,
-                productId: product?.id,
-                productCode: product?.code,
-                productName: product?.name,
-                sendQuantity: detail.sendQuantity ?? 0,
-                receivedQuantity: detail.receiveQuantity ?? 0,
-                sendPrice: detail.sendPrice ?? 0,
-                receivePrice: detail.receivePrice ?? 0,
-                price: detail.price ?? 0,
-                lineNumber: i + 1,
-              },
-            });
+                update: {
+                  productId: product?.id,
+                  productCode: product?.code,
+                  productName: product?.name,
+                  sendQuantity: detail.sendQuantity ?? 0,
+                  receivedQuantity: detail.receiveQuantity ?? 0,
+                  sendPrice: detail.sendPrice ?? 0,
+                  receivePrice: detail.receivePrice ?? 0,
+                  price: detail.price ?? 0,
+                  lineNumber: i + 1,
+                  uniqueKey: transfer.id + '.' + acsNumber,
+                },
+                create: {
+                  transferId: transfer.id,
+                  productId: product?.id,
+                  productCode: product?.code,
+                  productName: product?.name,
+                  sendQuantity: detail.sendQuantity ?? 0,
+                  receivedQuantity: detail.receiveQuantity ?? 0,
+                  sendPrice: detail.sendPrice ?? 0,
+                  receivePrice: detail.receivePrice ?? 0,
+                  price: detail.price ?? 0,
+                  lineNumber: i + 1,
+                  uniqueKey: transfer.id + '.' + acsNumber,
+                },
+              });
+            }
           }
         }
 
@@ -540,6 +565,49 @@ export class KiotVietTransferService {
 
     this.logger.log(`Saved ${savedTransfers.length} transfers successfully`);
     return savedTransfers;
+  }
+
+  async syncTransfersToLarkBase(transfers: any[]): Promise<void> {
+    try {
+      this.logger.log(
+        `Starting LarkBase sync for ${transfers.length} transfers...`,
+      );
+
+      const transfersToSync = transfers.filter(
+        (s) => s.larkSyncStatus === 'PENDING' || s.larkSyncStatus === 'FAILED',
+      );
+
+      if (transfersToSync.length === 0) {
+        return;
+      }
+
+      await this.larkTransferSyncService.syncTransferToLarkBase(
+        transfersToSync,
+      );
+      this.logger.log(`LarkBase sync completed successfully`);
+    } catch (error) {
+      this.logger.error(`LarkBase transfers sync failed: ${error.message}`);
+
+      try {
+        const transferIds = transfers
+          .map((t) => t.id)
+          .filter((id) => id !== undefined);
+
+        if (transferIds.length > 0) {
+          await this.prismaService.transfer.updateMany({
+            where: { id: { in: transferIds } },
+            data: {
+              larkSyncedAt: new Date(),
+              larkSyncStatus: 'FAILED',
+            },
+          });
+        }
+      } catch (error) {
+        this.logger.error(`Failed to update transfer status: ${error.message}`);
+      }
+
+      throw new Error(`LarkBase sync failed: ${error.message}`);
+    }
   }
 
   private async updateSyncControl(name: string, data: any): Promise<void> {

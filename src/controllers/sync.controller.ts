@@ -24,6 +24,7 @@ import { LarkDemandSyncService } from 'src/services/lark/demand/lark-demand-sync
 import { LarkInvoiceDetailSyncService } from 'src/services/lark/invoice-detail/lark-invoice-detail-sync.service';
 import { KiotVietVoucherCampaign } from 'src/services/kiot-viet/voucher-campaign/voucher-campaign.service';
 import { LarkVoucherCampaignSyncService } from 'src/services/lark/voucher-campaign/lark-voucher-campaign-sync.service';
+import { LarkTransferSyncService } from 'src/services/lark/transfer/lark-transfer-sync.service';
 
 @Controller('sync')
 export class SyncController {
@@ -56,6 +57,7 @@ export class SyncController {
     private readonly cashflowService: KiotVietCashflowService,
     private readonly larkCashflowSyncService: LarkCashflowSyncService,
     private readonly transferService: KiotVietTransferService,
+    private readonly larkTransferSyncService: LarkTransferSyncService,
     private readonly larkDemandSyncService: LarkDemandSyncService,
     private readonly voucherCampaignService: KiotVietVoucherCampaign,
     private readonly larkVoucherCampaignSyncService: LarkVoucherCampaignSyncService,
@@ -349,6 +351,41 @@ export class SyncController {
   //     };
   //   }
   // }
+
+  @Post('transfers')
+  async syncTransfers() {
+    try {
+      this.logger.log('Starting transfer sync...');
+
+      await this.transferService.enableHistoricalSync();
+      await this.transferService.syncHistoricalTransfers();
+
+      const transfersToSync = await this.prismaService.transfer.findMany({
+        where: {
+          OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+        },
+      });
+
+      await this.larkTransferSyncService.syncTransferToLarkBase(
+        transfersToSync,
+      );
+
+      await this.larkTransferSyncService.syncTransferDetailsToLarkBase();
+
+      return {
+        success: true,
+        message: 'Transfers and Transfers Detail sync completed',
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error) {
+      this.logger.error(`Transfers sync failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
 
   @Post('categories')
   async syncCategories() {

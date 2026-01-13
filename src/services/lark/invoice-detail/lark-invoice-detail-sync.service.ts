@@ -286,7 +286,7 @@ export class LarkInvoiceDetailSyncService {
           await this.syncSingleInvoiceDetailDirect(detail);
           successCount++;
 
-          await new Promise((resolve) => setTimeout(resolve, 150));
+          await new Promise((resolve) => setTimeout(resolve, 100));
         } catch (error) {
           this.logger.error(
             `❌ Failed to sync detail ${detail.uniqueKey}: ${error.message}`,
@@ -338,9 +338,9 @@ export class LarkInvoiceDetailSyncService {
         'SYNCED',
       );
 
-      if (i + this.batchSize < details.length) {
-        await new Promise((resolve) => setTimeout(resolve, 300));
-      }
+      // if (i + this.batchSize < details.length) {
+      //   await new Promise((resolve) => setTimeout(resolve, 100));
+      // }
     }
   }
 

@@ -147,9 +147,9 @@ export class LarkInvoiceSyncService {
           await new Promise((resolve) => setTimeout(resolve, 100));
         }
 
-        if (i + BATCH_SIZE < invoicesToSync.length) {
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-        }
+        // if (i + BATCH_SIZE < invoicesToSync.length) {
+        //   await new Promise((resolve) => setTimeout(resolve, 2000));
+        // }
       }
 
       this.logger.log('🎯 Batch sync completed!');
@@ -602,7 +602,7 @@ export class LarkInvoiceSyncService {
       this.logger.debug(
         `⏳ Waiting for lock release... (${Math.round((Date.now() - startTime) / 1000)}s)`,
       );
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      await new Promise((resolve) => setTimeout(resolve, 500));
     }
 
     throw new Error(`Lock wait timeout after ${maxWaitMs / 1000}s`);
