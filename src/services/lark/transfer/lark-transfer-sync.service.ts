@@ -6,6 +6,7 @@ import { LarkAuthService } from '../auth/lark-auth.service';
 import { firstValueFrom } from 'rxjs';
 
 const LARK_TRANSFER_FIELDS = {
+  ID: 'ID',
   KIOTVIET_ID: 'kiotVietId',
   TRANSFER_CODE: 'Mã Chuyển Hàng',
   STATUS: 'Trạng Thái',
@@ -1690,23 +1691,18 @@ export class LarkTransferSyncService {
   private mapTransferToLarkBase(transfers: any): Record<string, any> {
     const fields: Record<string, any> = {};
 
+    if (transfers.id !== null || transfers.id !== undefined) {
+      fields[LARK_TRANSFER_FIELDS.ID] = transfers.id.toString();
+    }
+
     fields[LARK_TRANSFER_FIELDS.KIOTVIET_ID] = this.safeBigIntToNumber(
       transfers.kiotVietId,
     );
 
     fields[LARK_TRANSFER_FIELDS.TRANSFER_CODE] = transfers.code;
 
-    if (transfers.status) {
-      const statusMapping = {
-        1: STATUS_OPTION.PROCESSING,
-        2: STATUS_OPTION.DELIVERY,
-        3: STATUS_OPTION.COMPLETED,
-        4: STATUS_OPTION.CANCELLED,
-      };
-      if (transfers.status) {
-        fields[LARK_TRANSFER_FIELDS.STATUS] =
-          statusMapping[transfers.status] || STATUS_OPTION.COMPLETED;
-      }
+    if (transfers.status !== null && transfers.status !== undefined) {
+      fields[LARK_TRANSFER_FIELDS.STATUS] = Number(transfers.status);
     }
 
     if (transfers.receivedDate) {
@@ -1767,7 +1763,8 @@ export class LarkTransferSyncService {
     }
 
     if (detail.transferId !== null || detail.transferId !== undefined) {
-      fields[LARK_TRANSFER_DETAIL_FIELDS.ID_TRANSFER] = detail.transferId;
+      fields[LARK_TRANSFER_DETAIL_FIELDS.ID_TRANSFER] =
+        detail.transferId.toString();
     }
 
     if (detail.productId !== null || detail.productId !== undefined) {

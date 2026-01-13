@@ -480,6 +480,7 @@ export class KiotVietTransferService {
             status: transferData.status ?? null,
             toBranchId: transferData?.toBranchId ?? null,
             lastSyncedAt: new Date(),
+            larkSyncStatus: 'PENDING',
           },
           create: {
             kiotVietId: BigInt(transferData.id),
@@ -496,6 +497,7 @@ export class KiotVietTransferService {
             status: transferData.status ?? null,
             toBranchId: transferData?.toBranchId ?? null,
             lastSyncedAt: new Date(),
+            larkSyncStatus: 'PENDING',
           },
         });
 
@@ -536,6 +538,7 @@ export class KiotVietTransferService {
                   price: detail.price ?? 0,
                   lineNumber: i + 1,
                   uniqueKey: transfer.id + '.' + acsNumber,
+                  larkSyncStatus: 'PENDING',
                 },
                 create: {
                   transferId: transfer.id,
@@ -549,6 +552,7 @@ export class KiotVietTransferService {
                   price: detail.price ?? 0,
                   lineNumber: i + 1,
                   uniqueKey: transfer.id + '.' + acsNumber,
+                  larkSyncStatus: 'PENDING',
                 },
               });
             }
