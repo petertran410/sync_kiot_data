@@ -821,6 +821,8 @@ model Transfer {
   status            Int?
   toBranchId        Int?
   lastSyncedAt      DateTime?
+  larkSyncStatus    LarkSyncStatus     @default(PENDING)
+  larkSyncedAt      DateTime?
   details           TransferDetail[]
 
   @@index([kiotVietId])
@@ -842,6 +844,8 @@ model TransferDetail {
   transferId          Int
   lineNumber          Int?
   uniqueKey     String?                    @unique
+  larkSyncStatus    LarkSyncStatus             @default(PENDING)
+  larkSyncedAt      DateTime?
   product             Product?  @relation(fields: [productId], references: [id])
   transfer            Transfer @relation(fields: [transferId], references: [id])
 
