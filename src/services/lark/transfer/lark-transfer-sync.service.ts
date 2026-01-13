@@ -1,4 +1,3 @@
-import { LarkSyncStatus } from '@prisma/client';
 import { Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
@@ -140,7 +139,7 @@ export class LarkTransferSyncService {
       );
 
       const transfersToSync = transfers.filter(
-        (p) => p.LarkSyncStatus === 'PENDING' || p.larkSyncStatus === 'FAILED',
+        (p) => p.larkSyncStatus === 'PENDING' || p.larkSyncStatus === 'FAILED',
       );
 
       if (transfers.length === 0) {
@@ -1169,7 +1168,7 @@ export class LarkTransferSyncService {
 
         if (response.data.code === 0) {
           this.logger.debug(
-            `Updated record ${detail.larkRecordId} for purchase_order_detail ${detail.uniqueKey}`,
+            `Updated record ${detail.larkRecordId} for transfer_detail ${detail.uniqueKey}`,
           );
           return true;
         }
@@ -1620,7 +1619,7 @@ export class LarkTransferSyncService {
     if (detailIds.length === 0) return;
 
     try {
-      await this.prismaService.purchaseOrderDetail.updateMany({
+      await this.prismaService.transferDetail.updateMany({
         where: { id: { in: detailIds } },
         data: {
           larkSyncStatus: status,
@@ -1704,7 +1703,7 @@ export class LarkTransferSyncService {
         3: STATUS_OPTION.COMPLETED,
         4: STATUS_OPTION.CANCELLED,
       };
-      if (transfers.status === 1) {
+      if (transfers.status) {
         fields[LARK_TRANSFER_FIELDS.STATUS] =
           statusMapping[transfers.status] || STATUS_OPTION.COMPLETED;
       }
