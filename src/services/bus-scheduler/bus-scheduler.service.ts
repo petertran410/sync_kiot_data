@@ -15,6 +15,8 @@ import { LarkPurchaseOrderSyncService } from '../lark/purchase-order/lark-purcha
 import { LarkInvoiceDetailSyncService } from '../lark/invoice-detail/lark-invoice-detail-sync.service';
 import { KiotVietCashflowService } from '../kiot-viet/cashflow/cashflow.service';
 import { LarkCashflowSyncService } from '../lark/cashflow/lark-cashflow-sync.service';
+import { KiotVietTransferService } from '../kiot-viet/transfer/transfer.service';
+import { LarkTransferSyncService } from '../lark/transfer/lark-transfer-sync.service';
 
 @Injectable()
 export class BusSchedulerService implements OnModuleInit {
@@ -39,6 +41,9 @@ export class BusSchedulerService implements OnModuleInit {
 
     private readonly cashflowService: KiotVietCashflowService,
     private readonly larkCashflowSyncService: LarkCashflowSyncService,
+
+    private readonly transferService: KiotVietTransferService,
+    private readonly larkTransferSyncService: LarkTransferSyncService,
   ) {}
 
   async onModuleInit() {
@@ -94,6 +99,41 @@ export class BusSchedulerService implements OnModuleInit {
         'failed',
         error.message,
       );
+    }
+  }
+
+  @Cron('0 2 * * *', { timeZone: 'Asia/Ho_Chi_Minh' })
+  async syncTransfers() {
+    try {
+      this.logger.log('Starting transfer sync...');
+
+      await this.transferService.enableHistoricalSync();
+      await this.transferService.syncHistoricalTransfers();
+
+      const transfersToSync = await this.prismaService.transfer.findMany({
+        where: {
+          OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+        },
+      });
+
+      await this.larkTransferSyncService.syncTransferToLarkBase(
+        transfersToSync,
+      );
+
+      await this.larkTransferSyncService.syncTransferDetailsToLarkBase();
+
+      return {
+        success: true,
+        message: 'Transfers and Transfers Detail sync completed',
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error) {
+      this.logger.error(`Transfers sync failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
     }
   }
 
