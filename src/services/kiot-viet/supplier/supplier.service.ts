@@ -52,6 +52,25 @@ export class KiotVietSupplierService {
 
   async checkAndRunAppropriateSync(): Promise<void> {
     try {
+      const runningSupplierSyncs =
+        await this.prismaService.syncControl.findMany({
+          where: {
+            OR: [
+              { name: 'supplier_historical' },
+              { name: 'supplier_lark_sync' },
+            ],
+            isRunning: true,
+          },
+        });
+
+      if (runningSupplierSyncs.length > 0) {
+        this.logger.warn(
+          `Found ${runningSupplierSyncs.length} Supplier syncs still running: ${runningSupplierSyncs.map((s) => s.name).join(',')}`,
+        );
+        this.logger.warn('Skipping supplier sync to avoid conflicts');
+        return;
+      }
+
       const historicalSync = await this.prismaService.syncControl.findFirst({
         where: { name: 'supplier_historical' },
       });
@@ -59,6 +78,11 @@ export class KiotVietSupplierService {
       if (historicalSync?.isEnabled && !historicalSync.isRunning) {
         this.logger.log('Starting historical supplier sync...');
         await this.syncHistoricalSuppliers();
+        return;
+      }
+
+      if (historicalSync?.isRunning) {
+        this.logger.log('Historical supplier sync is running');
         return;
       }
 
@@ -77,7 +101,7 @@ export class KiotVietSupplierService {
       status: 'idle',
     });
 
-    this.logger.log('✅ Historical supplier sync enabled');
+    this.logger.log('Historical supplier sync enabled');
   }
 
   async syncHistoricalSuppliers(): Promise<void> {
@@ -99,7 +123,7 @@ export class KiotVietSupplierService {
         error: null,
       });
 
-      this.logger.log('🚀 Starting historical supplier sync...');
+      this.logger.log('Starting historical supplier sync...');
 
       const MAX_CONSECUTIVE_EMPTY_PAGES = 5;
       const MAX_CONSECUTIVE_ERROR_PAGES = 3;
@@ -114,17 +138,22 @@ export class KiotVietSupplierService {
         if (totalSuppliers > 0) {
           if (currentItem >= totalSuppliers) {
             this.logger.log(
-              `✅ Pagination complete. Processed ${processedCount}/${totalSuppliers} supplier`,
+              `Pagination complete. Processed ${processedCount}/${totalSuppliers} supplier`,
             );
             break;
           }
+
+          const progressPercentage = (currentItem / totalRetries) * 100;
+          this.logger.log(
+            `Fetching page ${currentPage} (${currentItem}/${totalSuppliers} - ${progressPercentage.toFixed(1)}%)`,
+          );
+        } else {
+          this.logger.log(
+            `Fetching page ${currentPage} (currentItem: ${currentItem})`,
+          );
         }
 
         try {
-          this.logger.log(
-            `📄 Fetching page ${currentPage} (items ${currentItem} - ${currentItem + this.PAGE_SIZE - 1})`,
-          );
-
           const response = await this.fetchSuppliersListWithRetry({
             currentItem,
             pageSize: this.PAGE_SIZE,
@@ -132,6 +161,23 @@ export class KiotVietSupplierService {
             includeSupplierGroup: true,
           });
 
+          if (!response) {
+            this.logger.warn('Received null response from KiotViet API');
+
+            consecutiveEmptyPages++;
+
+            if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
+              this.logger.log(
+                `Reached end after ${consecutiveEmptyPages} empty pages`,
+              );
+              break;
+            }
+
+            await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+            continue;
+          }
+
+          consecutiveEmptyPages = 0;
           consecutiveErrorPages = 0;
 
           const { data: suppliers, total } = response;
@@ -139,13 +185,13 @@ export class KiotVietSupplierService {
           if (total !== undefined && total !== null) {
             if (totalSuppliers === 0) {
               this.logger.log(
-                `📊 Total suppliers detected: ${total}. Starting processing...`,
+                `Total suppliers detected: ${total}. Starting processing...`,
               );
 
               totalSuppliers = total;
             } else if (total !== totalSuppliers && total !== lastValidTotal) {
               this.logger.warn(
-                `⚠️ Total count changed: ${totalSuppliers} → ${total}. Using latest.`,
+                `Total count changed: ${totalSuppliers} → ${total}. Using latest.`,
               );
 
               totalSuppliers = total;
@@ -154,14 +200,11 @@ export class KiotVietSupplierService {
           }
 
           if (!suppliers || suppliers.length === 0) {
-            this.logger.warn(
-              `⚠️ Empty page received at position ${currentItem}`,
-            );
-
+            this.logger.warn(`Empty page received at position ${currentItem}`);
             consecutiveEmptyPages++;
 
             if (totalSuppliers > 0 && currentItem >= totalSuppliers) {
-              this.logger.log('✅ Reached end of data (empty page past total)');
+              this.logger.log('Reached end of data (empty page past total)');
               break;
             }
 
@@ -176,77 +219,120 @@ export class KiotVietSupplierService {
             continue;
           }
 
+          const existingSupplierIds = new Set(
+            (
+              await this.prismaService.supplier.findMany({
+                select: { kiotVietId: true },
+              })
+            ).map((c) => Number(c.kiotVietId)),
+          );
+
           const newSuppliers = suppliers.filter((supplier) => {
-            if (processedSupplierIds.has(supplier.id)) {
-              this.logger.debug(
-                `⚠️ Duplicate supplier ID detected: ${supplier.id} (${supplier.code})`,
-              );
-              return false;
+            if (
+              !existingSupplierIds.has(supplier.id) &&
+              !processedSupplierIds.has(supplier.id)
+            ) {
+              processedSupplierIds.add(supplier.id);
+              return true;
             }
-            processedSupplierIds.add(supplier.id);
-            return true;
+            return false;
           });
 
-          if (newSuppliers.length !== suppliers.length) {
-            this.logger.warn(
-              `🔄 Filtered out ${suppliers.length - newSuppliers.length} duplicate suppliers on page ${currentPage}`,
-            );
-          }
+          const existingSuppliers = suppliers.filter((supplier) => {
+            if (
+              existingSupplierIds.has(supplier.id) &&
+              !processedSupplierIds.has(supplier.id)
+            ) {
+              processedSupplierIds.add(supplier.id);
+              return true;
+            }
+            return false;
+          });
 
-          if (newSuppliers.length === 0) {
+          if (newSuppliers.length === 0 && existingSuppliers.length === 0) {
             this.logger.log(
-              `⏭️ Skipping page ${currentPage} - all suppliers already processed`,
+              `Skipping page ${currentPage} - all suppliers already processed in this run`,
             );
             currentItem += this.PAGE_SIZE;
             continue;
           }
 
-          this.logger.log(
-            `🔄 Processing ${newSuppliers.length} suppliers from page ${currentPage}...`,
-          );
+          let pageProcessedCount = 0;
+          let allSavedSuppliers: any[] = [];
 
-          const suppliersWithDetails =
-            await this.enrichSuppliersWithDetails(newSuppliers);
-          const savedSuppliers =
-            await this.saveSuppliersToDatabase(suppliersWithDetails);
-          await this.syncSuppliersToLarkBase(savedSuppliers);
+          if (newSuppliers.length > 0) {
+            this.logger.log(
+              `Processing ${newSuppliers.length} NEW suppliers from page ${currentPage}...`,
+            );
 
-          processedCount += savedSuppliers.length;
+            const savedSuppliers =
+              await this.saveSuppliersToDatabase(newSuppliers);
+            pageProcessedCount += savedSuppliers.length;
+            allSavedSuppliers.push(...savedSuppliers);
+          }
+
+          if (existingSuppliers.length > 0) {
+            this.logger.log(
+              `Processing ${existingSuppliers.length} EXISTING supplier from page ${currentPage}...`,
+            );
+
+            const savedSuppliers =
+              await this.saveSuppliersToDatabase(existingSuppliers);
+            pageProcessedCount += savedSuppliers.length;
+            allSavedSuppliers.push(...savedSuppliers);
+          }
+
+          processedCount += pageProcessedCount;
           currentItem += this.PAGE_SIZE;
+
+          if (allSavedSuppliers.length > 0) {
+            try {
+              await this.syncSuppliersToLarkBase(allSavedSuppliers);
+              this.logger.log(
+                `Synced ${allSavedSuppliers.length} supplier to LarkBase`,
+              );
+            } catch (error) {
+              this.logger.warn(
+                `LarkBase sync failed for page ${currentPage}: ${error.message}`,
+              );
+            }
+          }
 
           if (totalSuppliers > 0) {
             const completionPercentage =
               (processedCount / totalSuppliers) * 100;
             this.logger.log(
-              `📈 Progress: ${processedCount}/${totalSuppliers} (${completionPercentage.toFixed(1)}%)`,
+              `Progress: ${processedCount}/${totalSuppliers} (${completionPercentage.toFixed(1)}%)`,
             );
 
             if (processedCount >= totalSuppliers) {
-              this.logger.log('🎉 All suppliers processed successfully!');
+              this.logger.log('All transfers processed successfully');
               break;
             }
           }
 
-          consecutiveEmptyPages = 0;
           await new Promise((resolve) => setTimeout(resolve, 100));
         } catch (error) {
           consecutiveErrorPages++;
           totalRetries++;
 
           this.logger.error(
-            `❌ Page ${currentPage} failed (attempt ${consecutiveErrorPages}/${MAX_CONSECUTIVE_ERROR_PAGES}): ${error.message}`,
+            `API error on page ${currentPage}: ${error.message}`,
           );
 
-          if (
-            consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES ||
-            totalRetries >= MAX_TOTAL_RETRIES
-          ) {
+          if (consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES) {
             throw new Error(
-              `Too many consecutive errors (${consecutiveErrorPages}) or total retries (${totalRetries}). Last error: ${error.message}`,
+              `Multiple consecutive API failures: ${error.message}`,
             );
           }
 
-          await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+          if (totalRetries >= MAX_TOTAL_RETRIES) {
+            throw new Error(`Maximum total retries exceeded: ${error.message}`);
+          }
+
+          const delay = RETRY_DELAY_MS * Math.pow(2, consecutiveErrorPages - 1);
+          this.logger.log(`Retrying after ${delay}ms delay...`);
+          await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }
 
@@ -263,7 +349,7 @@ export class KiotVietSupplierService {
         totalSuppliers > 0 ? (processedCount / totalSuppliers) * 100 : 100;
 
       this.logger.log(
-        `✅ Historical supplier sync completed: ${processedCount}/${totalSuppliers} (${completionRate.toFixed(1)}% completion rate)`,
+        `Historical supplier sync completed: ${processedCount}/${totalSuppliers} (${completionRate.toFixed(1)}% completion rate)`,
       );
     } catch (error) {
       this.logger.error(`❌ Historical supplier sync failed: ${error.message}`);
@@ -296,7 +382,7 @@ export class KiotVietSupplierService {
       } catch (error) {
         lastError = error as Error;
         this.logger.warn(
-          `⚠️ API attempt ${attempt}/${maxRetries} failed: ${error.message}`,
+          `API attempt ${attempt}/${maxRetries} failed: ${error.message}`,
         );
 
         if (attempt < maxRetries) {
@@ -334,53 +420,10 @@ export class KiotVietSupplierService {
     return response.data;
   }
 
-  private async enrichSuppliersWithDetails(
-    suppliers: KiotVietSupplier[],
-  ): Promise<KiotVietSupplier[]> {
-    this.logger.log(
-      `🔍 Enriching ${suppliers.length} suppliers with details...`,
-    );
-
-    const enrichedSuppliers: KiotVietSupplier[] = [];
-
-    for (const supplier of suppliers) {
-      try {
-        const headers = await this.authService.getRequestHeaders();
-
-        const queryParams = new URLSearchParams({
-          includeTotal: 'true',
-          includeSupplierGroup: 'true',
-        });
-
-        const response = await firstValueFrom(
-          this.httpService.get(
-            `${this.baseUrl}/suppliers/${supplier.id}?${queryParams}`,
-            { headers, timeout: 30000 },
-          ),
-        );
-
-        if (response.data) {
-          enrichedSuppliers.push(response.data);
-        } else {
-          enrichedSuppliers.push(supplier);
-        }
-
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      } catch (error) {
-        this.logger.warn(
-          `Failed to enrich supplier ${supplier.code}: ${error.message}`,
-        );
-
-        enrichedSuppliers.push(supplier);
-      }
-    }
-    return enrichedSuppliers;
-  }
-
   private async saveSuppliersToDatabase(
     suppliers: KiotVietSupplier[],
   ): Promise<any[]> {
-    this.logger.log(`💾 Saving ${suppliers.length} suppliers to database...`);
+    this.logger.log(`Saving ${suppliers.length} suppliers to database...`);
 
     const savedSuppliers: any[] = [];
 
@@ -465,14 +508,14 @@ export class KiotVietSupplierService {
       }
     }
 
-    this.logger.log(`✅ Saved ${savedSuppliers.length} suppliers successfully`);
+    this.logger.log(`Saved ${savedSuppliers.length} suppliers successfully`);
     return savedSuppliers;
   }
 
   async syncSuppliersToLarkBase(suppliers: any[]): Promise<void> {
     try {
       this.logger.log(
-        `🚀 Starting LarkBase sync for ${suppliers.length} suppliers...`,
+        `Starting LarkBase sync for ${suppliers.length} suppliers...`,
       );
 
       const suppliersToSync = suppliers.filter(
@@ -480,7 +523,7 @@ export class KiotVietSupplierService {
       );
 
       if (suppliersToSync.length === 0) {
-        this.logger.log('📋 No suppliers need LarkBase sync');
+        this.logger.log('No suppliers need LarkBase sync');
         return;
       }
 
@@ -488,7 +531,7 @@ export class KiotVietSupplierService {
         suppliersToSync,
       );
 
-      this.logger.log(`✅ LarkBase sync completed successfully`);
+      this.logger.log(`LarkBase sync completed successfully`);
     } catch (error) {
       this.logger.error(`❌ LarkBase supplier sync failed: ${error.message}`);
 

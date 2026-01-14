@@ -84,7 +84,7 @@ export class KiotVietTransferService {
         return;
       }
 
-      this.logger.log('Running detailf historical transfer sync...');
+      this.logger.log('Running defaut historical transfer sync...');
       await this.syncHistoricalTransfers();
     } catch (error) {
       this.logger.error(`Sync check failed: ${error.message}`);

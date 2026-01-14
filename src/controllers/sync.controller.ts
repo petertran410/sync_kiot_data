@@ -25,6 +25,7 @@ import { LarkInvoiceDetailSyncService } from 'src/services/lark/invoice-detail/l
 import { KiotVietVoucherCampaign } from 'src/services/kiot-viet/voucher-campaign/voucher-campaign.service';
 import { LarkVoucherCampaignSyncService } from 'src/services/lark/voucher-campaign/lark-voucher-campaign-sync.service';
 import { LarkTransferSyncService } from 'src/services/lark/transfer/lark-transfer-sync.service';
+import { KiotVietUserService } from 'src/services/kiot-viet/user/user.service';
 
 @Controller('sync')
 export class SyncController {
@@ -37,30 +38,22 @@ export class SyncController {
     private readonly invoiceService: KiotVietInvoiceService,
     private readonly larkInvoiceSyncService: LarkInvoiceHistoricalSyncService,
     private readonly larkInvoiceDetailSyncService: LarkInvoiceDetailSyncService,
-
     private readonly orderService: KiotVietOrderService,
     private readonly larkOrderSyncService: LarkOrderSyncService,
-
     private readonly productService: KiotVietProductService,
-
     private readonly categoryService: KiotVietCategoryService,
-
     private readonly returnService: KiotVietReturnService,
-    private readonly priceBookService: KiotVietPriceBookService,
-    private readonly larkProductSevice: LarkProductSyncService,
     private readonly prismaService: PrismaService,
     private readonly orderSupplierService: KiotVietOrderSupplierService,
     private readonly larkOrderSupplierService: LarkOrderSupplierSyncService,
     private readonly purchaseOrderService: KiotVietPurchaseOrderService,
     private readonly larkPurchaseOrderSyncService: LarkPurchaseOrderSyncService,
-    private readonly trademarkService: KiotVietTradeMarkService,
     private readonly cashflowService: KiotVietCashflowService,
-    private readonly larkCashflowSyncService: LarkCashflowSyncService,
     private readonly transferService: KiotVietTransferService,
     private readonly larkTransferSyncService: LarkTransferSyncService,
     private readonly larkDemandSyncService: LarkDemandSyncService,
     private readonly voucherCampaignService: KiotVietVoucherCampaign,
-    private readonly larkVoucherCampaignSyncService: LarkVoucherCampaignSyncService,
+    private readonly userService: KiotVietUserService,
   ) {}
 
   @Post('customer/historical')
@@ -169,188 +162,6 @@ export class SyncController {
       };
     }
   }
-
-  // @Post('trademarks')
-  // async syncTrademarks() {
-  //   try {
-  //     this.logger.log('🗂️ Starting trademark sync...');
-
-  //     await this.trademarkService.enableHistoricalSync();
-
-  //     await this.trademarkService.syncHistoricalTradeMarks();
-
-  //     return {
-  //       success: true,
-  //       message: 'Trademark sync completed successfully',
-  //       timestamp: new Date().toISOString(),
-  //     };
-  //   } catch (error) {
-  //     this.logger.error(`❌ Trademark sync failed: ${error.message}`);
-  //     return {
-  //       success: false,
-  //       error: error.message,
-  //       timestamp: new Date().toISOString(),
-  //     };
-  //   }
-  // }
-
-  // @Post('customer-groups')
-  // async syncCustomerGroups() {
-  //   try {
-  //     this.logger.log('👥 Starting customer group sync...');
-
-  //     await this.customerGroupService.enableHistoricalSync();
-
-  //     await this.customerGroupService.syncHistoricalCustomerGroups();
-
-  //     return {
-  //       success: true,
-  //       message: 'Customer group sync completed successfully',
-  //       timestamp: new Date().toISOString(),
-  //     };
-  //   } catch (error) {
-  //     this.logger.error(`❌ Customer group sync failed: ${error.message}`);
-  //     return {
-  //       success: false,
-  //       error: error.message,
-  //       timestamp: new Date().toISOString(),
-  //     };
-  //   }
-  // }
-
-  // @Post('returns')
-  // async syncReturns() {
-  //   try {
-  //     this.logger.log('👥 Starting return sync...');
-
-  //     await this.returnService.enableHistoricalSync();
-
-  //     await this.returnService.syncHistoricalReturns();
-
-  //     return {
-  //       success: true,
-  //       message: 'Return sync completed successfully',
-  //       timestamp: new Date().toISOString(),
-  //     };
-  //   } catch (error) {
-  //     this.logger.error(`❌ Return sync failed: ${error.message}`);
-  //     return {
-  //       success: false,
-  //       error: error.message,
-  //       timestamp: new Date().toISOString(),
-  //     };
-  //   }
-  // }
-
-  // @Post('pricebooks')
-  // async syncPriceBooks() {
-  //   try {
-  //     this.logger.log('Starting pricebook sync...');
-
-  //     await this.priceBookService.enableHistoricalSync();
-
-  //     await this.priceBookService.syncHistoricalPriceBooks();
-
-  //     return {
-  //       success: true,
-  //       message: 'Product sync completed successfully',
-  //       timestamp: new Date().toISOString,
-  //     };
-  //   } catch (error) {
-  //     this.logger.error(`❌ Product sync failed: ${error.message}`);
-  //     return {
-  //       success: false,
-  //       error: error.message,
-  //       timestamp: new Date().toISOString(),
-  //     };
-  //   }
-  // }
-
-  // @Post('purchase-order')
-  // async syncPurchaseOrders() {
-  //   try {
-  //     this.logger.log('Starting purchase-order sync...');
-
-  //     await this.purchaseOrderService.enableHistoricalSync();
-
-  //     await this.purchaseOrderService.syncHistoricalPurchaseOrder();
-
-  //     const purchaseOrdersToSync =
-  //       await this.prismaService.purchaseOrder.findMany({
-  //         where: {
-  //           OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
-  //         },
-  //         take: 1000,
-  //       });
-
-  //     await this.larkPurchaseOrderSyncService.syncPurchaseOrdersToLarkBase(
-  //       purchaseOrdersToSync,
-  //     );
-
-  //     await this.larkPurchaseOrderSyncService.syncPurchaseOrderDetailsToLarkBase();
-
-  //     return {
-  //       success: true,
-  //       message: 'Purchase Order sync completed successfully',
-  //       timestamp: new Date().toISOString,
-  //     };
-  //   } catch (error) {
-  //     this.logger.error(`❌ Purchase Order sync failed: ${error.message}`);
-  //     return {
-  //       success: false,
-  //       error: error.message,
-  //       timestamp: new Date().toISOString(),
-  //     };
-  //   }
-  // }
-
-  // @Post('cashflows-recent')
-  // async syncCashflowsRecent() {
-  //   try {
-  //     this.logger.log('Starting cashflow sync...');
-
-  //     // await this.cashflowService.enableHistoricalSync();
-
-  //     await this.cashflowService.syncRecentCashflows();
-
-  //     return {
-  //       success: true,
-  //       message: 'Cashflow sync completed successfully',
-  //       timestamp: new Date().toISOString,
-  //     };
-  //   } catch (error) {
-  //     this.logger.error(`❌ Cashflow sync failed: ${error.message}`);
-  //     return {
-  //       success: false,
-  //       error: error.message,
-  //       timestamp: new Date().toISOString(),
-  //     };
-  //   }
-  // }
-
-  // @Post('transfers')
-  // async syncTransfers() {
-  //   try {
-  //     this.logger.log('Starting transfer sync...');
-
-  //     await this.transferService.enableHistoricalSync();
-
-  //     await this.transferService.syncHistoricalTransfers();
-
-  //     return {
-  //       success: true,
-  //       message: 'Transfer sync completed successfully',
-  //       timestamp: new Date('+07:00').toISOString,
-  //     };
-  //   } catch (error) {
-  //     this.logger.error(`❌ Transfer sync failed: ${error.message}`);
-  //     return {
-  //       success: false,
-  //       error: error.message,
-  //       timestamp: new Date('+07:00').toISOString(),
-  //     };
-  //   }
-  // }
 
   @Post('transfers')
   async syncTransfers() {
@@ -593,6 +404,28 @@ export class SyncController {
         success: false,
         error: error.message,
         timestamp: new Date().toISOString(),
+      };
+    }
+  }
+
+  @Post('user')
+  async syncUser() {
+    try {
+      this.logger.log('Starting user sync...');
+
+      await this.userService.syncHistoricalUsers();
+
+      return {
+        success: true,
+        message: 'User sync completed successfully',
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error) {
+      this.logger.log(`User sync failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        timestampt: new Date().toISOString(),
       };
     }
   }
