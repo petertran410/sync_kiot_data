@@ -10,6 +10,9 @@ const LARK_ORDER_SUPPLIER_FIELDS = {
   kiotVietId: 'kiotVietId',
   ORDER_DATE: 'Ngày Đặt Hàng Nhập',
   BRANCH: 'Branch',
+  SUPPLIER_ID: 'Id Nhà Cung Cấp',
+  SUPPLIER_CODE: 'Mã Nhà Cung Cấp',
+  SUPPLIER_NAME: 'Tên Nhà Cung Cấp',
   RETAILER: 'Retailer',
   USER_ID: 'Người Đặt',
   DESCRIPTION: 'Ghi Chú',
@@ -1199,7 +1202,7 @@ export class LarkOrderSupplierSyncService {
         if (this.AUTH_ERROR_CODES.includes(response.data.code)) {
           authRetries++;
           await this.forceTokenRefresh();
-          await new Promise((resolve) => setTimeout(resolve, 2000));
+          await new Promise((resolve) => setTimeout(resolve, 500));
           continue;
         }
 
@@ -1298,7 +1301,7 @@ export class LarkOrderSupplierSyncService {
         if (this.AUTH_ERROR_CODES.includes(response.data.code)) {
           authRetries++;
           await this.forceDetailTokenRefresh();
-          await new Promise((resolve) => setTimeout(resolve, 2000));
+          await new Promise((resolve) => setTimeout(resolve, 500));
           continue;
         }
 
@@ -1368,7 +1371,7 @@ export class LarkOrderSupplierSyncService {
         if (this.AUTH_ERROR_CODES.includes(response.data.code)) {
           authRetries++;
           await this.forceTokenRefresh();
-          await new Promise((resolve) => setTimeout(resolve, 2000));
+          await new Promise((resolve) => setTimeout(resolve, 500));
           continue;
         }
 
@@ -1378,7 +1381,7 @@ export class LarkOrderSupplierSyncService {
         if (error.response?.status === 401 || error.response?.status === 403) {
           authRetries++;
           await this.forceTokenRefresh();
-          await new Promise((resolve) => setTimeout(resolve, 2000));
+          await new Promise((resolve) => setTimeout(resolve, 500));
           continue;
         }
 
@@ -1427,7 +1430,7 @@ export class LarkOrderSupplierSyncService {
         if (this.AUTH_ERROR_CODES.includes(response.data.code)) {
           authRetries++;
           await this.forceDetailTokenRefresh();
-          await new Promise((resolve) => setTimeout(resolve, 2000));
+          await new Promise((resolve) => setTimeout(resolve, 500));
           continue;
         }
 
@@ -1437,7 +1440,7 @@ export class LarkOrderSupplierSyncService {
         if (error.response?.status === 401 || error.response?.status === 403) {
           authRetries++;
           await this.forceTokenRefresh();
-          await new Promise((resolve) => setTimeout(resolve, 2000));
+          await new Promise((resolve) => setTimeout(resolve, 500));
           continue;
         }
 
@@ -1731,7 +1734,7 @@ export class LarkOrderSupplierSyncService {
       this.logger.debug(
         `⏳ Waiting for lock release... (${Math.round((Date.now() - startTime) / 1000)}s)`,
       );
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      await new Promise((resolve) => setTimeout(resolve, 500));
     }
 
     throw new Error(`Lock wait timeout after ${maxWaitMs / 1000}s`);
@@ -1977,6 +1980,31 @@ export class LarkOrderSupplierSyncService {
 
     if (order_supplier.retailerId) {
       fields[LARK_ORDER_SUPPLIER_FIELDS.RETAILER] = '2svn';
+    }
+
+    if (
+      order_supplier.supplierId !== null &&
+      order_supplier.supplierId !== undefined
+    ) {
+      fields[LARK_ORDER_SUPPLIER_FIELDS.SUPPLIER_ID] = Number(
+        order_supplier.supplierId,
+      );
+    }
+
+    if (
+      order_supplier.supplierCode !== null &&
+      order_supplier.supplierCode !== undefined
+    ) {
+      fields[LARK_ORDER_SUPPLIER_FIELDS.SUPPLIER_CODE] =
+        order_supplier.supplierCode;
+    }
+
+    if (
+      order_supplier.supplierName !== null &&
+      order_supplier.supplierName !== undefined
+    ) {
+      fields[LARK_ORDER_SUPPLIER_FIELDS.SUPPLIER_NAME] =
+        order_supplier.supplierName;
     }
 
     if (order_supplier.userId !== null && order_supplier.userId !== undefined) {

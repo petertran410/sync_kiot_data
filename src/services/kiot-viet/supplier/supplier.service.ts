@@ -432,6 +432,7 @@ export class KiotVietSupplierService {
         const supplier = await this.prismaService.supplier.upsert({
           where: { kiotVietId: BigInt(supplierData.id) },
           update: {
+            kiotVietId: BigInt(supplierData.id),
             code: supplierData.code.trim(),
             name: supplierData.name.trim(),
             contactNumber: supplierData.contactNumber || null,

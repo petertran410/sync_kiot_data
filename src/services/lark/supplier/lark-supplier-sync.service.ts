@@ -143,7 +143,7 @@ export class LarkSupplierSyncService {
       }
 
       const { newSuppliers, updateSuppliers } =
-        this.categorizeSuppliers(suppliersToSync);
+        await this.categorizeSuppliers(suppliersToSync);
 
       this.logger.log(
         `Categorization: ${newSuppliers.length} new, ${updateSuppliers.length} updates`,

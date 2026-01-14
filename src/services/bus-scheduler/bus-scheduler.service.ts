@@ -17,6 +17,8 @@ import { KiotVietCashflowService } from '../kiot-viet/cashflow/cashflow.service'
 import { LarkCashflowSyncService } from '../lark/cashflow/lark-cashflow-sync.service';
 import { KiotVietTransferService } from '../kiot-viet/transfer/transfer.service';
 import { LarkTransferSyncService } from '../lark/transfer/lark-transfer-sync.service';
+import { KiotVietSupplierService } from '../kiot-viet/supplier/supplier.service';
+import { LarkSupplierSyncService } from '../lark/supplier/lark-supplier-sync.service';
 
 @Injectable()
 export class BusSchedulerService implements OnModuleInit {
@@ -28,8 +30,8 @@ export class BusSchedulerService implements OnModuleInit {
     private readonly larkInvoiceSyncService: LarkInvoiceHistoricalSyncService,
     private readonly larkInvoiceDetailSyncService: LarkInvoiceDetailSyncService,
 
-    private readonly orderService: KiotVietOrderService,
-    private readonly larkOrderSyncService: LarkOrderSyncService,
+    private readonly supplierService: KiotVietSupplierService,
+    private readonly larkSupplierSyncService: LarkSupplierSyncService,
 
     private readonly returnService: KiotVietReturnService,
 
@@ -177,6 +179,39 @@ export class BusSchedulerService implements OnModuleInit {
       };
     } catch (error) {
       this.logger.error(`❌ Cashflow sync failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
+
+  @Cron('0 0 * * SUN', { timeZone: 'Asia/Ho_Chi_Minh' })
+  async syncSuppliers() {
+    try {
+      this.logger.log('Starting supplier sync...');
+
+      await this.supplierService.enableHistoricalSync();
+      await this.supplierService.syncHistoricalSuppliers();
+
+      const suppliersToSync = await this.prismaService.supplier.findMany({
+        where: {
+          OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+        },
+      });
+
+      await this.larkSupplierSyncService.syncSuppliersToLarkBase(
+        suppliersToSync,
+      );
+
+      return {
+        success: true,
+        message: 'Supplier sync completed',
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error) {
+      this.logger.error(`Supplier sync failed: ${error.message}`);
       return {
         success: false,
         error: error.message,

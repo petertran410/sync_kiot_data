@@ -12,6 +12,9 @@ interface KiotVietOrderSupplier {
   code: string;
   orderDate: string;
   branchId?: number;
+  supplierId?: number;
+  supplierCode?: string;
+  supplierName?: string;
   retailerId: number;
   userId?: number;
   description?: string;
@@ -449,44 +452,6 @@ export class KiotVietOrderSupplierService {
     return response.data;
   }
 
-  private async enrichOrderSuppliersWithDetails(
-    order_suppliers: KiotVietOrderSupplier[],
-  ): Promise<KiotVietOrderSupplier[]> {
-    this.logger.log(
-      `🔍 Enriching ${order_suppliers.length} order_suppliers with details...`,
-    );
-
-    const enrichedOrderSuppliers: KiotVietOrderSupplier[] = [];
-
-    for (const order_supplier of order_suppliers) {
-      try {
-        const headers = await this.authService.getRequestHeaders();
-
-        const response = await firstValueFrom(
-          this.httpService.get(
-            `${this.baseUrl}/ordersuppliers/${order_supplier.id}`,
-            { headers, timeout: 30000 },
-          ),
-        );
-
-        if (response.data) {
-          enrichedOrderSuppliers.push(response.data);
-        } else {
-          enrichedOrderSuppliers.push(order_supplier);
-        }
-
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      } catch (error) {
-        this.logger.warn(
-          `Failed to enrich supplier ${order_supplier.code}: ${error.message}`,
-        );
-
-        enrichedOrderSuppliers.push(order_supplier);
-      }
-    }
-    return enrichedOrderSuppliers;
-  }
-
   private async saveOrderSuppliersToDatabase(
     order_suppliers: KiotVietOrderSupplier[],
   ): Promise<any[]> {
@@ -508,6 +473,11 @@ export class KiotVietOrderSupplierService {
           select: { id: true, userName: true },
         });
 
+        const supplier = await this.prismaService.supplier.findFirst({
+          where: { kiotVietId: orderSupplierData.supplierId },
+          select: { kiotVietId: true, code: true, name: true },
+        });
+
         const order_supplier = await this.prismaService.orderSupplier.upsert({
           where: { kiotVietId: BigInt(orderSupplierData.id) },
           update: {
@@ -516,6 +486,9 @@ export class KiotVietOrderSupplierService {
               ? new Date(orderSupplierData.orderDate)
               : new Date(),
             branchId: branch?.id ?? null,
+            supplierId: supplier?.kiotVietId ?? null,
+            supplierCode: supplier?.code ?? null,
+            supplierName: supplier?.name ?? null,
             retailerId: orderSupplierData.retailerId ?? null,
             userId: user?.id ?? null,
             description: orderSupplierData.description || '',
@@ -556,6 +529,9 @@ export class KiotVietOrderSupplierService {
               ? new Date(orderSupplierData.orderDate)
               : new Date(),
             branchId: branch?.id ?? null,
+            supplierId: supplier?.kiotVietId ?? null,
+            supplierCode: supplier?.code ?? null,
+            supplierName: supplier?.name ?? null,
             retailerId: orderSupplierData.retailerId ?? null,
             userId: user?.id ?? null,
             description: orderSupplierData.description || '',

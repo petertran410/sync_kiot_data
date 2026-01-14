@@ -404,6 +404,9 @@ model OrderSupplier {
   supplierDebt          Decimal?                     @db.Decimal(15, 2)
   supplierOldDebt       Decimal?                     @db.Decimal(15, 2)
   purchaseOrderCodes    String?
+  supplierId            BigInt?
+  supplierCode          String?
+  supplierName           String?
   createdBy             BigInt?
   createdDate           DateTime?
   modifiedDate          DateTime                     @updatedAt
@@ -413,6 +416,7 @@ model OrderSupplier {
   larkSyncedAt          DateTime?
   larkSyncRetries       Int                          @default(0)
   branch                Branch?                      @relation(fields: [branchId], references: [id])
+  supplier              Supplier? @relation(fields: [supplierId], references: [kiotVietId])
   orderSupplierDetails  OrderSupplierDetail[]
   orderSupplierExpenses OrderSupplierExpense[]
   purchaseOrderLinks    OrderSupplierPurchaseOrder[]
@@ -1041,6 +1045,7 @@ model Supplier {
   larkSyncStatus             LarkSyncStatus  @default(PENDING)
   larkSyncedAt               DateTime?
   purchaseOrders             PurchaseOrder[]
+  orderSuppliers             OrderSupplier[]
 
   @@index([kiotVietId])
   @@index([code])

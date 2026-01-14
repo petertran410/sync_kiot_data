@@ -26,6 +26,8 @@ import { KiotVietVoucherCampaign } from 'src/services/kiot-viet/voucher-campaign
 import { LarkVoucherCampaignSyncService } from 'src/services/lark/voucher-campaign/lark-voucher-campaign-sync.service';
 import { LarkTransferSyncService } from 'src/services/lark/transfer/lark-transfer-sync.service';
 import { KiotVietUserService } from 'src/services/kiot-viet/user/user.service';
+import { KiotVietSupplierService } from 'src/services/kiot-viet/supplier/supplier.service';
+import { LarkSupplierSyncService } from 'src/services/lark/supplier/lark-supplier-sync.service';
 
 @Controller('sync')
 export class SyncController {
@@ -54,6 +56,8 @@ export class SyncController {
     private readonly larkDemandSyncService: LarkDemandSyncService,
     private readonly voucherCampaignService: KiotVietVoucherCampaign,
     private readonly userService: KiotVietUserService,
+    private readonly supplierService: KiotVietSupplierService,
+    private readonly larkSupplierSyncService: LarkSupplierSyncService,
   ) {}
 
   @Post('customer/historical')
@@ -251,10 +255,6 @@ export class SyncController {
     try {
       this.logger.log('Starting product sync...');
 
-      // await this.priceBookService.enableHistoricalSync();
-
-      // await this.priceBookService.syncHistoricalPriceBooks();
-
       await this.productService.enableHistoricalSync();
 
       await this.productService.syncHistoricalProducts();
@@ -266,6 +266,29 @@ export class SyncController {
       };
     } catch (error) {
       this.logger.error(`❌ Product sync failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
+
+  @Post('suppliers')
+  async syncSuppliers() {
+    try {
+      this.logger.log('Starting supplier sync...');
+
+      await this.supplierService.enableHistoricalSync();
+      await this.supplierService.syncHistoricalSuppliers();
+
+      return {
+        success: true,
+        message: 'Supplier sync completed successfully',
+        timestamp: new Date().toISOString,
+      };
+    } catch (error) {
+      this.logger.error(`❌ Supplier sync failed: ${error.message}`);
       return {
         success: false,
         error: error.message,
