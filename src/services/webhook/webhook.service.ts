@@ -886,7 +886,7 @@ export class WebhookService {
                 ),
                 lineNumber: i + 1,
                 larkSyncStatus: detailLarkSyncStatus,
-                uniqueKey: invoice.id + '.' + acsNumber,
+                uniqueKey: `${invoice.kiotVietId}.${acsNumber}`,
               },
               create: {
                 invoiceId: invoice.id,
@@ -908,7 +908,7 @@ export class WebhookService {
                 ),
                 lineNumber: i + 1,
                 larkSyncStatus: detailLarkSyncStatus,
-                uniqueKey: invoice.id + '.' + acsNumber,
+                uniqueKey: `${invoice.kiotVietId}.${acsNumber}`,
               },
             });
           }

@@ -157,6 +157,7 @@ export class LarkInvoiceSyncService {
       this.logger.log(`❌ Failed: ${totalFailed}`);
     } catch (error) {
       this.logger.error(`❌ Batch sync failed: ${error.message}`);
+      await this.releaseSyncLock(lockKey);
       throw error;
     } finally {
       await this.releaseSyncLock(lockKey);

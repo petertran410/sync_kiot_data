@@ -250,7 +250,7 @@ export class KiotVietInvoiceService {
         }
 
         const dateStart = new Date();
-        dateStart.setDate(dateStart.getDate() - 120);
+        dateStart.setDate(dateStart.getDate() - 400);
         const dateStartStr = dateStart.toISOString().split('T')[0];
 
         const dateEnd = new Date();
@@ -682,9 +682,9 @@ export class KiotVietInvoiceService {
         ) {
           for (let i = 0; i < invoiceData.invoiceDetails.length; i++) {
             const detail = invoiceData.invoiceDetails[i];
-            const product = await this.prismaService.product.findFirst({
+            const product = await this.prismaService.product.findUnique({
               where: { kiotVietId: BigInt(detail.productId) },
-              select: { id: true, name: true, code: true, kiotVietId: true },
+              select: { id: true, code: true, name: true, kiotVietId: true },
             });
 
             const acsNumber: number = i + 1;
@@ -712,7 +712,7 @@ export class KiotVietInvoiceService {
                   productCode: product.code,
                   productName: product.name,
                   quantity: detail.quantity,
-                  uniqueKey: invoice.id + '.' + acsNumber,
+                  uniqueKey: `${invoice.kiotVietId}.${acsNumber}`,
                   price: new Prisma.Decimal(detail.price),
                   discount: detail.discount
                     ? new Prisma.Decimal(detail.discount)
@@ -732,7 +732,7 @@ export class KiotVietInvoiceService {
                   productCode: product.code,
                   productName: product.name,
                   quantity: detail.quantity,
-                  uniqueKey: invoice.id + '.' + acsNumber,
+                  uniqueKey: `${invoice.kiotVietId}.${acsNumber}`,
                   price: new Prisma.Decimal(detail.price),
                   discount: detail.discount
                     ? new Prisma.Decimal(detail.discount)

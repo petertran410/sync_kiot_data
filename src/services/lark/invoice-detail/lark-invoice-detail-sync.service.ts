@@ -114,9 +114,14 @@ export class LarkInvoiceDetailSyncService {
         `🔄 Syncing invoice detail ${detail.uniqueKey} to Lark...`,
       );
 
-      const existingRecordId = await this.searchRecordByUniqueKey(
-        detail.uniqueKey,
-      );
+      let existingRecordId: string | null = null;
+
+      if (detail.larkRecordId) {
+        existingRecordId = detail.larkRecordId;
+        this.logger.log(`Found existing larkRecordId: ${existingRecordId}`);
+      } else {
+        existingRecordId = await this.searchRecordByUniqueKey(detail.uniqueKey);
+      }
 
       const larkData = this.mapDetailToLarkBase(detail);
       const headers = await this.larkAuthService.getInvoiceDetailHeaders();
@@ -124,21 +129,95 @@ export class LarkInvoiceDetailSyncService {
       if (existingRecordId) {
         const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/${existingRecordId}`;
 
-        await firstValueFrom(
-          this.httpService.put(
-            url,
-            { fields: larkData },
-            { headers, timeout: 10000 },
-          ),
-        );
+        try {
+          await firstValueFrom(
+            this.httpService.put(
+              url,
+              { fields: larkData },
+              { headers, timeout: 10000 },
+            ),
+          );
 
-        this.logger.log(
-          `✅ Updated invoice detail ${detail.uniqueKey} in Lark`,
-        );
+          this.logger.log(
+            `✅ Updated invoice detail ${detail.uniqueKey} in Lark`,
+          );
+
+          if (!detail.larkRecordId) {
+            await this.prismaService.invoiceDetail.update({
+              where: { uniqueKey: detail.uniqueKey },
+              data: {
+                larkRecordId: existingRecordId,
+                larkSyncStatus: 'SYNCED',
+                larkSyncedAt: new Date(),
+              },
+            });
+          } else {
+            await this.prismaService.invoiceDetail.update({
+              where: { uniqueKey: detail.uniqueKey },
+              data: {
+                larkSyncStatus: 'SYNCED',
+                larkSyncedAt: new Date(),
+              },
+            });
+          }
+        } catch (updateError) {
+          const isRecordNotFound =
+            updateError.response?.status === 404 ||
+            updateError.response?.data?.code === 1254034 ||
+            updateError.response?.data?.msg?.includes('record') ||
+            updateError.response?.data?.msg?.includes('not found');
+
+          if (isRecordNotFound) {
+            this.logger.warn(
+              `⚠️ Record ${existingRecordId} not found on Lark, creating new record...`,
+            );
+
+            await this.prismaService.invoiceDetail.update({
+              where: { uniqueKey: detail.uniqueKey },
+              data: { larkRecordId: null },
+            });
+
+            const createUrl = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records`;
+
+            const createResponse = await firstValueFrom(
+              this.httpService.post(
+                createUrl,
+                { fields: larkData },
+                { headers, timeout: 10000 },
+              ),
+            );
+
+            this.logger.log(
+              `✅ Re-created invoice detail ${detail.uniqueKey} in Lark`,
+            );
+
+            const newRecordId = createResponse.data?.data?.record_id;
+            if (newRecordId) {
+              await this.prismaService.invoiceDetail.update({
+                where: { uniqueKey: detail.uniqueKey },
+                data: {
+                  larkRecordId: newRecordId,
+                  larkSyncStatus: 'SYNCED',
+                  larkSyncedAt: new Date(),
+                },
+              });
+            } else {
+              await this.prismaService.invoiceDetail.update({
+                where: { uniqueKey: detail.uniqueKey },
+                data: {
+                  larkSyncStatus: 'SYNCED',
+                  larkSyncedAt: new Date(),
+                },
+              });
+            }
+          } else {
+            throw updateError;
+          }
+        }
       } else {
         const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records`;
 
-        await firstValueFrom(
+        const response = await firstValueFrom(
           this.httpService.post(
             url,
             { fields: larkData },
@@ -149,19 +228,34 @@ export class LarkInvoiceDetailSyncService {
         this.logger.log(
           `✅ Created invoice detail ${detail.uniqueKey} in Lark`,
         );
-      }
 
-      await this.prismaService.invoiceDetail.update({
-        where: { id: detail.id },
-        data: { larkSyncStatus: 'SYNCED', larkSyncedAt: new Date() },
-      });
+        const newRecordId = response.data?.data?.record_id;
+        if (newRecordId) {
+          await this.prismaService.invoiceDetail.update({
+            where: { uniqueKey: detail.uniqueKey },
+            data: {
+              larkRecordId: newRecordId,
+              larkSyncStatus: 'SYNCED',
+              larkSyncedAt: new Date(),
+            },
+          });
+        } else {
+          await this.prismaService.invoiceDetail.update({
+            where: { uniqueKey: detail.uniqueKey },
+            data: {
+              larkSyncStatus: 'SYNCED',
+              larkSyncedAt: new Date(),
+            },
+          });
+        }
+      }
     } catch (error) {
       this.logger.error(
-        `❌ Sync invoice detail ${detail.uniqueKey} failed: ${error.message}`,
+        `❌ Sync detail ${detail.uniqueKey} failed: ${error.message}`,
       );
 
       await this.prismaService.invoiceDetail.update({
-        where: { id: detail.id },
+        where: { uniqueKey: detail.uniqueKey },
         data: {
           larkSyncStatus: 'FAILED',
           larkSyncRetries: { increment: 1 },
@@ -184,7 +278,7 @@ export class LarkInvoiceDetailSyncService {
         where: {
           larkSyncStatus: 'PENDING',
         },
-        take: 1000,
+        take: 500,
       });
 
       if (invoiceDetails.length === 0) {
@@ -199,27 +293,61 @@ export class LarkInvoiceDetailSyncService {
 
       await this.loadExistingRecords();
 
-      const { newDetails, updateDetails } =
-        this.categorizeDetails(invoiceDetails);
+      const BATCH_SIZE = 500;
+      let totalSuccess = 0;
+      let totalFailed = 0;
 
-      this.logger.log(
-        `New: ${newDetails.length}, Updates: ${updateDetails.length}`,
-      );
+      for (let i = 0; i < invoiceDetails.length; i += BATCH_SIZE) {
+        const batch = invoiceDetails.slice(i, i + BATCH_SIZE);
+        const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
+        const totalBatches = Math.ceil(invoiceDetails.length / BATCH_SIZE);
 
-      if (newDetails.length > 0) {
-        await this.processNewDetails(newDetails);
+        this.logger.log(
+          `🔄 Processing batch ${batchNumber}/${totalBatches} (${batch.length} invoicesDetail)`,
+        );
+
+        for (const invoiceDetail of batch) {
+          try {
+            await this.syncSingleInvoiceDetailDirect(invoiceDetail);
+            totalSuccess++;
+          } catch (error) {
+            this.logger.error(
+              `Failed to sync invoice detail: ${error.message}`,
+            );
+            totalFailed++;
+          }
+
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
       }
 
-      if (updateDetails.length > 0) {
-        await this.processUpdateDetails(updateDetails);
-      }
+      // const { newDetails, updateDetails } =
+      //   this.categorizeDetails(invoiceDetails);
 
-      await this.releaseSyncLock(lockKey);
-      this.logger.log('Invoice detail sync completed!');
+      // this.logger.log(
+      //   `New: ${newDetails.length}, Updates: ${updateDetails.length}`,
+      // );
+
+      // if (newDetails.length > 0) {
+      //   await this.processNewDetails(newDetails);
+      // }
+
+      // if (updateDetails.length > 0) {
+      //   await this.processUpdateDetails(updateDetails);
+      // }
+
+      // await this.releaseSyncLock(lockKey);
+      // this.logger.log('Invoice detail sync completed!');
+
+      this.logger.log('🎯 Batch sync completed!');
+      this.logger.log(`✅ Success: ${totalSuccess}`);
+      this.logger.log(`❌ Failed: ${totalFailed}`);
     } catch (error) {
       this.logger.error(`Sync failed: ${error.message}`);
       await this.releaseSyncLock(lockKey);
       throw error;
+    } finally {
+      await this.releaseSyncLock(lockKey);
     }
   }
 
@@ -286,7 +414,7 @@ export class LarkInvoiceDetailSyncService {
           await this.syncSingleInvoiceDetailDirect(detail);
           successCount++;
 
-          await new Promise((resolve) => setTimeout(resolve, 100));
+          await new Promise((resolve) => setTimeout(resolve, 300));
         } catch (error) {
           this.logger.error(
             `❌ Failed to sync detail ${detail.uniqueKey}: ${error.message}`,
@@ -390,6 +518,28 @@ export class LarkInvoiceDetailSyncService {
         throw new Error(`Lark API error: ${response.data.msg}`);
       }
 
+      if (response.data.data?.records) {
+        for (let i = 0; i < response.data.data.records.length; i++) {
+          const larkRecord = response.data.data.records[i];
+          const detail = details[i];
+
+          if (larkRecord.record_id && detail.uniqueKey) {
+            await this.prismaService.invoiceDetail.update({
+              where: { uniqueKey: detail.uniqueKey },
+              data: {
+                larkRecordId: larkRecord.record_id,
+                larkSyncStatus: 'SYNCED',
+                larkSyncedAt: new Date(),
+              },
+            });
+
+            this.logger.log(
+              `✅ Saved larkRecordId ${larkRecord.record_id} for ${detail.uniqueKey}`,
+            );
+          }
+        }
+      }
+
       return {
         successRecords: details,
         failedRecords: [],
@@ -427,6 +577,15 @@ export class LarkInvoiceDetailSyncService {
         { headers, timeout: 30000 },
       ),
     );
+
+    await this.prismaService.invoiceDetail.update({
+      where: { uniqueKey: detail.uniqueKey },
+      data: {
+        larkRecordId: recordId,
+        larkSyncStatus: 'SYNCED',
+        larkSyncedAt: new Date(),
+      },
+    });
   }
 
   private async loadExistingRecords(): Promise<void> {
