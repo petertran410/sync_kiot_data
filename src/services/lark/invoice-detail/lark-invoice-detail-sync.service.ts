@@ -23,7 +23,18 @@ interface LarkBatchResponse {
   code: number;
   msg: string;
   data?: {
+    // Cho batch_create
     records?: Array<{
+      record_id: string;
+      fields: Record<string, any>;
+    }>;
+    // Cho single create/update
+    record?: {
+      record_id: string;
+      fields: Record<string, any>;
+    };
+    // Cho search/list
+    items?: Array<{
       record_id: string;
       fields: Record<string, any>;
     }>;
@@ -191,7 +202,7 @@ export class LarkInvoiceDetailSyncService {
               `✅ Re-created invoice detail ${detail.uniqueKey} in Lark`,
             );
 
-            const newRecordId = createResponse.data?.data?.record_id;
+            const newRecordId = createResponse.data?.data?.record?.record_id;
             if (newRecordId) {
               await this.prismaService.invoiceDetail.update({
                 where: { uniqueKey: detail.uniqueKey },
@@ -229,7 +240,7 @@ export class LarkInvoiceDetailSyncService {
           `✅ Created invoice detail ${detail.uniqueKey} in Lark`,
         );
 
-        const newRecordId = response.data?.data?.record_id;
+        const newRecordId = response.data?.data?.record?.record_id;
         if (newRecordId) {
           await this.prismaService.invoiceDetail.update({
             where: { uniqueKey: detail.uniqueKey },
