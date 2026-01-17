@@ -171,29 +171,111 @@ export class LarkInvoiceSyncService {
         return;
       }
 
+      if (invoice.larkSyncStatus === 'SKIP') {
+        this.logger.log(
+          `⏭️  Skipping invoice ${invoice.code} - larkSyncStatus is SKIP`,
+        );
+        return;
+      }
+
       this.logger.log(`🔄 Syncing invoice ${invoice.code} to Lark...`);
 
-      const existingRecordId = await this.searchRecordByCode(invoice.code);
+      // ✅ Check larkRecordId từ database
+      let existingRecordId: string | null = invoice.larkRecordId || null;
+
+      // ✅ Nếu không có, search trên LarkBase
+      if (!existingRecordId) {
+        existingRecordId = await this.searchRecordByCode(invoice.code);
+
+        if (existingRecordId) {
+          // ✅ LƯU ngay vào database
+          await this.prismaService.invoice.update({
+            where: { id: invoice.id },
+            data: { larkRecordId: existingRecordId },
+          });
+          this.logger.log(
+            `✅ Found and saved larkRecordId for invoice ${invoice.code}`,
+          );
+        }
+      }
 
       const larkData = this.mapInvoiceToLarkBase(invoice);
       const headers = await this.larkAuthService.getInvoiceHeaders();
 
       if (existingRecordId) {
+        // UPDATE
         const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/${existingRecordId}`;
 
-        await firstValueFrom(
-          this.httpService.put(
-            url,
-            { fields: larkData },
-            { headers, timeout: 10000 },
-          ),
-        );
+        try {
+          await firstValueFrom(
+            this.httpService.put(
+              url,
+              { fields: larkData },
+              { headers, timeout: 10000 },
+            ),
+          );
 
-        this.logger.log(`✅ Updated invoice ${invoice.code} in Lark`);
+          this.logger.log(`✅ Updated invoice ${invoice.code} in Lark`);
+
+          // ✅ LƯU larkRecordId
+          await this.prismaService.invoice.update({
+            where: { id: invoice.id },
+            data: {
+              larkRecordId: existingRecordId, // ← QUAN TRỌNG
+              larkSyncStatus: 'SYNCED',
+              larkSyncedAt: new Date(),
+            },
+          });
+        } catch (updateError) {
+          const isRecordNotFound =
+            updateError.response?.status === 404 ||
+            updateError.response?.data?.code === 1254034;
+
+          if (isRecordNotFound) {
+            this.logger.warn(`⚠️ Record not found, creating new...`);
+
+            await this.prismaService.invoice.update({
+              where: { id: invoice.id },
+              data: { larkRecordId: null },
+            });
+
+            const createUrl = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records`;
+            const createResponse = await firstValueFrom(
+              this.httpService.post(
+                createUrl,
+                { fields: larkData },
+                { headers, timeout: 10000 },
+              ),
+            );
+
+            const newRecordId = createResponse.data?.data?.record?.record_id;
+
+            // ✅ LƯU larkRecordId mới
+            await this.prismaService.invoice.update({
+              where: { id: invoice.id },
+              data: {
+                larkRecordId: newRecordId, // ← QUAN TRỌNG
+                larkSyncStatus: 'SYNCED',
+                larkSyncedAt: new Date(),
+              },
+            });
+
+            this.logger.log(`✅ Re-created invoice ${invoice.code}`);
+          } else {
+            throw updateError;
+          }
+        }
       } else {
-        const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records`;
+        // Final check
+        const finalCheck = await this.searchRecordByCode(invoice.code);
+        if (finalCheck) {
+          invoice.larkRecordId = finalCheck;
+          return await this.syncSingleInvoiceDirect(invoice);
+        }
 
-        await firstValueFrom(
+        // CREATE
+        const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records`;
+        const response = await firstValueFrom(
           this.httpService.post(
             url,
             { fields: larkData },
@@ -201,13 +283,20 @@ export class LarkInvoiceSyncService {
           ),
         );
 
+        const newRecordId = response.data?.data?.record?.record_id;
+
+        // ✅ LƯU larkRecordId
+        await this.prismaService.invoice.update({
+          where: { id: invoice.id },
+          data: {
+            larkRecordId: newRecordId,
+            larkSyncStatus: 'SYNCED',
+            larkSyncedAt: new Date(),
+          },
+        });
+
         this.logger.log(`✅ Created invoice ${invoice.code} in Lark`);
       }
-
-      await this.prismaService.invoice.update({
-        where: { id: invoice.id },
-        data: { larkSyncStatus: 'SYNCED', larkSyncedAt: new Date() },
-      });
     } catch (error) {
       this.logger.error(
         `❌ Sync invoice ${invoice.code} failed: ${error.message}`,

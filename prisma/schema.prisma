@@ -525,7 +525,7 @@ model Invoice {
   createdDate       DateTime?
   modifiedDate      DateTime?
   lastSyncedAt      DateTime           @default(now())
-  larkRecordId      String?            @unique
+  larkRecordId      String?
   larkSyncRetries   Int                @default(0)
   larkSyncStatus    LarkSyncStatus     @default(PENDING)
   larkSyncedAt      DateTime?
