@@ -23,17 +23,14 @@ interface LarkBatchResponse {
   code: number;
   msg: string;
   data?: {
-    // Cho batch_create
     records?: Array<{
       record_id: string;
       fields: Record<string, any>;
     }>;
-    // Cho single create/update
     record?: {
       record_id: string;
       fields: Record<string, any>;
     };
-    // Cho search/list
     items?: Array<{
       record_id: string;
       fields: Record<string, any>;
