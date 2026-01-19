@@ -653,6 +653,18 @@ export class LarkInvoiceHistoricalSyncService {
               );
             }
 
+            if (createdRecord.record_id && invoice.id) {
+              await this.prismaService.invoice.update({
+                where: { id: invoice.id },
+                data: {
+                  larkRecordId: createdRecord.record_id,
+                  larkSyncStatus: 'SYNCED',
+                  larkSyncedAt: new Date(),
+                  larkSyncRetries: 0,
+                },
+              });
+            }
+
             // successRecords.forEach((invoice) => {
             //   const kiotVietId = this.safeBigIntToNumber(invoice.kiotVietId);
             //   this.pendingCreation.delete(kiotVietId);
@@ -670,6 +682,16 @@ export class LarkInvoiceHistoricalSyncService {
             //   );
             // }
           }
+
+          successRecords.forEach((invoice) => {
+            const kiotVietId = this.safeBigIntToNumber(invoice.kiotVietId);
+            this.pendingCreation.delete(kiotVietId);
+          });
+
+          failedRecords.forEach((invoice) => {
+            const kiotVietId = this.safeBigIntToNumber(invoice.kiotVietId);
+            this.pendingCreation.delete(kiotVietId);
+          });
 
           return { successRecords, failedRecords };
         }
@@ -731,6 +753,15 @@ export class LarkInvoiceHistoricalSyncService {
           this.logger.debug(
             `Updated record ${invoice.larkRecordId} for invoice ${invoice.code}`,
           );
+          await this.prismaService.invoice.update({
+            where: { id: invoice.id },
+            data: {
+              larkRecordId: invoice.larkRecordId,
+              larkSyncStatus: 'SYNCED',
+              larkSyncedAt: new Date(),
+              larkSyncRetries: 0,
+            },
+          });
           return true;
         }
 
