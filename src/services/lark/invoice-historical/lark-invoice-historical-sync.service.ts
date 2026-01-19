@@ -184,7 +184,7 @@ export class LarkInvoiceHistoricalSyncService {
 
       if (invoicesToSync.length < 5) {
         this.logger.log(
-          `🏃‍♂️ Small sync (${invoicesToSync.length} invoices) - using lightweight mode`,
+          `Small sync (${invoicesToSync.length} invoices) - using lightweight mode`,
         );
         await this.syncWithoutCache(invoicesToSync);
         await this.releaseSyncLock(lockKey);
@@ -258,7 +258,7 @@ export class LarkInvoiceHistoricalSyncService {
       try {
         this.logger.log(`Loading cache (attempt ${attempt}/${maxRetries})...`);
 
-        if (this.isCacheValid() && this.existingRecordsCache.size > 3000) {
+        if (this.isCacheValid() && this.existingRecordsCache.size > 5000) {
           this.logger.log(
             `Large cache available (${this.existingRecordsCache.size} records) - skipping reload`,
           );
@@ -294,7 +294,7 @@ export class LarkInvoiceHistoricalSyncService {
         );
 
         if (attempt < maxRetries) {
-          const delay = attempt * 1000;
+          const delay = attempt * 1500;
           this.logger.log(`Waiting ${delay / 1000}s before retry...`);
           await new Promise((resolve) => setTimeout(resolve, delay));
         }
@@ -386,6 +386,7 @@ export class LarkInvoiceHistoricalSyncService {
       } while (pageToken);
 
       this.cacheLoaded = true;
+
       const successRate =
         totalLoaded > 0 ? Math.round((cacheBuilt / totalLoaded) * 100) : 0;
 
@@ -402,22 +403,27 @@ export class LarkInvoiceHistoricalSyncService {
     const newInvoices: any[] = [];
     const updateInvoices: any[] = [];
 
-    const duplicateDetected = invoices.filter((invoice) => {
-      const kiotVietId = this.safeBigIntToNumber(invoice.kiotVietId);
-      return this.existingRecordsCache.has(kiotVietId);
-    });
+    // const duplicateDetected = invoices.filter((invoice) => {
+    //   const kiotVietId = this.safeBigIntToNumber(invoice.kiotVietId);
+    //   return this.existingRecordsCache.has(kiotVietId);
+    // });
 
-    if (duplicateDetected.length > 0) {
-      this.logger.warn(
-        `Detected ${duplicateDetected.length} invoices already in cache: ${duplicateDetected
-          .map((o) => o.kiotVietId)
-          .slice(0, 5)
-          .join(', ')}`,
-      );
-    }
+    // if (duplicateDetected.length > 0) {
+    //   this.logger.warn(
+    //     `Detected ${duplicateDetected.length} invoices already in cache: ${duplicateDetected
+    //       .map((o) => o.kiotVietId)
+    //       .slice(0, 5)
+    //       .join(', ')}`,
+    //   );
+    // }
 
     for (const invoice of invoices) {
-      const kiotVietId = this.safeBigIntToNumber(invoice.kiotVietId);
+      // const kiotVietId = this.safeBigIntToNumber(invoice.kiotVietId);
+      const kiotVietId = invoice.kiotVietId
+        ? typeof invoice.kiotVietId === 'bigint'
+          ? Number(invoice.kiotVietId)
+          : Number(invoice.kiotVietId)
+        : 0;
 
       if (this.pendingCreation.has(kiotVietId)) {
         this.logger.warn(
@@ -437,7 +443,7 @@ export class LarkInvoiceHistoricalSyncService {
       if (existingRecordId) {
         updateInvoices.push({ ...invoice, larkRecordId: existingRecordId });
       } else {
-        this.pendingCreation.add(kiotVietId);
+        // this.pendingCreation.add(kiotVietId);
         newInvoices.push(invoice);
       }
     }
@@ -446,7 +452,7 @@ export class LarkInvoiceHistoricalSyncService {
   }
 
   private async syncWithoutCache(invoices: any[]): Promise<void> {
-    this.logger.log(`🏃‍♂️ Running lightweight sync without full cache...`);
+    this.logger.log(`Running lightweight sync without full cache...`);
 
     const existingInvoices = await this.prismaService.invoice.findMany({
       where: {
@@ -494,7 +500,6 @@ export class LarkInvoiceHistoricalSyncService {
       const batch = batches[i];
 
       const verifiedBatch: any[] = [];
-
       for (const invoice of batch) {
         const kiotVietId = this.safeBigIntToNumber(invoice.kiotVietId);
         if (!this.existingRecordsCache.has(kiotVietId)) {
@@ -523,6 +528,11 @@ export class LarkInvoiceHistoricalSyncService {
 
       if (successRecords.length > 0) {
         await this.updateDatabaseStatus(successRecords, 'SYNCED');
+
+        successRecords.forEach((record) => {
+          const kiotVietId = this.safeBigIntToNumber(record.kiotVietId);
+          this.pendingCreation.delete(kiotVietId);
+        });
       }
 
       if (failedRecords.length > 0) {
@@ -533,9 +543,9 @@ export class LarkInvoiceHistoricalSyncService {
         `Batch ${i + 1}/${batches.length}: ${successRecords.length}/${batch.length} created`,
       );
 
-      if (i < batches.length - 1) {
-        await new Promise((resolve) => setTimeout(resolve, 500));
-      }
+      // if (i < batches.length - 1) {
+      //   await new Promise((resolve) => setTimeout(resolve, 500));
+      // }
     }
 
     this.logger.log(
@@ -552,7 +562,7 @@ export class LarkInvoiceHistoricalSyncService {
     let failedCount = 0;
     const createFallbacks: any[] = [];
 
-    const UPDATE_CHUNK_SIZE = 5;
+    const UPDATE_CHUNK_SIZE = 20;
 
     for (let i = 0; i < invoices.length; i += UPDATE_CHUNK_SIZE) {
       const chunk = invoices.slice(i, i + UPDATE_CHUNK_SIZE);
@@ -577,9 +587,9 @@ export class LarkInvoiceHistoricalSyncService {
         }),
       );
 
-      if (i + UPDATE_CHUNK_SIZE < invoices.length) {
-        await new Promise((resolve) => setTimeout(resolve, 300));
-      }
+      // if (i + UPDATE_CHUNK_SIZE < invoices.length) {
+      //   await new Promise((resolve) => setTimeout(resolve, 300));
+      // }
     }
 
     if (createFallbacks.length > 0) {
@@ -636,22 +646,29 @@ export class LarkInvoiceHistoricalSyncService {
               );
             }
 
-            successRecords.forEach((invoice) => {
-              const kiotVietId = this.safeBigIntToNumber(invoice.kiotVietId);
-              this.pendingCreation.delete(kiotVietId);
-            });
-
-            failedRecords.forEach((invoice) => {
-              const kiotVietId = this.safeBigIntToNumber(invoice.kiotVietId);
-              this.pendingCreation.delete(kiotVietId);
-            });
-
             if (invoice.code) {
               this.invoiceCodeCache.set(
                 String(invoice.code).trim(),
                 createdRecord.record_id,
               );
             }
+
+            // successRecords.forEach((invoice) => {
+            //   const kiotVietId = this.safeBigIntToNumber(invoice.kiotVietId);
+            //   this.pendingCreation.delete(kiotVietId);
+            // });
+
+            // failedRecords.forEach((invoice) => {
+            //   const kiotVietId = this.safeBigIntToNumber(invoice.kiotVietId);
+            //   this.pendingCreation.delete(kiotVietId);
+            // });
+
+            // if (invoice.code) {
+            //   this.invoiceCodeCache.set(
+            //     String(invoice.code).trim(),
+            //     createdRecord.record_id,
+            //   );
+            // }
           }
 
           return { successRecords, failedRecords };
@@ -660,7 +677,7 @@ export class LarkInvoiceHistoricalSyncService {
         if (this.AUTH_ERROR_CODES.includes(response.data.code)) {
           authRetries++;
           await this.larkAuthService.forceRefreshInvoiceToken();
-          await new Promise((resolve) => setTimeout(resolve, 2000));
+          await new Promise((resolve) => setTimeout(resolve, 500));
           continue;
         }
 
@@ -669,14 +686,24 @@ export class LarkInvoiceHistoricalSyncService {
         );
         return { successRecords: [], failedRecords: invoices };
       } catch (error) {
-        if (error.response?.status === 401 || error.response?.status === 403) {
-          authRetries++;
-          await this.larkAuthService.forceRefreshInvoiceToken();
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-          continue;
+        this.logger.error('Batch create error details:', {
+          status: error.response?.status,
+          statusText: error.response?.statusText,
+          data: error.response?.data,
+          config: {
+            url: error.config?.url,
+            method: error.config?.method,
+            data: JSON.parse(error.config?.data || '{}'),
+          },
+        });
+
+        if (records && records.length > 0) {
+          this.logger.error(
+            'Sample record being sent:',
+            JSON.stringify(records[0], null, 2),
+          );
         }
 
-        this.logger.error(`❌ Batch create error: ${error.message}`);
         return { successRecords: [], failedRecords: invoices };
       }
     }
@@ -710,7 +737,7 @@ export class LarkInvoiceHistoricalSyncService {
         if (this.AUTH_ERROR_CODES.includes(response.data.code)) {
           authRetries++;
           await this.larkAuthService.forceRefreshInvoiceToken();
-          await new Promise((resolve) => setTimeout(resolve, 2000));
+          await new Promise((resolve) => setTimeout(resolve, 500));
           continue;
         }
 
@@ -735,10 +762,6 @@ export class LarkInvoiceHistoricalSyncService {
 
     return false;
   }
-
-  // ============================================================================
-  // HELPER METHODS
-  // ============================================================================
 
   private async testLarkBaseConnection(): Promise<void> {
     const maxRetries = 10;
@@ -820,7 +843,6 @@ export class LarkInvoiceHistoricalSyncService {
       }
     }
 
-    // 🆕 ADDED: Wait for any competing processes
     await this.waitForLockAvailability(syncName);
 
     await this.prismaService.syncControl.upsert({
@@ -836,8 +858,8 @@ export class LarkInvoiceHistoricalSyncService {
         startedAt: new Date(),
         progress: {
           lockKey,
-          processId: process.pid, // 🆕 ADDED: Track process ID
-          hostname: require('os').hostname(), // 🆕 ADDED: Track hostname
+          processId: process.pid,
+          hostname: require('os').hostname(),
         },
       },
       update: {
@@ -858,30 +880,26 @@ export class LarkInvoiceHistoricalSyncService {
     );
   }
 
-  // 🆕 ADD these new methods after acquireSyncLock:
-
   private async isLockProcessActive(lockRecord: any): Promise<boolean> {
     try {
       if (!lockRecord.progress?.processId) {
-        return false; // No process ID stored = inactive
+        return false;
       }
 
       const currentHostname = require('os').hostname();
       if (lockRecord.progress.hostname !== currentHostname) {
-        return false; // Different machine = inactive
+        return false;
       }
 
-      // Check if process exists (simple heuristic)
       const lockAge = Date.now() - lockRecord.startedAt.getTime();
       if (lockAge > 5 * 60 * 1000) {
-        // 5 minutes without update = likely stuck
         return false;
       }
 
       return true;
     } catch (error) {
       this.logger.warn(`Could not verify lock process: ${error.message}`);
-      return false; // Assume inactive if can't verify
+      return false;
     }
   }
 
@@ -1021,7 +1039,6 @@ export class LarkInvoiceHistoricalSyncService {
   private mapInvoiceToLarkBase(invoice: any): Record<string, any> {
     const fields: Record<string, any> = {};
 
-    // Required fields
     fields[LARK_INVOICE_FIELDS.KIOTVIET_ID] = this.safeBigIntToNumber(
       invoice.kiotVietId,
     );
@@ -1214,25 +1231,14 @@ export class LarkInvoiceHistoricalSyncService {
       fields[LARK_INVOICE_FIELDS.COMMENT] = invoice.description || '';
     }
 
-    // Dates
     if (invoice.createdDate) {
       fields[LARK_INVOICE_FIELDS.CREATED_DATE] = new Date(
         invoice.createdDate,
       ).getTime();
     }
 
-    // if (invoice.modifiedDate) {
-    //   fields[LARK_INVOICE_FIELDS.MODIFIED_DATE] = new Date(
-    //     invoice.modifiedDate,
-    //   ).getTime();
-    // }
-
     return fields;
   }
-
-  // ============================================================================
-  // MONITORING METHODS
-  // ============================================================================
 
   async getSyncProgress(): Promise<any> {
     const total = await this.prismaService.invoice.count();
@@ -1258,485 +1264,6 @@ export class LarkInvoiceHistoricalSyncService {
       progress,
       canRetryFailed,
       summary: `${synced}/${total} synced (${progress}%)`,
-    };
-  }
-
-  async resetFailedInvoices(): Promise<{ resetCount: number }> {
-    const result = await this.prismaService.invoice.updateMany({
-      where: { larkSyncStatus: 'FAILED' },
-      data: {
-        larkSyncStatus: 'PENDING',
-        larkSyncRetries: 0,
-      },
-    });
-
-    this.logger.log(`🔄 Reset ${result.count} FAILED invoices to PENDING`);
-    return { resetCount: result.count };
-  }
-
-  async getFailedInvoicesReport(): Promise<any> {
-    const failedInvoices = await this.prismaService.invoice.findMany({
-      where: { larkSyncStatus: 'FAILED' },
-      select: {
-        id: true,
-        code: true,
-        orderCode: true,
-        larkSyncRetries: true,
-        larkSyncedAt: true,
-        modifiedDate: true,
-      },
-      orderBy: { larkSyncRetries: 'desc' },
-      take: 10,
-    });
-
-    return {
-      totalFailed: await this.prismaService.invoice.count({
-        where: { larkSyncStatus: 'FAILED' },
-      }),
-      topFailures: failedInvoices.map((c) => ({
-        ...c,
-        larkSyncRetries: Number(c.larkSyncRetries), // Convert BigInt to number
-      })),
-      canReset: true,
-    };
-  }
-
-  async performHealthCheck(): Promise<any> {
-    const allIssues: string[] = [];
-    const recommendations: string[] = [];
-
-    // Data reconciliation
-    this.logger.log('📊 [1/5] DATA RECONCILIATION');
-    const dataReconciliation = await this.reconcileDataMismatch();
-    allIssues.push(...dataReconciliation.recommendations);
-
-    // Sync control health
-    this.logger.log('🔄 [2/5] SYNC CONTROL HEALTH');
-    const syncControlHealth = await this.checkSyncControlHealth();
-    allIssues.push(...syncControlHealth.issues);
-
-    // LarkBase connectivity
-    this.logger.log('🌐 [3/5] LARKBASE CONNECTIVITY');
-    const larkBaseConnectivity = await this.testLarkBaseConnectivity();
-    if (!larkBaseConnectivity.connected) {
-      allIssues.push(
-        `LarkBase connectivity failed: ${larkBaseConnectivity.error}`,
-      );
-    }
-
-    // Data quality
-    this.logger.log('🔍 [4/5] DATA QUALITY CHECK');
-    const dataQuality = await this.checkCustomerDataQuality();
-    allIssues.push(...dataQuality.issues);
-
-    // Cache health
-    this.logger.log('📦 [5/5] CACHE HEALTH');
-    const cacheHealth = {
-      loaded: this.cacheLoaded,
-      size: this.existingRecordsCache.size,
-      codeMapSize: this.invoiceCodeCache.size,
-      valid: this.isCacheValid(),
-      age: this.lastCacheLoadTime
-        ? Math.round(
-            (Date.now() - this.lastCacheLoadTime.getTime()) / 1000 / 60,
-          )
-        : null,
-    };
-
-    if (!cacheHealth.valid && this.cacheLoaded) {
-      recommendations.push('🔄 Refresh cache for accurate duplicate detection');
-    }
-
-    // Generate overall status
-    let overallStatus: 'HEALTHY' | 'WARNING' | 'CRITICAL' = 'HEALTHY';
-
-    const criticalIssues = allIssues.filter(
-      (issue) =>
-        issue.includes('🚨') ||
-        issue.includes('CRITICAL') ||
-        issue.includes('connectivity failed'),
-    );
-
-    const warningIssues = allIssues.filter(
-      (issue) =>
-        issue.includes('⚠️') ||
-        issue.includes('WARNING') ||
-        issue.includes('duplicate'),
-    );
-
-    if (criticalIssues.length > 0) {
-      overallStatus = 'CRITICAL';
-    } else if (warningIssues.length > 0 || allIssues.length > 0) {
-      overallStatus = 'WARNING';
-    }
-
-    // Additional recommendations
-    if (dataReconciliation.pendingSync > 0) {
-      recommendations.push(
-        `🚀 Sync ${dataReconciliation.pendingSync} pending invoices`,
-      );
-    }
-
-    if (dataReconciliation.failedSync > 0) {
-      recommendations.push(
-        `🔄 Retry ${dataReconciliation.failedSync} failed invoices`,
-      );
-    }
-
-    return {
-      timestamp: new Date().toISOString(),
-      overallStatus,
-      components: {
-        dataReconciliation: {
-          ...dataReconciliation,
-          syncedCount: Number(dataReconciliation.syncedCount),
-        },
-        syncControlHealth,
-        larkBaseConnectivity,
-        dataQuality: {
-          ...dataQuality,
-          duplicateKiotVietIds: Number(dataQuality.duplicateKiotVietIds),
-          nullKiotVietIds: Number(dataQuality.nullKiotVietIds),
-        },
-        cacheHealth,
-      },
-      issues: allIssues,
-      recommendations,
-    };
-  }
-
-  private async reconcileDataMismatch(): Promise<any> {
-    const databaseCount = await this.prismaService.invoice.count();
-    const pendingCount = await this.prismaService.invoice.count({
-      where: { larkSyncStatus: 'PENDING' },
-    });
-    const failedCount = await this.prismaService.invoice.count({
-      where: { larkSyncStatus: 'FAILED' },
-    });
-    const syncedCount = await this.prismaService.invoice.count({
-      where: { larkSyncStatus: 'SYNCED' },
-    });
-
-    let larkBaseCount = 0;
-    let cacheLoadError = null;
-
-    try {
-      if (!this.isCacheValid()) {
-        await this.loadExistingRecordsWithRetry();
-      }
-      larkBaseCount = this.existingRecordsCache.size;
-    } catch (error) {
-      cacheLoadError = error.message;
-    }
-
-    const mismatch = Math.abs(databaseCount - larkBaseCount);
-    const recommendations: string[] = [];
-
-    if (cacheLoadError) {
-      recommendations.push(
-        `🚨 CRITICAL: Cannot access LarkBase - ${cacheLoadError}`,
-      );
-    }
-
-    if (mismatch > 1000) {
-      recommendations.push(
-        `🚨 CRITICAL: Major data mismatch - ${mismatch} records difference`,
-      );
-    } else if (mismatch > 100) {
-      recommendations.push(
-        `⚠️ WARNING: Significant mismatch - ${mismatch} records difference`,
-      );
-    }
-
-    if (pendingCount > 0) {
-      recommendations.push(`⏳ ${pendingCount} customers pending sync`);
-    }
-
-    if (failedCount > 100) {
-      recommendations.push(
-        `❌ ${failedCount} customers failed sync - investigation needed`,
-      );
-    }
-
-    // Check for extra records in LarkBase
-    if (larkBaseCount > databaseCount) {
-      const extraRecords = larkBaseCount - databaseCount;
-      recommendations.push(
-        `📊 ${extraRecords} extra records in LarkBase - possible manual additions or sync status issues`,
-      );
-    }
-
-    return {
-      databaseCount,
-      larkBaseCount,
-      mismatch,
-      pendingSync: pendingCount,
-      failedSync: failedCount,
-      syncedCount,
-      recommendations,
-    };
-  }
-
-  private async checkSyncControlHealth(): Promise<any> {
-    const stuckSyncs = await this.prismaService.syncControl.findMany({
-      where: {
-        isRunning: true,
-        startedAt: {
-          lt: new Date(Date.now() - 60 * 60 * 1000), // Over 1 hour
-        },
-      },
-    });
-
-    const issues: string[] = [];
-
-    if (stuckSyncs.length > 0) {
-      issues.push(`⚠️ ${stuckSyncs.length} stuck sync processes detected`);
-    }
-
-    return {
-      stuckSyncs: stuckSyncs.map((s) => ({
-        name: s.name,
-        startedAt: s.startedAt ? s.startedAt.toISOString() : 'unknown',
-        duration: s.startedAt
-          ? Math.round((Date.now() - s.startedAt.getTime()) / 1000 / 60)
-          : 0,
-      })),
-      issues,
-    };
-  }
-
-  private async testLarkBaseConnectivity(): Promise<any> {
-    try {
-      await this.testLarkBaseConnection();
-      return { connected: true, error: null };
-    } catch (error) {
-      return { connected: false, error: error.message };
-    }
-  }
-
-  private async checkCustomerDataQuality(): Promise<any> {
-    const issues: string[] = [];
-
-    // Check for duplicates by kiotVietId
-    const duplicateKiotVietIds = await this.prismaService.$queryRaw<any[]>`
-      SELECT "kiotVietId", COUNT(*) as count
-      FROM "Customer"
-      GROUP BY "kiotVietId"
-      HAVING COUNT(*) > 1
-      LIMIT 10
-    `;
-
-    if (duplicateKiotVietIds.length > 0) {
-      issues.push(
-        `⚠️ Found ${duplicateKiotVietIds.length} duplicate kiotVietIds in database`,
-      );
-    }
-
-    // Check for null kiotVietIds
-    const nullKiotVietIds = await this.prismaService.customer.count({
-      where: { kiotVietId: null },
-    });
-
-    if (nullKiotVietIds > 0) {
-      issues.push(`⚠️ ${nullKiotVietIds} customers with null kiotVietId`);
-    }
-
-    return {
-      duplicateKiotVietIds: duplicateKiotVietIds.length,
-      nullKiotVietIds,
-      issues,
-    };
-  }
-
-  // ============================================================================
-  // DATA TYPE DEBUG (Fixed BigInt serialization)
-  // ============================================================================
-
-  async debugKiotVietIdDataTypes(): Promise<any> {
-    this.logger.log(
-      '🔍 Debugging kiotVietId data types between Database and LarkBase...',
-    );
-
-    // Get samples from database
-    const dbSamples = await this.prismaService.customer.findMany({
-      select: {
-        kiotVietId: true,
-        code: true,
-      },
-      take: 10,
-      orderBy: { createdDate: 'desc' },
-    });
-
-    // Get samples from LarkBase cache
-    const larkSamples: any[] = [];
-    if (this.existingRecordsCache.size > 0) {
-      let count = 0;
-      for (const [
-        kiotVietId,
-        recordId,
-      ] of this.existingRecordsCache.entries()) {
-        larkSamples.push({ kiotVietId, recordId });
-        count++;
-        if (count >= 10) break;
-      }
-    }
-
-    const conversionIssues: string[] = [];
-
-    // Analyze database types
-    const dbTypes = new Map<string, number>();
-    dbSamples.forEach((sample) => {
-      const type = typeof sample.kiotVietId;
-      dbTypes.set(type, (dbTypes.get(type) || 0) + 1);
-    });
-
-    // Log findings
-    this.logger.log('🔍 KiotVietId Data Type Analysis:');
-    this.logger.log(`Database samples (${dbSamples.length}):`);
-    dbSamples.forEach((sample, i) => {
-      const type = typeof sample.kiotVietId;
-      this.logger.log(
-        `${i + 1}. ${sample.kiotVietId} (${type}) - ${sample.code}`,
-      );
-    });
-
-    this.logger.log(`LarkBase samples (${larkSamples.length}):`);
-    larkSamples.forEach((sample, i) => {
-      this.logger.log(
-        `${i + 1}. ${sample.kiotVietId} (string) - ${sample.recordId}`,
-      );
-    });
-
-    this.logger.log('Type Distribution:');
-    this.logger.log(`LarkBase: ${larkSamples.length} strings, 0 numbers`);
-    this.logger.log(
-      `Database: ${dbTypes.get('bigint') || 0} bigints, ${dbTypes.get('number') || 0} numbers`,
-    );
-
-    if (dbTypes.has('bigint') && larkSamples.length > 0) {
-      conversionIssues.push(
-        'Type mismatch: LarkBase stores kiotVietId as STRING but Database expects NUMBER/BIGINT',
-      );
-    }
-
-    if (conversionIssues.length > 0) {
-      this.logger.warn('⚠️ Conversion Issues Found:');
-      conversionIssues.forEach((issue, i) => {
-        this.logger.warn(`${i + 1}. ${issue}`);
-      });
-    }
-
-    return {
-      databaseTypes: Object.fromEntries(dbTypes),
-      larkBaseType: 'string',
-      samplesAnalyzed: {
-        database: dbSamples.length,
-        larkBase: larkSamples.length,
-      },
-      conversionIssues,
-    };
-  }
-
-  // ============================================================================
-  // VERIFY SYNC COMPLETENESS
-  // ============================================================================
-
-  async verifySyncCompleteness(): Promise<{
-    isComplete: boolean;
-    discrepancies: any[];
-    recommendations: string[];
-  }> {
-    this.logger.log('🔍 Verifying sync completeness...');
-
-    // Reload cache to get latest LarkBase state
-    this.clearCache();
-    await this.loadExistingRecordsWithRetry();
-
-    // Get counts
-    const dbTotal = await this.prismaService.invoice.count();
-    const dbSynced = await this.prismaService.invoice.count({
-      where: { larkSyncStatus: 'SYNCED' },
-    });
-    const larkTotal = this.existingRecordsCache.size;
-
-    // Check each SYNCED record actually exists in LarkBase
-    const syncedButMissing: any[] = [];
-    const syncedInvoices = await this.prismaService.invoice.findMany({
-      where: { larkSyncStatus: 'SYNCED' },
-      select: {
-        id: true,
-        kiotVietId: true,
-        code: true,
-        orderCode: true,
-      },
-    });
-
-    for (const invoice of syncedInvoices) {
-      const kiotVietId = this.safeBigIntToNumber(invoice.kiotVietId);
-      if (!this.existingRecordsCache.has(kiotVietId)) {
-        syncedButMissing.push({
-          id: invoice.id,
-          kiotVietId,
-          code: invoice.code,
-          orderCode: invoice.orderCode,
-        });
-      }
-    }
-
-    const isComplete = dbTotal === larkTotal && syncedButMissing.length === 0;
-    const discrepancies: any[] = [];
-    const recommendations: string[] = [];
-
-    if (dbTotal !== larkTotal) {
-      discrepancies.push({
-        type: 'COUNT_MISMATCH',
-        database: dbTotal,
-        larkBase: larkTotal,
-        difference: Math.abs(dbTotal - larkTotal),
-      });
-    }
-
-    if (syncedButMissing.length > 0) {
-      discrepancies.push({
-        type: 'SYNCED_BUT_MISSING',
-        count: syncedButMissing.length,
-        samples: syncedButMissing.slice(0, 5),
-      });
-
-      recommendations.push(
-        `Reset ${syncedButMissing.length} incorrectly marked SYNCED records and re-sync`,
-      );
-    }
-
-    if (dbSynced < dbTotal) {
-      const pending = await this.prismaService.invoice.count({
-        where: { larkSyncStatus: 'PENDING' },
-      });
-      const failed = await this.prismaService.invoice.count({
-        where: { larkSyncStatus: 'FAILED' },
-      });
-
-      if (pending > 0) {
-        recommendations.push(`Sync ${pending} PENDING invoices`);
-      }
-
-      if (failed > 0) {
-        recommendations.push(`Reset and retry ${failed} FAILED invoices`);
-      }
-    }
-
-    if (isComplete) {
-      recommendations.push(
-        '✅ Sync is complete! Database and LarkBase are fully synchronized.',
-      );
-    } else {
-      recommendations.push('Run syncMissingDataOnly() to sync missing records');
-    }
-
-    return {
-      isComplete,
-      discrepancies,
-      recommendations,
     };
   }
 }

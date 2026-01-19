@@ -335,6 +335,7 @@ export class LarkPurchaseOrderSyncService {
 
   private async loadExistingRecordsWithRetry(): Promise<boolean> {
     const maxRetries = 3;
+
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         this.logger.log(`Loading cache (attempt ${attempt}/${maxRetries})...`);

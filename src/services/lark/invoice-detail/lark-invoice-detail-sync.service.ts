@@ -296,10 +296,6 @@ export class LarkInvoiceDetailSyncService {
         return;
       }
 
-      this.logger.log(
-        `Found ${invoiceDetails.length} invoice details with "thanh lý"`,
-      );
-
       await this.loadExistingRecords();
 
       const BATCH_SIZE = 500;
