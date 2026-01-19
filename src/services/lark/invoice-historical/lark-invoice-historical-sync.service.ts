@@ -747,7 +747,7 @@ export class LarkInvoiceHistoricalSyncService {
         if (error.response?.status === 401 || error.response?.status === 403) {
           authRetries++;
           await this.larkAuthService.forceRefreshInvoiceToken();
-          await new Promise((resolve) => setTimeout(resolve, 2000));
+          await new Promise((resolve) => setTimeout(resolve, 500));
           continue;
         }
 
@@ -795,7 +795,7 @@ export class LarkInvoiceHistoricalSyncService {
         throw new Error(`Connection test failed: ${response.data.msg}`);
       } catch (error) {
         if (retryCount < maxRetries) {
-          const delay = (retryCount + 1) * 2000;
+          const delay = (retryCount + 1) * 500;
           this.logger.warn(
             `⚠️ Connection attempt ${retryCount + 1} failed: ${error.message}`,
           );
@@ -921,7 +921,7 @@ export class LarkInvoiceHistoricalSyncService {
       this.logger.debug(
         `⏳ Waiting for lock release... (${Math.round((Date.now() - startTime) / 1000)}s)`,
       );
-      await new Promise((resolve) => setTimeout(resolve, 2000)); // Check every 2 seconds
+      await new Promise((resolve) => setTimeout(resolve, 500));
     }
 
     throw new Error(`Lock wait timeout after ${maxWaitMs / 1000}s`);
