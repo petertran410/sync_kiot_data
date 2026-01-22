@@ -43,6 +43,8 @@ export class KiotVietCustomerService {
   private readonly baseUrl: string;
   private readonly PAGE_SIZE = 100;
 
+  private readonly CUSTOMER_CODE_SYNC_KEYWORDS = ['KHSPE', 'KHTTS'];
+
   constructor(
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
@@ -64,7 +66,6 @@ export class KiotVietCustomerService {
           where: {
             OR: [
               { name: 'customer_historical' },
-              // { name: 'customer_recent' },
               { name: 'customer_lark_sync' },
             ],
             isRunning: true,
@@ -75,16 +76,12 @@ export class KiotVietCustomerService {
         this.logger.warn(
           `Found ${runningCustomerSyncs.length} customer syncs still running: ${runningCustomerSyncs.map((s) => s.name).join(', ')}`,
         );
-        this.logger.warn('⏸️ Skipping customer sync to avoid conflicts');
+        this.logger.warn('Skipping customer sync to avoid conflicts');
         return;
       }
 
       const historicalSync = await this.prismaService.syncControl.findFirst({
         where: { name: 'customer_historical' },
-      });
-
-      const recentSync = await this.prismaService.syncControl.findFirst({
-        where: { name: 'customer_recent' },
       });
 
       if (historicalSync?.isEnabled && !historicalSync.isRunning) {
@@ -99,15 +96,6 @@ export class KiotVietCustomerService {
         );
         return;
       }
-
-      // if (recentSync?.isEnabled && !recentSync.isRunning) {
-      //   this.logger.log('Starting recent customer sync...');
-      //   await this.syncRecentCustomers();
-      //   return;
-      // }
-
-      // this.logger.log('Running default recent customer sync...');
-      // await this.syncRecentCustomers();
     } catch (error) {
       this.logger.error(`Sync check failed: ${error.message}`);
       throw error;
@@ -122,6 +110,13 @@ export class KiotVietCustomerService {
     });
 
     this.logger.log('Historical customer sync enabled');
+  }
+
+  private shouldSyncCustomerCode(customerCode?: string): boolean {
+    const customerCodeSync = customerCode?.trim();
+    return this.CUSTOMER_CODE_SYNC_KEYWORDS.some((keyword) =>
+      customerCodeSync?.includes(keyword),
+    );
   }
 
   async syncHistoricalCustomers(): Promise<void> {
@@ -186,7 +181,7 @@ export class KiotVietCustomerService {
             currentItem,
             pageSize: this.PAGE_SIZE,
             orderBy: 'id',
-            // orderDirection: 'DESC',
+            orderDirection: 'DESC',
             includeTotal: true,
             includeCustomerGroup: true,
             includeCustomerSocial: true,
@@ -201,7 +196,7 @@ export class KiotVietCustomerService {
 
             if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
               this.logger.log(
-                `🔚 Reached end after ${consecutiveEmptyPages} empty pages`,
+                `Reached end after ${consecutiveEmptyPages} empty pages`,
               );
               break;
             }
@@ -296,6 +291,7 @@ export class KiotVietCustomerService {
             this.logger.log(
               `Processing ${newCustomers.length} NEW customers from page ${currentPage}...`,
             );
+
             const savedCustomers =
               await this.saveCustomersToDatabase(newCustomers);
             pageProcessedCount += savedCustomers.length;
@@ -306,6 +302,7 @@ export class KiotVietCustomerService {
             this.logger.log(
               `Processing ${existingCustomers.length} EXISTING customers from page ${currentPage}...`,
             );
+
             const savedCustomers =
               await this.saveCustomersToDatabase(existingCustomers);
             pageProcessedCount += savedCustomers.length;
@@ -383,6 +380,7 @@ export class KiotVietCustomerService {
 
       const completionRate =
         totalCustomers > 0 ? (processedCount / totalCustomers) * 100 : 100;
+
       this.logger.log(
         `Historical customer sync completed: ${processedCount}/${totalCustomers} (${completionRate.toFixed(1)}% completion rate)`,
       );
@@ -390,7 +388,7 @@ export class KiotVietCustomerService {
         `AUTO-TRANSITION: Historical sync disabled, Recent sync enabled for future cycles`,
       );
     } catch (error) {
-      this.logger.error(`❌ Historical customer sync failed: ${error.message}`);
+      this.logger.error(`Historical customer sync failed: ${error.message}`);
 
       await this.updateSyncControl(syncName, {
         isRunning: false,
@@ -489,6 +487,9 @@ export class KiotVietCustomerService {
           where: { kiotVietId: customerData.branchId },
           select: { id: true, name: true },
         });
+
+        const customerCode = customerData.code;
+        // const shouldSyncToLark = customerCode && customerCode.
 
         const customer = await this.prismaService.customer.upsert({
           where: { kiotVietId: customerData.id },
