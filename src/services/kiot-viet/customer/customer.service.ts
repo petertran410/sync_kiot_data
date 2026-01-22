@@ -484,9 +484,6 @@ export class KiotVietCustomerService {
         let larkSyncStatus: 'PENDING' | 'SKIP' = 'SKIP';
 
         const isKH0 = customerData.code?.startsWith('KH0');
-        const hasSpecialCode =
-          customerData.code?.includes('KHSPE') ||
-          customerData.code?.includes('KHTTS');
 
         if (isKH0) {
           larkSyncStatus = 'PENDING';

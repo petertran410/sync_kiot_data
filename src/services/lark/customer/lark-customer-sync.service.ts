@@ -267,7 +267,7 @@ export class LarkCustomerSyncService {
 
         const newRecordId = response.data?.data?.record?.record_id;
 
-        await this.prismaService.invoice.update({
+        await this.prismaService.customer.update({
           where: { id: customer.id },
           data: {
             larkRecordId: newRecordId,
