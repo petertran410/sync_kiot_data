@@ -483,13 +483,11 @@ export class KiotVietCustomerService {
 
         let larkSyncStatus: 'PENDING' | 'SKIP' = 'SKIP';
 
-        const isKH0 = customerData.code?.startsWith('KH0');
+        const nameValid = customerData.name && !customerData.name.includes('*');
 
-        if (isKH0) {
-          larkSyncStatus = 'PENDING';
-        } else {
+        if (nameValid) {
           const addressValid =
-            customerData.address && !customerData.address.includes('***');
+            customerData.address && !customerData.address.includes('*');
           const hasLocationName = !!customerData.locationName;
           const hasWardName = !!customerData.wardName;
 
@@ -502,6 +500,11 @@ export class KiotVietCustomerService {
                 `Missing valid address/locationName/wardName`,
             );
           }
+        } else {
+          this.logger.log(
+            `Skipping LarkBase sync for customer ${customerData.code}: ` +
+              `Name contains "*"`,
+          );
         }
 
         const customer = await this.prismaService.customer.upsert({
