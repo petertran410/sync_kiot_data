@@ -112,13 +112,6 @@ export class KiotVietCustomerService {
     this.logger.log('Historical customer sync enabled');
   }
 
-  private shouldSyncCustomerCode(customerCode?: string): boolean {
-    const customerCodeSync = customerCode?.trim();
-    return this.CUSTOMER_CODE_SYNC_KEYWORDS.some((keyword) =>
-      customerCodeSync?.includes(keyword),
-    );
-  }
-
   async syncHistoricalCustomers(): Promise<void> {
     const syncName = 'customer_historical';
 
@@ -169,7 +162,7 @@ export class KiotVietCustomerService {
         }
 
         const dateStart = new Date();
-        dateStart.setDate(dateStart.getDate() - 90);
+        dateStart.setDate(dateStart.getDate() - 120);
         const dateStartStr = dateStart.toISOString().split('T')[0];
 
         const dateEnd = new Date();
@@ -185,8 +178,8 @@ export class KiotVietCustomerService {
             includeTotal: true,
             includeCustomerGroup: true,
             includeCustomerSocial: true,
-            // lastModifiedFrom: dateStartStr,
-            lastModifiedFrom: '2024-12-01',
+            lastModifiedFrom: dateStartStr,
+            // lastModifiedFrom: '2024-12-01',
             toDate: dateEndStr,
           });
 
@@ -489,20 +482,27 @@ export class KiotVietCustomerService {
         });
 
         let larkSyncStatus: 'PENDING' | 'SKIP' = 'SKIP';
+
+        const isKH0 = customerData.code?.startsWith('KH0');
         const hasSpecialCode =
           customerData.code?.includes('KHSPE') ||
           customerData.code?.includes('KHTTS');
 
-        if (hasSpecialCode) {
-          const hasLocation = !!(
-            customerData.locationName || customerData.wardName
-          );
-          larkSyncStatus = hasLocation ? 'PENDING' : 'SKIP';
+        if (isKH0) {
+          larkSyncStatus = 'PENDING';
+        } else {
+          const addressValid =
+            customerData.address && !customerData.address.includes('***');
+          const hasLocationName = !!customerData.locationName;
+          const hasWardName = !!customerData.wardName;
 
-          if (!hasLocation) {
+          const shouldSync = addressValid || hasLocationName || hasWardName;
+          larkSyncStatus = shouldSync ? 'PENDING' : 'SKIP';
+
+          if (!shouldSync) {
             this.logger.log(
               `Skipping LarkBase sync for customer ${customerData.code}: ` +
-                `Special code with missing locationName or wardName`,
+                `Missing valid address/locationName/wardName`,
             );
           }
         }
@@ -551,7 +551,7 @@ export class KiotVietCustomerService {
               ? new Date(customerData.modifiedDate)
               : new Date(),
             lastSyncedAt: new Date(),
-            larkSyncStatus: larkSyncStatus,
+            larkSyncStatus,
           },
           create: {
             kiotVietId: customerData.id,
@@ -596,7 +596,7 @@ export class KiotVietCustomerService {
               ? new Date(customerData.modifiedDate)
               : new Date(),
             lastSyncedAt: new Date(),
-            larkSyncStatus: larkSyncStatus,
+            larkSyncStatus,
           },
         });
 
