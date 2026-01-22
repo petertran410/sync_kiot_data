@@ -206,7 +206,6 @@ export class LarkInvoiceSyncService {
       const headers = await this.larkAuthService.getInvoiceHeaders();
 
       if (existingRecordId) {
-        // UPDATE
         const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/${existingRecordId}`;
 
         try {

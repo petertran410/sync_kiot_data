@@ -5,7 +5,7 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { KiotVietAuthService } from '../auth.service';
 import { firstValueFrom } from 'rxjs';
 import { Prisma } from '@prisma/client';
-import { LarkCustomerSyncService } from '../../lark/customer/lark-customer-sync.service';
+import { LarkCustomerHistoricalSyncService } from '../../lark/customer-historical/lark-customer-historical-sync.service';
 
 interface KiotVietCustomer {
   id: number;
@@ -50,7 +50,7 @@ export class KiotVietCustomerService {
     private readonly configService: ConfigService,
     private readonly prismaService: PrismaService,
     private readonly authService: KiotVietAuthService,
-    private readonly larkCustomerSyncService: LarkCustomerSyncService,
+    private readonly larkCustomerHistoricalSyncService: LarkCustomerHistoricalSyncService,
   ) {
     const baseUrl = this.configService.get<string>('KIOT_BASE_URL');
     if (!baseUrl) {
@@ -488,8 +488,24 @@ export class KiotVietCustomerService {
           select: { id: true, name: true },
         });
 
-        const customerCode = customerData.code;
-        // const shouldSyncToLark = customerCode && customerCode.
+        let larkSyncStatus: 'PENDING' | 'SKIP' = 'SKIP';
+        const hasSpecialCode =
+          customerData.code?.includes('KHSPE') ||
+          customerData.code?.includes('KHTTS');
+
+        if (hasSpecialCode) {
+          const hasLocation = !!(
+            customerData.locationName || customerData.wardName
+          );
+          larkSyncStatus = hasLocation ? 'PENDING' : 'SKIP';
+
+          if (!hasLocation) {
+            this.logger.log(
+              `Skipping LarkBase sync for customer ${customerData.code}: ` +
+                `Special code with missing locationName or wardName`,
+            );
+          }
+        }
 
         const customer = await this.prismaService.customer.upsert({
           where: { kiotVietId: customerData.id },
@@ -535,7 +551,7 @@ export class KiotVietCustomerService {
               ? new Date(customerData.modifiedDate)
               : new Date(),
             lastSyncedAt: new Date(),
-            larkSyncStatus: 'PENDING',
+            larkSyncStatus: larkSyncStatus,
           },
           create: {
             kiotVietId: customerData.id,
@@ -580,7 +596,7 @@ export class KiotVietCustomerService {
               ? new Date(customerData.modifiedDate)
               : new Date(),
             lastSyncedAt: new Date(),
-            larkSyncStatus: 'PENDING',
+            larkSyncStatus: larkSyncStatus,
           },
         });
 
@@ -611,14 +627,14 @@ export class KiotVietCustomerService {
         return;
       }
 
-      await this.larkCustomerSyncService.syncCustomersToLarkBase(
+      await this.larkCustomerHistoricalSyncService.syncCustomersToLarkBase(
         customersToSync,
       );
 
       this.logger.log(`LarkBase sync completed successfully`);
     } catch (error) {
-      this.logger.error(`❌ LarkBase sync FAILED: ${error.message}`);
-      this.logger.error(`🛑 STOPPING sync to prevent data duplication`);
+      this.logger.error(`LarkBase sync FAILED: ${error.message}`);
+      this.logger.error(`STOPPING sync to prevent data duplication`);
 
       const customerIds = customers.map((c) => c.id);
       await this.prismaService.customer.updateMany({

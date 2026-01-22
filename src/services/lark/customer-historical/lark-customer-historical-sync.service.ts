@@ -5,107 +5,52 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { LarkAuthService } from '../auth/lark-auth.service';
 import { firstValueFrom } from 'rxjs';
 
-const LARK_INVOICE_FIELDS = {
-  PRIMARY_CODE: 'Mã Hoá Đơn',
-  ORDER_CODE: 'Mã Đơn Hàng',
-  KIOTVIET_ID: 'kiotVietId',
-  BRANCH: 'Branch',
-  CUSTOMER_NAME: 'Tên Khách Hàng',
+const LARK_CUSTOMER_FIELDS = {
+  PRIMARY_NAME: 'Tên Khách Hàng',
   CUSTOMER_CODE: 'Mã Khách Hàng',
-  SELLER: 'Người Bán',
-  CUSTOMER_NEED_PAY: 'Khách Cần Trả',
-  CUSTOMER_PAID: 'Khách Đã Trả',
-  DISCOUNT: 'Giảm Giá',
-  DISCOUNT_RATIO: 'Mức Độ Giảm Giá',
-  STATUS: 'Tình Trạng',
-  COMMENT: 'Ghi Chú',
-  APPLY_COD: 'Sử Dụng COD',
-  SALE_CHANNEL: 'Kênh Bán',
-  APPLY_VOUCHER: 'Áp Mã Voucher',
-  CREATED_DATE: 'Ngày Tạo',
-  PURCHASE_DATE: 'Ngày Mua',
+  PHONE_NUMBER: 'Số Điện Thoại',
+  STORE_ID: 'Id Cửa Hàng',
+  BRANCH: 'Branch',
+  COMPANY: 'Công Ty',
+  EMAIL: 'Email của Khách Hàng',
+  ADDRESS: 'Địa Chỉ Khách Hàng',
+  CURRENT_DEBT: 'Nợ Hiện Tại',
+  TAX_CODE: 'Mã Số Thuế',
+  TOTAL_POINTS: 'Tổng Điểm',
+  TOTAL_REVENUE: 'Tổng Doanh Thu',
+  GENDER: 'Giới Tính',
+  WARD_NAME: 'Phường xã',
+  CURRENT_POINTS: 'Điểm Hiện Tại',
+  KIOTVIET_ID: 'kiotVietId',
+  TOTAL_INVOICED: 'Tổng Bán',
+  COMMENTS: 'Ghi Chú',
+  MODIFIED_DATE: 'Thời Gian Cập Nhật',
+  CREATED_DATE: 'Thời Gian Tạo',
+  FACEBOOK_ID: 'Facebook Khách Hàng',
+  LOCATION_NAME: 'Khu Vực',
+  CUSTOMER_GROUPS: 'Nhóm Khách Hàng',
+  DATE_OF_BIRTH: 'Ngày Sinh',
+  TYPE: 'Loại Khách Hàng',
+  SUB_PHONE: 'Số Điện Thoại Phụ',
+  IDENTIFICATION_NUMBER: 'CCCD Của Khách Hàng',
+} as const;
+
+const GENDER_OPTIONS = {
+  MALE: 'Nam',
+  FEMALE: 'Nữ',
 } as const;
 
 const BRANCH_OPTIONS = {
-  VAN_PHONG_HA_NOI: 'Văn Phòng Hà Nội',
+  CUA_HANG_DIEP_TRA: 'Cửa Hàng Diệp Trà',
   KHO_HA_NOI: 'Kho Hà Nội',
   KHO_SAI_GON: 'Kho Sài Gòn',
-  CUA_HANG_DIEP_TRA: 'Cửa Hàng Diệp Trà',
+  VAN_PHONG_HA_NOI: 'Văn Phòng Hà Nội',
 };
 
-const STATUS_OPTIONS = {
-  COMPLETED: 'Hoàn Thành',
-  CANCELLED: 'Đã Huỷ',
-  PROCESSING: 'Đang Xử Lý',
-  DELIVERY_FAILED: 'Không Giao Được',
+const TYPE_CUSTOMER = {
+  CONG_TY: 'Công Ty',
+  CA_NHAN: 'Cá Nhân',
 };
-
-const SALE_NAME = {
-  LE_ANH_TUAN: 'Lê Anh Tuấn',
-  NGUYEN_THI_PHUONG: 'Nguyễn Thị Phương',
-  LINH_THUY_DUONG: 'Linh Thuỳ Dương',
-  VU_HUYEN_TRANG: 'Vũ Huyền Trang',
-  NGUYEN_THI_THUONG: 'Nguyễn Thị Thương',
-  NGUYEN_THI_NGAN: 'Nguyễn Thị Ngân',
-  NGUYEN_HUYEN_TRANG: 'Nguyễn Huyền Trang',
-  MAI_THI_VAN_ANH: 'Mai Thị Vân Anh',
-  BANG_ANH_VU: 'Bàng Anh Vũ',
-  PHI_THI_PHUONG_THANH: 'Phí Thị Phương Thanh',
-  LE_THI_HONG_LIEN: 'Lê Thị Hồng Liên',
-  TRAN_XUAN_PHUONG: 'Trần Xuân Phương',
-  DINH_THI_LY_LY: 'Đinh Thị Ly Ly',
-  ADMIN: 'Admin',
-  LE_XUAN_TUNG: 'Lê Xuân Tùng',
-  TA_THI_TRANG: 'Tạ Thị Trang',
-  LINH_THU_TRANG: 'Linh Thu Trang',
-  LY_THI_HONG_DAO: 'Lý Thị Hồng Đào',
-  NGUYEN_HUU_TOAN: 'Nguyễn Hữu Toàn',
-  LE_BICH_NGOC: 'Lê Bích Ngọc',
-  NGUYEN_THI_LOAN: 'Nguyễn Thị Loan',
-  NGUYEN_VIET_NAM: 'Nguyễn Viết Nam',
-  CUA_HANG_DIEP_TRA_ANH_TUAN: 'Cửa Hàng Diệp Trà Anh Tuấn',
-  DO_THI_THUONG: 'Đỗ Thị Thương',
-  NGUYEN_THI_BICH_NGOC: 'Nguyễn Thị Bích Ngọc',
-  LE_BAO_NGAN: 'Lê Bảo Ngân',
-};
-
-const SALE_CHANNEL_OPTIONS = {
-  DIRECT: 'Bán Trực Tiếp',
-  LERMAO_SANH_AN: 'LerMao - Sành Ăn Như Gấu',
-  DIEP_TRA_PHA_CHE: 'Diệp Trà - Nguyên Liệu Pha Chế',
-  FACEBOOK: 'Facebook',
-  INSTAGRAM: 'Instagram',
-  DIEPTRA: 'DiepTra',
-  DIEPTRA_OFFICIAL: 'DiepTraOfficial',
-  TIKTOK_LIVE: 'Tiktok Live',
-  DIEPTRA_ROYAL: 'DIỆP TRÀ - ROYALTEA',
-  DIEPTRA_TONGKHO_NGUYENLIEU: 'DIỆP TRÀ  Tổng Kho Nguyên Liệu',
-  DIEPTRA_TONGKHO_NGUYENLIEU_2: 'DIỆP TRÀ  Tổng Kho Nguyên Liệu',
-  DIEPTRA_CHINHANH_MIENNAM: 'Diệp Trà Chi Nhánh Miền Nam',
-  DIEPTRA_CHINHANH_MIENNAM_2: 'Diệp Trà Chi Nhánh Miền Nam',
-  DIEPTRA_SAIGON: 'DIỆP TRÀ SÀI GÒN',
-  MAOMAO_THICH_TRASUA: 'Mao Mao thích Tà Xữa',
-  SHOPEE: 'Shopee',
-  DIEPTRA_ROYAL_2: 'DIỆP TRÀ - ROYALTEA',
-  DIEPTRA_SAIGON_2: 'DIỆP TRÀ SÀI GÒN',
-  WEBSITE: 'Website',
-  OTHER: 'Khác',
-};
-
-const VOUCHER_OPTIONS = {
-  YES: 'Có',
-  NO: 'Không',
-};
-
-const COD_APPLY = {
-  YES: 'Có',
-  NO: 'Không',
-};
-
-interface LarkBaseRecord {
-  record_id?: string;
-  fields: Record<string, any>;
-}
 
 interface LarkBatchResponse {
   code: number;
@@ -130,8 +75,8 @@ interface BatchResult {
 }
 
 @Injectable()
-export class LarkInvoiceHistoricalSyncService {
-  private readonly logger = new Logger(LarkInvoiceHistoricalSyncService.name);
+export class LarkCustomerHistoricalSyncService {
+  private readonly logger = new Logger(LarkCustomerHistoricalSyncService.name);
   private readonly baseToken: string;
   private readonly tableId: string;
   private readonly batchSize = 100;
@@ -141,7 +86,7 @@ export class LarkInvoiceHistoricalSyncService {
   private readonly MAX_AUTH_RETRIES = 3;
 
   private existingRecordsCache: Map<number, string> = new Map();
-  private invoiceCodeCache: Map<string, string> = new Map();
+  private customerCodeCache: Map<string, string> = new Map();
   private cacheLoaded: boolean = false;
   private lastCacheLoadTime: Date | null = null;
   private readonly CACHE_VALIDITY_MINUTES = 600;
@@ -153,58 +98,59 @@ export class LarkInvoiceHistoricalSyncService {
     private readonly larkAuthService: LarkAuthService,
   ) {
     const baseToken = this.configService.get<string>(
-      'LARK_INVOICE_HISTORICAL_BASE_TOKEN',
+      'LARK_CUSTOMER_HISTORICAL_SYNC_BASE_TOKEN',
     );
     const tableId = this.configService.get<string>(
-      'LARK_INVOICE_HISTORICAL_TABLE_ID',
+      'LARK_CUSTOMER_HISTORICAL_SYNC_TABLE_ID',
     );
 
     if (!baseToken || !tableId) {
-      throw new Error('LarkBase invoice configuration missing');
+      throw new Error('LarkBase customer configuration missing');
     }
 
     this.baseToken = baseToken;
     this.tableId = tableId;
   }
 
-  async syncInvoicesToLarkBase(invoices: any[]): Promise<void> {
-    const lockKey = `lark_invoice_historical_sync_lock_${Date.now()}`;
+  async syncCustomersToLarkBase(customers: any[]): Promise<void> {
+    const lockKey = `lark_customer_historical_sync_lock_${Date.now()}`;
 
     try {
       await this.acquireSyncLock(lockKey);
 
       this.logger.log(
-        `Starting LarkBase sync for ${invoices.length} invoices...`,
+        `Starting LarkBase sync for ${customers.length} customers...`,
       );
 
-      const invoicesToSync = invoices.filter(
+      const customersToSync = customers.filter(
         (i) => i.larkSyncStatus === 'PENDING' || i.larkSyncStatus === 'FAILED',
       );
 
-      if (invoicesToSync.length === 0) {
-        this.logger.log('No invoices need LarkBase sync');
+      if (customersToSync.length === 0) {
+        this.logger.log('No customers need LarkBase sync');
         await this.releaseSyncLock(lockKey);
         return;
       }
 
-      if (invoicesToSync.length < 5) {
+      if (customersToSync.length < 5) {
         this.logger.log(
-          `Small sync (${invoicesToSync.length} invoices) - using lightweight mode`,
+          `Small sync (${customersToSync.length} customers) - using lightweight mode`,
         );
-        await this.syncWithoutCache(invoicesToSync);
+
+        await this.syncWithoutCache(customersToSync);
         await this.releaseSyncLock(lockKey);
         return;
       }
 
-      const pendingCount = invoices.filter(
+      const pendingCount = customers.filter(
         (i) => i.larkSyncStatus === 'PENDING',
       ).length;
-      const failedCount = invoices.filter(
+      const failedCount = customers.filter(
         (i) => i.larkSyncStatus === 'FAILED',
       ).length;
 
       this.logger.log(
-        `Including: ${pendingCount} PENDING + ${failedCount} FAILED invoices`,
+        `Including: ${pendingCount} PENDING + ${failedCount} FAILED customers`,
       );
 
       await this.testLarkBaseConnection();
@@ -213,43 +159,43 @@ export class LarkInvoiceHistoricalSyncService {
 
       if (!cacheLoaded) {
         this.logger.warn('Cache loading failed - using lightweight mode');
-        await this.syncWithoutCache(invoicesToSync);
+        await this.syncWithoutCache(customersToSync);
         await this.releaseSyncLock(lockKey);
         return;
       }
 
-      const { newInvoices, updateInvoices } =
-        await this.categorizeInvoices(invoicesToSync);
+      const { newCustomers, updateCustomers } =
+        await this.categorizeCustomers(customersToSync);
 
       this.logger.log(
-        `Categorization: ${newInvoices.length} new, ${updateInvoices.length} updates`,
+        `Categorization: ${newCustomers.length} new, ${updateCustomers.length} updates`,
       );
 
       const BATCH_SIZE_FOR_SYNC = 100;
 
-      if (newInvoices.length > 0) {
-        for (let i = 0; i < newInvoices.length; i += BATCH_SIZE_FOR_SYNC) {
-          const batch = newInvoices.slice(i, i + BATCH_SIZE_FOR_SYNC);
+      if (newCustomers.length > 0) {
+        for (let i = 0; i < newCustomers.length; i += BATCH_SIZE_FOR_SYNC) {
+          const batch = newCustomers.slice(i, i + BATCH_SIZE_FOR_SYNC);
           this.logger.log(
-            `Processing new invoices batch ${Math.floor(i / BATCH_SIZE_FOR_SYNC) + 1}/${Math.ceil(newInvoices.length / BATCH_SIZE_FOR_SYNC)}`,
+            `Processing new customers batch ${Math.floor(i / BATCH_SIZE_FOR_SYNC) + 1}/${Math.ceil(newCustomers.length / BATCH_SIZE_FOR_SYNC)}`,
           );
-          await this.processNewInvoices(batch);
+          await this.processNewCustomers(batch);
         }
       }
 
-      if (updateInvoices.length > 0) {
-        for (let i = 0; i < updateInvoices.length; i += BATCH_SIZE_FOR_SYNC) {
-          const batch = updateInvoices.slice(i, i + BATCH_SIZE_FOR_SYNC);
+      if (updateCustomers.length > 0) {
+        for (let i = 0; i < updateCustomers.length; i += BATCH_SIZE_FOR_SYNC) {
+          const batch = updateCustomers.slice(i, i + BATCH_SIZE_FOR_SYNC);
           this.logger.log(
-            `Processing update invoices batch ${Math.floor(i / BATCH_SIZE_FOR_SYNC) + 1}/${Math.ceil(updateInvoices.length / BATCH_SIZE_FOR_SYNC)}`,
+            `Processing update Customers batch ${Math.floor(i / BATCH_SIZE_FOR_SYNC) + 1}/${Math.ceil(updateCustomers.length / BATCH_SIZE_FOR_SYNC)}`,
           );
-          await this.processUpdateInvoices(batch);
+          await this.processUpdateCustomers(batch);
         }
       }
 
-      this.logger.log('LarkBase invoice sync completed successfully');
+      this.logger.log('LarkBase customers sync completed successfully');
     } catch (error) {
-      this.logger.error(`LarkBase invoice sync failed: ${error.message}`);
+      this.logger.error(`LarkBase customer sync failed: ${error.message}`);
       throw error;
     } finally {
       await this.releaseSyncLock(lockKey);
@@ -322,7 +268,7 @@ export class LarkInvoiceHistoricalSyncService {
 
   private async loadExistingRecordsCache(): Promise<void> {
     try {
-      const headers = await this.larkAuthService.getInvoiceHeaders();
+      const headers = await this.larkAuthService.getCustomerHistoricalHeaders();
       let pageToken: string | undefined;
       let totalLoaded = 0;
       let cacheBuilt = 0;
@@ -355,7 +301,7 @@ export class LarkInvoiceHistoricalSyncService {
 
           for (const record of records) {
             const kiotVietIdField =
-              record.fields[LARK_INVOICE_FIELDS.KIOTVIET_ID];
+              record.fields[LARK_CUSTOMER_FIELDS.KIOTVIET_ID];
 
             if (kiotVietIdField) {
               const kiotVietId = this.safeBigIntToNumber(kiotVietIdField);
@@ -365,11 +311,11 @@ export class LarkInvoiceHistoricalSyncService {
               }
             }
 
-            const invoiceCodeField =
-              record.fields[LARK_INVOICE_FIELDS.PRIMARY_CODE];
-            if (invoiceCodeField) {
-              this.invoiceCodeCache.set(
-                String(invoiceCodeField).trim(),
+            const customerCodeField =
+              record.fields[LARK_CUSTOMER_FIELDS.CUSTOMER_CODE];
+            if (customerCodeField) {
+              this.customerCodeCache.set(
+                String(customerCodeField).trim(),
                 record.record_id,
               );
             }
@@ -396,62 +342,62 @@ export class LarkInvoiceHistoricalSyncService {
         totalLoaded > 0 ? Math.round((cacheBuilt / totalLoaded) * 100) : 0;
 
       this.logger.log(
-        `Invoice cache loaded: ${this.existingRecordsCache.size} by ID, ${this.invoiceCodeCache.size} by code (${successRate}% success)`,
+        `Customer cache loaded: ${this.existingRecordsCache.size} by ID, ${this.customerCodeCache.size} by code (${successRate}% success)`,
       );
     } catch (error) {
-      this.logger.error(`❌ Invoice cache loading failed: ${error.message}`);
+      this.logger.error(`❌ Customer cache loading failed: ${error.message}`);
       throw error;
     }
   }
 
-  private async categorizeInvoices(invoices: any[]): Promise<any> {
-    const newInvoices: any[] = [];
-    const updateInvoices: any[] = [];
+  private async categorizeCustomers(customers: any[]): Promise<any> {
+    const newCustomers: any[] = [];
+    const updateCustomers: any[] = [];
 
-    for (const invoice of invoices) {
-      const kiotVietId = invoice.kiotVietId
-        ? typeof invoice.kiotVietId === 'bigint'
-          ? Number(invoice.kiotVietId)
-          : Number(invoice.kiotVietId)
+    for (const customer of customers) {
+      const kiotVietId = customer.kiotVietId
+        ? typeof customer.kiotVietId === 'bigint'
+          ? Number(customer.kiotVietId)
+          : Number(customer.kiotVietId)
         : 0;
 
       if (this.pendingCreation.has(kiotVietId)) {
         this.logger.warn(
-          `Invoices ${kiotVietId} is pending creation, skipping`,
+          `Customers ${kiotVietId} is pending creation, skipping`,
         );
         continue;
       }
 
       let existingRecordId = this.existingRecordsCache.get(kiotVietId);
 
-      if (!existingRecordId && invoice.code) {
-        existingRecordId = this.invoiceCodeCache.get(
-          String(invoice.code).trim(),
+      if (!existingRecordId && customer.code) {
+        existingRecordId = this.customerCodeCache.get(
+          String(customer.code).trim(),
         );
       }
 
       if (existingRecordId) {
-        updateInvoices.push({ ...invoice, larkRecordId: existingRecordId });
+        updateCustomers.push({ ...customer, larkRecordId: existingRecordId });
       } else {
-        newInvoices.push(invoice);
+        newCustomers.push(customer);
       }
     }
 
-    return { newInvoices, updateInvoices };
+    return { newCustomers, updateCustomers };
   }
 
-  private async syncWithoutCache(invoices: any[]): Promise<void> {
+  private async syncWithoutCache(customers: any[]): Promise<void> {
     this.logger.log(`Running lightweight sync without full cache...`);
 
-    const existingInvoices = await this.prismaService.invoice.findMany({
+    const existingCustomers = await this.prismaService.customer.findMany({
       where: {
-        kiotVietId: { in: invoices.map((i) => i.kiotVietId) },
+        kiotVietId: { in: customers.map((i) => i.kiotVietId) },
       },
       select: { kiotVietId: true, larkRecordId: true },
     });
 
     const quickCache = new Map<number, string>();
-    existingInvoices.forEach((i) => {
+    existingCustomers.forEach((i) => {
       if (i.larkRecordId) {
         quickCache.set(Number(i.kiotVietId), i.larkRecordId);
       }
@@ -461,27 +407,27 @@ export class LarkInvoiceHistoricalSyncService {
     this.existingRecordsCache = quickCache;
 
     try {
-      const { newInvoices, updateInvoices } =
-        await this.categorizeInvoices(invoices);
+      const { newCustomers, updateCustomers } =
+        await this.categorizeCustomers(customers);
 
-      if (newInvoices.length > 0) {
-        await this.processNewInvoices(newInvoices);
+      if (newCustomers.length > 0) {
+        await this.processNewCustomers(newCustomers);
       }
 
-      if (updateInvoices.length > 0) {
-        await this.processUpdateInvoices(updateInvoices);
+      if (updateCustomers.length > 0) {
+        await this.processUpdateCustomers(updateCustomers);
       }
     } finally {
       this.existingRecordsCache = originalCache;
     }
   }
 
-  private async processNewInvoices(invoices: any[]): Promise<void> {
-    if (invoices.length === 0) return;
+  private async processNewCustomers(customers: any[]): Promise<void> {
+    if (customers.length === 0) return;
 
-    this.logger.log(`Creating ${invoices.length} new invoices...`);
+    this.logger.log(`Creating ${customers.length} new customers...`);
 
-    const batches = this.chunkArray(invoices, this.batchSize);
+    const batches = this.chunkArray(customers, this.batchSize);
     let totalCreated = 0;
     let totalFailed = 0;
 
@@ -489,28 +435,28 @@ export class LarkInvoiceHistoricalSyncService {
       const batch = batches[i];
 
       const verifiedBatch: any[] = [];
-      for (const invoice of batch) {
-        const kiotVietId = this.safeBigIntToNumber(invoice.kiotVietId);
+      for (const customer of batch) {
+        const kiotVietId = this.safeBigIntToNumber(customer.kiotVietId);
         if (!this.existingRecordsCache.has(kiotVietId)) {
-          verifiedBatch.push(invoice);
+          verifiedBatch.push(customer);
         } else {
           this.logger.warn(
-            `Skipping duplicate invoice ${kiotVietId} in batch ${i + 1}`,
+            `Skipping duplicate customer ${kiotVietId} in batch ${i + 1}`,
           );
         }
       }
 
       if (verifiedBatch.length === 0) {
-        this.logger.log(`Batch ${i + 1} skipped - all invoices already exist`);
+        this.logger.log(`Batch ${i + 1} skipped - all customers already exist`);
         continue;
       }
 
       this.logger.log(
-        `Creating batch ${i + 1}/${batches.length} (${verifiedBatch.length} invoices)...`,
+        `Creating batch ${i + 1}/${batches.length} (${verifiedBatch.length} customers)...`,
       );
 
       const { successRecords, failedRecords } =
-        await this.batchCreateInvoices(verifiedBatch);
+        await this.batchCreateCustomers(verifiedBatch);
 
       totalCreated += successRecords.length;
       totalFailed += failedRecords.length;
@@ -531,10 +477,6 @@ export class LarkInvoiceHistoricalSyncService {
       this.logger.log(
         `Batch ${i + 1}/${batches.length}: ${successRecords.length}/${batch.length} created`,
       );
-
-      // if (i < batches.length - 1) {
-      //   await new Promise((resolve) => setTimeout(resolve, 500));
-      // }
     }
 
     this.logger.log(
@@ -542,10 +484,10 @@ export class LarkInvoiceHistoricalSyncService {
     );
   }
 
-  private async processUpdateInvoices(invoices: any[]): Promise<void> {
-    if (invoices.length === 0) return;
+  private async processUpdateCustomers(customers: any[]): Promise<void> {
+    if (customers.length === 0) return;
 
-    this.logger.log(`Updating ${invoices.length} existing invoices...`);
+    this.logger.log(`Updating ${customers.length} existing customers...`);
 
     let successCount = 0;
     let failedCount = 0;
@@ -553,39 +495,35 @@ export class LarkInvoiceHistoricalSyncService {
 
     const UPDATE_CHUNK_SIZE = 20;
 
-    for (let i = 0; i < invoices.length; i += UPDATE_CHUNK_SIZE) {
-      const chunk = invoices.slice(i, i + UPDATE_CHUNK_SIZE);
+    for (let i = 0; i < customers.length; i += UPDATE_CHUNK_SIZE) {
+      const chunk = customers.slice(i, i + UPDATE_CHUNK_SIZE);
 
       await Promise.all(
-        chunk.map(async (invoice) => {
+        chunk.map(async (customer) => {
           try {
-            const updated = await this.updateSingleInvoice(invoice);
+            const updated = await this.updateSingleCustomer(customer);
 
             if (updated) {
               successCount++;
-              await this.updateDatabaseStatus([invoice], 'SYNCED');
+              await this.updateDatabaseStatus([customer], 'SYNCED');
             } else {
-              createFallbacks.push(invoice);
+              createFallbacks.push(customer);
             }
           } catch (error) {
             this.logger.warn(
-              `Update failed for ${invoice.code}: ${error.message}`,
+              `Update failed for ${customer.code}: ${error.message}`,
             );
-            createFallbacks.push(invoice);
+            createFallbacks.push(customer);
           }
         }),
       );
-
-      // if (i + UPDATE_CHUNK_SIZE < invoices.length) {
-      //   await new Promise((resolve) => setTimeout(resolve, 300));
-      // }
     }
 
     if (createFallbacks.length > 0) {
       this.logger.log(
-        `Creating ${createFallbacks.length} invoices that failed update...`,
+        `Creating ${createFallbacks.length} customers that failed update...`,
       );
-      await this.processNewInvoices(createFallbacks);
+      await this.processNewCustomers(createFallbacks);
     }
 
     this.logger.log(
@@ -593,16 +531,17 @@ export class LarkInvoiceHistoricalSyncService {
     );
   }
 
-  private async batchCreateInvoices(invoices: any[]): Promise<BatchResult> {
-    const records = invoices.map((invoice) => ({
-      fields: this.mapInvoiceToLarkBase(invoice),
+  private async batchCreateCustomers(customers: any[]): Promise<BatchResult> {
+    const records = customers.map((customer) => ({
+      fields: this.mapCustomerToLarkBase(customer),
     }));
 
     let authRetries = 0;
 
     while (authRetries < this.MAX_AUTH_RETRIES) {
       try {
-        const headers = await this.larkAuthService.getInvoiceHeaders();
+        const headers =
+          await this.larkAuthService.getCustomerHistoricalHeaders();
         const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/batch_create`;
 
         const response = await firstValueFrom(
@@ -616,18 +555,18 @@ export class LarkInvoiceHistoricalSyncService {
         if (response.data.code === 0) {
           const createdRecords = response.data.data?.records || [];
           const successCount = createdRecords.length;
-          const successRecords = invoices.slice(0, successCount);
-          const failedRecords = invoices.slice(successCount);
+          const successRecords = customers.slice(0, successCount);
+          const failedRecords = customers.slice(successCount);
 
           for (
             let i = 0;
             i < Math.min(successRecords.length, createdRecords.length);
             i++
           ) {
-            const invoice = successRecords[i];
+            const customer = successRecords[i];
             const createdRecord = createdRecords[i];
 
-            const kiotVietId = this.safeBigIntToNumber(invoice.kiotVietId);
+            const kiotVietId = this.safeBigIntToNumber(customer.kiotVietId);
             if (kiotVietId > 0) {
               this.existingRecordsCache.set(
                 kiotVietId,
@@ -635,16 +574,16 @@ export class LarkInvoiceHistoricalSyncService {
               );
             }
 
-            if (invoice.code) {
-              this.invoiceCodeCache.set(
-                String(invoice.code).trim(),
+            if (customer.code) {
+              this.customerCodeCache.set(
+                String(customer.code).trim(),
                 createdRecord.record_id,
               );
             }
 
-            if (createdRecord.record_id && invoice.id) {
-              await this.prismaService.invoice.update({
-                where: { id: invoice.id },
+            if (createdRecord.record_id && customer.id) {
+              await this.prismaService.customer.update({
+                where: { id: customer.id },
                 data: {
                   larkRecordId: createdRecord.record_id,
                   larkSyncStatus: 'SYNCED',
@@ -655,13 +594,13 @@ export class LarkInvoiceHistoricalSyncService {
             }
           }
 
-          successRecords.forEach((invoice) => {
-            const kiotVietId = this.safeBigIntToNumber(invoice.kiotVietId);
+          successRecords.forEach((customer) => {
+            const kiotVietId = this.safeBigIntToNumber(customer.kiotVietId);
             this.pendingCreation.delete(kiotVietId);
           });
 
-          failedRecords.forEach((invoice) => {
-            const kiotVietId = this.safeBigIntToNumber(invoice.kiotVietId);
+          failedRecords.forEach((customer) => {
+            const kiotVietId = this.safeBigIntToNumber(customer.kiotVietId);
             this.pendingCreation.delete(kiotVietId);
           });
 
@@ -670,7 +609,7 @@ export class LarkInvoiceHistoricalSyncService {
 
         if (this.AUTH_ERROR_CODES.includes(response.data.code)) {
           authRetries++;
-          await this.larkAuthService.forceRefreshInvoiceToken();
+          await this.larkAuthService.forceRefreshCustomerHistoricalToken();
           await new Promise((resolve) => setTimeout(resolve, 500));
           continue;
         }
@@ -678,7 +617,7 @@ export class LarkInvoiceHistoricalSyncService {
         this.logger.warn(
           `Batch create failed: ${response.data.msg} (Code: ${response.data.code})`,
         );
-        return { successRecords: [], failedRecords: invoices };
+        return { successRecords: [], failedRecords: customers };
       } catch (error) {
         this.logger.error('Batch create error details:', {
           status: error.response?.status,
@@ -698,37 +637,38 @@ export class LarkInvoiceHistoricalSyncService {
           );
         }
 
-        return { successRecords: [], failedRecords: invoices };
+        return { successRecords: [], failedRecords: customers };
       }
     }
 
-    return { successRecords: [], failedRecords: invoices };
+    return { successRecords: [], failedRecords: customers };
   }
 
-  private async updateSingleInvoice(invoice: any): Promise<boolean> {
+  private async updateSingleCustomer(customer: any): Promise<boolean> {
     let authRetries = 0;
 
     while (authRetries < this.MAX_AUTH_RETRIES) {
       try {
-        const headers = await this.larkAuthService.getInvoiceHeaders();
-        const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/${invoice.larkRecordId}`;
+        const headers =
+          await this.larkAuthService.getCustomerHistoricalHeaders();
+        const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/${customer.larkRecordId}`;
 
         const response = await firstValueFrom(
           this.httpService.put(
             url,
-            { fields: this.mapInvoiceToLarkBase(invoice) },
+            { fields: this.mapCustomerToLarkBase(customer) },
             { headers, timeout: 15000 },
           ),
         );
 
         if (response.data.code === 0) {
           this.logger.debug(
-            `Updated record ${invoice.larkRecordId} for invoice ${invoice.code}`,
+            `Updated record ${customer.larkRecordId} for customer ${customer.code}`,
           );
-          await this.prismaService.invoice.update({
-            where: { id: invoice.id },
+          await this.prismaService.customer.update({
+            where: { id: customer.id },
             data: {
-              larkRecordId: invoice.larkRecordId,
+              larkRecordId: customer.larkRecordId,
               larkSyncStatus: 'SYNCED',
               larkSyncedAt: new Date(),
               larkSyncRetries: 0,
@@ -739,7 +679,7 @@ export class LarkInvoiceHistoricalSyncService {
 
         if (this.AUTH_ERROR_CODES.includes(response.data.code)) {
           authRetries++;
-          await this.larkAuthService.forceRefreshInvoiceToken();
+          await this.larkAuthService.forceRefreshCustomerHistoricalToken();
           await new Promise((resolve) => setTimeout(resolve, 500));
           continue;
         }
@@ -749,13 +689,13 @@ export class LarkInvoiceHistoricalSyncService {
       } catch (error) {
         if (error.response?.status === 401 || error.response?.status === 403) {
           authRetries++;
-          await this.larkAuthService.forceRefreshInvoiceToken();
+          await this.larkAuthService.forceRefreshCustomerHistoricalToken();
           await new Promise((resolve) => setTimeout(resolve, 500));
           continue;
         }
 
         if (error.response?.status === 404) {
-          this.logger.warn(`Record not found: ${invoice.larkRecordId}`);
+          this.logger.warn(`Record not found: ${customer.larkRecordId}`);
           return false;
         }
 
@@ -775,7 +715,8 @@ export class LarkInvoiceHistoricalSyncService {
           `🔍 Testing LarkBase connection (attempt ${retryCount + 1}/${maxRetries + 1})...`,
         );
 
-        const headers = await this.larkAuthService.getInvoiceHeaders();
+        const headers =
+          await this.larkAuthService.getCustomerHistoricalHeaders();
         const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records`;
         const params = new URLSearchParams({ page_size: '1' });
 
@@ -815,7 +756,7 @@ export class LarkInvoiceHistoricalSyncService {
   }
 
   private async acquireSyncLock(lockKey: string): Promise<void> {
-    const syncName = 'invoice_lark_sync';
+    const syncName = 'customer_historical_lark_sync';
 
     const existingLock = await this.prismaService.syncControl.findFirst({
       where: {
@@ -852,7 +793,7 @@ export class LarkInvoiceHistoricalSyncService {
       where: { name: syncName },
       create: {
         name: syncName,
-        entities: ['invoice'],
+        entities: ['customer'],
         syncMode: 'lark_sync',
         isEnabled: true,
         isRunning: true,
@@ -918,7 +859,7 @@ export class LarkInvoiceHistoricalSyncService {
       });
 
       if (!existingLock) {
-        return; // Lock is available
+        return;
       }
 
       this.logger.debug(
@@ -946,7 +887,7 @@ export class LarkInvoiceHistoricalSyncService {
   private async releaseSyncLock(lockKey: string): Promise<void> {
     const lockRecord = await this.prismaService.syncControl.findFirst({
       where: {
-        name: 'invoice_lark_sync',
+        name: 'customer_historical_lark_sync',
         isRunning: true,
       },
     });
@@ -975,12 +916,12 @@ export class LarkInvoiceHistoricalSyncService {
   }
 
   private async updateDatabaseStatus(
-    invoices: any[],
+    customers: any[],
     status: 'SYNCED' | 'FAILED',
   ): Promise<void> {
-    if (invoices.length === 0) return;
+    if (customers.length === 0) return;
 
-    const invoiceIds = invoices.map((i) => i.id);
+    const customerIds = customers.map((i) => i.id);
     const updateData = {
       larkSyncStatus: status,
       larkSyncedAt: new Date(),
@@ -988,15 +929,15 @@ export class LarkInvoiceHistoricalSyncService {
       ...(status === 'SYNCED' && { larkSyncRetries: 0 }),
     };
 
-    await this.prismaService.invoice.updateMany({
-      where: { id: { in: invoiceIds } },
+    await this.prismaService.customer.updateMany({
+      where: { id: { in: customerIds } },
       data: updateData,
     });
   }
 
   private clearCache(): void {
     this.existingRecordsCache.clear();
-    this.invoiceCodeCache.clear();
+    this.customerCodeCache.clear();
     this.cacheLoaded = false;
     this.lastCacheLoadTime = null;
     this.logger.debug('🧹 Cache cleared');
@@ -1039,210 +980,144 @@ export class LarkInvoiceHistoricalSyncService {
     }
   }
 
-  private mapInvoiceToLarkBase(invoice: any): Record<string, any> {
+  private mapCustomerToLarkBase(customer: any): Record<string, any> {
     const fields: Record<string, any> = {};
 
-    fields[LARK_INVOICE_FIELDS.KIOTVIET_ID] = this.safeBigIntToNumber(
-      invoice.kiotVietId,
-    );
+    fields[LARK_CUSTOMER_FIELDS.KIOTVIET_ID] = Number(customer.kiotVietId || 0);
 
-    if (invoice.code) {
-      fields[LARK_INVOICE_FIELDS.PRIMARY_CODE] = invoice.code;
+    if (customer.name) {
+      fields[LARK_CUSTOMER_FIELDS.PRIMARY_NAME] = customer.name;
     }
 
-    if (invoice.orderCode) {
-      fields[LARK_INVOICE_FIELDS.ORDER_CODE] = invoice.orderCode || '';
+    if (customer.code) {
+      fields[LARK_CUSTOMER_FIELDS.CUSTOMER_CODE] = customer.code;
     }
 
-    if (invoice.purchaseDate) {
-      fields[LARK_INVOICE_FIELDS.PURCHASE_DATE] = new Date(
-        invoice.purchaseDate,
+    if (customer.contactNumber) {
+      fields[LARK_CUSTOMER_FIELDS.PHONE_NUMBER] = customer.contactNumber || '';
+    }
+
+    if (customer.retailerId) {
+      fields[LARK_CUSTOMER_FIELDS.STORE_ID] = '310831';
+    }
+
+    if (customer.organization) {
+      fields[LARK_CUSTOMER_FIELDS.COMPANY] = customer.organization || '';
+    }
+
+    if (customer.email) {
+      fields[LARK_CUSTOMER_FIELDS.EMAIL] = customer.email || '';
+    }
+
+    if (customer.address) {
+      fields[LARK_CUSTOMER_FIELDS.ADDRESS] = customer.address || '';
+    }
+
+    if (customer.debt !== null && customer.debt !== undefined) {
+      fields[LARK_CUSTOMER_FIELDS.CURRENT_DEBT] = Number(customer.debt || 0);
+    }
+
+    if (customer.taxCode) {
+      fields[LARK_CUSTOMER_FIELDS.TAX_CODE] = customer.taxCode || '';
+    }
+
+    if (customer.totalPoint !== null && customer.totalPoint !== undefined) {
+      fields[LARK_CUSTOMER_FIELDS.TOTAL_POINTS] =
+        Number(customer.totalPoint) || 0;
+    }
+
+    if (customer.totalRevenue !== null && customer.totalRevenue !== undefined) {
+      fields[LARK_CUSTOMER_FIELDS.TOTAL_REVENUE] =
+        Number(customer.totalRevenue) || 0;
+    }
+
+    if (customer.gender !== null && customer.gender !== undefined) {
+      fields[LARK_CUSTOMER_FIELDS.GENDER] = customer.gender
+        ? GENDER_OPTIONS.MALE
+        : GENDER_OPTIONS.FEMALE;
+    }
+
+    if (customer.branchId !== null && customer.branchId !== undefined) {
+      if (customer.branchId === 635934) {
+        fields[LARK_CUSTOMER_FIELDS.BRANCH] = BRANCH_OPTIONS.CUA_HANG_DIEP_TRA;
+      } else if (customer.branchId === 154833) {
+        fields[LARK_CUSTOMER_FIELDS.BRANCH] = BRANCH_OPTIONS.KHO_HA_NOI;
+      } else if (customer.branchId === 402819) {
+        fields[LARK_CUSTOMER_FIELDS.BRANCH] = BRANCH_OPTIONS.KHO_SAI_GON;
+      } else if (customer.branchId === 631164) {
+        fields[LARK_CUSTOMER_FIELDS.BRANCH] = BRANCH_OPTIONS.VAN_PHONG_HA_NOI;
+      }
+    }
+
+    if (customer.groups !== null && customer.groups !== undefined) {
+      fields[LARK_CUSTOMER_FIELDS.CUSTOMER_GROUPS] = customer.groups || '';
+    }
+
+    if (customer.wardName) {
+      fields[LARK_CUSTOMER_FIELDS.WARD_NAME] = customer.wardName || '';
+    }
+
+    if (customer.rewardPoint !== null && customer.rewardPoint !== undefined) {
+      fields[LARK_CUSTOMER_FIELDS.CURRENT_POINTS] =
+        Number(customer.rewardPoint) || 0;
+    }
+
+    if (customer.type !== null && customer.type !== undefined) {
+      const typeMapping = {
+        0: TYPE_CUSTOMER.CA_NHAN,
+        1: TYPE_CUSTOMER.CONG_TY,
+      };
+
+      fields[LARK_CUSTOMER_FIELDS.TYPE] = typeMapping[customer.type];
+    }
+
+    if (
+      customer.totalInvoiced !== null &&
+      customer.totalInvoiced !== undefined
+    ) {
+      fields[LARK_CUSTOMER_FIELDS.TOTAL_INVOICED] =
+        Number(customer.totalInvoiced) || 0;
+    }
+
+    if (customer.comments) {
+      fields[LARK_CUSTOMER_FIELDS.COMMENTS] = customer.comments || '';
+    }
+
+    if (customer.birthDate) {
+      fields[LARK_CUSTOMER_FIELDS.DATE_OF_BIRTH] = new Date(
+        customer.birthDate,
       ).getTime();
     }
 
-    if (invoice.branchId !== null && invoice.branchId !== undefined) {
-      const branchMapping = {
-        1: BRANCH_OPTIONS.CUA_HANG_DIEP_TRA,
-        2: BRANCH_OPTIONS.KHO_HA_NOI,
-        3: BRANCH_OPTIONS.KHO_SAI_GON,
-        4: BRANCH_OPTIONS.VAN_PHONG_HA_NOI,
-      };
-      fields[LARK_INVOICE_FIELDS.BRANCH] =
-        branchMapping[invoice.branchId] || '';
-    }
-
-    // Seller name - need to look up from soldById
-    if (invoice.soldById !== null && invoice.soldById !== undefined) {
-      const sellerMapping: Record<number, string> = {
-        1015579: SALE_NAME.ADMIN,
-        1031177: SALE_NAME.DINH_THI_LY_LY,
-        1015592: SALE_NAME.TRAN_XUAN_PHUONG,
-        1015596: SALE_NAME.LE_THI_HONG_LIEN,
-        1015604: SALE_NAME.PHI_THI_PHUONG_THANH,
-        1015610: SALE_NAME.LE_XUAN_TUNG,
-        1015613: SALE_NAME.TA_THI_TRANG,
-        1015698: SALE_NAME.BANG_ANH_VU,
-        1015722: SALE_NAME.MAI_THI_VAN_ANH,
-        1015729: SALE_NAME.LINH_THU_TRANG,
-        1015746: SALE_NAME.LY_THI_HONG_DAO,
-        1015761: SALE_NAME.NGUYEN_HUYEN_TRANG,
-        1015764: SALE_NAME.NGUYEN_THI_NGAN,
-        1015777: SALE_NAME.NGUYEN_THI_THUONG,
-        1015781: SALE_NAME.VU_HUYEN_TRANG,
-        1015788: SALE_NAME.LINH_THUY_DUONG,
-        1016818: SALE_NAME.NGUYEN_THI_PHUONG,
-        383855: SALE_NAME.NGUYEN_HUU_TOAN,
-        1032906: SALE_NAME.LE_BICH_NGOC,
-        1032972: SALE_NAME.NGUYEN_THI_LOAN,
-        1034030: SALE_NAME.NGUYEN_VIET_NAM,
-        1030913: SALE_NAME.CUA_HANG_DIEP_TRA_ANH_TUAN,
-        1034176: SALE_NAME.DO_THI_THUONG,
-        1034250: SALE_NAME.NGUYEN_THI_BICH_NGOC,
-        1034266: SALE_NAME.LE_BAO_NGAN,
-      };
-
-      fields[LARK_INVOICE_FIELDS.SELLER] =
-        sellerMapping[invoice.soldById] || '';
-    }
-
-    if (invoice.customerCode !== null && invoice.customerCode !== undefined) {
-      fields[LARK_INVOICE_FIELDS.CUSTOMER_CODE] = invoice.customerCode || '';
-    }
-
-    if (invoice.customerName !== null && invoice.customerName !== undefined) {
-      fields[LARK_INVOICE_FIELDS.CUSTOMER_NAME] = invoice.customerName || '';
-    }
-
-    // Financial fields
-    if (invoice.total !== null && invoice.total !== undefined) {
-      fields[LARK_INVOICE_FIELDS.CUSTOMER_NEED_PAY] = Number(
-        invoice.total || 0,
-      );
-    }
-
-    if (invoice.totalPayment !== null && invoice.totalPayment !== undefined) {
-      fields[LARK_INVOICE_FIELDS.CUSTOMER_PAID] = Number(
-        invoice.totalPayment || 0,
-      );
-    }
-
-    if (invoice.discount !== null && invoice.discount !== undefined) {
-      fields[LARK_INVOICE_FIELDS.DISCOUNT] = Number(invoice.discount || 0);
-    }
-
-    if (invoice.discountRatio !== null && invoice.discountRatio !== undefined) {
-      fields[LARK_INVOICE_FIELDS.DISCOUNT_RATIO] = Number(
-        invoice.discountRatio || 0,
-      );
-    }
-
-    // Status
-    if (invoice.status) {
-      if (invoice.status === 1) {
-        fields[LARK_INVOICE_FIELDS.STATUS] = STATUS_OPTIONS.COMPLETED;
-      } else if (invoice.status === 2) {
-        fields[LARK_INVOICE_FIELDS.STATUS] = STATUS_OPTIONS.CANCELLED;
-      } else if (invoice.status === 3) {
-        fields[LARK_INVOICE_FIELDS.STATUS] = STATUS_OPTIONS.PROCESSING;
-      } else if (invoice.status === 4) {
-        fields[LARK_INVOICE_FIELDS.STATUS] = STATUS_OPTIONS.DELIVERY_FAILED;
-      }
-    }
-
-    if (invoice.saleChannelId) {
-      if (invoice.saleChannelId === 1) {
-        fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] = SALE_CHANNEL_OPTIONS.DIRECT;
-      }
-      if (invoice.saleChannelId === 2) {
-        fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] =
-          SALE_CHANNEL_OPTIONS.LERMAO_SANH_AN;
-      }
-      if (invoice.saleChannelId === 3) {
-        fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] =
-          SALE_CHANNEL_OPTIONS.DIEP_TRA_PHA_CHE;
-      }
-      if (invoice.saleChannelId === 4) {
-        fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] =
-          SALE_CHANNEL_OPTIONS.FACEBOOK;
-      }
-      if (invoice.saleChannelId === 5) {
-        fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] =
-          SALE_CHANNEL_OPTIONS.INSTAGRAM;
-      }
-      if (invoice.saleChannelId === 6) {
-        fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] = SALE_CHANNEL_OPTIONS.DIEPTRA;
-      }
-      if (invoice.saleChannelId === 7) {
-        fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] =
-          SALE_CHANNEL_OPTIONS.DIEPTRA_OFFICIAL;
-      }
-      if (invoice.saleChannelId === 8) {
-        fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] =
-          SALE_CHANNEL_OPTIONS.TIKTOK_LIVE;
-      }
-      if (invoice.saleChannelId === 9) {
-        fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] =
-          SALE_CHANNEL_OPTIONS.DIEPTRA_ROYAL;
-      }
-      if (invoice.saleChannelId === 10) {
-        fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] =
-          SALE_CHANNEL_OPTIONS.DIEPTRA_TONGKHO_NGUYENLIEU;
-      }
-      if (invoice.saleChannelId === 11) {
-        fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] =
-          SALE_CHANNEL_OPTIONS.DIEPTRA_TONGKHO_NGUYENLIEU_2;
-      }
-      if (invoice.saleChannelId === 12) {
-        fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] =
-          SALE_CHANNEL_OPTIONS.DIEPTRA_CHINHANH_MIENNAM;
-      }
-      if (invoice.saleChannelId === 13) {
-        fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] =
-          SALE_CHANNEL_OPTIONS.DIEPTRA_CHINHANH_MIENNAM_2;
-      }
-      if (invoice.saleChannelId === 14) {
-        fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] =
-          SALE_CHANNEL_OPTIONS.DIEPTRA_SAIGON;
-      }
-      if (invoice.saleChannelId === 15) {
-        fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] =
-          SALE_CHANNEL_OPTIONS.MAOMAO_THICH_TRASUA;
-      }
-      if (invoice.saleChannelId === 16) {
-        fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] = SALE_CHANNEL_OPTIONS.SHOPEE;
-      }
-      if (invoice.saleChannelId === 17) {
-        fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] =
-          SALE_CHANNEL_OPTIONS.DIEPTRA_ROYAL_2;
-      }
-      if (invoice.saleChannelId === 18) {
-        fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] =
-          SALE_CHANNEL_OPTIONS.DIEPTRA_SAIGON_2;
-      }
-      if (invoice.saleChannelId === 19) {
-        fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] = SALE_CHANNEL_OPTIONS.WEBSITE;
-      }
-      if (invoice.saleChannelId === 20) {
-        fields[LARK_INVOICE_FIELDS.SALE_CHANNEL] = SALE_CHANNEL_OPTIONS.OTHER;
-      }
-    }
-
-    fields[LARK_INVOICE_FIELDS.APPLY_VOUCHER] = invoice.isApplyVoucher
-      ? VOUCHER_OPTIONS.YES
-      : VOUCHER_OPTIONS.NO;
-
-    fields[LARK_INVOICE_FIELDS.APPLY_COD] = invoice.usingCod
-      ? COD_APPLY.YES
-      : COD_APPLY.NO;
-
-    if (invoice.description) {
-      fields[LARK_INVOICE_FIELDS.COMMENT] = invoice.description || '';
-    }
-
-    if (invoice.createdDate) {
-      fields[LARK_INVOICE_FIELDS.CREATED_DATE] = new Date(
-        invoice.createdDate,
+    if (customer.modifiedDate) {
+      fields[LARK_CUSTOMER_FIELDS.MODIFIED_DATE] = new Date(
+        customer.modifiedDate,
       ).getTime();
+    }
+
+    if (customer.createdDate) {
+      fields[LARK_CUSTOMER_FIELDS.CREATED_DATE] = new Date(
+        customer.createdDate,
+      ).getTime();
+    }
+
+    if (customer.locationName) {
+      fields[LARK_CUSTOMER_FIELDS.LOCATION_NAME] = customer.locationName || '';
+    }
+
+    if (customer.psidFacebook) {
+      fields[LARK_CUSTOMER_FIELDS.FACEBOOK_ID] = String(
+        customer.psidFacebook || '',
+      );
+    }
+
+    if (customer.subNumber) {
+      fields[LARK_CUSTOMER_FIELDS.SUB_PHONE] = customer.subNumber || '';
+    }
+
+    if (customer.identificationNumber) {
+      fields[LARK_CUSTOMER_FIELDS.IDENTIFICATION_NUMBER] =
+        customer.identificationNumber || '';
     }
 
     return fields;

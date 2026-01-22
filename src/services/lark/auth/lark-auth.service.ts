@@ -17,6 +17,9 @@ export class LarkAuthService {
   private customerAccessToken: string | null = null;
   private customerTokenExpiry: Date | null = null;
 
+  private customerHistoricalAccessToken: string | null = null;
+  private customerHistoricalTokenExpiry: Date | null = null;
+
   private invoiceAccessToken: string | null = null;
   private invoiceTokenExpiry: Date | null = null;
 
@@ -64,6 +67,7 @@ export class LarkAuthService {
   async getAccessToken(
     service:
       | 'customer'
+      | 'customerHistorical'
       | 'invoice'
       | 'invoiceDetail'
       | 'invoiceHistorical'
@@ -81,6 +85,8 @@ export class LarkAuthService {
     switch (service) {
       case 'customer':
         return await this.getCustomerAccessToken();
+      case 'customerHistorical':
+        return await this.getCustomerHistoricalAccessToken();
       case 'invoice':
         return await this.getInvoiceAccessToken();
       case 'invoiceHistorical':
@@ -197,6 +203,101 @@ export class LarkAuthService {
     this.customerAccessToken = null;
     this.customerTokenExpiry = null;
     await this.refreshCustomerToken();
+  }
+
+  // ============================================================================
+  // CUSTOMER HISTORICAL TOKEN MANAGEMENT
+  // ============================================================================
+
+  async getCustomerHistoricalHeaders(): Promise<Record<string, string>> {
+    const token = await this.getCustomerHistoricalAccessToken();
+    return {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    };
+  }
+
+  private async getCustomerHistoricalAccessToken(): Promise<string> {
+    if (
+      this.customerHistoricalAccessToken &&
+      this.customerHistoricalTokenExpiry &&
+      this.customerHistoricalTokenExpiry > new Date(Date.now() + 5 * 60 * 1000)
+    ) {
+      return this.customerHistoricalAccessToken;
+    }
+
+    return await this.refreshCustomerHistoricalToken();
+  }
+
+  private async refreshCustomerHistoricalToken(): Promise<string> {
+    try {
+      this.logger.log(
+        '🔄 Refreshing LarkBase customer historical access token...',
+      );
+
+      const appId = this.configService.get<string>(
+        'LARK_CUSTOMER_HISTORICAL_SYNC_APP_ID',
+      );
+      const appSecret = this.configService.get<string>(
+        'LARK_CUSTOMER_HISTORICAL_SYNC_APP_SECRET',
+      );
+
+      if (!appId || !appSecret) {
+        throw new Error(
+          'LarkBase customer historical credentials not configured',
+        );
+      }
+
+      const url =
+        'https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal';
+
+      const response = await firstValueFrom(
+        this.httpService.post<TenantAccessTokenResponse>(
+          url,
+          {
+            app_id: appId,
+            app_secret: appSecret,
+          },
+          {
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            timeout: 10000,
+          },
+        ),
+      );
+
+      if (response.data.code !== 0) {
+        throw new Error(
+          `LarkBase auth failed: ${response.data.msg} (code: ${response.data.code})`,
+        );
+      }
+
+      this.customerHistoricalAccessToken = response.data.tenant_access_token;
+      this.customerHistoricalTokenExpiry = new Date(
+        Date.now() + response.data.expire * 1000,
+      );
+
+      this.logger.log(
+        '✅ LarkBase customer historical token refreshed successfully',
+      );
+      return this.customerHistoricalAccessToken;
+    } catch (error) {
+      this.logger.error(
+        `❌ Failed to refresh customer historical token: ${error.message}`,
+      );
+
+      this.customerHistoricalAccessToken = null;
+      this.customerHistoricalTokenExpiry = null;
+
+      throw new Error(`Token refresh failed: ${error.message}`);
+    }
+  }
+
+  async forceRefreshCustomerHistoricalToken(): Promise<void> {
+    this.customerHistoricalAccessToken = null;
+    this.customerHistoricalTokenExpiry = null;
+    await this.refreshCustomerHistoricalToken();
   }
 
   // ============================================================================

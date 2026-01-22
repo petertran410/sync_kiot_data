@@ -1,3 +1,4 @@
+import { LarkCustomerHistoricalSyncService } from './../services/lark/customer-historical/lark-customer-historical-sync.service';
 import { LarkPurchaseOrderSyncService } from './../services/lark/purchase-order/lark-purchase-order-sync.service';
 import { Controller, Get, Post, Query, Logger } from '@nestjs/common';
 import { KiotVietCustomerService } from '../services/kiot-viet/customer/customer.service';
@@ -8,22 +9,16 @@ import { KiotVietOrderService } from 'src/services/kiot-viet/order/order.service
 import { LarkOrderSyncService } from './../services/lark/order/lark-order-sync.service';
 import { KiotVietProductService } from 'src/services/kiot-viet/product/product.service';
 import { KiotVietCategoryService } from '../services/kiot-viet/category/category.service';
-import { KiotVietCustomerGroupService } from 'src/services/kiot-viet/customer-group/customer-group.service';
 import { KiotVietReturnService } from 'src/services/kiot-viet/returns/return.service';
-import { KiotVietPriceBookService } from 'src/services/kiot-viet/pricebook/pricebook.service';
-import { LarkProductSyncService } from 'src/services/lark/product/lark-product-sync.service';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { KiotVietOrderSupplierService } from 'src/services/kiot-viet/order-supplier/order-supplier.service';
 import { LarkOrderSupplierSyncService } from 'src/services/lark/order-supplier/lark-order-supplier-sync.service';
 import { KiotVietPurchaseOrderService } from 'src/services/kiot-viet/purchase-order/purchase-order.service';
-import { KiotVietTradeMarkService } from 'src/services/kiot-viet/trademark/trademark.service';
 import { KiotVietCashflowService } from 'src/services/kiot-viet/cashflow/cashflow.service';
-import { LarkCashflowSyncService } from 'src/services/lark/cashflow/lark-cashflow-sync.service';
 import { KiotVietTransferService } from 'src/services/kiot-viet/transfer/transfer.service';
 import { LarkDemandSyncService } from 'src/services/lark/demand/lark-demand-sync.service';
 import { LarkInvoiceDetailSyncService } from 'src/services/lark/invoice-detail/lark-invoice-detail-sync.service';
 import { KiotVietVoucherCampaign } from 'src/services/kiot-viet/voucher-campaign/voucher-campaign.service';
-import { LarkVoucherCampaignSyncService } from 'src/services/lark/voucher-campaign/lark-voucher-campaign-sync.service';
 import { LarkTransferSyncService } from 'src/services/lark/transfer/lark-transfer-sync.service';
 import { KiotVietUserService } from 'src/services/kiot-viet/user/user.service';
 import { KiotVietSupplierService } from 'src/services/kiot-viet/supplier/supplier.service';
@@ -35,11 +30,15 @@ export class SyncController {
 
   constructor(
     private readonly customerService: KiotVietCustomerService,
-    private readonly larkCustomerSyncService: LarkCustomerSyncService,
+
+    private readonly larkCustomerSyncService: LarkCustomerHistoricalSyncService,
 
     private readonly invoiceService: KiotVietInvoiceService,
+
     private readonly larkInvoiceSyncService: LarkInvoiceHistoricalSyncService,
+
     private readonly larkInvoiceDetailSyncService: LarkInvoiceDetailSyncService,
+
     private readonly orderService: KiotVietOrderService,
     private readonly larkOrderSyncService: LarkOrderSyncService,
     private readonly productService: KiotVietProductService,
@@ -66,7 +65,6 @@ export class SyncController {
       this.logger.log('Manual historical customer sync triggered');
 
       await this.customerService.enableHistoricalSync();
-
       await this.customerService.syncHistoricalCustomers();
 
       const customersToSync = await this.prismaService.customer.findMany({
@@ -79,6 +77,8 @@ export class SyncController {
       await this.larkCustomerSyncService.syncCustomersToLarkBase(
         customersToSync,
       );
+
+      this.logger.log(`Synced ${customersToSync.length} customers to LarkBase`);
 
       return {
         success: true,

@@ -148,7 +148,7 @@ export class WebhookService {
 
               if (!shouldSyncToLark) {
                 this.logger.log(
-                  `⏭️  Skipping LarkBase sync for customer ${savedCustomer.code}: ` +
+                  `Skipping LarkBase sync for customer ${savedCustomer.code}: ` +
                     `Special code with missing locationName or wardName`,
                 );
               }

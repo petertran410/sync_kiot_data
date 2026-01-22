@@ -149,9 +149,9 @@ export class LarkCustomerSyncService {
           await new Promise((resolve) => setTimeout(resolve, 100));
         }
 
-        if (i + BATCH_SIZE < customersToSync.length) {
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-        }
+        // if (i + BATCH_SIZE < customersToSync.length) {
+        //   await new Promise((resolve) => setTimeout(resolve, 2000));
+        // }
       }
 
       this.logger.log('🎯 Batch sync completed!');
@@ -169,7 +169,21 @@ export class LarkCustomerSyncService {
     try {
       this.logger.log(`🔄 Syncing customer ${customer.code} to Lark...`);
 
-      const existingRecordId = await this.searchRecordByCode(customer.code);
+      let existingRecordId: string | null = customer.larkRecordId || null;
+
+      if (!existingRecordId) {
+        existingRecordId = await this.searchRecordByCode(customer.code);
+
+        if (existingRecordId) {
+          await this.prismaService.customer.update({
+            where: { id: customer.id },
+            data: { larkRecordId: existingRecordId },
+          });
+          this.logger.log(
+            `✅ Found and saved larkRecordId for customer ${customer.code}`,
+          );
+        }
+      }
 
       const larkData = this.mapCustomerToLarkBase(customer);
       const headers = await this.larkAuthService.getCustomerHeaders();
@@ -177,19 +191,73 @@ export class LarkCustomerSyncService {
       if (existingRecordId) {
         const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/${existingRecordId}`;
 
-        await firstValueFrom(
-          this.httpService.put(
-            url,
-            { fields: larkData },
-            { headers, timeout: 10000 },
-          ),
-        );
+        try {
+          await firstValueFrom(
+            this.httpService.put(
+              url,
+              { fields: larkData },
+              { headers, timeout: 10000 },
+            ),
+          );
 
-        this.logger.log(`✅ Updated customer ${customer.code} in Lark`);
+          this.logger.log(`✅ Updated customer ${customer.code} in Lark`);
+
+          await this.prismaService.customer.update({
+            where: { id: customer.id },
+            data: {
+              larkRecordId: existingRecordId,
+              larkSyncStatus: 'SYNCED',
+              larkSyncedAt: new Date(),
+            },
+          });
+        } catch (updateError) {
+          const isRecordNotFound =
+            updateError.response?.status === 404 ||
+            updateError.response?.data?.code === 1254034;
+
+          if (isRecordNotFound) {
+            this.logger.warn(`⚠️ Record not found, creating new...`);
+
+            await this.prismaService.customer.update({
+              where: { id: customer.id },
+              data: { larkRecordId: null },
+            });
+
+            const createUrl = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records`;
+
+            const createResponse = await firstValueFrom(
+              this.httpService.post(
+                createUrl,
+                { fields: larkData },
+                { headers, timeout: 10000 },
+              ),
+            );
+
+            const newRecordId = createResponse.data?.data?.record?.record_id;
+
+            await this.prismaService.customer.update({
+              where: { id: customer.id },
+              data: {
+                larkRecordId: newRecordId,
+                larkSyncStatus: 'SYNCED',
+                larkSyncedAt: new Date(),
+              },
+            });
+
+            this.logger.log(`✅ Re-created invoice ${customer.code}`);
+          } else {
+            throw updateError;
+          }
+        }
       } else {
-        const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records`;
+        const finalCheck = await this.searchRecordByCode(customer.code);
+        if (finalCheck) {
+          customer.larkRecordId = finalCheck;
+          return await this.syncSingleCustomerDirect(customer);
+        }
 
-        await firstValueFrom(
+        const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records`;
+        const response = await firstValueFrom(
           this.httpService.post(
             url,
             { fields: larkData },
@@ -197,13 +265,19 @@ export class LarkCustomerSyncService {
           ),
         );
 
+        const newRecordId = response.data?.data?.record?.record_id;
+
+        await this.prismaService.invoice.update({
+          where: { id: customer.id },
+          data: {
+            larkRecordId: newRecordId,
+            larkSyncStatus: 'SYNCED',
+            larkSyncedAt: new Date(),
+          },
+        });
+
         this.logger.log(`✅ Created customer ${customer.code} in Lark`);
       }
-
-      await this.prismaService.customer.update({
-        where: { id: customer.id },
-        data: { larkSyncStatus: 'SYNCED', larkSyncedAt: new Date() },
-      });
     } catch (error) {
       this.logger.error(
         `❌ Sync customer ${customer.code} failed: ${error.message}`,
@@ -635,7 +709,7 @@ export class LarkCustomerSyncService {
       this.logger.debug(
         `⏳ Waiting for lock release... (${Math.round((Date.now() - startTime) / 1000)}s)`,
       );
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      await new Promise((resolve) => setTimeout(resolve, 500));
     }
 
     throw new Error(`Lock wait timeout after ${maxWaitMs / 1000}s`);
