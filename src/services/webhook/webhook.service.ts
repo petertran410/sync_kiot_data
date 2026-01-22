@@ -7,10 +7,12 @@ import { LarkInvoiceSyncService } from '../lark/invoice/lark-invoice-sync.servic
 import { LarkCustomerSyncService } from '../lark/customer/lark-customer-sync.service';
 import { LarkProductSyncService } from '../lark/product/lark-product-sync.service';
 import { Prisma } from '@prisma/client';
-import { firstValueFrom } from 'rxjs';
+import { async, firstValueFrom } from 'rxjs';
 import { HttpService } from '@nestjs/axios';
 import { LarkPaymentVoucherSyncService } from '../lark/payment-voucher/lark-payment-voucher-sync.service';
 import { LarkInvoiceDetailSyncService } from '../lark/invoice-detail/lark-invoice-detail-sync.service';
+import { response } from 'express';
+import { url } from 'inspector';
 
 @Injectable()
 export class WebhookService {
@@ -135,23 +137,29 @@ export class WebhookService {
           if (savedCustomer) {
             this.logger.log(`✅ Upserted customer ${savedCustomer.code}`);
 
-            const hasSpecialCode =
-              savedCustomer.code?.includes('KHSPE') ||
-              savedCustomer.code?.includes('KHTTS');
+            let shouldSyncToLark = false;
+            const nameValid =
+              savedCustomer.name && !savedCustomer.name.includes('*');
 
-            let shouldSyncToLark = true;
+            if (nameValid) {
+              const addressValid =
+                savedCustomer.address && !savedCustomer.address.includes('*');
+              const hasLocationName = !!savedCustomer.locationName;
+              const hasWardName = !!savedCustomer.wardName;
 
-            if (hasSpecialCode) {
-              shouldSyncToLark = !!(
-                savedCustomer.locationName || savedCustomer.wardName
-              );
+              shouldSyncToLark = addressValid || hasLocationName || hasWardName;
 
               if (!shouldSyncToLark) {
                 this.logger.log(
                   `Skipping LarkBase sync for customer ${savedCustomer.code}: ` +
-                    `Special code with missing locationName or wardName`,
+                    `Missing valid address/locationName/wardName`,
                 );
               }
+            } else {
+              this.logger.log(
+                `Skipping LarkBase sync for customer ${savedCustomer.code}: ` +
+                  `Name contains "*"`,
+              );
             }
 
             if (shouldSyncToLark) {
