@@ -118,7 +118,6 @@ export class LarkInvoiceDetailSyncService {
 
   async syncSingleInvoiceDetailDirect(detail: any): Promise<void> {
     try {
-      // ✅ GUARD 1: KHÔNG sync records SKIP
       if (detail.larkSyncStatus === 'SKIP') {
         this.logger.log(
           `⏭️  Skipping detail ${detail.uniqueKey} - larkSyncStatus is SKIP`,
@@ -130,14 +129,11 @@ export class LarkInvoiceDetailSyncService {
         `🔄 Syncing invoice detail ${detail.uniqueKey} to Lark...`,
       );
 
-      // ✅ GUARD 2: ALWAYS check larkRecordId từ database trước
       let existingRecordId: string | null = detail.larkRecordId || null;
 
-      // ✅ GUARD 3: Nếu không có larkRecordId, search trên LarkBase
       if (!existingRecordId) {
         existingRecordId = await this.searchRecordByUniqueKey(detail.uniqueKey);
 
-        // ✅ GUARD 4: Nếu tìm thấy, SAVE vào database ngay
         if (existingRecordId) {
           await this.prismaService.invoiceDetail.update({
             where: { uniqueKey: detail.uniqueKey },
@@ -153,11 +149,10 @@ export class LarkInvoiceDetailSyncService {
       const headers = await this.larkAuthService.getInvoiceDetailHeaders();
 
       if (existingRecordId) {
-        // UPDATE existing record
         const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/${existingRecordId}`;
 
         try {
-          await firstValueFrom(
+          const response = await firstValueFrom(
             this.httpService.put(
               url,
               { fields: larkData },
@@ -165,20 +160,78 @@ export class LarkInvoiceDetailSyncService {
             ),
           );
 
-          this.logger.log(
-            `✅ Updated invoice detail ${detail.uniqueKey} in Lark`,
-          );
+          if (response.data.code === 0) {
+            this.logger.log(
+              `✅ Updated invoice detail ${detail.uniqueKey} in Lark`,
+            );
 
-          await this.prismaService.invoiceDetail.update({
-            where: { uniqueKey: detail.uniqueKey },
-            data: {
-              larkRecordId: existingRecordId,
-              larkSyncStatus: 'SYNCED',
-              larkSyncedAt: new Date(),
-            },
-          });
+            await this.prismaService.invoiceDetail.update({
+              where: { uniqueKey: detail.uniqueKey },
+              data: {
+                larkRecordId: existingRecordId,
+                larkSyncStatus: 'SYNCED',
+                larkSyncedAt: new Date(),
+              },
+            });
+          } else {
+            const isRecordNotFound = response.data.code === 1254034;
+
+            if (isRecordNotFound) {
+              this.logger.warn(
+                `⚠️ Record ${existingRecordId} not found (API error code), creating new...`,
+              );
+
+              await this.prismaService.invoiceDetail.update({
+                where: { uniqueKey: detail.uniqueKey },
+                data: { larkRecordId: null },
+              });
+
+              // ✅ VỊ TRÍ 1: THÊM finalCheck VÀO ĐÂY
+              const finalCheck = await this.searchRecordByUniqueKey(
+                detail.uniqueKey,
+              );
+              if (finalCheck) {
+                this.logger.warn(
+                  `⚠️ Found existing record during final check! Updating instead of creating.`,
+                );
+
+                await this.prismaService.invoiceDetail.update({
+                  where: { uniqueKey: detail.uniqueKey },
+                  data: { larkRecordId: finalCheck },
+                });
+
+                detail.larkRecordId = finalCheck;
+                return await this.syncSingleInvoiceDetailDirect(detail);
+              }
+
+              const createUrl = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records`;
+              const createResponse = await firstValueFrom(
+                this.httpService.post(
+                  createUrl,
+                  { fields: larkData },
+                  { headers, timeout: 10000 },
+                ),
+              );
+
+              const newRecordId = createResponse.data?.data?.record?.record_id;
+              if (newRecordId) {
+                await this.prismaService.invoiceDetail.update({
+                  where: { uniqueKey: detail.uniqueKey },
+                  data: {
+                    larkRecordId: newRecordId,
+                    larkSyncStatus: 'SYNCED',
+                    larkSyncedAt: new Date(),
+                  },
+                });
+              }
+              this.logger.log(
+                `✅ Re-created invoice detail ${detail.uniqueKey}`,
+              );
+            } else {
+              throw new Error(`Lark API error: ${response.data.msg}`);
+            }
+          }
         } catch (updateError) {
-          // Handle 404
           const isRecordNotFound =
             updateError.response?.status === 404 ||
             updateError.response?.data?.code === 1254034;
@@ -188,13 +241,29 @@ export class LarkInvoiceDetailSyncService {
               `⚠️ Record ${existingRecordId} not found, creating new...`,
             );
 
-            // Reset larkRecordId
             await this.prismaService.invoiceDetail.update({
               where: { uniqueKey: detail.uniqueKey },
               data: { larkRecordId: null },
             });
 
-            // CREATE new
+            // ✅ VỊ TRÍ 2: THÊM finalCheck VÀO ĐÂY
+            const finalCheck = await this.searchRecordByUniqueKey(
+              detail.uniqueKey,
+            );
+            if (finalCheck) {
+              this.logger.warn(
+                `⚠️ Found existing record during final check! Updating instead of creating.`,
+              );
+
+              await this.prismaService.invoiceDetail.update({
+                where: { uniqueKey: detail.uniqueKey },
+                data: { larkRecordId: finalCheck },
+              });
+
+              detail.larkRecordId = finalCheck;
+              return await this.syncSingleInvoiceDetailDirect(detail);
+            }
+
             const createUrl = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records`;
             const createResponse = await firstValueFrom(
               this.httpService.post(
@@ -221,18 +290,15 @@ export class LarkInvoiceDetailSyncService {
           }
         }
       } else {
-        // ✅ GUARD 5: SEARCH LẦN CUỐI trước khi CREATE
         const finalCheck = await this.searchRecordByUniqueKey(detail.uniqueKey);
         if (finalCheck) {
           this.logger.warn(
             `⚠️ Found existing record during final check! Updating instead of creating.`,
           );
-          // Recursive call để UPDATE
           detail.larkRecordId = finalCheck;
           return await this.syncSingleInvoiceDetailDirect(detail);
         }
 
-        // CREATE new record (chắc chắn không tồn tại)
         const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records`;
         const response = await firstValueFrom(
           this.httpService.post(
