@@ -174,7 +174,14 @@ export class LarkInvoiceDetailSyncService {
               },
             });
           } else {
-            const isRecordNotFound = response.data.code === 1254034;
+            const isRecordNotFound =
+              response.data.code === 1254034 ||
+              (response.data.msg &&
+                response.data.msg.includes('RecordIdNotFound')) ||
+              (response.data.msg &&
+                response.data.msg.includes('Record not found')) ||
+              (response.data.msg &&
+                response.data.msg.includes('record does not exist'));
 
             if (isRecordNotFound) {
               this.logger.warn(
@@ -186,7 +193,6 @@ export class LarkInvoiceDetailSyncService {
                 data: { larkRecordId: null },
               });
 
-              // ✅ VỊ TRÍ 1: THÊM finalCheck VÀO ĐÂY
               const finalCheck = await this.searchRecordByUniqueKey(
                 detail.uniqueKey,
               );
@@ -234,7 +240,17 @@ export class LarkInvoiceDetailSyncService {
         } catch (updateError) {
           const isRecordNotFound =
             updateError.response?.status === 404 ||
-            updateError.response?.data?.code === 1254034;
+            updateError.response?.data?.code === 1254034 ||
+            (updateError.response?.data?.msg &&
+              updateError.response.data.msg.includes('RecordIdNotFound')) ||
+            (updateError.response?.data?.msg &&
+              updateError.response.data.msg.includes('Record not found')) ||
+            (updateError.response?.data?.msg &&
+              updateError.response.data.msg.includes(
+                'record does not exist',
+              )) ||
+            (updateError.message &&
+              updateError.message.includes('RecordIdNotFound'));
 
           if (isRecordNotFound) {
             this.logger.warn(
@@ -246,7 +262,6 @@ export class LarkInvoiceDetailSyncService {
               data: { larkRecordId: null },
             });
 
-            // ✅ VỊ TRÍ 2: THÊM finalCheck VÀO ĐÂY
             const finalCheck = await this.searchRecordByUniqueKey(
               detail.uniqueKey,
             );
