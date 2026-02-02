@@ -2,27 +2,26 @@ import { LarkCustomerHistoricalSyncService } from './../services/lark/customer-h
 import { LarkPurchaseOrderSyncService } from './../services/lark/purchase-order/lark-purchase-order-sync.service';
 import { Controller, Get, Post, Query, Logger } from '@nestjs/common';
 import { KiotVietCustomerService } from '../services/kiot-viet/customer/customer.service';
-import { LarkCustomerSyncService } from 'src/services/lark/customer/lark-customer-sync.service';
 import { KiotVietInvoiceService } from '../services/kiot-viet/invoice/invoice.service';
-import { LarkInvoiceHistoricalSyncService } from 'src/services/lark/invoice-historical/lark-invoice-historical-sync.service';
-import { KiotVietOrderService } from 'src/services/kiot-viet/order/order.service';
+import { LarkInvoiceHistoricalSyncService } from '../services/lark/invoice-historical/lark-invoice-historical-sync.service';
+import { KiotVietOrderService } from '../services/kiot-viet/order/order.service';
 import { LarkOrderSyncService } from './../services/lark/order/lark-order-sync.service';
-import { KiotVietProductService } from 'src/services/kiot-viet/product/product.service';
+import { KiotVietProductService } from '../services/kiot-viet/product/product.service';
 import { KiotVietCategoryService } from '../services/kiot-viet/category/category.service';
-import { KiotVietReturnService } from 'src/services/kiot-viet/returns/return.service';
-import { PrismaService } from 'src/prisma/prisma.service';
-import { KiotVietOrderSupplierService } from 'src/services/kiot-viet/order-supplier/order-supplier.service';
-import { LarkOrderSupplierSyncService } from 'src/services/lark/order-supplier/lark-order-supplier-sync.service';
-import { KiotVietPurchaseOrderService } from 'src/services/kiot-viet/purchase-order/purchase-order.service';
-import { KiotVietCashflowService } from 'src/services/kiot-viet/cashflow/cashflow.service';
-import { KiotVietTransferService } from 'src/services/kiot-viet/transfer/transfer.service';
-import { LarkDemandSyncService } from 'src/services/lark/demand/lark-demand-sync.service';
-import { LarkInvoiceDetailSyncService } from 'src/services/lark/invoice-detail/lark-invoice-detail-sync.service';
-import { KiotVietVoucherCampaign } from 'src/services/kiot-viet/voucher-campaign/voucher-campaign.service';
-import { LarkTransferSyncService } from 'src/services/lark/transfer/lark-transfer-sync.service';
-import { KiotVietUserService } from 'src/services/kiot-viet/user/user.service';
-import { KiotVietSupplierService } from 'src/services/kiot-viet/supplier/supplier.service';
-import { LarkSupplierSyncService } from 'src/services/lark/supplier/lark-supplier-sync.service';
+import { KiotVietReturnService } from '../services/kiot-viet/returns/return.service';
+import { PrismaService } from '../prisma/prisma.service';
+import { KiotVietOrderSupplierService } from '../services/kiot-viet/order-supplier/order-supplier.service';
+import { LarkOrderSupplierSyncService } from '../services/lark/order-supplier/lark-order-supplier-sync.service';
+import { KiotVietPurchaseOrderService } from '../services/kiot-viet/purchase-order/purchase-order.service';
+import { KiotVietCashflowService } from '../services/kiot-viet/cashflow/cashflow.service';
+import { KiotVietTransferService } from '../services/kiot-viet/transfer/transfer.service';
+import { LarkDemandSyncService } from '../services/lark/demand/lark-demand-sync.service';
+import { LarkInvoiceDetailSyncService } from '../services/lark/invoice-detail/lark-invoice-detail-sync.service';
+import { KiotVietVoucherCampaign } from '../services/kiot-viet/voucher-campaign/voucher-campaign.service';
+import { LarkTransferSyncService } from '../services/lark/transfer/lark-transfer-sync.service';
+import { KiotVietUserService } from '../services/kiot-viet/user/user.service';
+import { KiotVietSupplierService } from '../services/kiot-viet/supplier/supplier.service';
+import { LarkSupplierSyncService } from '../services/lark/supplier/lark-supplier-sync.service';
 
 @Controller('sync')
 export class SyncController {

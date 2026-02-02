@@ -3,9 +3,9 @@ import { HttpService } from '@nestjs/axios';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { async, first, firstValueFrom } from 'rxjs';
-import { PrismaService } from 'src/prisma/prisma.service';
+import { PrismaService } from '../../../prisma/prisma.service';
 import { KiotVietAuthService } from '../auth.service';
-import { LarkCashflowSyncService } from 'src/services/lark/cashflow/lark-cashflow-sync.service';
+import { LarkCashflowSyncService } from '../../../services/lark/cashflow/lark-cashflow-sync.service';
 
 interface KiotVietCashflow {
   id: number;

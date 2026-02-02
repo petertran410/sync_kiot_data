@@ -5,7 +5,7 @@ import { async, firstValueFrom } from 'rxjs';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { KiotVietAuthService } from '../auth.service';
 import { Prisma } from '@prisma/client';
-import { LarkPurchaseOrderSyncService } from 'src/services/lark/purchase-order/lark-purchase-order-sync.service';
+import { LarkPurchaseOrderSyncService } from '../../../services/lark/purchase-order/lark-purchase-order-sync.service';
 
 interface KiotVietPurchaseOrder {
   id: number;
