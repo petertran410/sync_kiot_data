@@ -44,7 +44,7 @@ export class WebhookService {
     note: string | null,
     productCode?: string,
   ): boolean {
-    if (productCode === 'SP007489') {
+    if (productCode === 'SP007489' || productCode === 'SP007500') {
       return true;
     }
 
