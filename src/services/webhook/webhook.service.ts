@@ -771,7 +771,9 @@ export class WebhookService {
         invoiceData.SaleChannelId,
       );
       const invoiceCode = invoiceData.Code;
-      const shouldSyncToLark = invoiceCode && invoiceCode.includes('HD0');
+      const shouldSyncToLark =
+        invoiceCode &&
+        (invoiceCode.includes('HD0') || invoiceCode.includes('HD1'));
 
       const invoice = await this.prismaService.invoice.upsert({
         where: { kiotVietId },
