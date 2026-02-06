@@ -281,6 +281,8 @@ export class WebhookService {
       for (const notification of notifications) {
         const data = notification?.Data || [];
 
+        console.log(data);
+
         for (const detailData of data) {
           const savedDetail = await this.upsertPriceBookDetail(detailData);
 
@@ -331,8 +333,6 @@ export class WebhookService {
               await this.larkProductSyncService.syncSingleProductDirectDebounced(
                 productWithRelations,
               );
-
-              console.log(productWithRelations);
             }
           }
         }
