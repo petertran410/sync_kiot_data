@@ -262,7 +262,7 @@ export class KiotVietInvoiceService {
             currentItem,
             pageSize: this.PAGE_SIZE,
             orderBy: 'id',
-            orderDirection: 'ASC',
+            orderDirection: 'DESC',
             includeInvoiceDelivery: true,
             includePayment: true,
             includeTotal: true,

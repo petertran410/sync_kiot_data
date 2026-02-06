@@ -45,7 +45,7 @@ const LARK_ORDER_SUPPLIER_DETAIL_FIELDS = {
   ORDER_BY_NUMBER: 'Đặt Hàng Theo Số',
   ALLOCATION_SUPPLIERS: 'Phân Bổ Theo Nhà Cung Cấp',
   ALLOCATION_THIRD_PARTY: 'Phân Bổ Từ Bên Thứ 3',
-  ORDER_QUANTITY: 'Số Lượng Đặt Hàng',
+  ORDER_QUANTITY: 'Số Lượng Nhập Kho',
   SUB_TOTAL: 'Tổng Tiền Đặt Hàng Theo Sản Phẩm',
   CREATED_DATE: 'Ngày Tạo',
 };
