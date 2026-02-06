@@ -732,9 +732,7 @@ export class LarkProductSyncService {
       this.logger.debug(`ℹ️ No inventories for product ${product.code}`);
     }
 
-    if (product.basePrice) {
-      fields[LARK_PRODUCT_FIELDS.BASE_PRICE] = Number(product.basePrice);
-    }
+    fields[LARK_PRODUCT_FIELDS.BASE_PRICE] = Number(product.basePrice);
 
     if (product.weight) {
       fields[LARK_PRODUCT_FIELDS.WEIGHT] = Number(product.weight) || null;
