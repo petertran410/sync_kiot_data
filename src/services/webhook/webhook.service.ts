@@ -331,6 +331,8 @@ export class WebhookService {
               await this.larkProductSyncService.syncSingleProductDirectDebounced(
                 productWithRelations,
               );
+
+              console.log(productWithRelations);
             }
           }
         }
