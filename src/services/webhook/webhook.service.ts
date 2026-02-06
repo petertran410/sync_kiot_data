@@ -180,10 +180,10 @@ export class WebhookService {
     try {
       const notifications = webhookData?.Notifications || [];
 
-      console.log('Product:', notifications);
-
       for (const notification of notifications) {
         const data = notification?.Data || [];
+
+        console.log('Product: ', data);
 
         for (const productData of data) {
           const detailedProduct = await this.fetchProductDetail(productData.Id);
@@ -251,10 +251,10 @@ export class WebhookService {
     try {
       const notifications = webhookData?.Notifications || [];
 
-      console.log('PriceBook:', notifications);
-
       for (const notification of notifications) {
         const data = notification?.Data || [];
+
+        console.log('PriceBook: ', data);
 
         for (const priceBookData of data) {
           const detailedPriceBook = await this.fetchPriceBookDetail(
@@ -282,10 +282,10 @@ export class WebhookService {
     try {
       const notifications = webhookData?.Notifications || [];
 
-      console.log('PriceBookDetail:', notifications);
-
       for (const notification of notifications) {
         const data = notification?.Data || [];
+
+        console.log('PriceBookDetail: ', data);
 
         for (const detailData of data) {
           const savedDetail = await this.upsertPriceBookDetail(detailData);

@@ -734,8 +734,6 @@ export class LarkProductSyncService {
 
     fields[LARK_PRODUCT_FIELDS.BASE_PRICE] = Number(product.basePrice);
 
-    console.log(product.basePrice);
-
     if (product.weight) {
       fields[LARK_PRODUCT_FIELDS.WEIGHT] = Number(product.weight) || null;
     }
