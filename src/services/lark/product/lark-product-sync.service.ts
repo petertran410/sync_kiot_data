@@ -392,9 +392,51 @@ export class LarkProductSyncService {
     try {
       this.logger.log(`🔄 Syncing product ${product.code} to Lark...`);
 
-      const existingRecordId = await this.findExistingRecord(product);
+      // FETCH LẠI PRODUCT TỪ DATABASE ĐỂ LẤY DỮ LIỆU MỚI NHẤT
+      const freshProduct = await this.prismaService.product.findUnique({
+        where: { id: product.id },
+        include: {
+          inventories: true,
+          priceBookDetails: {
+            include: {
+              priceBook: {
+                select: { kiotVietId: true },
+              },
+            },
+          },
+        },
+      });
 
-      const larkData = this.mapProductToLarkBase(product);
+      if (!freshProduct) {
+        throw new Error(`Product not found: ${product.code}`);
+      }
+
+      // Thêm branchKiotVietId cho inventories
+      const branchIds = freshProduct.inventories
+        .map((inv) => inv.branchId)
+        .filter((id): id is number => id !== null);
+
+      if (branchIds.length > 0) {
+        const branches = await this.prismaService.branch.findMany({
+          where: { id: { in: branchIds } },
+          select: { id: true, kiotVietId: true },
+        });
+
+        const branchMap = new Map(branches.map((b) => [b.id, b.kiotVietId]));
+
+        freshProduct.inventories = freshProduct.inventories.map((inv) => ({
+          ...inv,
+          branchKiotVietId: inv.branchId
+            ? branchMap.get(inv.branchId) || null
+            : null,
+        }));
+      }
+
+      // SỬ DỤNG findExistingRecord với freshProduct
+      const existingRecordId = await this.findExistingRecord(freshProduct);
+
+      // SỬ DỤNG freshProduct THAY VÌ product
+      const larkData = this.mapProductToLarkBase(freshProduct);
       const headers = await this.larkAuthService.getProductHeaders();
 
       if (existingRecordId) {
@@ -420,7 +462,7 @@ export class LarkProductSyncService {
       }
 
       await this.prismaService.product.update({
-        where: { id: product.id },
+        where: { id: freshProduct.id },
         data: { larkSyncStatus: 'SYNCED', larkSyncedAt: new Date() },
       });
     } catch (error) {
