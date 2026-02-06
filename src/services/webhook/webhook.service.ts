@@ -180,6 +180,8 @@ export class WebhookService {
     try {
       const notifications = webhookData?.Notifications || [];
 
+      console.log('Product:', notifications);
+
       for (const notification of notifications) {
         const data = notification?.Data || [];
 
@@ -249,6 +251,8 @@ export class WebhookService {
     try {
       const notifications = webhookData?.Notifications || [];
 
+      console.log('PriceBook:', notifications);
+
       for (const notification of notifications) {
         const data = notification?.Data || [];
 
@@ -277,6 +281,8 @@ export class WebhookService {
   async processPriceBookDetailWebhook(webhookData: any): Promise<void> {
     try {
       const notifications = webhookData?.Notifications || [];
+
+      console.log('PriceBookDetail:', notifications);
 
       for (const notification of notifications) {
         const data = notification?.Data || [];
