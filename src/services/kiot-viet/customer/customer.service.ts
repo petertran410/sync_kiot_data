@@ -162,7 +162,7 @@ export class KiotVietCustomerService {
         }
 
         const dateStart = new Date();
-        dateStart.setDate(dateStart.getDate() - 120);
+        dateStart.setDate(dateStart.getDate() - 31);
         const dateStartStr = dateStart.toISOString().split('T')[0];
 
         const dateEnd = new Date();
