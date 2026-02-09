@@ -68,6 +68,7 @@ const SALE_NAME = {
   DO_THI_THUONG: 'Đỗ Thị Thương',
   NGUYEN_THI_BICH_NGOC: 'Nguyễn Thị Bích Ngọc',
   LE_BAO_NGAN: 'Lê Bảo Ngân',
+  HUYNH_MAN_NHI: 'Huỳnh Mẫn Nhi',
 };
 
 @Injectable()
