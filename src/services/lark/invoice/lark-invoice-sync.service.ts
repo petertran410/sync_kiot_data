@@ -415,6 +415,7 @@ export class LarkInvoiceSyncService {
         1034176: SALE_NAME.DO_THI_THUONG,
         1034250: SALE_NAME.NGUYEN_THI_BICH_NGOC,
         1034266: SALE_NAME.LE_BAO_NGAN,
+        1033767: SALE_NAME.HUYNH_MAN_NHI,
       };
 
       fields[LARK_INVOICE_FIELDS.SELLER] =
