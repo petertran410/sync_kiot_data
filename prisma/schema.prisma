@@ -36,6 +36,8 @@ model Product {
   id                   Int                      @id @default(autoincrement())
   kiotVietId           BigInt                   @unique
   code                 String
+  misaCode             String  @default("")
+  misaName             String  @default("")
   barCode              String?
   name                 String
   fullName             String
@@ -85,7 +87,6 @@ model Product {
 
   category             Category?                @relation(fields: [categoryId], references: [id])
   tradeMark            TradeMark?               @relation(fields: [tradeMarkId], references: [id])
-
 }
 
 model ProductAttribute {
