@@ -36,8 +36,9 @@ model Product {
   id                   Int                      @id @default(autoincrement())
   kiotVietId           BigInt                   @unique
   code                 String
-  misaCode             String  @default("")
-  misaName             String  @default("")
+  misa_code             String  @default("")
+  misa_name             String  @default("")
+  misa_unit             String  @default("")
   barCode              String?
   name                 String
   fullName             String
