@@ -112,12 +112,20 @@ export class MisaDictionaryService {
       }
 
       for (const item of items) {
+        // Validate required fields
+        if (!item.inventory_item_id || !item.inventory_item_code) {
+          this.logger.warn(
+            `⚠️ Skipping inventory item with missing id or code: ${JSON.stringify(item).substring(0, 100)}`,
+          );
+          continue;
+        }
+
         try {
           await this.prisma.misaInventoryItem.upsert({
             where: { inventoryItemId: item.inventory_item_id },
             update: {
               inventoryItemCode: item.inventory_item_code,
-              inventoryItemName: item.inventory_item_name,
+              inventoryItemName: item.inventory_item_name || '',
               inventoryItemType: item.inventory_item_type || 0,
               unitId: item.unit_id || null,
               unitName: item.unit_name || null,
@@ -134,7 +142,7 @@ export class MisaDictionaryService {
             create: {
               inventoryItemId: item.inventory_item_id,
               inventoryItemCode: item.inventory_item_code,
-              inventoryItemName: item.inventory_item_name,
+              inventoryItemName: item.inventory_item_name || '',
               inventoryItemType: item.inventory_item_type || 0,
               unitId: item.unit_id || null,
               unitName: item.unit_name || null,
@@ -184,12 +192,20 @@ export class MisaDictionaryService {
       }
 
       for (const item of items) {
+        // Validate required fields
+        if (!item.stock_id || !item.stock_code) {
+          this.logger.warn(
+            `⚠️ Skipping stock with missing id or code: ${JSON.stringify(item).substring(0, 100)}`,
+          );
+          continue;
+        }
+
         try {
           await this.prisma.misaStock.upsert({
             where: { stockId: item.stock_id },
             update: {
               stockCode: item.stock_code,
-              stockName: item.stock_name,
+              stockName: item.stock_name || '',
               branchId: item.branch_id || null,
               inactive: item.inactive || false,
               inventoryAccount: item.inventory_account || null,
@@ -197,7 +213,7 @@ export class MisaDictionaryService {
             create: {
               stockId: item.stock_id,
               stockCode: item.stock_code,
-              stockName: item.stock_name,
+              stockName: item.stock_name || '',
               branchId: item.branch_id || null,
               inactive: item.inactive || false,
               inventoryAccount: item.inventory_account || null,
@@ -242,12 +258,20 @@ export class MisaDictionaryService {
       }
 
       for (const item of items) {
+        // Validate required fields
+        if (!item.account_object_id || !item.account_object_code) {
+          this.logger.warn(
+            `⚠️ Skipping account object with missing id or code: ${JSON.stringify(item).substring(0, 100)}`,
+          );
+          continue;
+        }
+
         try {
           await this.prisma.misaAccountObject.upsert({
             where: { accountObjectId: item.account_object_id },
             update: {
               accountObjectCode: item.account_object_code,
-              accountObjectName: item.account_object_name,
+              accountObjectName: item.account_object_name || '',
               accountObjectType: item.account_object_type || 0,
               address: item.address || null,
               companyTaxCode: item.company_tax_code || null,
@@ -262,7 +286,7 @@ export class MisaDictionaryService {
             create: {
               accountObjectId: item.account_object_id,
               accountObjectCode: item.account_object_code,
-              accountObjectName: item.account_object_name,
+              accountObjectName: item.account_object_name || '',
               accountObjectType: item.account_object_type || 0,
               address: item.address || null,
               companyTaxCode: item.company_tax_code || null,
@@ -314,12 +338,20 @@ export class MisaDictionaryService {
       }
 
       for (const item of items) {
+        // Validate required fields
+        if (!item.organization_unit_id || !item.organization_unit_code) {
+          this.logger.warn(
+            `⚠️ Skipping organization unit with missing id or code: ${JSON.stringify(item).substring(0, 100)}`,
+          );
+          continue;
+        }
+
         try {
           await this.prisma.misaOrganizationUnit.upsert({
             where: { organizationUnitId: item.organization_unit_id },
             update: {
               organizationUnitCode: item.organization_unit_code,
-              organizationUnitName: item.organization_unit_name,
+              organizationUnitName: item.organization_unit_name || '',
               organizationUnitTypeId: item.organization_unit_type_id || 1,
               parentId: item.parent_id || null,
               branchId: item.branch_id || null,
@@ -327,7 +359,7 @@ export class MisaDictionaryService {
             create: {
               organizationUnitId: item.organization_unit_id,
               organizationUnitCode: item.organization_unit_code,
-              organizationUnitName: item.organization_unit_name,
+              organizationUnitName: item.organization_unit_name || '',
               organizationUnitTypeId: item.organization_unit_type_id || 1,
               parentId: item.parent_id || null,
               branchId: item.branch_id || null,
@@ -395,7 +427,43 @@ export class MisaDictionaryService {
         return [];
       }
 
-      return data.Data || [];
+      // Xử lý Data có thể là string JSON hoặc array
+      let items: T[] = [];
+
+      if (!data.Data) {
+        this.logger.warn(`⚠️ No data returned for data_type=${dataType}`);
+        return [];
+      }
+
+      if (typeof data.Data === 'string') {
+        try {
+          items = JSON.parse(data.Data);
+          this.logger.debug(
+            `Parsed Data from string for data_type=${dataType}, count: ${items.length}`,
+          );
+        } catch (parseError) {
+          this.logger.error(
+            `❌ Failed to parse Data as JSON for data_type=${dataType}: ${parseError.message}`,
+          );
+          return [];
+        }
+      } else if (Array.isArray(data.Data)) {
+        items = data.Data;
+      } else {
+        this.logger.warn(
+          `⚠️ Unexpected Data format for data_type=${dataType}: ${typeof data.Data}`,
+        );
+        return [];
+      }
+
+      // Validate items có data hay không
+      if (items.length > 0) {
+        this.logger.log(
+          `📥 Fetched ${items.length} items for data_type=${dataType} (skip=${skip})`,
+        );
+      }
+
+      return items;
     } catch (error) {
       this.logger.error(
         `❌ Failed to fetch dictionary (type=${dataType}): ${error.message}`,

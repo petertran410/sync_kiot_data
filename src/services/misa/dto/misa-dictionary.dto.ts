@@ -11,12 +11,13 @@ export interface MisaGetDictionaryRequestDto {
 
 /**
  * Response chung từ API get_dictionary
+ * Lưu ý: Data từ Misa trả về dạng JSON string, không phải array trực tiếp
  */
 export interface MisaGetDictionaryResponseDto<T> {
   Success: boolean;
   ErrorCode?: string;
   ErrorMessage?: string;
-  Data?: T[];
+  Data?: string | T[]; // Có thể là JSON string hoặc array
 }
 
 /**

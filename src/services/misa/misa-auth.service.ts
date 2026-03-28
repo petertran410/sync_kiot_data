@@ -65,6 +65,8 @@ export class MisaAuthService {
     };
 
     this.logger.log('🔐 Requesting new Misa access token...');
+    this.logger.debug(`Request URL: ${url}`);
+    this.logger.debug(`Request body: ${JSON.stringify(requestBody)}`);
 
     try {
       const response = await firstValueFrom(
@@ -77,13 +79,34 @@ export class MisaAuthService {
 
       const data = response.data;
 
+      // Log raw response để debug
+      this.logger.debug(`Raw response: ${JSON.stringify(data)}`);
+
       if (!data.Success) {
         const errorMsg = `Misa connect failed: ${data.ErrorCode} - ${data.ErrorMessage}`;
         this.logger.error(`❌ ${errorMsg}`);
         throw new Error(errorMsg);
       }
 
-      if (!data.Data?.access_token) {
+      // Xử lý Data có thể là string JSON hoặc object
+      let tokenData = data.Data;
+
+      if (typeof data.Data === 'string') {
+        try {
+          tokenData = JSON.parse(data.Data);
+          this.logger.debug(
+            `Parsed Data from string: ${JSON.stringify(tokenData)}`,
+          );
+        } catch (parseError) {
+          this.logger.error(`❌ Failed to parse Data as JSON: ${data.Data}`);
+          throw new Error('Misa connect response Data is not valid JSON');
+        }
+      }
+
+      if (!tokenData?.access_token) {
+        this.logger.error(
+          `❌ Token data structure: ${JSON.stringify(tokenData)}`,
+        );
         throw new Error('Misa connect response missing access_token');
       }
 
@@ -91,7 +114,7 @@ export class MisaAuthService {
       expiresAt.setHours(expiresAt.getHours() + 12);
 
       this.cachedToken = {
-        accessToken: data.Data.access_token,
+        accessToken: tokenData.access_token,
         expiresAt: expiresAt,
       };
 
@@ -101,6 +124,12 @@ export class MisaAuthService {
 
       return this.cachedToken.accessToken;
     } catch (error) {
+      // Log chi tiết lỗi
+      if (error.response) {
+        this.logger.error(
+          `❌ Misa API error response: ${JSON.stringify(error.response.data)}`,
+        );
+      }
       this.logger.error(`❌ Failed to get Misa access token: ${error.message}`);
       throw error;
     }
