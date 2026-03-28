@@ -352,14 +352,7 @@ export class MisaVoucherService {
       return null;
     }
 
-    if (details.length === 0) {
-      this.logger.error('❌ No valid details for voucher');
-      return null;
-    }
-
     // Calculate total amount
-    const totalAmount = totalSaleAmount - totalDiscountAmount + totalVatAmount;
-
     const now = new Date();
     const postedDate = this.formatDateForMisa(invoice.purchaseDate);
     const refDate = this.formatDateForMisa(invoice.purchaseDate);
@@ -392,11 +385,11 @@ export class MisaVoucherService {
       // Customer info
       account_object_id: accountObject?.accountObjectId,
       account_object_code: accountObject?.accountObjectCode,
-      account_object_name:
-        accountObject?.accountObjectName ||
-        invoice.customerName ||
-        invoice.customer?.name ||
-        'Khách lẻ',
+      // account_object_name:
+      //   accountObject?.accountObjectName ||
+      //   invoice.customerName ||
+      //   invoice.customer?.name ||
+      //   'Khách lẻ',
       account_object_address: invoice.customer?.address || '',
       account_object_tax_code: invoice.customer?.taxCode || '',
 
