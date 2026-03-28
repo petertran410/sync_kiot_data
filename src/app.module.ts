@@ -11,6 +11,7 @@ import { SyncController } from './controllers/sync.controller';
 import { LarkModule } from './services/lark/lark.module';
 import { WebhookModule } from './services/webhook/webhook.module';
 import { WebhookController } from './controllers/webhook.controller';
+import { MisaModule } from './services/misa/misa.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { WebhookController } from './controllers/webhook.controller';
     BusSchedulerModule,
     LarkModule,
     WebhookModule,
+    MisaModule,
   ],
   controllers: [AppController, SyncController, WebhookController],
   providers: [AppService],

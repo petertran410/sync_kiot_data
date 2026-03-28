@@ -139,29 +139,29 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
-  @Cron('0 */3 * * *', { timeZone: 'Asia/Ho_Chi_Minh' })
-  async syncCashflowsHistorical() {
-    try {
-      this.logger.log('Starting cashflow sync...');
+  // @Cron('0 */3 * * *', { timeZone: 'Asia/Ho_Chi_Minh' })
+  // async syncCashflowsHistorical() {
+  //   try {
+  //     this.logger.log('Starting cashflow sync...');
 
-      await this.cashflowService.enableHistoricalSync();
+  //     await this.cashflowService.enableHistoricalSync();
 
-      await this.cashflowService.syncHistoricalCashflows();
+  //     await this.cashflowService.syncHistoricalCashflows();
 
-      return {
-        success: true,
-        message: 'Cashflow sync completed successfully',
-        timestamp: new Date().toISOString,
-      };
-    } catch (error) {
-      this.logger.error(`❌ Cashflow sync failed: ${error.message}`);
-      return {
-        success: false,
-        error: error.message,
-        timestamp: new Date().toISOString(),
-      };
-    }
-  }
+  //     return {
+  //       success: true,
+  //       message: 'Cashflow sync completed successfully',
+  //       timestamp: new Date().toISOString,
+  //     };
+  //   } catch (error) {
+  //     this.logger.error(`❌ Cashflow sync failed: ${error.message}`);
+  //     return {
+  //       success: false,
+  //       error: error.message,
+  //       timestamp: new Date().toISOString(),
+  //     };
+  //   }
+  // }
 
   @Cron('0 7 * * *', { timeZone: 'Asia/Ho_Chi_Minh' })
   async syncAllReturns() {
