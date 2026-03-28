@@ -116,7 +116,7 @@ export class WebhookService {
             try {
               const misaResult =
                 await this.misaVoucherService.createSaleVoucherFromInvoice(
-                  savedInvoice.id,
+                  savedInvoice.code,
                 );
 
               if (misaResult.success) {

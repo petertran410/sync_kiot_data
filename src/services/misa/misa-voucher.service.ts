@@ -32,19 +32,21 @@ export class MisaVoucherService {
   ) {}
 
   /**
-   * Tạo chứng từ bán hàng Misa từ Invoice ID
+   * Tạo chứng từ bán hàng Misa từ Invoice Code
    */
-  async createSaleVoucherFromInvoice(invoiceId: number): Promise<{
+  async createSaleVoucherFromInvoice(invoiceCode: string): Promise<{
     success: boolean;
     orgRefId: string | null;
     message: string;
   }> {
-    this.logger.log(`🧾 Creating Misa voucher for invoice ID: ${invoiceId}`);
+    this.logger.log(
+      `🧾 Creating Misa voucher for invoice code: ${invoiceCode}`,
+    );
 
     try {
       // 1. Lấy Invoice với đầy đủ thông tin
       const invoice = await this.prismaService.invoice.findUnique({
-        where: { id: invoiceId },
+        where: { code: invoiceCode },
         include: {
           invoiceDetails: {
             include: {
@@ -81,7 +83,7 @@ export class MisaVoucherService {
         return {
           success: false,
           orgRefId: null,
-          message: `Invoice not found: ${invoiceId}`,
+          message: `Invoice not found: ${invoiceCode}`,
         };
       }
 
@@ -111,7 +113,7 @@ export class MisaVoucherService {
 
         // Cập nhật trạng thái SKIP
         await this.prismaService.invoice.update({
-          where: { id: invoiceId },
+          where: { id: invoice.id },
           data: {
             misaSyncStatus: 'SKIP',
             misaErrorMessage: `Products without misa_code: ${productCodes}`,
@@ -143,7 +145,7 @@ export class MisaVoucherService {
       // 6. Cập nhật trạng thái
       if (result.success) {
         await this.prismaService.invoice.update({
-          where: { id: invoiceId },
+          where: { id: invoice.id },
           data: {
             misaSyncStatus: 'PENDING', // Chờ callback từ Misa
             misaOrgRefId: orgRefId,
@@ -158,7 +160,7 @@ export class MisaVoucherService {
         );
       } else {
         await this.prismaService.invoice.update({
-          where: { id: invoiceId },
+          where: { id: invoice.id },
           data: {
             misaSyncStatus: 'FAILED',
             misaOrgRefId: orgRefId,
@@ -179,18 +181,25 @@ export class MisaVoucherService {
       };
     } catch (error) {
       this.logger.error(
-        `❌ Error creating Misa voucher for invoice ${invoiceId}: ${error.message}`,
+        `❌ Error creating Misa voucher for invoice ${invoiceCode}: ${error.message}`,
       );
 
-      // Cập nhật trạng thái FAILED
-      await this.prismaService.invoice.update({
-        where: { id: invoiceId },
-        data: {
-          misaSyncStatus: 'FAILED',
-          misaSyncRetries: { increment: 1 },
-          misaErrorMessage: error.message,
-        },
+      // Cập nhật trạng thái FAILED (tìm lại invoice vì có thể chưa có trong scope)
+      const invoice = await this.prismaService.invoice.findUnique({
+        where: { code: invoiceCode },
+        select: { id: true },
       });
+
+      if (invoice) {
+        await this.prismaService.invoice.update({
+          where: { id: invoice.id },
+          data: {
+            misaSyncStatus: 'FAILED',
+            misaSyncRetries: { increment: 1 },
+            misaErrorMessage: error.message,
+          },
+        });
+      }
 
       return {
         success: false,
@@ -505,7 +514,7 @@ export class MisaVoucherService {
     let successCount = 0;
 
     for (const invoice of failedInvoices) {
-      const result = await this.createSaleVoucherFromInvoice(invoice.id);
+      const result = await this.createSaleVoucherFromInvoice(invoice.code);
       if (result.success) {
         successCount++;
       }

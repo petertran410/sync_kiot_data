@@ -6,7 +6,6 @@ import {
   Param,
   Logger,
   HttpCode,
-  ParseIntPipe,
 } from '@nestjs/common';
 import { MisaVoucherService } from '../services/misa/misa-voucher.service';
 import { MisaDictionaryService } from '../services/misa/misa-dictionary.service';
@@ -65,30 +64,30 @@ export class MisaCallbackController {
   // ========================================
 
   /**
-   * Tạo chứng từ bán hàng Misa từ Invoice ID
-   * URL: POST /misa/voucher/create/:invoiceId
+   * Tạo chứng từ bán hàng Misa từ Invoice Code
+   * URL: POST /misa/voucher/create/:invoiceCode
    */
-  @Post('voucher/create/:invoiceId')
+  @Post('voucher/create/:invoiceCode')
   @HttpCode(200)
   async createVoucherFromInvoice(
-    @Param('invoiceId', ParseIntPipe) invoiceId: number,
+    @Param('invoiceCode') invoiceCode: string,
   ): Promise<{
     success: boolean;
     orgRefId: string | null;
     message: string;
   }> {
     this.logger.log(
-      `🧾 Manual create Misa voucher for invoice ID: ${invoiceId}`,
+      `🧾 Manual create Misa voucher for invoice code: ${invoiceCode}`,
     );
 
     try {
       const result =
-        await this.misaVoucherService.createSaleVoucherFromInvoice(invoiceId);
+        await this.misaVoucherService.createSaleVoucherFromInvoice(invoiceCode);
 
       return result;
     } catch (error) {
       this.logger.error(
-        `❌ Create voucher failed for invoice ${invoiceId}: ${error.message}`,
+        `❌ Create voucher failed for invoice ${invoiceCode}: ${error.message}`,
       );
       return {
         success: false,
