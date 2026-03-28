@@ -188,4 +188,30 @@ export class MisaCallbackController {
       timestamp: new Date().toISOString(),
     };
   }
+
+  @Post('voucher/delete/:invoiceCode')
+  @HttpCode(200)
+  async deleteVoucherByInvoiceCode(
+    @Param('invoiceCode') invoiceCode: string,
+  ): Promise<{
+    success: boolean;
+    message: string;
+  }> {
+    this.logger.log(`🗑️ Delete Misa voucher for invoice code: ${invoiceCode}`);
+
+    try {
+      const result =
+        await this.misaVoucherService.deleteVoucherByInvoiceCode(invoiceCode);
+
+      return result;
+    } catch (error) {
+      this.logger.error(
+        `❌ Delete voucher failed for invoice ${invoiceCode}: ${error.message}`,
+      );
+      return {
+        success: false,
+        message: error.message,
+      };
+    }
+  }
 }

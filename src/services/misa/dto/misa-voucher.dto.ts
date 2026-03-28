@@ -4,25 +4,36 @@
 export interface MisaSaveVoucherRequestDto {
   app_id: string;
   org_company_code: string;
-  voucher: MisaSaInvoiceDto[];
+  voucher: MisaSaVoucherDto[];
 }
 
 /**
- * Chứng từ hóa đơn bán hàng (voucher_type = 11, reftype = 3560)
+ * Chứng từ bán hàng (voucher_type = 13, reftype = 3531)
  */
-export interface MisaSaInvoiceDto {
+export interface MisaSaVoucherDto {
   // Required fields
   voucher_type: number;
   org_refid: string;
   org_refno: string;
   branch_id: string;
   reftype: number;
+  posted_date: string;
+  refdate: string;
+  is_sale_with_outward: boolean;
+
+  // Totals (required for sa_voucher)
+  total_sale_amount_oc: number;
+  total_sale_amount: number;
+  total_amount_oc: number;
+  total_amount: number;
+  total_discount_amount_oc: number;
+  total_discount_amount: number;
+  total_vat_amount_oc: number;
+  total_vat_amount: number;
 
   // Invoice info
   org_reftype?: number | null;
   org_reftype_name?: string;
-  inv_date?: string;
-  is_posted?: boolean;
 
   // Customer info
   account_object_id?: string;
@@ -30,7 +41,6 @@ export interface MisaSaInvoiceDto {
   account_object_name?: string;
   account_object_address?: string;
   account_object_tax_code?: string;
-  account_object_bank_account?: string;
 
   // Employee info
   employee_id?: string;
@@ -42,14 +52,14 @@ export interface MisaSaInvoiceDto {
   discount_rate_voucher?: number;
 
   // Other info
-  container_no?: string;
   exchange_rate?: number;
   currency_id?: string;
-  payment_method?: string;
-  buyer?: string;
-  is_created_savoucher?: number;
-  invoice_type?: number;
   include_invoice?: number;
+  payer?: string;
+  journal_memo?: string;
+
+  // Outward info (khi is_sale_with_outward = true)
+  in_outward?: MisaInOutwardDto;
 
   // Audit fields
   created_date?: string;
@@ -58,19 +68,38 @@ export interface MisaSaInvoiceDto {
   modified_by?: string;
 
   // Details
-  detail: MisaSaInvoiceDetailDto[];
+  detail: MisaSaVoucherDetailDto[];
 }
 
 /**
- * Chi tiết hóa đơn bán hàng
+ * Thông tin phiếu xuất kho (khi bán hàng kiêm phiếu xuất)
  */
-export interface MisaSaInvoiceDetailDto {
+export interface MisaInOutwardDto {
+  branch_id: string;
+  reftype: number;
+  posted_date: string;
+  refdate: string;
+  in_reforder: string;
+  account_object_id?: string;
+  account_object_code?: string;
+  account_object_name?: string;
+  account_object_address?: string;
+  employee_id?: string;
+  employee_code?: string;
+  employee_name?: string;
+  journal_memo?: string;
+}
+
+/**
+ * Chi tiết chứng từ bán hàng
+ */
+export interface MisaSaVoucherDetailDto {
   // Product info
   inventory_item_id?: string;
   inventory_item_code: string;
   inventory_item_name: string;
   inventory_item_type: number;
-  description?: string;
+  description: string;
 
   // Unit info
   unit_id?: string;
@@ -85,7 +114,6 @@ export interface MisaSaInvoiceDetailDto {
 
   // Price
   unit_price?: number;
-  unit_price_after_tax?: number;
   main_unit_price: number;
   amount_oc: number;
   amount: number;
@@ -97,24 +125,23 @@ export interface MisaSaInvoiceDetailDto {
 
   // VAT
   vat_rate?: number;
-  other_vat_rate?: number;
   vat_amount_oc?: number;
   vat_amount?: number;
+
+  // Account info (required for sa_voucher)
+  debit_account: string;
+  credit_account: string;
+  cost_account?: string;
 
   // Stock info
   stock_id?: string;
   stock_code?: string;
   stock_name?: string;
 
-  // Account object (customer) info in detail
-  account_object_id?: string;
-  account_object_code?: string;
-  account_object_name?: string;
-
   // Other
   sort_order: number;
   is_promotion?: boolean;
-  not_in_vat_declaration?: boolean;
+  is_description?: boolean;
   exchange_rate_operator?: string;
 }
 
@@ -147,4 +174,30 @@ export interface MisaCallbackDataDto {
 export interface MisaCallbackRequestDto {
   app_id: string;
   data: MisaCallbackDataDto[];
+}
+
+/**
+ * Request body để xóa chứng từ
+ */
+export interface MisaDeleteVoucherRequestDto {
+  app_id: string;
+  org_company_code: string;
+  voucher: MisaDeleteVoucherItemDto[];
+}
+
+/**
+ * Item trong danh sách voucher cần xóa
+ */
+export interface MisaDeleteVoucherItemDto {
+  voucher_type: number;
+  org_refid: string;
+}
+
+/**
+ * Response từ API delete voucher
+ */
+export interface MisaDeleteVoucherResponseDto {
+  Success: boolean;
+  ErrorCode?: string;
+  ErrorMessage?: string;
 }

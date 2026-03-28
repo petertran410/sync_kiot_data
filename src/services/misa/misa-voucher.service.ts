@@ -8,9 +8,11 @@ import { MisaAuthService } from './misa-auth.service';
 import { MisaDictionaryService } from './misa-dictionary.service';
 import {
   MisaSaveVoucherRequestDto,
-  MisaSaInvoiceDto,
-  MisaSaInvoiceDetailDto,
+  MisaSaVoucherDto,
+  MisaSaVoucherDetailDto,
   MisaSaveVoucherResponseDto,
+  MisaDeleteVoucherRequestDto,
+  MisaDeleteVoucherResponseDto,
 } from './dto';
 
 @Injectable()
@@ -18,10 +20,16 @@ export class MisaVoucherService {
   private readonly logger = new Logger(MisaVoucherService.name);
 
   // Constants
-  private readonly VOUCHER_TYPE = 11; // Hóa đơn bán hàng
-  private readonly REFTYPE = 3560; // Hóa đơn bán hàng hóa, dịch vụ trong nước
+  private readonly VOUCHER_TYPE = 13; // Chứng từ bán hàng
+  private readonly REFTYPE = 3530; // Bán hàng hóa, dịch vụ trong nước - Tiền mặt
+  private readonly OUTWARD_REFTYPE = 2020; // Xuất kho bán hàng
   private readonly VAT_RATE = 8; // 8% VAT
   private readonly DEFAULT_CREATED_BY = 'Trần Ngọc Nhân';
+
+  // Default accounts
+  private readonly DEBIT_ACCOUNT = '131'; // TK Phải thu khách hàng
+  private readonly CREDIT_ACCOUNT = '5111'; // TK Doanh thu bán hàng
+  private readonly COST_ACCOUNT = '632'; // TK Giá vốn hàng bán
 
   constructor(
     private readonly configService: ConfigService,
@@ -184,7 +192,7 @@ export class MisaVoucherService {
         `❌ Error creating Misa voucher for invoice ${invoiceCode}: ${error.message}`,
       );
 
-      // Cập nhật trạng thái FAILED (tìm lại invoice vì có thể chưa có trong scope)
+      // Cập nhật trạng thái FAILED
       const invoice = await this.prismaService.invoice.findUnique({
         where: { code: invoiceCode },
         select: { id: true },
@@ -210,7 +218,7 @@ export class MisaVoucherService {
   }
 
   /**
-   * Build payload cho voucher Misa
+   * Build payload cho chứng từ bán hàng Misa (voucher_type = 13)
    */
   private async buildVoucherPayload(
     invoice: any,
@@ -243,8 +251,11 @@ export class MisaVoucherService {
         invoice.customerName || invoice.customer?.name || '',
       );
 
-    // Build details
-    const details: MisaSaInvoiceDetailDto[] = [];
+    // Build details và tính totals
+    const details: MisaSaVoucherDetailDto[] = [];
+    let totalSaleAmount = 0;
+    let totalDiscountAmount = 0;
+    let totalVatAmount = 0;
 
     for (let i = 0; i < invoice.invoiceDetails.length; i++) {
       const detail = invoice.invoiceDetails[i];
@@ -270,8 +281,12 @@ export class MisaVoucherService {
       const amountBeforeDiscount = quantity * unitPrice;
       const amount = amountBeforeDiscount - discountAmount;
       const vatAmount = (amount * this.VAT_RATE) / 100;
-      const unitPriceAfterTax = unitPrice * (1 + this.VAT_RATE / 100);
       const mainUnitPrice = amount / quantity;
+
+      // Accumulate totals
+      totalSaleAmount += amountBeforeDiscount;
+      totalDiscountAmount += discountAmount;
+      totalVatAmount += vatAmount;
 
       details.push({
         inventory_item_id: inventoryItem.inventoryItemId,
@@ -290,7 +305,6 @@ export class MisaVoucherService {
         main_convert_rate: 1,
 
         unit_price: unitPrice,
-        unit_price_after_tax: unitPriceAfterTax,
         main_unit_price: mainUnitPrice,
         amount_oc: amount,
         amount: amount,
@@ -300,25 +314,22 @@ export class MisaVoucherService {
         discount_amount: discountAmount,
 
         vat_rate: this.VAT_RATE,
-        other_vat_rate: 0,
         vat_amount_oc: vatAmount,
         vat_amount: vatAmount,
+
+        // Required account fields for sa_voucher
+        debit_account: this.DEBIT_ACCOUNT,
+        credit_account: this.CREDIT_ACCOUNT,
+        cost_account: this.COST_ACCOUNT,
 
         stock_id: stock.stockId,
         stock_code: stock.stockCode,
         stock_name: stock.stockName,
 
-        account_object_id: accountObject?.accountObjectId,
-        account_object_code: accountObject?.accountObjectCode,
-        account_object_name:
-          accountObject?.accountObjectName ||
-          invoice.customerName ||
-          invoice.customer?.name,
-
         sort_order: i + 1,
         exchange_rate_operator: '*',
         is_promotion: false,
-        not_in_vat_declaration: false,
+        is_description: false,
       });
     }
 
@@ -327,23 +338,39 @@ export class MisaVoucherService {
       return null;
     }
 
+    // Calculate total amount
+    const totalAmount = totalSaleAmount - totalDiscountAmount + totalVatAmount;
+
     const now = new Date();
-    const invDate = this.formatDateForMisa(invoice.purchaseDate);
+    const postedDate = this.formatDateForMisa(invoice.purchaseDate);
+    const refDate = this.formatDateForMisa(invoice.purchaseDate);
+    const inRefOrder = this.formatDateForMisa(invoice.purchaseDate);
     const createdDate = this.formatDateForMisa(now);
 
     // Build voucher
-    const voucher: MisaSaInvoiceDto = {
+    const voucher: MisaSaVoucherDto = {
       voucher_type: this.VOUCHER_TYPE,
       org_refid: orgRefId,
       org_refno: invoice.code,
       org_reftype: null,
-      org_reftype_name: 'Hóa đơn bán hàng hóa, dịch vụ trong nước',
+      org_reftype_name: 'Chứng từ bán hàng hóa, dịch vụ trong nước',
       branch_id: branchId || '',
       reftype: this.REFTYPE,
+      posted_date: postedDate,
+      refdate: refDate,
+      is_sale_with_outward: true, // Bán hàng kiêm phiếu xuất kho
 
-      inv_date: invDate,
-      is_posted: false,
+      // Totals (required)
+      total_sale_amount_oc: totalSaleAmount,
+      total_sale_amount: totalSaleAmount,
+      total_amount_oc: totalAmount,
+      total_amount: totalAmount,
+      total_discount_amount_oc: totalDiscountAmount,
+      total_discount_amount: totalDiscountAmount,
+      total_vat_amount_oc: totalVatAmount,
+      total_vat_amount: totalVatAmount,
 
+      // Customer info
       account_object_id: accountObject?.accountObjectId,
       account_object_code: accountObject?.accountObjectCode,
       account_object_name:
@@ -353,25 +380,45 @@ export class MisaVoucherService {
         'Khách lẻ',
       account_object_address: invoice.customer?.address || '',
       account_object_tax_code: invoice.customer?.taxCode || '',
-      account_object_bank_account: '',
 
+      // Employee info
       employee_id: '',
       employee_code: '',
       employee_name: '',
 
-      discount_type: 2, // Theo % hóa đơn
+      // Discount
+      discount_type: 1, // Theo mặt hàng
       discount_rate_voucher: invoice.discountRatio || 0,
 
-      container_no: invoice.code,
+      // Other
       exchange_rate: 1,
       currency_id: 'VND',
-      payment_method: 'TM/CK',
-      buyer: invoice.customerName || invoice.customer?.name || 'Khách lẻ',
+      include_invoice: 1, // Không kèm hóa đơn
+      payer: invoice.customerName || invoice.customer?.name || 'Khách lẻ',
+      journal_memo: `Bán hàng - ${invoice.code}`,
 
-      is_created_savoucher: 1,
-      invoice_type: 0,
-      include_invoice: 0,
+      // Phiếu xuất kho (khi is_sale_with_outward = true)
+      in_outward: {
+        branch_id: branchId || '',
+        reftype: this.OUTWARD_REFTYPE,
+        posted_date: postedDate,
+        refdate: refDate,
+        in_reforder: inRefOrder,
+        account_object_id: accountObject?.accountObjectId,
+        account_object_code: accountObject?.accountObjectCode,
+        account_object_name:
+          accountObject?.accountObjectName ||
+          invoice.customerName ||
+          invoice.customer?.name ||
+          'Khách lẻ',
+        account_object_address: invoice.customer?.address || '',
+        employee_id: '',
+        employee_code: '',
+        employee_name: '',
+        journal_memo: `Xuất kho bán hàng - ${invoice.code}`,
+      },
 
+      // Audit fields
       created_date: createdDate,
       created_by: this.DEFAULT_CREATED_BY,
       modified_date: createdDate,
@@ -525,5 +572,137 @@ export class MisaVoucherService {
     );
 
     return successCount;
+  }
+
+  /**
+   * Xóa chứng từ bán hàng trên Misa theo Invoice Code
+   */
+  async deleteVoucherByInvoiceCode(invoiceCode: string): Promise<{
+    success: boolean;
+    message: string;
+  }> {
+    this.logger.log(
+      `🗑️ Deleting Misa voucher for invoice code: ${invoiceCode}`,
+    );
+
+    try {
+      // 1. Tìm invoice trong database
+      const invoice = await this.prismaService.invoice.findUnique({
+        where: { code: invoiceCode },
+        select: {
+          id: true,
+          code: true,
+          misaOrgRefId: true,
+          misaSyncStatus: true,
+        },
+      });
+
+      if (!invoice) {
+        return {
+          success: false,
+          message: `Invoice not found: ${invoiceCode}`,
+        };
+      }
+
+      if (!invoice.misaOrgRefId) {
+        return {
+          success: false,
+          message: `Invoice ${invoiceCode} has no misaOrgRefId. Never synced to Misa.`,
+        };
+      }
+
+      // 2. Gọi API xóa trên Misa
+      const result = await this.sendDeleteVoucherToMisa(invoice.misaOrgRefId);
+
+      // 3. Cập nhật trạng thái trong database
+      if (result.success) {
+        await this.prismaService.invoice.update({
+          where: { id: invoice.id },
+          data: {
+            misaSyncStatus: 'SKIP',
+            misaOrgRefId: null,
+            misaConfirmed: false,
+            misaCallbackReceivedAt: null,
+            misaSyncRetries: 0,
+            misaErrorMessage: null,
+          },
+        });
+
+        this.logger.log(`✅ Voucher deleted for invoice ${invoiceCode}`);
+      } else {
+        this.logger.error(
+          `❌ Failed to delete voucher for invoice ${invoiceCode}: ${result.message}`,
+        );
+      }
+
+      return result;
+    } catch (error) {
+      this.logger.error(
+        `❌ Error deleting Misa voucher for invoice ${invoiceCode}: ${error.message}`,
+      );
+
+      return {
+        success: false,
+        message: error.message,
+      };
+    }
+  }
+
+  /**
+   * Gửi request xóa voucher lên Misa API
+   */
+  private async sendDeleteVoucherToMisa(
+    orgRefId: string,
+  ): Promise<{ success: boolean; message: string }> {
+    const baseUrl = this.configService.get<string>('MISA_BASE_URL');
+    const appId = this.configService.get<string>('MISA_APP_ID');
+    const orgCompanyCode = this.configService.get<string>(
+      'MISA_ORG_COMPANY_CODE',
+    );
+    const accessToken = await this.misaAuthService.getAccessToken();
+
+    const url = `${baseUrl}/apir/sync/actopen/delete`;
+
+    const payload: MisaDeleteVoucherRequestDto = {
+      app_id: appId || '',
+      org_company_code: orgCompanyCode || '',
+      voucher: [
+        {
+          voucher_type: this.VOUCHER_TYPE,
+          org_refid: orgRefId,
+        },
+      ],
+    };
+
+    try {
+      const response = await firstValueFrom(
+        this.httpService.delete<MisaDeleteVoucherResponseDto>(url, {
+          headers: {
+            'Content-Type': 'application/json',
+            'X-MISA-AccessToken': accessToken,
+          },
+          data: payload,
+        }),
+      );
+
+      const data = response.data;
+
+      if (data.Success) {
+        return {
+          success: true,
+          message: 'Voucher deleted successfully',
+        };
+      } else {
+        return {
+          success: false,
+          message: `${data.ErrorCode}: ${data.ErrorMessage}`,
+        };
+      }
+    } catch (error) {
+      return {
+        success: false,
+        message: error.message,
+      };
+    }
   }
 }
