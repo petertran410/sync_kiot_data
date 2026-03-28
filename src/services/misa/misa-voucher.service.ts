@@ -214,7 +214,7 @@ export class MisaVoucherService {
     const branchId = this.configService.get<string>('MISA_BRANCH_ID');
 
     // Tìm stock theo branchName
-    let stock = await this.misaDictionaryService.findStockByBranchName(
+    let stock = await this.misaDictionaryService.findStockByNameFuzzy(
       invoice.branch?.name || '',
     );
 
@@ -230,7 +230,7 @@ export class MisaVoucherService {
 
     // Tìm account object (khách hàng)
     const accountObject =
-      await this.misaDictionaryService.findAccountObjectByName(
+      await this.misaDictionaryService.findAccountObjectByNameFuzzy(
         invoice.customerName || invoice.customer?.name || '',
       );
 
@@ -243,7 +243,9 @@ export class MisaVoucherService {
 
       // Tìm inventory item từ cache
       const inventoryItem =
-        await this.misaDictionaryService.findInventoryByCode(product.misa_code);
+        await this.misaDictionaryService.findInventoryItemByCode(
+          product.misa_code,
+        );
 
       if (!inventoryItem) {
         this.logger.warn(
