@@ -284,19 +284,17 @@ export class MisaVoucherService {
       const unitPriceAfterTax = originalPrice - discountAmount;
 
       // Đơn giá trước thuế = đơn giá sau thuế / (1 + VAT%)
-      const unitPrice = unitPriceAfterTax / (1 + this.VAT_RATE / 100);
-
-      // Thành tiền (sau thuế, đã trừ chiết khấu)
-      const amountAfterTax = unitPriceAfterTax * quantity;
-
-      // Tiền thuế = thành tiền * VAT% / (100 + VAT%)
-      // const vatAmount =
-      //   (amountAfterTax * this.VAT_RATE) / (100 + this.VAT_RATE);
-
-      const vatAmount = unitPriceAfterTax * quantity - unitPrice * quantity;
+      const unitPrice =
+        Math.round((unitPriceAfterTax / (1 + this.VAT_RATE / 100)) * 100) / 100;
 
       // Thành tiền trước thuế
-      const amountBeforeTax = unitPrice * quantity;
+      const amountBeforeTax = Math.round(unitPrice * quantity * 100) / 100;
+
+      // Tiền thuế GTGT
+      const vatAmount = Math.round((amountBeforeTax * this.VAT_RATE) / 100);
+
+      // Thành tiền sau thuế = trước thuế + thuế
+      const amountAfterTax = amountBeforeTax + vatAmount;
 
       // Accumulate totals
       totalSaleAmount += amountBeforeTax;
