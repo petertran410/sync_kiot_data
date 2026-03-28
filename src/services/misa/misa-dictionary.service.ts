@@ -26,6 +26,17 @@ export class MisaDictionaryService {
   ) {}
 
   /**
+   * Truncate string để không vượt quá maxLength
+   */
+  private truncateString(
+    value: string | null | undefined,
+    maxLength: number,
+  ): string | null {
+    if (!value) return null;
+    return value.length > maxLength ? value.substring(0, maxLength) : value;
+  }
+
+  /**
    * Sync tất cả danh mục từ Misa vào cache
    */
   async syncAllDictionaries(): Promise<{
@@ -121,40 +132,57 @@ export class MisaDictionaryService {
         }
 
         try {
+          // Truncate fields theo giới hạn schema
+          const inventoryItemCode =
+            this.truncateString(item.inventory_item_code, 100) || '';
+          const inventoryItemName =
+            this.truncateString(item.inventory_item_name, 255) || '';
+          const unitName = this.truncateString(item.unit_name, 100);
+          const inventoryAccount = this.truncateString(
+            item.inventory_account,
+            20,
+          );
+          const cogsAccount = this.truncateString(item.cogs_account, 20);
+          const saleAccount = this.truncateString(item.sale_account, 20);
+          const discountAccount = this.truncateString(
+            item.discount_account,
+            20,
+          );
+
           await this.prisma.misaInventoryItem.upsert({
             where: { inventoryItemId: item.inventory_item_id },
             update: {
-              inventoryItemCode: item.inventory_item_code,
-              inventoryItemName: item.inventory_item_name || '',
+              inventoryItemCode,
+              inventoryItemName,
               inventoryItemType: item.inventory_item_type || 0,
               unitId: item.unit_id || null,
-              unitName: item.unit_name || null,
+              unitName,
               defaultStockId: item.default_stock_id || null,
               branchId: item.branch_id || null,
               unitPrice: item.unit_price ? Number(item.unit_price) : null,
               salePrice1: item.sale_price1 ? Number(item.sale_price1) : null,
               inactive: item.inactive || false,
-              inventoryAccount: item.inventory_account || null,
-              cogsAccount: item.cogs_account || null,
-              saleAccount: item.sale_account || null,
-              discountAccount: item.discount_account || null,
+              inventoryAccount,
+              cogsAccount,
+              saleAccount,
+              discountAccount,
             },
             create: {
               inventoryItemId: item.inventory_item_id,
-              inventoryItemCode: item.inventory_item_code,
-              inventoryItemName: item.inventory_item_name || '',
+              inventoryItemCode,
+              inventoryItemName,
               inventoryItemType: item.inventory_item_type || 0,
               unitId: item.unit_id || null,
-              unitName: item.unit_name || null,
+              unitName,
               defaultStockId: item.default_stock_id || null,
               branchId: item.branch_id || null,
               unitPrice: item.unit_price ? Number(item.unit_price) : null,
               salePrice1: item.sale_price1 ? Number(item.sale_price1) : null,
               inactive: item.inactive || false,
-              inventoryAccount: item.inventory_account || null,
-              cogsAccount: item.cogs_account || null,
-              saleAccount: item.sale_account || null,
-              discountAccount: item.discount_account || null,
+              inventoryAccount,
+              cogsAccount,
+              saleAccount,
+              discountAccount,
             },
           });
           totalSynced++;
@@ -201,22 +229,30 @@ export class MisaDictionaryService {
         }
 
         try {
+          // Truncate fields theo giới hạn schema
+          const stockCode = this.truncateString(item.stock_code, 50) || '';
+          const stockName = this.truncateString(item.stock_name, 255) || '';
+          const inventoryAccount = this.truncateString(
+            item.inventory_account,
+            20,
+          );
+
           await this.prisma.misaStock.upsert({
             where: { stockId: item.stock_id },
             update: {
-              stockCode: item.stock_code,
-              stockName: item.stock_name || '',
+              stockCode,
+              stockName,
               branchId: item.branch_id || null,
               inactive: item.inactive || false,
-              inventoryAccount: item.inventory_account || null,
+              inventoryAccount,
             },
             create: {
               stockId: item.stock_id,
-              stockCode: item.stock_code,
-              stockName: item.stock_name || '',
+              stockCode,
+              stockName,
               branchId: item.branch_id || null,
               inactive: item.inactive || false,
-              inventoryAccount: item.inventory_account || null,
+              inventoryAccount,
             },
           });
           totalSynced++;
@@ -267,36 +303,46 @@ export class MisaDictionaryService {
         }
 
         try {
+          // Truncate fields theo giới hạn schema
+          const accountObjectCode =
+            this.truncateString(item.account_object_code, 50) || '';
+          const accountObjectName =
+            this.truncateString(item.account_object_name, 255) || '';
+          const address = this.truncateString(item.address, 500);
+          const companyTaxCode = this.truncateString(item.company_tax_code, 50);
+          const payAccount = this.truncateString(item.pay_account, 20);
+          const receiveAccount = this.truncateString(item.receive_account, 20);
+
           await this.prisma.misaAccountObject.upsert({
             where: { accountObjectId: item.account_object_id },
             update: {
-              accountObjectCode: item.account_object_code,
-              accountObjectName: item.account_object_name || '',
+              accountObjectCode,
+              accountObjectName,
               accountObjectType: item.account_object_type || 0,
-              address: item.address || null,
-              companyTaxCode: item.company_tax_code || null,
+              address,
+              companyTaxCode,
               branchId: item.branch_id || null,
               isCustomer: item.is_customer || false,
               isVendor: item.is_vendor || false,
               isEmployee: item.is_employee || false,
               inactive: item.inactive || false,
-              payAccount: item.pay_account || null,
-              receiveAccount: item.receive_account || null,
+              payAccount,
+              receiveAccount,
             },
             create: {
               accountObjectId: item.account_object_id,
-              accountObjectCode: item.account_object_code,
-              accountObjectName: item.account_object_name || '',
+              accountObjectCode,
+              accountObjectName,
               accountObjectType: item.account_object_type || 0,
-              address: item.address || null,
-              companyTaxCode: item.company_tax_code || null,
+              address,
+              companyTaxCode,
               branchId: item.branch_id || null,
               isCustomer: item.is_customer || false,
               isVendor: item.is_vendor || false,
               isEmployee: item.is_employee || false,
               inactive: item.inactive || false,
-              payAccount: item.pay_account || null,
-              receiveAccount: item.receive_account || null,
+              payAccount,
+              receiveAccount,
             },
           });
           totalSynced++;
@@ -347,19 +393,25 @@ export class MisaDictionaryService {
         }
 
         try {
+          // Truncate fields theo giới hạn schema
+          const organizationUnitCode =
+            this.truncateString(item.organization_unit_code, 50) || '';
+          const organizationUnitName =
+            this.truncateString(item.organization_unit_name, 255) || '';
+
           await this.prisma.misaOrganizationUnit.upsert({
             where: { organizationUnitId: item.organization_unit_id },
             update: {
-              organizationUnitCode: item.organization_unit_code,
-              organizationUnitName: item.organization_unit_name || '',
+              organizationUnitCode,
+              organizationUnitName,
               organizationUnitTypeId: item.organization_unit_type_id || 1,
               parentId: item.parent_id || null,
               branchId: item.branch_id || null,
             },
             create: {
               organizationUnitId: item.organization_unit_id,
-              organizationUnitCode: item.organization_unit_code,
-              organizationUnitName: item.organization_unit_name || '',
+              organizationUnitCode,
+              organizationUnitName,
               organizationUnitTypeId: item.organization_unit_type_id || 1,
               parentId: item.parent_id || null,
               branchId: item.branch_id || null,
