@@ -281,8 +281,7 @@ export class MisaVoucherService {
       const discountRate = detail.discountRatio || 0;
 
       // Đơn giá sau thuế = (price * quantity - discount) / quantity
-      const unitPriceAfterTax =
-        (originalPrice * quantity - discountAmount) / quantity;
+      const unitPriceAfterTax = originalPrice - discountAmount;
 
       // Đơn giá trước thuế = đơn giá sau thuế / (1 + VAT%)
       const unitPrice = unitPriceAfterTax / (1 + this.VAT_RATE / 100);
@@ -291,11 +290,13 @@ export class MisaVoucherService {
       const amountAfterTax = unitPriceAfterTax * quantity;
 
       // Tiền thuế = thành tiền * VAT% / (100 + VAT%)
-      const vatAmount =
-        (amountAfterTax * this.VAT_RATE) / (100 + this.VAT_RATE);
+      // const vatAmount =
+      //   (amountAfterTax * this.VAT_RATE) / (100 + this.VAT_RATE);
+
+      const vatAmount = unitPriceAfterTax * quantity - unitPrice * quantity;
 
       // Thành tiền trước thuế
-      const amountBeforeTax = amountAfterTax - vatAmount;
+      const amountBeforeTax = unitPrice * quantity;
 
       // Accumulate totals
       totalSaleAmount += amountBeforeTax;
@@ -385,11 +386,11 @@ export class MisaVoucherService {
       // Customer info
       account_object_id: accountObject?.accountObjectId,
       account_object_code: accountObject?.accountObjectCode,
-      // account_object_name:
-      //   accountObject?.accountObjectName ||
-      //   invoice.customerName ||
-      //   invoice.customer?.name ||
-      //   'Khách lẻ',
+      account_object_name:
+        accountObject?.accountObjectName ||
+        invoice.customerName ||
+        invoice.customer?.name ||
+        'Khách lẻ',
       account_object_address: invoice.customer?.address || '',
       account_object_tax_code: invoice.customer?.taxCode || '',
 
@@ -406,7 +407,7 @@ export class MisaVoucherService {
       exchange_rate: 1,
       currency_id: 'VND',
       include_invoice: 1,
-      payer: invoice.customerName || invoice.customer?.name || 'Khách lẻ',
+      // payer: invoice.customerName || invoice.customer?.name || 'Khách lẻ',
       journal_memo: `Bán hàng - ${invoice.code}`,
 
       // Phiếu xuất kho
