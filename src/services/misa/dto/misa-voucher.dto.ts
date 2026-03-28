@@ -115,6 +115,7 @@ export interface MisaSaVoucherDetailDto {
   // Price
   unit_price?: number;
   main_unit_price: number;
+  unit_price_after_tax?: number;
   amount_oc: number;
   amount: number;
 

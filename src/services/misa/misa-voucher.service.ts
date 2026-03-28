@@ -253,9 +253,10 @@ export class MisaVoucherService {
 
     // Build details và tính totals
     const details: MisaSaVoucherDetailDto[] = [];
-    let totalSaleAmount = 0;
-    let totalDiscountAmount = 0;
-    let totalVatAmount = 0;
+    let totalSaleAmount = 0; // Tổng tiền hàng (trước thuế)
+    let totalDiscountAmount = 0; // Tổng chiết khấu
+    let totalVatAmount = 0; // Tổng thuế
+    let totalAmount = 0; // Tổng tiền thanh toán (sau thuế)
 
     for (let i = 0; i < invoice.invoiceDetails.length; i++) {
       const detail = invoice.invoiceDetails[i];
@@ -275,24 +276,37 @@ export class MisaVoucherService {
       }
 
       const quantity = detail.quantity;
-      const unitPrice = Number(detail.price);
+      const originalPrice = Number(detail.price);
       const discountAmount = Number(detail.discount || 0);
       const discountRate = detail.discountRatio || 0;
-      const amountBeforeDiscount = quantity * unitPrice;
-      const amount = amountBeforeDiscount - discountAmount;
-      const vatAmount = (amount * this.VAT_RATE) / 100;
-      const mainUnitPrice = amount / quantity;
+
+      // Đơn giá sau thuế = (price * quantity - discount) / quantity
+      const unitPriceAfterTax =
+        (originalPrice * quantity - discountAmount) / quantity;
+
+      // Đơn giá trước thuế = đơn giá sau thuế / (1 + VAT%)
+      const unitPrice = unitPriceAfterTax / (1 + this.VAT_RATE / 100);
+
+      // Thành tiền (sau thuế, đã trừ chiết khấu)
+      const amountAfterTax = unitPriceAfterTax * quantity;
+
+      // Tiền thuế = thành tiền * VAT% / (100 + VAT%)
+      const vatAmount =
+        (amountAfterTax * this.VAT_RATE) / (100 + this.VAT_RATE);
+
+      // Thành tiền trước thuế
+      const amountBeforeTax = amountAfterTax - vatAmount;
 
       // Accumulate totals
-      totalSaleAmount += amountBeforeDiscount;
-      totalDiscountAmount += discountAmount;
+      totalSaleAmount += amountBeforeTax;
       totalVatAmount += vatAmount;
+      totalAmount += amountAfterTax;
 
       details.push({
         inventory_item_id: inventoryItem.inventoryItemId,
         inventory_item_code: inventoryItem.inventoryItemCode,
         inventory_item_name: inventoryItem.inventoryItemName,
-        inventory_item_type: 0, // Hàng hóa
+        inventory_item_type: 0,
         description: inventoryItem.inventoryItemName,
 
         unit_id: inventoryItem.unitId || undefined,
@@ -305,19 +319,19 @@ export class MisaVoucherService {
         main_convert_rate: 1,
 
         unit_price: unitPrice,
-        main_unit_price: mainUnitPrice,
-        amount_oc: amount,
-        amount: amount,
+        unit_price_after_tax: unitPriceAfterTax,
+        main_unit_price: unitPrice,
+        amount_oc: amountBeforeTax,
+        amount: amountBeforeTax,
 
-        discount_rate: discountRate,
-        discount_amount_oc: discountAmount,
-        discount_amount: discountAmount,
+        discount_rate: 0,
+        discount_amount_oc: 0,
+        discount_amount: 0,
 
         vat_rate: this.VAT_RATE,
         vat_amount_oc: vatAmount,
         vat_amount: vatAmount,
 
-        // Required account fields for sa_voucher
         debit_account: this.DEBIT_ACCOUNT,
         credit_account: this.CREDIT_ACCOUNT,
         cost_account: this.COST_ACCOUNT,
@@ -331,6 +345,11 @@ export class MisaVoucherService {
         is_promotion: false,
         is_description: false,
       });
+    }
+
+    if (details.length === 0) {
+      this.logger.error('❌ No valid details for voucher');
+      return null;
     }
 
     if (details.length === 0) {
@@ -358,9 +377,9 @@ export class MisaVoucherService {
       reftype: this.REFTYPE,
       posted_date: postedDate,
       refdate: refDate,
-      is_sale_with_outward: true, // Bán hàng kiêm phiếu xuất kho
+      is_sale_with_outward: true,
 
-      // Totals (required)
+      // Totals
       total_sale_amount_oc: totalSaleAmount,
       total_sale_amount: totalSaleAmount,
       total_amount_oc: totalAmount,
@@ -387,17 +406,17 @@ export class MisaVoucherService {
       employee_name: '',
 
       // Discount
-      discount_type: 1, // Theo mặt hàng
-      discount_rate_voucher: invoice.discountRatio || 0,
+      discount_type: 0,
+      discount_rate_voucher: 0,
 
       // Other
       exchange_rate: 1,
       currency_id: 'VND',
-      include_invoice: 1, // Không kèm hóa đơn
+      include_invoice: 1,
       payer: invoice.customerName || invoice.customer?.name || 'Khách lẻ',
       journal_memo: `Bán hàng - ${invoice.code}`,
 
-      // Phiếu xuất kho (khi is_sale_with_outward = true)
+      // Phiếu xuất kho
       in_outward: {
         branch_id: branchId || '',
         reftype: this.OUTWARD_REFTYPE,
