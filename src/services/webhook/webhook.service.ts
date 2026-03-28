@@ -11,8 +11,7 @@ import { async, firstValueFrom } from 'rxjs';
 import { HttpService } from '@nestjs/axios';
 import { LarkPaymentVoucherSyncService } from '../lark/payment-voucher/lark-payment-voucher-sync.service';
 import { LarkInvoiceDetailSyncService } from '../lark/invoice-detail/lark-invoice-detail-sync.service';
-import { response } from 'express';
-import { url } from 'inspector';
+import { MisaVoucherService } from '../misa/misa-voucher.service';
 
 @Injectable()
 export class WebhookService {
@@ -38,6 +37,7 @@ export class WebhookService {
     private readonly larkProductSyncService: LarkProductSyncService,
     private readonly larkPaymentVoucherSyncService: LarkPaymentVoucherSyncService,
     private readonly larkInvoiceDetailSyncService: LarkInvoiceDetailSyncService,
+    private readonly misaVoucherService: MisaVoucherService,
   ) {}
 
   private shouldSyncInvoiceDetail(
@@ -109,6 +109,32 @@ export class WebhookService {
             this.logger.log(
               `✅ Synced invoice details for invoice ${savedInvoice.code}`,
             );
+
+            // ========================================
+            // PHASE 7: Tạo chứng từ bán hàng Misa
+            // ========================================
+            try {
+              const misaResult =
+                await this.misaVoucherService.createSaleVoucherFromInvoice(
+                  savedInvoice.id,
+                );
+
+              if (misaResult.success) {
+                this.logger.log(
+                  `✅ Misa voucher queued for invoice ${savedInvoice.code}, orgRefId: ${misaResult.orgRefId}`,
+                );
+              } else {
+                this.logger.warn(
+                  `⚠️ Misa voucher skipped/failed for invoice ${savedInvoice.code}: ${misaResult.message}`,
+                );
+              }
+            } catch (misaError) {
+              // Log error nhưng không throw để không ảnh hưởng webhook response
+              this.logger.error(
+                `❌ Failed to create Misa voucher for invoice ${savedInvoice.code}: ${misaError.message}`,
+              );
+            }
+            // ========================================
           }
         }
       }
