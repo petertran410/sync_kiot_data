@@ -60,6 +60,7 @@ model Product {
   weight               Float?
   isLotSerialControl   Boolean                  @default(false)
   isBatchExpireControl Boolean                  @default(false)
+  isCommerce           Boolean                  @default(false)
   orderTemplate        String?
   minQuantity          Int?
   maxQuantity          Int?
