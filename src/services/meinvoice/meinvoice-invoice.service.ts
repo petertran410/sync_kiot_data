@@ -182,6 +182,7 @@ export class MeInvoiceInvoiceService {
     message: string;
   }> {
     const baseUrl = this.configService.get<string>('MEINVOICE_WEBAPP_BASE_URL');
+    const taxCode = this.configService.get<string>('MEINVOICE_TAX_CODE') || '';
     const accessToken = await this.meInvoiceAuthService.getAccessToken();
 
     const url = `${baseUrl}/SAInvoice/Get/${refId}`;
@@ -189,15 +190,14 @@ export class MeInvoiceInvoiceService {
     try {
       const response = await firstValueFrom(
         this.httpService.get(url, {
-          headers: { Authorization: `Bearer ${accessToken}` },
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            taxcode: taxCode,
+          },
         }),
       );
 
-      return {
-        success: true,
-        data: response.data,
-        message: 'OK',
-      };
+      return { success: true, data: response.data, message: 'OK' };
     } catch (error) {
       return {
         success: false,
@@ -368,9 +368,15 @@ export class MeInvoiceInvoiceService {
     payload: MeInvoiceInsertRequestDto,
   ): Promise<{ success: boolean; message: string }> {
     const baseUrl = this.configService.get<string>('MEINVOICE_WEBAPP_BASE_URL');
+    const taxCode = this.configService.get<string>('MEINVOICE_TAX_CODE') || '';
     const accessToken = await this.meInvoiceAuthService.getAccessToken();
 
     const url = `${baseUrl}/SAInvoice/Insert`;
+
+    this.logger.debug(`Insert URL: ${url}`);
+    this.logger.debug(
+      `Insert payload: ${JSON.stringify(payload).substring(0, 500)}...`,
+    );
 
     try {
       const response = await firstValueFrom(
@@ -378,11 +384,14 @@ export class MeInvoiceInvoiceService {
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${accessToken}`,
+            taxcode: taxCode,
           },
         }),
       );
 
       const data = response.data;
+
+      this.logger.debug(`Insert response: ${JSON.stringify(data)}`);
 
       if (data?.success === false) {
         const errorMsg =
@@ -395,11 +404,309 @@ export class MeInvoiceInvoiceService {
       const errorDetail = error.response?.data
         ? JSON.stringify(error.response.data)
         : error.message;
+      this.logger.error(`❌ Insert error: ${errorDetail}`);
       return { success: false, message: errorDetail };
     }
   }
 
+  /**
+   * Lấy link preview PDF hóa đơn chưa phát hành
+   */
+  async getPreviewLink(invoiceCode: string): Promise<{
+    success: boolean;
+    link: string | null;
+    message: string;
+  }> {
+    this.logger.log(`🔗 Getting preview link for invoice: ${invoiceCode}`);
+
+    try {
+      const invoice = await this.prismaService.invoice.findUnique({
+        where: { code: invoiceCode },
+        include: {
+          invoiceDetails: {
+            include: {
+              product: {
+                select: {
+                  id: true,
+                  code: true,
+                  name: true,
+                  misa_code: true,
+                  misa_name: true,
+                  misa_unit: true,
+                  unit: true,
+                },
+              },
+            },
+          },
+          customer: {
+            select: {
+              id: true,
+              code: true,
+              name: true,
+              address: true,
+              taxCode: true,
+              contactNumber: true,
+              email: true,
+            },
+          },
+        },
+      });
+
+      if (!invoice) {
+        return {
+          success: false,
+          link: null,
+          message: `Invoice not found: ${invoiceCode}`,
+        };
+      }
+
+      // Build ITG v3 OriginalInvoiceData payload
+      const payload = this.buildPreviewPayload(invoice);
+
+      if (!payload) {
+        return {
+          success: false,
+          link: null,
+          message: 'Failed to build preview payload',
+        };
+      }
+
+      // Gọi ITG API v3
+      const itgBaseUrl = this.configService.get<string>(
+        'MEINVOICE_ITG_BASE_URL',
+      );
+      const taxCode =
+        this.configService.get<string>('MEINVOICE_TAX_CODE') || '';
+      const itgToken = await this.meInvoiceAuthService.getItgAccessToken();
+
+      const url = `${itgBaseUrl}/code/itg/invoicepublishing/invoicelinkview?type=1`;
+
+      const response = await firstValueFrom(
+        this.httpService.post(url, payload, {
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${itgToken}`,
+            CompanyTaxCode: taxCode,
+          },
+        }),
+      );
+
+      const data = response.data;
+
+      this.logger.debug(`Preview response: ${JSON.stringify(data)}`);
+
+      if (!data?.Success || !data?.Data) {
+        return {
+          success: false,
+          link: null,
+          message: `${data?.ErrorCode || 'Unknown error'}`,
+        };
+      }
+
+      this.logger.log(`✅ Preview link obtained for ${invoiceCode}`);
+
+      return {
+        success: true,
+        link: data.Data,
+        message: 'Preview link generated',
+      };
+    } catch (error) {
+      const errorDetail = error.response?.data
+        ? JSON.stringify(error.response.data)
+        : error.message;
+      this.logger.error(`❌ Preview link error: ${errorDetail}`);
+      return { success: false, link: null, message: errorDetail };
+    }
+  }
+
+  /**
+   * Build OriginalInvoiceData cho ITG v3 preview API
+   */
+  private buildPreviewPayload(invoice: any): any {
+    const invSeries =
+      this.configService.get<string>('MEINVOICE_INV_SERIES') || '';
+
+    const details: any[] = [];
+    let totalSaleAmount = 0;
+    let totalDiscountAmount = 0;
+    let totalAmountWithoutVAT = 0;
+    let totalVATAmount = 0;
+    let totalAmount = 0;
+
+    for (let i = 0; i < invoice.invoiceDetails.length; i++) {
+      const detail = invoice.invoiceDetails[i];
+      const product = detail.product;
+
+      const quantity = detail.quantity;
+      const originalPrice = Number(detail.price);
+      const discountPerUnit = Number(detail.discount || 0);
+
+      const unitPrice =
+        Math.round((originalPrice / (1 + this.VAT_RATE / 100)) * 100) / 100;
+
+      const amountOC = Math.round(unitPrice * quantity * 100) / 100;
+
+      const discountPerUnitBeforeTax =
+        Math.round((discountPerUnit / (1 + this.VAT_RATE / 100)) * 100) / 100;
+      const discountAmountOC =
+        Math.round(discountPerUnitBeforeTax * quantity * 100) / 100;
+
+      const amountWithoutVAT = amountOC - discountAmountOC;
+      const vatAmount = Math.round((amountWithoutVAT * this.VAT_RATE) / 100);
+
+      totalSaleAmount += amountOC;
+      totalDiscountAmount += discountAmountOC;
+      totalAmountWithoutVAT += amountWithoutVAT;
+      totalVATAmount += vatAmount;
+      totalAmount += amountWithoutVAT + vatAmount;
+
+      details.push({
+        ItemType: 1,
+        LineNumber: i + 1,
+        SortOrder: i + 1,
+        ItemCode: product.misa_code || product.code,
+        ItemName: product.misa_name || product.name,
+        UnitName: product.misa_unit || product.unit || '',
+        Quantity: quantity,
+        UnitPrice: unitPrice,
+        DiscountRate: detail.discountRatio || 0,
+        DiscountAmountOC: discountAmountOC,
+        DiscountAmount: discountAmountOC,
+        AmountOC: amountOC,
+        Amount: amountOC,
+        AmountWithoutVATOC: amountWithoutVAT,
+        AmountWithoutVAT: amountWithoutVAT,
+        VATRateName: '10%',
+        VATAmountOC: vatAmount,
+        VATAmount: vatAmount,
+      });
+    }
+
+    if (details.length === 0) return null;
+
+    return {
+      RefID: invoice.meinvoiceRefId || uuidv4(),
+      InvSeries: invSeries,
+      InvoiceName: 'Hóa đơn giá trị gia tăng',
+      InvDate: this.formatDate(invoice.purchaseDate),
+      CurrencyCode: 'VND',
+      ExchangeRate: 1.0,
+      PaymentMethodName: 'TM/CK',
+      BuyerLegalName:
+        invoice.customer?.name || invoice.customerName || 'Khách lẻ',
+      BuyerTaxCode: invoice.customer?.taxCode || '',
+      BuyerAddress: invoice.customer?.address || '',
+      BuyerCode: invoice.customer?.code || invoice.customerCode || '',
+      BuyerPhoneNumber: invoice.customer?.contactNumber || '',
+      BuyerEmail: invoice.customer?.email || '',
+      BuyerFullName: invoice.customerName || invoice.customer?.name || '',
+      TotalSaleAmountOC: totalSaleAmount,
+      TotalSaleAmount: totalSaleAmount,
+      TotalAmountWithoutVATOC: totalAmountWithoutVAT,
+      TotalAmountWithoutVAT: totalAmountWithoutVAT,
+      TotalVATAmountOC: totalVATAmount,
+      TotalVATAmount: totalVATAmount,
+      TotalDiscountAmountOC: totalDiscountAmount,
+      TotalDiscountAmount: totalDiscountAmount,
+      TotalAmountOC: totalAmount,
+      TotalAmount: totalAmount,
+      TotalAmountInWords: this.numberToVietnameseWords(totalAmount),
+      IsTaxReduction: true,
+      OriginalInvoiceDetail: details,
+      TaxRateInfo: [
+        {
+          VATRateName: '10%',
+          AmountWithoutVATOC: totalAmountWithoutVAT,
+          VATAmountOC: totalVATAmount,
+        },
+      ],
+      OptionUserDefined: {
+        MainCurrency: 'VND',
+        AmountDecimalDigits: '0',
+        AmountOCDecimalDigits: '0',
+        UnitPriceOCDecimalDigits: '0',
+        UnitPriceDecimalDigits: '0',
+        QuantityDecimalDigits: '0',
+        CoefficientDecimalDigits: '2',
+        ExchangRateDecimalDigits: '0',
+      },
+      ReferenceType: null,
+      OrgInvoiceType: null,
+      OrgInvTemplateNo: null,
+      OrgInvSeries: null,
+      OrgInvNo: null,
+      OrgInvDate: null,
+    };
+  }
+
   private formatDate(date: Date): string {
     return new Date(date).toISOString();
+  }
+
+  private numberToVietnameseWords(amount: number): string {
+    const rounded = Math.round(amount);
+    if (rounded === 0) return 'Không đồng.';
+
+    const ones = [
+      '',
+      'một',
+      'hai',
+      'ba',
+      'bốn',
+      'năm',
+      'sáu',
+      'bảy',
+      'tám',
+      'chín',
+    ];
+    const groups = ['', 'nghìn', 'triệu', 'tỷ', 'nghìn tỷ', 'triệu tỷ'];
+
+    const readThreeDigits = (n: number, showZeroHundred: boolean): string => {
+      const h = Math.floor(n / 100);
+      const t = Math.floor((n % 100) / 10);
+      const o = n % 10;
+      let result = '';
+
+      if (h > 0) {
+        result += ones[h] + ' trăm';
+      } else if (showZeroHundred) {
+        result += 'không trăm';
+      }
+
+      if (t > 1) {
+        result += ' ' + ones[t] + ' mươi';
+        if (o === 1) result += ' mốt';
+        else if (o === 5) result += ' lăm';
+        else if (o > 0) result += ' ' + ones[o];
+      } else if (t === 1) {
+        result += ' mười';
+        if (o === 5) result += ' lăm';
+        else if (o > 0) result += ' ' + ones[o];
+      } else if (o > 0) {
+        if (h > 0 || showZeroHundred) result += ' lẻ';
+        result += ' ' + ones[o];
+      }
+
+      return result.trim();
+    };
+
+    const chunks: number[] = [];
+    let temp = rounded;
+    while (temp > 0) {
+      chunks.push(temp % 1000);
+      temp = Math.floor(temp / 1000);
+    }
+
+    let result = '';
+    for (let i = chunks.length - 1; i >= 0; i--) {
+      if (chunks[i] === 0) continue;
+      const showZero = i < chunks.length - 1;
+      result += readThreeDigits(chunks[i], showZero) + ' ' + groups[i] + ' ';
+    }
+
+    result = result.trim();
+    result = result.charAt(0).toUpperCase() + result.slice(1) + ' đồng.';
+
+    return result;
   }
 }

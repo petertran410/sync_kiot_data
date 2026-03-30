@@ -47,4 +47,23 @@ export class MeInvoiceController {
       return { success: false, data: null, message: error.message };
     }
   }
+
+  /**
+   * Lấy link preview PDF hóa đơn chưa phát hành
+   * GET /meinvoice/preview/:invoiceCode
+   */
+  @Get('preview/:invoiceCode')
+  async getPreviewLink(@Param('invoiceCode') invoiceCode: string): Promise<{
+    success: boolean;
+    link: string | null;
+    message: string;
+  }> {
+    this.logger.log(`🔗 Get preview link: ${invoiceCode}`);
+
+    try {
+      return await this.meInvoiceInvoiceService.getPreviewLink(invoiceCode);
+    } catch (error) {
+      return { success: false, link: null, message: error.message };
+    }
+  }
 }
