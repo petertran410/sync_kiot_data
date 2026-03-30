@@ -291,7 +291,7 @@ export class MisaVoucherService {
       const amountBeforeTax = Math.round(unitPrice * quantity * 100) / 100;
 
       // Tiền thuế GTGT
-      const vatAmount = unitPrice * quantity * 0.08;
+      const vatAmount = Math.trunc((amountBeforeTax * this.VAT_RATE) / 100);
 
       // Thành tiền sau thuế = trước thuế + thuế
       const amountAfterTax = amountBeforeTax + vatAmount;
