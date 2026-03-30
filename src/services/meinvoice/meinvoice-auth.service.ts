@@ -2,11 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
-import {
-  MeInvoiceTokenRequestDto,
-  MeInvoiceTokenResponseDto,
-  MeInvoiceCachedTokenDto,
-} from './dto';
+import { MeInvoiceCachedTokenDto } from './dto';
 
 @Injectable()
 export class MeInvoiceAuthService {
@@ -27,123 +23,61 @@ export class MeInvoiceAuthService {
   }
 
   private isTokenValid(): boolean {
-    if (!this.cachedToken) {
-      return false;
-    }
+    if (!this.cachedToken) return false;
 
     const now = new Date();
-    const bufferMs = 60 * 60 * 1000; // 1 giờ buffer
-    const expiresAt = new Date(this.cachedToken.expiresAt.getTime() - bufferMs);
-
-    return now < expiresAt;
+    const bufferMs = 5 * 60 * 1000; // 5 phút buffer
+    return now < new Date(this.cachedToken.expiresAt.getTime() - bufferMs);
   }
 
   private async requestNewToken(): Promise<string> {
-    const baseUrl = this.configService.get<string>('MEINVOICE_BASE_URL');
-    const url = `${baseUrl}/auth/token`;
+    const baseUrl = this.configService.get<string>('MEINVOICE_WEBAPP_BASE_URL');
+    const taxCode = this.configService.get<string>('MEINVOICE_TAX_CODE') || '';
+    const username = this.configService.get<string>('MEINVOICE_USERNAME') || '';
+    const password = this.configService.get<string>('MEINVOICE_PASSWORD') || '';
 
-    const requestBody: MeInvoiceTokenRequestDto = {
-      appid: this.configService.get<string>('MEINVOICE_APP_ID') || '',
-      taxcode: this.configService.get<string>('MEINVOICE_TAX_CODE') || '',
-      username: this.configService.get<string>('MEINVOICE_USERNAME') || '',
-      password: this.configService.get<string>('MEINVOICE_PASSWORD') || '',
-    };
+    const url = `${baseUrl}/oauth`;
+    const body = `grant_type=password&username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
 
-    this.logger.log('🔐 Requesting new MeInvoice access token...');
+    this.logger.log('🔐 Requesting MeInvoice Web API v2 token...');
 
     try {
       const response = await firstValueFrom(
-        this.httpService.post<MeInvoiceTokenResponseDto>(url, requestBody, {
-          headers: { 'Content-Type': 'application/json' },
+        this.httpService.post(url, body, {
+          headers: {
+            'Content-Type': 'text/plain',
+            taxcode: taxCode,
+          },
         }),
       );
 
       const data = response.data;
 
-      if (!data.Success || !data.Data) {
-        const errorMsg = `MeInvoice auth failed: ${data.ErrorCode}`;
-        this.logger.error(`❌ ${errorMsg}`);
-        throw new Error(errorMsg);
+      if (!data?.access_token) {
+        throw new Error('MeInvoice OAuth response missing access_token');
       }
 
-      // Token hạn 15 ngày
-      const expiresAt = new Date();
-      expiresAt.setDate(expiresAt.getDate() + 15);
+      const expiresInMs = (data.expires_in || 86400) * 1000;
+      const expiresAt = new Date(Date.now() + expiresInMs);
 
       this.cachedToken = {
-        token: data.Data,
-        expiresAt: expiresAt,
+        token: data.access_token,
+        expiresAt,
       };
 
       this.logger.log(
-        `✅ MeInvoice access token obtained, expires at: ${expiresAt.toISOString()}`,
+        `✅ MeInvoice token obtained, expires at: ${expiresAt.toISOString()}`,
       );
 
       return this.cachedToken.token;
     } catch (error) {
       if (error.response) {
         this.logger.error(
-          `❌ MeInvoice API error: ${JSON.stringify(error.response.data)}`,
+          `❌ MeInvoice OAuth error: ${JSON.stringify(error.response.data)}`,
         );
       }
-      this.logger.error(
-        `❌ Failed to get MeInvoice access token: ${error.message}`,
-      );
+      this.logger.error(`❌ Failed to get MeInvoice token: ${error.message}`);
       throw error;
-    }
-  }
-
-  async refreshToken(): Promise<string> {
-    if (!this.cachedToken) {
-      return this.requestNewToken();
-    }
-
-    const baseUrl = this.configService.get<string>('MEINVOICE_BASE_URL');
-    const url = `${baseUrl}/auth/refreshtoken`;
-
-    this.logger.log('🔄 Refreshing MeInvoice token...');
-
-    try {
-      const response = await firstValueFrom(
-        this.httpService.post<MeInvoiceTokenResponseDto>(
-          url,
-          this.cachedToken.token,
-          {
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${this.cachedToken.token}`,
-              CompanyTaxCode:
-                this.configService.get<string>('MEINVOICE_TAX_CODE') || '',
-            },
-          },
-        ),
-      );
-
-      const data = response.data;
-
-      if (!data.Success || !data.Data) {
-        this.logger.warn('⚠️ Refresh failed, requesting new token...');
-        this.cachedToken = null;
-        return this.requestNewToken();
-      }
-
-      const expiresAt = new Date();
-      expiresAt.setDate(expiresAt.getDate() + 15);
-
-      this.cachedToken = {
-        token: data.Data,
-        expiresAt: expiresAt,
-      };
-
-      this.logger.log('✅ MeInvoice token refreshed');
-
-      return this.cachedToken.token;
-    } catch (error) {
-      this.logger.warn(
-        `⚠️ Refresh token error: ${error.message}, requesting new token...`,
-      );
-      this.cachedToken = null;
-      return this.requestNewToken();
     }
   }
 

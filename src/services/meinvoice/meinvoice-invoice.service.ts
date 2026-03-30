@@ -6,10 +6,9 @@ import { firstValueFrom } from 'rxjs';
 import { v4 as uuidv4 } from 'uuid';
 import { MeInvoiceAuthService } from './meinvoice-auth.service';
 import {
-  MeInvoiceOriginalInvoiceDataDto,
-  MeInvoiceOriginalDetailDto,
-  MeInvoiceCreateResponseDto,
-  MeInvoiceCreateResultItemDto,
+  MeInvoiceInsertRequestDto,
+  MeInvoiceMasterDto,
+  MeInvoiceDetailDto,
 } from './dto';
 
 @Injectable()
@@ -17,7 +16,6 @@ export class MeInvoiceInvoiceService {
   private readonly logger = new Logger(MeInvoiceInvoiceService.name);
 
   private readonly VAT_RATE = 8;
-  private readonly VAT_RATE_NAME = '8%';
 
   constructor(
     private readonly configService: ConfigService,
@@ -27,21 +25,18 @@ export class MeInvoiceInvoiceService {
   ) {}
 
   /**
-   * Tạo hóa đơn nháp trên MeInvoice từ Invoice Code
+   * Đẩy hóa đơn nháp lên MeInvoice Web
    */
-  async createDraftInvoice(invoiceCode: string): Promise<{
+  async pushDraftInvoice(invoiceCode: string): Promise<{
     success: boolean;
     refId: string | null;
-    transactionId: string | null;
-    invNo: string | null;
     message: string;
   }> {
     this.logger.log(
-      `📄 Creating MeInvoice draft for invoice code: ${invoiceCode}`,
+      `📄 Pushing draft invoice to MeInvoice for: ${invoiceCode}`,
     );
 
     try {
-      // 1. Lấy Invoice với đầy đủ thông tin
       const invoice = await this.prismaService.invoice.findUnique({
         where: { code: invoiceCode },
         include: {
@@ -78,97 +73,70 @@ export class MeInvoiceInvoiceService {
         return {
           success: false,
           refId: null,
-          transactionId: null,
-          invNo: null,
           message: `Invoice not found: ${invoiceCode}`,
         };
       }
 
-      // 2. Kiểm tra đã sync MeInvoice chưa
       if (invoice.meinvoiceSyncStatus === 'SYNCED') {
         return {
           success: false,
           refId: invoice.meinvoiceRefId,
-          transactionId: invoice.meinvoiceTransactionId,
-          invNo: invoice.meinvoiceInvNo,
-          message: `Invoice already synced to MeInvoice: ${invoice.code}`,
+          message: `Invoice already pushed to MeInvoice: ${invoice.code}`,
         };
       }
 
-      // 3. Kiểm tra sản phẩm có misa_code không (dùng chung mapping)
+      // Kiểm tra misa_code
       const productsWithoutCode = invoice.invoiceDetails.filter(
-        (detail) =>
-          !detail.product.misa_code || detail.product.misa_code.trim() === '',
+        (d) => !d.product.misa_code || d.product.misa_code.trim() === '',
       );
 
       if (productsWithoutCode.length > 0) {
-        const productCodes = productsWithoutCode
-          .map((d) => d.product.code)
-          .join(', ');
-
-        this.logger.warn(
-          `⚠️ Invoice ${invoice.code} has products without misa_code: ${productCodes}. Skipping...`,
-        );
+        const codes = productsWithoutCode.map((d) => d.product.code).join(', ');
 
         await this.prismaService.invoice.update({
           where: { id: invoice.id },
           data: {
             meinvoiceSyncStatus: 'SKIP',
-            meinvoiceErrorMessage: `Products without misa_code: ${productCodes}`,
+            meinvoiceErrorMessage: `Products without misa_code: ${codes}`,
           },
         });
 
         return {
           success: false,
           refId: null,
-          transactionId: null,
-          invNo: null,
           message: `Invoice ${invoice.code} skipped: products without misa_code`,
         };
       }
 
-      // 4. Build payload
+      // Build payload
       const refId = invoice.meinvoiceRefId || uuidv4();
-      const payload = this.buildInvoicePayload(invoice, refId);
+      const payload = this.buildInsertPayload(invoice, refId);
 
       if (!payload) {
         return {
           success: false,
           refId: null,
-          transactionId: null,
-          invNo: null,
-          message: `Failed to build MeInvoice payload for invoice: ${invoice.code}`,
+          message: 'Failed to build payload',
         };
       }
 
-      // 5. Gửi API tạo hóa đơn
-      const result = await this.sendCreateInvoice([payload]);
+      // Gửi API
+      const result = await this.sendInsert(payload);
 
-      // 6. Cập nhật trạng thái
-      if (result.success && result.data) {
+      if (result.success) {
         await this.prismaService.invoice.update({
           where: { id: invoice.id },
           data: {
             meinvoiceSyncStatus: 'SYNCED',
-            meinvoiceRefId: result.data.RefID,
-            meinvoiceTransactionId: result.data.TransactionID,
-            meinvoiceInvNo: result.data.InvNo,
+            meinvoiceRefId: refId,
             meinvoiceSyncedAt: new Date(),
             meinvoiceErrorMessage: null,
           },
         });
 
         this.logger.log(
-          `✅ MeInvoice draft created for invoice ${invoice.code}, InvNo: ${result.data.InvNo}, TransactionID: ${result.data.TransactionID}`,
+          `✅ Draft invoice pushed to MeInvoice for ${invoice.code}, RefID: ${refId}`,
         );
-
-        return {
-          success: true,
-          refId: result.data.RefID,
-          transactionId: result.data.TransactionID,
-          invNo: result.data.InvNo,
-          message: `Draft invoice created successfully`,
-        };
       } else {
         await this.prismaService.invoice.update({
           where: { id: invoice.id },
@@ -178,22 +146,12 @@ export class MeInvoiceInvoiceService {
             meinvoiceErrorMessage: result.message,
           },
         });
-
-        this.logger.error(
-          `❌ Failed to create MeInvoice draft for invoice ${invoice.code}: ${result.message}`,
-        );
-
-        return {
-          success: false,
-          refId: refId,
-          transactionId: null,
-          invNo: null,
-          message: result.message,
-        };
       }
+
+      return { success: result.success, refId, message: result.message };
     } catch (error) {
       this.logger.error(
-        `❌ Error creating MeInvoice draft for invoice ${invoiceCode}: ${error.message}`,
+        `❌ Error pushing draft invoice ${invoiceCode}: ${error.message}`,
       );
 
       const invoice = await this.prismaService.invoice.findUnique({
@@ -211,34 +169,69 @@ export class MeInvoiceInvoiceService {
         });
       }
 
+      return { success: false, refId: null, message: error.message };
+    }
+  }
+
+  /**
+   * Query hóa đơn trên MeInvoice theo RefID
+   */
+  async getInvoiceByRefId(refId: string): Promise<{
+    success: boolean;
+    data: any;
+    message: string;
+  }> {
+    const baseUrl = this.configService.get<string>('MEINVOICE_WEBAPP_BASE_URL');
+    const accessToken = await this.meInvoiceAuthService.getAccessToken();
+
+    const url = `${baseUrl}/SAInvoice/Get/${refId}`;
+
+    try {
+      const response = await firstValueFrom(
+        this.httpService.get(url, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        }),
+      );
+
+      return {
+        success: true,
+        data: response.data,
+        message: 'OK',
+      };
+    } catch (error) {
       return {
         success: false,
-        refId: null,
-        transactionId: null,
-        invNo: null,
-        message: error.message,
+        data: null,
+        message: error.response?.data?.error || error.message,
       };
     }
   }
 
   /**
-   * Build payload cho MeInvoice từ Invoice data
+   * Build payload cho /SAInvoice/Insert
    */
-  private buildInvoicePayload(
+  private buildInsertPayload(
     invoice: any,
     refId: string,
-  ): MeInvoiceOriginalInvoiceDataDto | null {
+  ): MeInvoiceInsertRequestDto | null {
+    const companyId = Number(
+      this.configService.get<string>('MEINVOICE_COMPANY_ID') || '0',
+    );
+    const companyName =
+      this.configService.get<string>('MEINVOICE_COMPANY_NAME') || '';
+    const companyTaxCode =
+      this.configService.get<string>('MEINVOICE_COMPANY_TAX_CODE') || '';
+    const invTemplateNo =
+      this.configService.get<string>('MEINVOICE_INV_TEMPLATE_NO') || '';
+    const invTypeCode =
+      this.configService.get<string>('MEINVOICE_INV_TYPE_CODE') || '';
     const invSeries =
       this.configService.get<string>('MEINVOICE_INV_SERIES') || '';
-    const invoiceTemplateId = this.configService.get<string>(
-      'MEINVOICE_INVOICE_TEMPLATE_ID',
-    );
 
-    // Build details và tính totals
-    const details: MeInvoiceOriginalDetailDto[] = [];
+    // Build details
+    const details: MeInvoiceDetailDto[] = [];
     let totalSaleAmount = 0;
     let totalDiscountAmount = 0;
-    let totalAmountWithoutVAT = 0;
     let totalVATAmount = 0;
     let totalAmount = 0;
 
@@ -247,14 +240,14 @@ export class MeInvoiceInvoiceService {
       const product = detail.product;
 
       const quantity = detail.quantity;
-      const originalPrice = Number(detail.price); // đơn giá bao gồm VAT
-      const discountPerUnit = Number(detail.discount || 0); // CK per-unit (trên giá bao gồm VAT)
+      const originalPrice = Number(detail.price);
+      const discountPerUnit = Number(detail.discount || 0);
 
       // Đơn giá chưa thuế, chưa CK
       const unitPrice =
         Math.round((originalPrice / (1 + this.VAT_RATE / 100)) * 100) / 100;
 
-      // Thành tiền (UnitPrice * SL) — trước CK
+      // Thành tiền trước CK
       const amountOC = Math.round(unitPrice * quantity * 100) / 100;
 
       // Chiết khấu (quy về trước thuế)
@@ -265,320 +258,148 @@ export class MeInvoiceInvoiceService {
       const discountRate = detail.discountRatio || 0;
 
       // Thành tiền sau CK, chưa thuế
-      const amountWithoutVAT = amountOC - discountAmountOC;
+      const amountAfterDiscount = amountOC - discountAmountOC;
 
       // Tiền thuế
-      const vatAmount = Math.round((amountWithoutVAT * this.VAT_RATE) / 100);
+      const vatAmount = Math.round((amountAfterDiscount * this.VAT_RATE) / 100);
 
-      // Accumulate totals
       totalSaleAmount += amountOC;
       totalDiscountAmount += discountAmountOC;
-      totalAmountWithoutVAT += amountWithoutVAT;
       totalVATAmount += vatAmount;
-      totalAmount += amountWithoutVAT + vatAmount;
+      totalAmount += amountAfterDiscount + vatAmount;
+
+      const refDetailId = uuidv4();
 
       details.push({
-        ItemType: 1,
-        LineNumber: i + 1,
-        SortOrder: i + 1,
-        ItemCode: product.misa_code || product.code,
-        ItemName: product.misa_name || product.name,
+        RefDetailID: refDetailId,
+        RefID: refId,
+        InventoryItemID: product.misa_code || product.code,
+        InventoryItemCode: product.misa_code || product.code,
+        InventoryItemName: product.misa_name || product.name,
+        Description: product.misa_name || product.name,
         UnitName: product.misa_unit || product.unit || '',
         Quantity: quantity,
         UnitPrice: unitPrice,
+        AmountOC: amountOC,
+        Amount: amountOC,
         DiscountRate: discountRate,
         DiscountAmountOC: discountAmountOC,
         DiscountAmount: discountAmountOC,
-        AmountOC: amountOC,
-        Amount: amountOC,
-        AmountWithoutVATOC: amountWithoutVAT,
-        AmountWithoutVAT: amountWithoutVAT,
-        VATRateName: this.VAT_RATE_NAME,
+        VATRate: 10, // MeInvoice yêu cầu thuế suất gốc, tự giảm về 8%
         VATAmountOC: vatAmount,
         VATAmount: vatAmount,
+        SortOrder: i + 1,
+        IsPromotion: false,
+        CompanyID: companyId,
+        InventoryItemType: 0,
+        SortOrderView: i + 1,
+        EntityState: 1,
       });
     }
 
     if (details.length === 0) {
-      this.logger.error('❌ No valid details for MeInvoice');
+      this.logger.error('❌ No valid details');
       return null;
     }
 
-    const payload: MeInvoiceOriginalInvoiceDataDto = {
+    const totalAmountWithoutVAT = totalSaleAmount - totalDiscountAmount;
+    const invDate = this.formatDate(invoice.purchaseDate);
+    const now = this.formatDate(new Date());
+
+    const master: MeInvoiceMasterDto = {
       RefID: refId,
-      InvSeries: invSeries,
-      InvoiceName: 'Hóa đơn giá trị gia tăng',
-      InvDate: this.formatDateForMeInvoice(invoice.purchaseDate),
-      CurrencyCode: 'VND',
-      ExchangeRate: 1.0,
-      PaymentMethodName: 'TM/CK',
-
-      // Buyer
-      BuyerLegalName:
+      RefType: 0, // Hóa đơn GTGT
+      AccountObjectID: null,
+      AccountObjectName:
         invoice.customer?.name || invoice.customerName || 'Khách lẻ',
-      BuyerTaxCode: invoice.customer?.taxCode || '',
-      BuyerAddress: invoice.customer?.address || '',
-      BuyerCode: invoice.customer?.code || invoice.customerCode || '',
-      BuyerPhoneNumber: invoice.customer?.contactNumber || '',
-      BuyerEmail: invoice.customer?.email || '',
-      BuyerFullName: invoice.customerName || invoice.customer?.name || '',
-
-      // Totals
+      AccountObjectAddress: invoice.customer?.address || '',
+      AccountObjectTaxCode: invoice.customer?.taxCode || '',
+      AccountObjectBankAccount: '',
+      AccountObjectBankName: '',
+      PaymentMethod: 'TM/CK',
+      ContactName: invoice.customerName || invoice.customer?.name || '',
+      ReceiverEmail: invoice.customer?.email || '',
+      ReceiverMobile: invoice.customer?.contactNumber || '',
+      InvTypeCode: invTypeCode,
+      InvTemplateNo: invTemplateNo,
+      InvSeries: invSeries,
+      InvNo: '<Chưa cấp số>',
+      InvDate: invDate,
+      CurrencyCode: 'VND',
+      ExchangeRate: 1,
+      VATRate: 10, // Max VAT rate gốc
       TotalSaleAmountOC: totalSaleAmount,
       TotalSaleAmount: totalSaleAmount,
-      TotalAmountWithoutVATOC: totalAmountWithoutVAT,
-      TotalAmountWithoutVAT: totalAmountWithoutVAT,
-      TotalVATAmountOC: totalVATAmount,
-      TotalVATAmount: totalVATAmount,
       TotalDiscountAmountOC: totalDiscountAmount,
       TotalDiscountAmount: totalDiscountAmount,
+      TotalVATAmountOC: totalVATAmount,
+      TotalVATAmount: totalVATAmount,
       TotalAmountOC: totalAmount,
       TotalAmount: totalAmount,
-      TotalAmountInWords: this.numberToVietnameseWords(totalAmount),
-
-      // Details
-      OriginalInvoiceDetail: details,
-
-      // Tax rate info
-      TaxRateInfo: [
-        {
-          VATRateName: this.VAT_RATE_NAME,
-          AmountWithoutVATOC: totalAmountWithoutVAT,
-          VATAmountOC: totalVATAmount,
-        },
-      ],
-
-      // Display options
-      OptionUserDefined: {
-        MainCurrency: 'VND',
-        AmountDecimalDigits: '0',
-        AmountOCDecimalDigits: '0',
-        UnitPriceOCDecimalDigits: '0',
-        UnitPriceDecimalDigits: '0',
-        QuantityDecimalDigits: '0',
-        CoefficientDecimalDigits: '2',
-        ExchangRateDecimalDigits: '0',
-      },
-
-      // Hóa đơn gốc (không thay thế / điều chỉnh)
-      ReferenceType: null,
-      OrgInvoiceType: null,
-      OrgInvTemplateNo: null,
-      OrgInvSeries: null,
-      OrgInvNo: null,
-      OrgInvDate: null,
+      TotalAmountWithVAT: totalAmount,
+      TransactionID: null,
+      PublishStatus: 0, // Chưa phát hành
+      IsInvoiceDeleted: false,
+      EInvoiceStatus: 1, // Hóa đơn gốc
+      CompanyID: companyId,
+      CompanyName: companyName,
+      CompanyTaxCode: companyTaxCode,
+      CreatedDate: now,
+      CreatedBy: null,
+      ModifiedDate: now,
+      ModifiedBy: null,
+      EditVersion: 0,
+      EntityState: 1,
+      InvTemplateNoSeries: `${invTemplateNo} - ${invSeries}`,
+      TypeChangeInvoice: 0,
+      SendInvoiceStatus: 0,
     };
 
-    if (invoiceTemplateId) {
-      payload.InvoiceTemplateID = invoiceTemplateId;
-    }
-
-    return payload;
+    return {
+      data: JSON.stringify(master),
+      detail: JSON.stringify(details),
+    };
   }
 
   /**
-   * Gửi request tạo hóa đơn lên MeInvoice API
+   * Gửi request Insert lên MeInvoice Web API v2
    */
-  private async sendCreateInvoice(
-    payload: MeInvoiceOriginalInvoiceDataDto[],
-  ): Promise<{
-    success: boolean;
-    data: MeInvoiceCreateResultItemDto | null;
-    message: string;
-  }> {
-    const baseUrl = this.configService.get<string>('MEINVOICE_BASE_URL');
-    const taxCode = this.configService.get<string>('MEINVOICE_TAX_CODE') || '';
+  private async sendInsert(
+    payload: MeInvoiceInsertRequestDto,
+  ): Promise<{ success: boolean; message: string }> {
+    const baseUrl = this.configService.get<string>('MEINVOICE_WEBAPP_BASE_URL');
     const accessToken = await this.meInvoiceAuthService.getAccessToken();
 
-    // Có mã → /code/itg/invoicepublishing/createinvoice
-    const url = `${baseUrl}/code/itg/invoicepublishing/createinvoice`;
+    const url = `${baseUrl}/SAInvoice/Insert`;
 
     try {
       const response = await firstValueFrom(
-        this.httpService.post<MeInvoiceCreateResponseDto>(url, payload, {
+        this.httpService.post(url, payload, {
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${accessToken}`,
-            CompanyTaxCode: taxCode,
           },
         }),
       );
 
       const data = response.data;
 
-      if (!data.Success) {
-        // Kiểm tra token hết hạn → retry 1 lần
-        if (data.ErrorCode === 'TokenExpiredCode') {
-          this.logger.warn('⚠️ MeInvoice token expired, refreshing...');
-          const newToken = await this.meInvoiceAuthService.refreshToken();
-
-          const retryResponse = await firstValueFrom(
-            this.httpService.post<MeInvoiceCreateResponseDto>(url, payload, {
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${newToken}`,
-                CompanyTaxCode: taxCode,
-              },
-            }),
-          );
-
-          const retryData = retryResponse.data;
-
-          if (!retryData.Success) {
-            return {
-              success: false,
-              data: null,
-              message: `${retryData.ErrorCode}: ${retryData.Errors?.join(', ') || ''}`,
-            };
-          }
-
-          return this.parseCreateResponse(retryData);
-        }
-
-        return {
-          success: false,
-          data: null,
-          message: `${data.ErrorCode}: ${data.Errors?.join(', ') || ''}`,
-        };
+      if (data?.success === false) {
+        const errorMsg =
+          data.error || data.errorCode?.join(', ') || 'Unknown error';
+        return { success: false, message: errorMsg };
       }
 
-      return this.parseCreateResponse(data);
+      return { success: true, message: 'Draft invoice pushed successfully' };
     } catch (error) {
-      return {
-        success: false,
-        data: null,
-        message: error.message,
-      };
+      const errorDetail = error.response?.data
+        ? JSON.stringify(error.response.data)
+        : error.message;
+      return { success: false, message: errorDetail };
     }
   }
 
-  /**
-   * Parse response từ createinvoice API
-   */
-  private parseCreateResponse(data: MeInvoiceCreateResponseDto): {
-    success: boolean;
-    data: MeInvoiceCreateResultItemDto | null;
-    message: string;
-  } {
-    if (!data.Data) {
-      return {
-        success: false,
-        data: null,
-        message: 'Response Data is empty',
-      };
-    }
-
-    try {
-      const items: MeInvoiceCreateResultItemDto[] = JSON.parse(data.Data);
-
-      if (!items || items.length === 0) {
-        return {
-          success: false,
-          data: null,
-          message: 'No items in response Data',
-        };
-      }
-
-      const item = items[0];
-
-      // Kiểm tra ErrorCode bên trong item
-      if (item.ErrorCode) {
-        return {
-          success: false,
-          data: item,
-          message: `Item error: ${item.ErrorCode}`,
-        };
-      }
-
-      return {
-        success: true,
-        data: item,
-        message: 'Invoice created successfully',
-      };
-    } catch (parseError) {
-      this.logger.error(`❌ Failed to parse response Data: ${data.Data}`);
-      return {
-        success: false,
-        data: null,
-        message: `Failed to parse response: ${parseError.message}`,
-      };
-    }
-  }
-
-  /**
-   * Format date cho MeInvoice API (ISO 8601)
-   */
-  private formatDateForMeInvoice(date: Date): string {
+  private formatDate(date: Date): string {
     return new Date(date).toISOString();
-  }
-
-  /**
-   * Chuyển số thành chữ tiếng Việt (đơn giản)
-   */
-  private numberToVietnameseWords(amount: number): string {
-    const rounded = Math.round(amount);
-    if (rounded === 0) return 'Không đồng.';
-
-    const ones = [
-      '',
-      'một',
-      'hai',
-      'ba',
-      'bốn',
-      'năm',
-      'sáu',
-      'bảy',
-      'tám',
-      'chín',
-    ];
-    const groups = ['', 'nghìn', 'triệu', 'tỷ', 'nghìn tỷ', 'triệu tỷ'];
-
-    const readThreeDigits = (n: number, showZeroHundred: boolean): string => {
-      const h = Math.floor(n / 100);
-      const t = Math.floor((n % 100) / 10);
-      const o = n % 10;
-      let result = '';
-
-      if (h > 0) {
-        result += ones[h] + ' trăm';
-      } else if (showZeroHundred) {
-        result += 'không trăm';
-      }
-
-      if (t > 1) {
-        result += ' ' + ones[t] + ' mươi';
-        if (o === 1) result += ' mốt';
-        else if (o === 5) result += ' lăm';
-        else if (o > 0) result += ' ' + ones[o];
-      } else if (t === 1) {
-        result += ' mười';
-        if (o === 5) result += ' lăm';
-        else if (o > 0) result += ' ' + ones[o];
-      } else if (o > 0) {
-        if (h > 0 || showZeroHundred) result += ' lẻ';
-        result += ' ' + ones[o];
-      }
-
-      return result.trim();
-    };
-
-    const chunks: number[] = [];
-    let temp = rounded;
-    while (temp > 0) {
-      chunks.push(temp % 1000);
-      temp = Math.floor(temp / 1000);
-    }
-
-    let result = '';
-    for (let i = chunks.length - 1; i >= 0; i--) {
-      if (chunks[i] === 0) continue;
-      const showZero = i < chunks.length - 1;
-      result += readThreeDigits(chunks[i], showZero) + ' ' + groups[i] + ' ';
-    }
-
-    result = result.trim();
-    result = result.charAt(0).toUpperCase() + result.slice(1) + ' đồng.';
-
-    return result;
   }
 }

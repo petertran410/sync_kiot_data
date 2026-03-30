@@ -1,123 +1,102 @@
 /**
- * Request body — mảng OriginalInvoiceData
+ * Request body cho /SAInvoice/Insert
+ * Lưu ý: data và detail là JSON STRING, không phải object
  */
-export interface MeInvoiceOriginalInvoiceDataDto {
+export interface MeInvoiceInsertRequestDto {
+  data: string;
+  detail: string;
+}
+
+/**
+ * Master hóa đơn (serialize thành JSON string trong field "data")
+ */
+export interface MeInvoiceMasterDto {
   RefID: string;
+  RefType: number;
+  AccountObjectID?: string | null;
+  AccountObjectName?: string;
+  AccountObjectAddress?: string;
+  AccountObjectTaxCode?: string;
+  AccountObjectBankAccount?: string;
+  AccountObjectBankName?: string;
+  PaymentMethod: string;
+  ContactName?: string;
+  ReceiverEmail?: string;
+  ReceiverMobile?: string;
+  InvTypeCode: string;
+  InvTemplateNo: string;
   InvSeries: string;
-  InvoiceName: string;
+  InvNo: string;
   InvDate: string;
   CurrencyCode: string;
   ExchangeRate: number;
-  PaymentMethodName: string;
-
-  // Buyer info
-  BuyerLegalName?: string;
-  BuyerTaxCode?: string;
-  BuyerAddress?: string;
-  BuyerCode?: string;
-  BuyerPhoneNumber?: string;
-  BuyerEmail?: string;
-  BuyerFullName?: string;
-  BuyerBankAccount?: string;
-  BuyerBankName?: string;
-
-  // Totals
+  VATRate: number;
   TotalSaleAmountOC: number;
   TotalSaleAmount: number;
-  TotalAmountWithoutVATOC: number;
-  TotalAmountWithoutVAT: number;
-  TotalVATAmountOC: number;
-  TotalVATAmount: number;
   TotalDiscountAmountOC: number;
   TotalDiscountAmount: number;
+  TotalVATAmountOC: number;
+  TotalVATAmount: number;
   TotalAmountOC: number;
   TotalAmount: number;
-  TotalAmountInWords?: string;
-
-  // Details
-  OriginalInvoiceDetail: MeInvoiceOriginalDetailDto[];
-
-  // Tax rate breakdown
-  TaxRateInfo: MeInvoiceTaxRateInfoDto[];
-
-  // Display options
-  OptionUserDefined?: MeInvoiceOptionUserDefinedDto;
-
-  // Optional
-  InvoiceTemplateID?: string;
-
-  // Thay thế / điều chỉnh (null cho hóa đơn gốc)
-  ReferenceType?: number | null;
-  OrgInvoiceType?: number | null;
-  OrgInvTemplateNo?: string | null;
-  OrgInvSeries?: string | null;
-  OrgInvNo?: string | null;
-  OrgInvDate?: string | null;
+  TotalAmountWithVAT: number;
+  TransactionID?: string | null;
+  PublishStatus: number;
+  IsInvoiceDeleted: boolean;
+  EInvoiceStatus: number;
+  CompanyID: number;
+  CompanyName: string;
+  CompanyTaxCode: string;
+  CreatedDate: string;
+  CreatedBy?: string | null;
+  ModifiedDate: string;
+  ModifiedBy?: string | null;
+  EditVersion: number;
+  EntityState: number;
+  InvTemplateNoSeries?: string;
+  TypeChangeInvoice?: number;
+  SendInvoiceStatus?: number;
+  IsMoreVATRate?: boolean;
+  BusinessArea?: number;
 }
 
-export interface MeInvoiceOriginalDetailDto {
-  ItemType: number; // 1: HHDV, 2: khuyến mại, 3: chiết khấu, 4: ghi chú
-  LineNumber: number;
-  SortOrder: number;
-  ItemCode: string;
-  ItemName: string;
+/**
+ * Detail hóa đơn (serialize thành JSON string array trong field "detail")
+ */
+export interface MeInvoiceDetailDto {
+  RefDetailID: string;
+  RefID: string;
+  InventoryItemID: string;
+  InventoryItemCode?: string | null;
+  InventoryItemName: string;
+  Description: string;
   UnitName: string;
   Quantity: number;
   UnitPrice: number;
-  DiscountRate?: number;
-  DiscountAmountOC?: number;
-  DiscountAmount?: number;
   AmountOC: number;
   Amount: number;
-  AmountWithoutVATOC: number;
-  AmountWithoutVAT: number;
-  VATRateName: string;
+  DiscountRate: number;
+  DiscountAmountOC: number;
+  DiscountAmount: number;
+  VATRate: number;
   VATAmountOC: number;
   VATAmount: number;
-  UnitPriceAfterTax?: number;
-  AmountAfterTax?: number;
-}
-
-export interface MeInvoiceTaxRateInfoDto {
-  VATRateName: string;
-  AmountWithoutVATOC: number;
-  VATAmountOC: number;
-}
-
-export interface MeInvoiceOptionUserDefinedDto {
-  MainCurrency: string;
-  AmountDecimalDigits: string;
-  AmountOCDecimalDigits: string;
-  UnitPriceOCDecimalDigits: string;
-  UnitPriceDecimalDigits: string;
-  QuantityDecimalDigits: string;
-  CoefficientDecimalDigits: string;
-  ExchangRateDecimalDigits: string;
+  SortOrder: number;
+  IsPromotion: boolean;
+  CompanyID: number;
+  InventoryItemType: number;
+  SortOrderView: number;
+  EntityState: number;
+  IsDescription?: string;
 }
 
 /**
- * Response từ createinvoice
+ * Response chung từ Web API v2
  */
-export interface MeInvoiceCreateResponseDto {
-  Success: boolean;
-  ErrorCode?: string | null;
-  Errors?: string[];
-  Data?: string | null;
-  CustomData?: string | null;
-}
-
-/**
- * Parsed item trong Data (JSON string → array)
- */
-export interface MeInvoiceCreateResultItemDto {
-  RefID: string;
-  TransactionID: string;
-  InvNo: string;
-  InvCode?: string | null;
-  InvDate: string;
-  InvoiceData?: string;
-  ErrorCode?: string | null;
-  ErrorData?: string | null;
-  TokenCallback?: string | null;
-  CallbackUrl?: string | null;
+export interface MeInvoiceApiResponseDto {
+  success: boolean;
+  data?: any;
+  errorCode?: string[];
+  error?: string;
+  recordsTotal?: number;
 }

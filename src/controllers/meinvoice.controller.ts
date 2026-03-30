@@ -1,4 +1,4 @@
-import { Controller, Post, Param, Logger, HttpCode } from '@nestjs/common';
+import { Controller, Post, Get, Param, Logger, HttpCode } from '@nestjs/common';
 import { MeInvoiceInvoiceService } from '../services/meinvoice/meinvoice-invoice.service';
 
 @Controller('meinvoice')
@@ -10,38 +10,41 @@ export class MeInvoiceController {
   ) {}
 
   /**
-   * Tạo hóa đơn nháp trên MeInvoice từ Invoice Code
-   * URL: POST /meinvoice/create/:invoiceCode
+   * Đẩy hóa đơn nháp lên MeInvoice Web
+   * POST /meinvoice/push/:invoiceCode
    */
-  @Post('create/:invoiceCode')
+  @Post('push/:invoiceCode')
   @HttpCode(200)
-  async createDraftInvoice(@Param('invoiceCode') invoiceCode: string): Promise<{
+  async pushDraftInvoice(@Param('invoiceCode') invoiceCode: string): Promise<{
     success: boolean;
     refId: string | null;
-    transactionId: string | null;
-    invNo: string | null;
     message: string;
   }> {
-    this.logger.log(
-      `📄 Manual create MeInvoice draft for invoice code: ${invoiceCode}`,
-    );
+    this.logger.log(`📄 Push draft invoice: ${invoiceCode}`);
 
     try {
-      const result =
-        await this.meInvoiceInvoiceService.createDraftInvoice(invoiceCode);
-
-      return result;
+      return await this.meInvoiceInvoiceService.pushDraftInvoice(invoiceCode);
     } catch (error) {
-      this.logger.error(
-        `❌ Create MeInvoice draft failed for invoice ${invoiceCode}: ${error.message}`,
-      );
-      return {
-        success: false,
-        refId: null,
-        transactionId: null,
-        invNo: null,
-        message: error.message,
-      };
+      return { success: false, refId: null, message: error.message };
+    }
+  }
+
+  /**
+   * Query hóa đơn trên MeInvoice theo RefID
+   * GET /meinvoice/invoice/:refId
+   */
+  @Get('invoice/:refId')
+  async getInvoice(@Param('refId') refId: string): Promise<{
+    success: boolean;
+    data: any;
+    message: string;
+  }> {
+    this.logger.log(`🔍 Query MeInvoice invoice: ${refId}`);
+
+    try {
+      return await this.meInvoiceInvoiceService.getInvoiceByRefId(refId);
+    } catch (error) {
+      return { success: false, data: null, message: error.message };
     }
   }
 }

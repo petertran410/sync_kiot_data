@@ -1,18 +1,15 @@
-export interface MeInvoiceTokenRequestDto {
-  appid: string;
-  taxcode: string;
-  username: string;
-  password: string;
+/**
+ * Response từ Web API v2 OAuth
+ */
+export interface MeInvoiceOAuthResponseDto {
+  access_token: string;
+  token_type: string;
+  expires_in: number;
 }
 
-export interface MeInvoiceTokenResponseDto {
-  Success: boolean;
-  ErrorCode?: string | null;
-  Errors?: string[];
-  Data?: string | null;
-  CustomData?: string | null;
-}
-
+/**
+ * Cached token
+ */
 export interface MeInvoiceCachedTokenDto {
   token: string;
   expiresAt: Date;
