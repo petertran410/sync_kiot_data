@@ -12,8 +12,6 @@ import { WebhookModule } from './services/webhook/webhook.module';
 import { WebhookController } from './controllers/webhook.controller';
 import { MisaModule } from './services/misa/misa.module';
 import { MisaCallbackController } from './controllers/misa-callback.controller';
-import { MeInvoiceModule } from './services/meinvoice/meinvoice.module';
-import { MeInvoiceController } from './controllers/meinvoice.controller';
 
 @Module({
   imports: [
@@ -25,14 +23,12 @@ import { MeInvoiceController } from './controllers/meinvoice.controller';
     LarkModule,
     WebhookModule,
     MisaModule,
-    MeInvoiceModule,
   ],
   controllers: [
     AppController,
     SyncController,
     WebhookController,
     MisaCallbackController,
-    MeInvoiceController,
   ],
   providers: [AppService],
 })

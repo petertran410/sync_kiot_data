@@ -544,13 +544,6 @@ model Invoice {
   misaConfirmed            Boolean         @default(false)
   misaErrorMessage         String?
 
-  meinvoiceSyncStatus      MeInvoiceSyncStatus @default(SKIP)
-  meinvoiceRefId           String?
-  meinvoiceTransactionId   String?
-  meinvoiceInvNo           String?
-  meinvoiceSyncedAt        DateTime?
-  meinvoiceErrorMessage    String?
-
   branch            Branch?            @relation(fields: [branchId], references: [id])
   customer          Customer?          @relation(fields: [customerId], references: [id])
   order             Order?             @relation(fields: [orderId], references: [id])
@@ -574,7 +567,6 @@ model Invoice {
   @@index([lastSyncedAt])
   @@index([larkSyncStatus])
   @@index([misaSyncStatus])
-  @@index([meinvoiceSyncStatus])
 }
 
 model InvoiceDetail {
