@@ -82,6 +82,7 @@ export class MisaVoucherService {
               name: true,
               address: true,
               taxCode: true,
+              identificationNumber: true,
             },
           },
         },
@@ -251,6 +252,31 @@ export class MisaVoucherService {
         invoice.customerName || invoice.customer?.name || '',
       );
 
+    // Xác định mã định danh khách hàng: ưu tiên taxCode > identificationNumber
+    const customerTaxIdentifier =
+      invoice.customer?.taxCode || invoice.customer?.identificationNumber || '';
+
+    // Nếu có mã định danh, tra cứu MisaAccountObject theo companyTaxCode
+    let matchedAccountObject = accountObject;
+    if (customerTaxIdentifier) {
+      const matchedByTax = await this.prismaService.misaAccountObject.findFirst(
+        {
+          where: { companyTaxCode: customerTaxIdentifier },
+        },
+      );
+
+      if (matchedByTax) {
+        matchedAccountObject = matchedByTax;
+        this.logger.log(
+          `✅ Matched MisaAccountObject by companyTaxCode: ${customerTaxIdentifier} → ${matchedByTax.accountObjectCode}`,
+        );
+      } else {
+        this.logger.log(
+          `ℹ️ No MisaAccountObject found for companyTaxCode: ${customerTaxIdentifier}, using Customer info`,
+        );
+      }
+    }
+
     // Build details và tính totals
     const details: MisaSaVoucherDetailDto[] = [];
     let totalSaleAmount = 0; // Tổng tiền hàng (trước thuế)
@@ -331,7 +357,8 @@ export class MisaVoucherService {
         vat_amount_oc: vatAmount,
         vat_amount: vatAmount,
 
-        debit_account: this.DEBIT_ACCOUNT,
+        // debit_account: this.DEBIT_ACCOUNT,
+        debit_account: matchedAccountObject?.receiveAccount || '',
         credit_account: this.CREDIT_ACCOUNT,
         cost_account: this.COST_ACCOUNT,
 
@@ -382,15 +409,16 @@ export class MisaVoucherService {
       total_vat_amount: totalVatAmount,
 
       // Customer info
-      account_object_id: accountObject?.accountObjectId,
-      account_object_code: accountObject?.accountObjectCode,
+      account_object_id: matchedAccountObject?.accountObjectId,
+      account_object_code:
+        customerTaxIdentifier || matchedAccountObject?.accountObjectCode,
       account_object_name:
-        accountObject?.accountObjectName ||
+        matchedAccountObject?.accountObjectName ||
         invoice.customerName ||
         invoice.customer?.name ||
         'Khách lẻ',
       account_object_address: invoice.customer?.address || '',
-      account_object_tax_code: invoice.customer?.taxCode || '',
+      account_object_tax_code: customerTaxIdentifier,
 
       // Employee info
       employee_id: '',
@@ -415,10 +443,11 @@ export class MisaVoucherService {
         posted_date: postedDate,
         refdate: refDate,
         in_reforder: inRefOrder,
-        account_object_id: accountObject?.accountObjectId,
-        account_object_code: accountObject?.accountObjectCode,
+        account_object_id: matchedAccountObject?.accountObjectId,
+        account_object_code:
+          customerTaxIdentifier || matchedAccountObject?.accountObjectCode,
         account_object_name:
-          accountObject?.accountObjectName ||
+          matchedAccountObject?.accountObjectName ||
           invoice.customerName ||
           invoice.customer?.name ||
           'Khách lẻ',
