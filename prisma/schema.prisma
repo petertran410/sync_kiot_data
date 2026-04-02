@@ -60,6 +60,7 @@ model Product {
   weight               Float?
   isLotSerialControl   Boolean                  @default(false)
   isBatchExpireControl Boolean                  @default(false)
+  isCommerce           Boolean                  @default(false)
   orderTemplate        String?
   minQuantity          Int?
   maxQuantity          Int?
@@ -534,6 +535,15 @@ model Invoice {
   customerCode      String?
   customerName      String?
   statusValue       String?
+
+  misaSyncStatus           MisaSyncStatus  @default(SKIP)
+  misaSyncRetries          Int             @default(0)
+  misaSyncedAt             DateTime?
+  misaOrgRefId             String?         @unique
+  misaCallbackReceivedAt   DateTime?
+  misaConfirmed            Boolean         @default(false)
+  misaErrorMessage         String?
+
   branch            Branch?            @relation(fields: [branchId], references: [id])
   customer          Customer?          @relation(fields: [customerId], references: [id])
   order             Order?             @relation(fields: [orderId], references: [id])
@@ -556,6 +566,7 @@ model Invoice {
   @@index([saleChannelId])
   @@index([lastSyncedAt])
   @@index([larkSyncStatus])
+  @@index([misaSyncStatus])
 }
 
 model InvoiceDetail {
@@ -1286,6 +1297,99 @@ model Cashflow {
   @@index([accountId])
 }
 
+model MisaInventoryItem {
+  id                          Int       @id @default(autoincrement())
+  inventoryItemId             String    @unique @db.VarChar(36)
+  inventoryItemCode           String    @db.VarChar(100)
+  inventoryItemName           String    @db.VarChar(255)
+  inventoryItemType           Int       @default(0)
+  unitId                      String?   @db.VarChar(36)
+  unitName                    String?   @db.VarChar(100)
+  defaultStockId              String?   @db.VarChar(36)
+  branchId                    String?   @db.VarChar(36)
+  unitPrice                   Decimal?  @db.Decimal(15, 2)
+  salePrice1                  Decimal?  @db.Decimal(15, 2)
+  inactive                    Boolean   @default(false)
+  inventoryAccount            String?   @db.VarChar(20)
+  cogsAccount                 String?   @db.VarChar(20)
+  saleAccount                 String?   @db.VarChar(20)
+  discountAccount             String?   @db.VarChar(20)
+  createdAt                   DateTime  @default(now())
+  updatedAt                   DateTime  @updatedAt
+
+  @@index([inventoryItemCode])
+  @@index([inventoryItemName])
+}
+
+model MisaStock {
+  id              Int       @id @default(autoincrement())
+  stockId         String    @unique @db.VarChar(36)
+  stockCode       String    @db.VarChar(50)
+  stockName       String    @db.VarChar(255)
+  branchId        String?   @db.VarChar(36)
+  inactive        Boolean   @default(false)
+  inventoryAccount String?  @db.VarChar(20)
+  isDefault       Boolean   @default(false)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([stockCode])
+  @@index([stockName])
+}
+
+model MisaAccountObject {
+  id                    Int       @id @default(autoincrement())
+  accountObjectId       String    @unique @db.VarChar(36)
+  accountObjectCode     String    @db.VarChar(50)
+  accountObjectName     String    @db.VarChar(255)
+  accountObjectType     Int       @default(0)
+  address               String?   @db.VarChar(500)
+  companyTaxCode        String?   @db.VarChar(50)
+  branchId              String?   @db.VarChar(36)
+  isCustomer            Boolean   @default(false)
+  isVendor              Boolean   @default(false)
+  isEmployee            Boolean   @default(false)
+  inactive              Boolean   @default(false)
+  payAccount            String?   @db.VarChar(20)
+  receiveAccount        String?   @db.VarChar(20)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([accountObjectCode])
+  @@index([accountObjectName])
+}
+
+model MisaOrganizationUnit {
+  id                      Int       @id @default(autoincrement())
+  organizationUnitId      String    @unique @db.VarChar(36)
+  organizationUnitCode    String    @db.VarChar(50)
+  organizationUnitName    String    @db.VarChar(255)
+  organizationUnitTypeId  Int       @default(1)
+  parentId                String?   @db.VarChar(36)
+  branchId                String?   @db.VarChar(36)
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+
+  @@index([organizationUnitCode])
+  @@index([organizationUnitName])
+}
+
+model MisaSyncLog {
+  id            Int       @id @default(autoincrement())
+  syncType      String    @db.VarChar(50)
+  dataType      Int
+  totalRecords  Int       @default(0)
+  successCount  Int       @default(0)
+  failedCount   Int       @default(0)
+  status        String    @db.VarChar(20)
+  errorMessage  String?   @db.Text
+  startedAt     DateTime  @default(now())
+  completedAt   DateTime?
+
+  @@index([syncType])
+  @@index([startedAt])
+}
+
 model SyncControl {
   id                Int       @id @default(autoincrement())
   name              String    @unique
@@ -1308,6 +1412,20 @@ model SyncControl {
 }
 
 enum LarkSyncStatus {
+  PENDING
+  SYNCED
+  FAILED
+  SKIP
+}
+
+enum MisaSyncStatus {
+  PENDING
+  SYNCED
+  FAILED
+  SKIP
+}
+
+enum MeInvoiceSyncStatus {
   PENDING
   SYNCED
   FAILED

@@ -4,9 +4,10 @@ import { PrismaModule } from '../../prisma/prisma.module';
 import { HttpModule } from '@nestjs/axios';
 import { KiotVietModule } from '../kiot-viet/kiot-viet.module';
 import { LarkModule } from '../lark/lark.module';
+import { MisaModule } from '../misa/misa.module';
 
 @Module({
-  imports: [PrismaModule, HttpModule, KiotVietModule, LarkModule],
+  imports: [PrismaModule, HttpModule, KiotVietModule, LarkModule, MisaModule],
   providers: [WebhookService],
   exports: [WebhookService],
 })

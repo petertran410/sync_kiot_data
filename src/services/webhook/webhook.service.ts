@@ -11,6 +11,7 @@ import { async, firstValueFrom } from 'rxjs';
 import { HttpService } from '@nestjs/axios';
 import { LarkPaymentVoucherSyncService } from '../lark/payment-voucher/lark-payment-voucher-sync.service';
 import { LarkInvoiceDetailSyncService } from '../lark/invoice-detail/lark-invoice-detail-sync.service';
+import { MisaVoucherService } from '../misa/misa-voucher.service';
 
 @Injectable()
 export class WebhookService {
@@ -36,6 +37,7 @@ export class WebhookService {
     private readonly larkProductSyncService: LarkProductSyncService,
     private readonly larkPaymentVoucherSyncService: LarkPaymentVoucherSyncService,
     private readonly larkInvoiceDetailSyncService: LarkInvoiceDetailSyncService,
+    private readonly misaVoucherService: MisaVoucherService,
   ) {}
 
   private shouldSyncInvoiceDetail(
@@ -107,6 +109,32 @@ export class WebhookService {
             this.logger.log(
               `✅ Synced invoice details for invoice ${savedInvoice.code}`,
             );
+
+            // ========================================
+            // PHASE 7: Tạo chứng từ bán hàng Misa
+            // (Tạm tắt - chỉ tạo thủ công qua API POST /misa/voucher/create/:invoiceCode)
+            // ========================================
+            // try {
+            //   const misaResult =
+            //     await this.misaVoucherService.createSaleVoucherFromInvoice(
+            //       savedInvoice.code,
+            //     );
+            //
+            //   if (misaResult.success) {
+            //     this.logger.log(
+            //       `✅ Misa voucher queued for invoice ${savedInvoice.code}, orgRefId: ${misaResult.orgRefId}`,
+            //     );
+            //   } else {
+            //     this.logger.warn(
+            //       `⚠️ Misa voucher skipped/failed for invoice ${savedInvoice.code}: ${misaResult.message}`,
+            //     );
+            //   }
+            // } catch (misaError) {
+            //   this.logger.error(
+            //     `❌ Failed to create Misa voucher for invoice ${savedInvoice.code}: ${misaError.message}`,
+            //   );
+            // }
+            // ========================================
           }
         }
       }
@@ -1079,6 +1107,7 @@ export class WebhookService {
           birthDate: customerData.BirthDate
             ? new Date(customerData.BirthDate)
             : null,
+          identificationNumber: customerData.IdentificationNumber ?? null,
           contactNumber: customerData.ContactNumber ?? null,
           address: customerData.Address ?? null,
           locationName: customerData.LocationName ?? null,
@@ -1119,6 +1148,7 @@ export class WebhookService {
           birthDate: customerData.BirthDate
             ? new Date(customerData.BirthDate)
             : null,
+          identificationNumber: customerData.IdentificationNumber ?? null,
           contactNumber: customerData.ContactNumber ?? null,
           address: customerData.Address ?? null,
           locationName: customerData.LocationName ?? null,
