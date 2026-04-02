@@ -655,7 +655,7 @@ export class MisaDictionaryService {
     accountObjectId: string;
     accountObjectCode: string;
     accountObjectName: string;
-    receiveAccount: string;
+    receiveAccount: string | null;
   } | null> {
     const normalizedCustomerName = this.normalizeString(customerName);
 
