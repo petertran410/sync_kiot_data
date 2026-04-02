@@ -151,6 +151,8 @@ export class WebhookService {
       for (const notification of notifications) {
         const data = notification?.Data || [];
 
+        console.log(data);
+
         for (const customerData of data) {
           const detailedCustomer = await this.fetchCustomerDetail(
             customerData.Id,
