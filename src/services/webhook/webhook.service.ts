@@ -151,8 +151,6 @@ export class WebhookService {
       for (const notification of notifications) {
         const data = notification?.Data || [];
 
-        console.log(data);
-
         for (const customerData of data) {
           const detailedCustomer = await this.fetchCustomerDetail(
             customerData.Id,
@@ -190,10 +188,25 @@ export class WebhookService {
               );
             }
 
+            // if (shouldSyncToLark) {
+            //   await this.larkCustomerSyncService.syncSingleCustomerDirect(
+            //     savedCustomer,
+            //   );
+            // }
             if (shouldSyncToLark) {
-              await this.larkCustomerSyncService.syncSingleCustomerDirect(
-                savedCustomer,
-              );
+              try {
+                await this.larkCustomerSyncService.syncSingleCustomerDirect(
+                  savedCustomer,
+                );
+              } catch (larkError) {
+                this.logger.error(
+                  `❌ Lark sync failed for customer ${savedCustomer.code}: ${larkError.message}`,
+                );
+                await this.prismaService.customer.update({
+                  where: { id: savedCustomer.id },
+                  data: { larkSyncStatus: 'FAILED' },
+                });
+              }
             }
           }
         }
