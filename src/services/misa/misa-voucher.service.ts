@@ -373,6 +373,26 @@ export class MisaVoucherService {
       });
     }
 
+    // Điều chỉnh chênh lệch thuế GTGT theo công thức MISA:
+    // (Tiền hàng - Chiết khấu) * Thuế suất
+    if (details.length > 0) {
+      const expectedTotalVat = Math.trunc(
+        ((totalSaleAmount - totalDiscountAmount) * this.VAT_RATE) / 100,
+      );
+      const vatDiff = expectedTotalVat - totalVatAmount;
+
+      if (vatDiff !== 0) {
+        details[0].vat_amount_oc = (details[0].vat_amount_oc ?? 0) + vatDiff;
+        details[0].vat_amount = (details[0].vat_amount ?? 0) + vatDiff;
+        totalVatAmount += vatDiff;
+        totalAmount += vatDiff;
+
+        this.logger.log(
+          `🔧 Adjusted VAT difference: ${vatDiff} VND on first detail line`,
+        );
+      }
+    }
+
     if (details.length === 0) {
       this.logger.error('❌ No valid details for voucher');
       return null;
