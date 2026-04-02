@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
 import { PrismaService } from '../../prisma/prisma.service';
 import { firstValueFrom } from 'rxjs';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 import { MisaAuthService } from './misa-auth.service';
 import { MisaDictionaryService } from './misa-dictionary.service';
 import {
@@ -137,7 +137,7 @@ export class MisaVoucherService {
       }
 
       // 4. Build payload
-      const orgRefId = invoice.misaOrgRefId || uuidv4();
+      const orgRefId = invoice.misaOrgRefId || randomUUID();
       const voucherPayload = await this.buildVoucherPayload(invoice, orgRefId);
 
       if (!voucherPayload) {
