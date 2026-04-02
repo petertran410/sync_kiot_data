@@ -112,28 +112,28 @@ export class WebhookService {
 
             // ========================================
             // PHASE 7: Tạo chứng từ bán hàng Misa
+            // (Tạm tắt - chỉ tạo thủ công qua API POST /misa/voucher/create/:invoiceCode)
             // ========================================
-            try {
-              const misaResult =
-                await this.misaVoucherService.createSaleVoucherFromInvoice(
-                  savedInvoice.code,
-                );
-
-              if (misaResult.success) {
-                this.logger.log(
-                  `✅ Misa voucher queued for invoice ${savedInvoice.code}, orgRefId: ${misaResult.orgRefId}`,
-                );
-              } else {
-                this.logger.warn(
-                  `⚠️ Misa voucher skipped/failed for invoice ${savedInvoice.code}: ${misaResult.message}`,
-                );
-              }
-            } catch (misaError) {
-              // Log error nhưng không throw để không ảnh hưởng webhook response
-              this.logger.error(
-                `❌ Failed to create Misa voucher for invoice ${savedInvoice.code}: ${misaError.message}`,
-              );
-            }
+            // try {
+            //   const misaResult =
+            //     await this.misaVoucherService.createSaleVoucherFromInvoice(
+            //       savedInvoice.code,
+            //     );
+            //
+            //   if (misaResult.success) {
+            //     this.logger.log(
+            //       `✅ Misa voucher queued for invoice ${savedInvoice.code}, orgRefId: ${misaResult.orgRefId}`,
+            //     );
+            //   } else {
+            //     this.logger.warn(
+            //       `⚠️ Misa voucher skipped/failed for invoice ${savedInvoice.code}: ${misaResult.message}`,
+            //     );
+            //   }
+            // } catch (misaError) {
+            //   this.logger.error(
+            //     `❌ Failed to create Misa voucher for invoice ${savedInvoice.code}: ${misaError.message}`,
+            //   );
+            // }
             // ========================================
           }
         }

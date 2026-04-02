@@ -358,7 +358,9 @@ export class MisaVoucherService {
         vat_amount: vatAmount,
 
         // debit_account: this.DEBIT_ACCOUNT,
-        debit_account: matchedAccountObject?.receiveAccount || '',
+        // debit_account: matchedAccountObject?.receiveAccount || '',
+        debit_account:
+          matchedAccountObject?.receiveAccount || this.DEBIT_ACCOUNT,
         credit_account: this.CREDIT_ACCOUNT,
         cost_account: this.COST_ACCOUNT,
 
