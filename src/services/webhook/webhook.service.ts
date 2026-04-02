@@ -1114,7 +1114,10 @@ export class WebhookService {
           email: customerData.Email ?? null,
           organization: customerData.Organization ?? null,
           taxCode: customerData.TaxCode ?? null,
-          identificationNumber: customerData.IdentificationNumber ?? null,
+          identificationNumber:
+            detailedCustomer?.identificationNumber ??
+            customerData.IdentificationNumber ??
+            null,
           comments: customerData.Comments ?? null,
           debt: detailedCustomer?.debt
             ? new Prisma.Decimal(detailedCustomer.debt)
@@ -1154,7 +1157,10 @@ export class WebhookService {
           email: customerData.Email ?? null,
           organization: customerData.Organization ?? null,
           taxCode: customerData.TaxCode ?? null,
-          identificationNumber: customerData.IdentificationNumber ?? null,
+          identificationNumber:
+            detailedCustomer?.identificationNumber ??
+            customerData.IdentificationNumber ??
+            null,
           comments: customerData.Comments ?? null,
           debt: detailedCustomer?.debt
             ? new Prisma.Decimal(detailedCustomer.debt)
