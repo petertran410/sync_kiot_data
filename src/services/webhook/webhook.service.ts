@@ -11,8 +11,6 @@ import { async, firstValueFrom } from 'rxjs';
 import { HttpService } from '@nestjs/axios';
 import { LarkPaymentVoucherSyncService } from '../lark/payment-voucher/lark-payment-voucher-sync.service';
 import { LarkInvoiceDetailSyncService } from '../lark/invoice-detail/lark-invoice-detail-sync.service';
-import { response } from 'express';
-import { url } from 'inspector';
 
 @Injectable()
 export class WebhookService {
@@ -1088,6 +1086,7 @@ export class WebhookService {
           email: customerData.Email ?? null,
           organization: customerData.Organization ?? null,
           taxCode: customerData.TaxCode ?? null,
+          identificationNumber: customerData.IdentificationNumber ?? null,
           comments: customerData.Comments ?? null,
           debt: detailedCustomer?.debt
             ? new Prisma.Decimal(detailedCustomer.debt)
@@ -1127,6 +1126,7 @@ export class WebhookService {
           email: customerData.Email ?? null,
           organization: customerData.Organization ?? null,
           taxCode: customerData.TaxCode ?? null,
+          identificationNumber: customerData.IdentificationNumber ?? null,
           comments: customerData.Comments ?? null,
           debt: detailedCustomer?.debt
             ? new Prisma.Decimal(detailedCustomer.debt)
