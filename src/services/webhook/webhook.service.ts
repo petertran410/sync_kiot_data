@@ -1107,7 +1107,6 @@ export class WebhookService {
           birthDate: customerData.BirthDate
             ? new Date(customerData.BirthDate)
             : null,
-          identificationNumber: customerData.IdentificationNumber ?? null,
           contactNumber: customerData.ContactNumber ?? null,
           address: customerData.Address ?? null,
           locationName: customerData.LocationName ?? null,
@@ -1148,7 +1147,6 @@ export class WebhookService {
           birthDate: customerData.BirthDate
             ? new Date(customerData.BirthDate)
             : null,
-          identificationNumber: customerData.IdentificationNumber ?? null,
           contactNumber: customerData.ContactNumber ?? null,
           address: customerData.Address ?? null,
           locationName: customerData.LocationName ?? null,
