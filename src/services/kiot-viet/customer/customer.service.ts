@@ -365,11 +365,11 @@ export class KiotVietCustomerService {
         progress: { processedCount, expectedTotal: totalCustomers },
       });
 
-      await this.updateSyncControl('customer_recent', {
-        isEnabled: true,
-        isRunning: false,
-        status: 'idle',
-      });
+      // await this.updateSyncControl('customer_recent', {
+      //   isEnabled: false,
+      //   isRunning: false,
+      //   status: 'idle',
+      // });
 
       const completionRate =
         totalCustomers > 0 ? (processedCount / totalCustomers) * 100 : 100;
