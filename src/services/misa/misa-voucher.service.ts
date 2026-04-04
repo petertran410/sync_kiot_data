@@ -13,6 +13,7 @@ import {
   MisaSaveVoucherResponseDto,
   MisaDeleteVoucherRequestDto,
   MisaDeleteVoucherResponseDto,
+  MisaSaInvoiceDetailDto,
 } from './dto';
 
 @Injectable()
@@ -414,6 +415,50 @@ export class MisaVoucherService {
       }
     }
 
+    // Build sa_invoice details (hóa đơn đính kèm)
+    const invoiceDetails: MisaSaInvoiceDetailDto[] = details.map((d) => ({
+      inventory_item_id: d.inventory_item_id,
+      inventory_item_code: d.inventory_item_code,
+      inventory_item_name: d.inventory_item_name,
+      inventory_item_type: d.inventory_item_type,
+      description: d.description,
+
+      unit_id: d.unit_id,
+      unit_name: d.unit_name,
+      main_unit_id: d.main_unit_id,
+      main_unit_name: d.main_unit_name,
+
+      quantity: d.quantity,
+      main_quantity: d.main_quantity,
+      main_convert_rate: d.main_convert_rate,
+
+      unit_price: d.unit_price ?? 0,
+      main_unit_price: d.main_unit_price,
+      amount_oc: d.amount_oc,
+      amount: d.amount,
+      amount_after_tax: d.amount_oc + (d.vat_amount_oc ?? 0),
+
+      discount_rate: d.discount_rate,
+      discount_amount_oc: d.discount_amount_oc,
+      discount_amount: d.discount_amount,
+
+      vat_rate: d.vat_rate,
+      vat_amount_oc: d.vat_amount_oc,
+      vat_amount: d.vat_amount,
+
+      debit_account: d.debit_account,
+      credit_account: d.credit_account,
+      sale_account: d.credit_account,
+
+      stock_id: d.stock_id,
+      stock_code: d.stock_code,
+      stock_name: d.stock_name,
+
+      sort_order: d.sort_order,
+      exchange_rate_operator: d.exchange_rate_operator,
+      is_description: false,
+    }));
+
     if (details.length === 0) {
       this.logger.error('❌ No valid details for voucher');
       return null;
@@ -476,6 +521,47 @@ export class MisaVoucherService {
       include_invoice: 1,
       // payer: invoice.customerName || invoice.customer?.name || 'Khách lẻ',
       journal_memo: `Bán hàng - ${invoice.code}`,
+
+      // Hóa đơn đính kèm
+      sa_invoice: {
+        reftype: 3560,
+        inv_date: postedDate,
+        inv_type_id: 1,
+        branch_id: branchId || '',
+
+        account_object_id: matchedAccountObject?.accountObjectId,
+        account_object_code:
+          customerTaxIdentifier || matchedAccountObject?.accountObjectCode,
+        account_object_name:
+          matchedAccountObject?.accountObjectName ||
+          invoice.customerName ||
+          invoice.customer?.name ||
+          'Khách lẻ',
+        account_object_address: invoice.customer?.address || '',
+        account_object_tax_code: customerTaxIdentifier,
+
+        employee_id: '',
+        employee_code: '',
+        employee_name: '',
+
+        exchange_rate: 1,
+        currency_id: 'VND',
+        discount_type: 0,
+        discount_rate_voucher: 0,
+        payment_method: 'TM/CK',
+        buyer: invoice.customerName || invoice.customer?.name || '',
+
+        total_sale_amount_oc: totalSaleAmount,
+        total_sale_amount: totalSaleAmount,
+        total_amount_oc: totalAmount,
+        total_amount: totalAmount,
+        total_discount_amount_oc: totalDiscountAmount,
+        total_discount_amount: totalDiscountAmount,
+        total_vat_amount_oc: totalVatAmount,
+        total_vat_amount: totalVatAmount,
+
+        detail: invoiceDetails,
+      },
 
       // Phiếu xuất kho
       in_outward: {
