@@ -156,7 +156,7 @@ export class MisaVoucherService {
         await this.prismaService.invoice.update({
           where: { id: invoice.id },
           data: {
-            misaSyncStatus: 'PENDING', // Chờ callback từ Misa
+            misaSyncStatus: 'SYNCED',
             misaOrgRefId: orgRefId,
             misaSyncedAt: new Date(),
             misaSyncRetries: { increment: 1 },
