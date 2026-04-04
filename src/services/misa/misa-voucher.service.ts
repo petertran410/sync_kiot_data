@@ -66,6 +66,7 @@ export class MisaVoucherService {
                   misa_code: true,
                   misa_name: true,
                   misa_unit: true,
+                  isCommerce: true,
                 },
               },
             },
@@ -231,20 +232,26 @@ export class MisaVoucherService {
     );
     const branchId = this.configService.get<string>('MISA_BRANCH_ID');
 
-    // Tìm stock theo branchName
-    let stock = await this.misaDictionaryService.findStockByNameFuzzy(
-      invoice.branch?.name || '',
-    );
+    // Xác định kho theo branchId
+    const isHcmBranch = invoice.branchId === 3 || invoice.branchId === 1;
 
-    // Fallback default stock
-    if (!stock) {
-      stock = await this.misaDictionaryService.getDefaultStock();
-    }
+    const STOCK_HCM = {
+      stockId: '012e030c-5815-4bb1-b7fc-2fc0fa295a34',
+      stockCode: 'KHOHCM',
+      stockName: 'KHO HỒ CHÍ MINH',
+    };
 
-    if (!stock) {
-      this.logger.error('❌ No stock found for invoice');
-      return null;
-    }
+    const STOCK_COMMERCE = {
+      stockId: 'fb817711-7803-4948-8e1e-ea57ebe37240',
+      stockCode: 'KHO1',
+      stockName: 'KHO 1 - HÀNG THƯƠNG MẠI',
+    };
+
+    const STOCK_IMPORT = {
+      stockId: '7efaa69c-e382-4a3d-932a-e2982464aa01',
+      stockCode: 'KHONK',
+      stockName: 'KHO NHẬP KHẨU',
+    };
 
     // Tìm account object (khách hàng)
     const accountObject =
@@ -364,9 +371,21 @@ export class MisaVoucherService {
         credit_account: this.CREDIT_ACCOUNT,
         cost_account: this.COST_ACCOUNT,
 
-        stock_id: stock.stockId,
-        stock_code: stock.stockCode,
-        stock_name: stock.stockName,
+        stock_id: isHcmBranch
+          ? STOCK_HCM.stockId
+          : product.isCommerce
+            ? STOCK_COMMERCE.stockId
+            : STOCK_IMPORT.stockId,
+        stock_code: isHcmBranch
+          ? STOCK_HCM.stockCode
+          : product.isCommerce
+            ? STOCK_COMMERCE.stockCode
+            : STOCK_IMPORT.stockCode,
+        stock_name: isHcmBranch
+          ? STOCK_HCM.stockName
+          : product.isCommerce
+            ? STOCK_COMMERCE.stockName
+            : STOCK_IMPORT.stockName,
 
         sort_order: i + 1,
         exchange_rate_operator: '*',
