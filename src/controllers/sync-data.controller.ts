@@ -143,7 +143,10 @@ export class SyncDataController {
     const [data, total] = await Promise.all([
       this.prisma.customer.findMany({
         where,
-        include: { CustomerGroupRelation: true },
+        include: {
+          CustomerGroupRelation: true,
+          branch: { select: { kiotVietId: true } },
+        },
         skip,
         take,
         orderBy: { id: 'asc' },
@@ -165,7 +168,10 @@ export class SyncDataController {
   async getCustomerByCode(@Param('code') code: string) {
     const customer = await this.prisma.customer.findFirst({
       where: { code },
-      include: { CustomerGroupRelation: true },
+      include: {
+        CustomerGroupRelation: true,
+        branch: { select: { kiotVietId: true } },
+      },
     });
     if (!customer) return null;
     return {
@@ -281,6 +287,9 @@ export class SyncDataController {
       this.prisma.order.findMany({
         where,
         include: {
+          customer: { select: { code: true, kiotVietId: true } },
+          branch: { select: { kiotVietId: true } },
+          saleChannel: { select: { kiotVietId: true } },
           orderDetails: true,
           orderDelivery: true,
           orderSurcharges: true,
@@ -308,6 +317,9 @@ export class SyncDataController {
     const order = await this.prisma.order.findFirst({
       where: { code },
       include: {
+        customer: { select: { code: true, kiotVietId: true } },
+        branch: { select: { kiotVietId: true } },
+        saleChannel: { select: { kiotVietId: true } },
         orderDetails: true,
         orderDelivery: true,
         orderSurcharges: true,
@@ -338,6 +350,9 @@ export class SyncDataController {
       this.prisma.invoice.findMany({
         where,
         include: {
+          customer: { select: { code: true, kiotVietId: true } },
+          branch: { select: { kiotVietId: true } },
+          saleChannel: { select: { kiotVietId: true } },
           invoiceDetails: true,
           invoiceDelivery: true,
           invoiceSurcharges: true,
@@ -364,6 +379,9 @@ export class SyncDataController {
     const invoice = await this.prisma.invoice.findFirst({
       where: { code },
       include: {
+        customer: { select: { code: true, kiotVietId: true } },
+        branch: { select: { kiotVietId: true } },
+        saleChannel: { select: { kiotVietId: true } },
         invoiceDetails: true,
         invoiceDelivery: true,
         invoiceSurcharges: true,
