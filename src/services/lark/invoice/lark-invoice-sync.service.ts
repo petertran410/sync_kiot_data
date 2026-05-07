@@ -70,6 +70,8 @@ const SALE_NAME = {
   LE_BAO_NGAN: 'Lê Bảo Ngân',
   HUYNH_MAN_NHI: 'Huỳnh Mẫn Nhi',
   NGO_TRANG_NHUNG: 'Ngô Trang Nhung',
+  DAM_THI_HONG_NHA: 'Đàm Thị Hồng Nhã',
+  HO_SI_PHU: 'Hồ Sĩ Phú',
 };
 
 @Injectable()
@@ -418,6 +420,8 @@ export class LarkInvoiceSyncService {
         1034266: SALE_NAME.LE_BAO_NGAN,
         1033767: SALE_NAME.HUYNH_MAN_NHI,
         1042325: SALE_NAME.NGO_TRANG_NHUNG,
+        1062483: SALE_NAME.HO_SI_PHU,
+        1062484: SALE_NAME.DAM_THI_HONG_NHA,
       };
 
       fields[LARK_INVOICE_FIELDS.SELLER] =
