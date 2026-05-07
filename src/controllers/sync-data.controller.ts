@@ -290,7 +290,11 @@ export class SyncDataController {
           customer: { select: { code: true, kiotVietId: true } },
           branch: { select: { kiotVietId: true } },
           saleChannel: { select: { kiotVietId: true } },
-          orderDetails: true,
+          orderDetails: {
+            include: {
+              product: { select: { kiotVietId: true } },
+            },
+          },
           orderDelivery: true,
           orderSurcharges: true,
           payments: true,
@@ -320,7 +324,11 @@ export class SyncDataController {
         customer: { select: { code: true, kiotVietId: true } },
         branch: { select: { kiotVietId: true } },
         saleChannel: { select: { kiotVietId: true } },
-        orderDetails: true,
+        orderDetails: {
+          include: {
+            product: { select: { kiotVietId: true } },
+          },
+        },
         orderDelivery: true,
         orderSurcharges: true,
         payments: true,
@@ -353,7 +361,11 @@ export class SyncDataController {
           customer: { select: { code: true, kiotVietId: true } },
           branch: { select: { kiotVietId: true } },
           saleChannel: { select: { kiotVietId: true } },
-          invoiceDetails: true,
+          invoiceDetails: {
+            include: {
+              product: { select: { kiotVietId: true } },
+            },
+          },
           invoiceDelivery: true,
           invoiceSurcharges: true,
           payments: true,
@@ -382,7 +394,11 @@ export class SyncDataController {
         customer: { select: { code: true, kiotVietId: true } },
         branch: { select: { kiotVietId: true } },
         saleChannel: { select: { kiotVietId: true } },
-        invoiceDetails: true,
+        invoiceDetails: {
+          include: {
+            product: { select: { kiotVietId: true } },
+          },
+        },
         invoiceDelivery: true,
         invoiceSurcharges: true,
         payments: true,
