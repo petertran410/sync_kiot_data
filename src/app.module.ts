@@ -12,6 +12,7 @@ import { WebhookModule } from './services/webhook/webhook.module';
 import { WebhookController } from './controllers/webhook.controller';
 import { MisaModule } from './services/misa/misa.module';
 import { MisaCallbackController } from './controllers/misa-callback.controller';
+import { SyncDataController } from './controllers/sync-data.controller';
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { MisaCallbackController } from './controllers/misa-callback.controller';
     SyncController,
     WebhookController,
     MisaCallbackController,
+    SyncDataController,
   ],
   providers: [AppService],
 })
