@@ -40,7 +40,7 @@ export class HisweetieNotifyService {
     try {
       await firstValueFrom(
         this.httpService.post(
-          `${this.hisweetieUrl}/sync-kiot/webhook`,
+          `${this.hisweetieUrl}/api/sync-kiot/webhook`,
           { entityType, code, action },
           {
             headers: {
