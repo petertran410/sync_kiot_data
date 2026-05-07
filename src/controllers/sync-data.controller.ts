@@ -496,7 +496,6 @@ export class SyncDataController {
       ...po,
       kiotVietId: po.kiotVietId.toString(),
       purchaseById: po.purchaseById?.toString(),
-      createdBy: po.createdBy?.toString(),
     }));
 
     return { data: serialized, total, pageSize: take, currentItem: skip };
