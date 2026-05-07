@@ -5,9 +5,17 @@ import { HttpModule } from '@nestjs/axios';
 import { KiotVietModule } from '../kiot-viet/kiot-viet.module';
 import { LarkModule } from '../lark/lark.module';
 import { MisaModule } from '../misa/misa.module';
+import { HisweetieModule } from '../hisweetie/hisweetie.module';
 
 @Module({
-  imports: [PrismaModule, HttpModule, KiotVietModule, LarkModule, MisaModule],
+  imports: [
+    PrismaModule,
+    HttpModule,
+    KiotVietModule,
+    LarkModule,
+    MisaModule,
+    HisweetieModule,
+  ],
   providers: [WebhookService],
   exports: [WebhookService],
 })

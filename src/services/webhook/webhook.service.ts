@@ -12,6 +12,7 @@ import { HttpService } from '@nestjs/axios';
 import { LarkPaymentVoucherSyncService } from '../lark/payment-voucher/lark-payment-voucher-sync.service';
 import { LarkInvoiceDetailSyncService } from '../lark/invoice-detail/lark-invoice-detail-sync.service';
 import { MisaVoucherService } from '../misa/misa-voucher.service';
+import { HisweetieNotifyService } from '../hisweetie/hisweetie-notify.service';
 
 @Injectable()
 export class WebhookService {
@@ -38,6 +39,7 @@ export class WebhookService {
     private readonly larkPaymentVoucherSyncService: LarkPaymentVoucherSyncService,
     private readonly larkInvoiceDetailSyncService: LarkInvoiceDetailSyncService,
     private readonly misaVoucherService: MisaVoucherService,
+    private readonly hisweetieNotify: HisweetieNotifyService,
   ) {}
 
   private shouldSyncInvoiceDetail(
@@ -71,6 +73,8 @@ export class WebhookService {
           if (savedOrder) {
             this.logger.log(`✅ Upserted order ${savedOrder.code}`);
 
+            await this.hisweetieNotify.notify('order', savedOrder.code);
+
             await this.larkOrderSyncService.syncSingleOrderDirect(savedOrder);
           }
         }
@@ -97,6 +101,8 @@ export class WebhookService {
 
           if (savedInvoice) {
             this.logger.log(`✅ Upserted invoice ${savedInvoice.code}`);
+
+            await this.hisweetieNotify.notify('invoice', savedInvoice.code);
 
             await this.larkInvoiceSyncService.syncSingleInvoiceDirect(
               savedInvoice,
@@ -162,6 +168,8 @@ export class WebhookService {
 
           if (savedCustomer) {
             this.logger.log(`✅ Upserted customer ${savedCustomer.code}`);
+
+            await this.hisweetieNotify.notify('customer', savedCustomer.code);
 
             let shouldSyncToLark = false;
             const nameValid =
@@ -236,6 +244,8 @@ export class WebhookService {
           if (savedProduct) {
             this.logger.log(`✅ Upserted product ${savedProduct.code}`);
 
+            await this.hisweetieNotify.notify('product', savedProduct.code);
+
             const productWithRelations =
               await this.prismaService.product.findUnique({
                 where: { id: savedProduct.id },
@@ -295,8 +305,6 @@ export class WebhookService {
       for (const notification of notifications) {
         const data = notification?.Data || [];
 
-        console.log('PriceBook: ', data);
-
         for (const priceBookData of data) {
           const detailedPriceBook = await this.fetchPriceBookDetail(
             priceBookData.Id,
@@ -308,6 +316,11 @@ export class WebhookService {
 
           if (savedPriceBook) {
             this.logger.log(`✅ Upserted pricebook ${savedPriceBook.name}`);
+
+            await this.hisweetieNotify.notify(
+              'price_book',
+              savedPriceBook.name,
+            );
           }
         }
       }
