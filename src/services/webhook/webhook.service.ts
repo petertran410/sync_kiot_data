@@ -349,6 +349,13 @@ export class WebhookService {
               `✅ Upserted priceBookDetail for product ${savedDetail.productName}`,
             );
 
+            if (savedDetail?.priceBookName) {
+              await this.hisweetieNotify.notify(
+                'price_book',
+                savedDetail.priceBookName,
+              );
+            }
+
             const productWithRelations =
               await this.prismaService.product.findUnique({
                 where: { id: savedDetail.productId },
@@ -417,6 +424,13 @@ export class WebhookService {
             this.logger.log(
               `✅ Upserted stock for product ${savedStock.productCode}`,
             );
+
+            if (savedStock?.productCode) {
+              await this.hisweetieNotify.notify(
+                'product',
+                savedStock.productCode,
+              );
+            }
 
             const productWithRelations =
               await this.prismaService.product.findUnique({

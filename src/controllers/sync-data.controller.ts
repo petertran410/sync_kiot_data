@@ -270,6 +270,25 @@ export class SyncDataController {
     return { data, total: data.length };
   }
 
+  @Get('price-books/:identifier')
+  async getPriceBookByIdentifier(@Param('identifier') identifier: string) {
+    const priceBook = await this.prisma.priceBook.findFirst({
+      where: {
+        OR: [
+          { name: identifier },
+          { kiotVietId: isNaN(+identifier) ? undefined : +identifier },
+        ],
+      },
+      include: {
+        details: true,
+        branches: true,
+        customerGroups: true,
+        users: true,
+      },
+    });
+    return priceBook || null;
+  }
+
   // ========== LAYER 3: Giao dịch ==========
 
   @Get('orders')
