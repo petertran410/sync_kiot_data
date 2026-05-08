@@ -487,7 +487,11 @@ export class SyncDataController {
     const [data, total] = await Promise.all([
       this.prisma.return.findMany({
         where,
-        include: { details: true, payments: true },
+        include: {
+          details: true,
+          payments: true,
+          branch: { select: { kiotVietId: true } },
+        },
         skip,
         take,
         orderBy: { id: 'asc' },

@@ -1,8 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../../prisma/prisma.service';
-import { KiotVietCustomerService } from '../kiot-viet/customer/customer.service';
-import { LarkCustomerSyncService } from '../lark/customer/lark-customer-sync.service';
 import { KiotVietInvoiceService } from '../kiot-viet/invoice/invoice.service';
 import { LarkInvoiceHistoricalSyncService } from '../lark/invoice-historical/lark-invoice-historical-sync.service';
 import { KiotVietReturnService } from '../kiot-viet/returns/return.service';
