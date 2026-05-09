@@ -13,6 +13,7 @@ import { WebhookController } from './controllers/webhook.controller';
 import { MisaModule } from './services/misa/misa.module';
 import { MisaCallbackController } from './controllers/misa-callback.controller';
 import { SyncDataController } from './controllers/sync-data.controller';
+import { HttpModule } from '@nestjs/axios';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { SyncDataController } from './controllers/sync-data.controller';
     LarkModule,
     WebhookModule,
     MisaModule,
+    HttpModule,
   ],
   controllers: [
     AppController,
