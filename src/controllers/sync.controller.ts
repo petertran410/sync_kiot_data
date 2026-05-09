@@ -519,8 +519,8 @@ export class SyncController {
 
       const response = await firstValueFrom(
         this.httpService.post(
-          'https://n8n.hisweetievietnam.com/webhook-test/calc-revenue-product',
-          payload,
+          'https://n8n.hisweetievietnam.com/webhook/calc-revenue-product',
+          revenueData,
           {
             headers: { 'Content-Type': 'application/json' },
             timeout: 30000,
