@@ -456,8 +456,8 @@ export class SyncController {
     }
   }
 
-  @Post('calc-revenue-product')
-  async calcRevenueProduct(
+  @Post('calc-revenue-product-m5')
+  async calcRevenueProductM5(
     @Body() body: { productCodes: string[]; month: number; year: number },
   ) {
     try {
@@ -519,7 +519,97 @@ export class SyncController {
 
       const response = await firstValueFrom(
         this.httpService.post(
-          'https://n8n.hisweetievietnam.com/webhook/calc-revenue-product',
+          'https://n8n.hisweetievietnam.com/webhook/calc-revenue-product-m5',
+          revenueData,
+          {
+            headers: { 'Content-Type': 'application/json' },
+            timeout: 30000,
+          },
+        ),
+      );
+
+      this.logger.log(`Pushed revenue data to n8n, status: ${response.status}`);
+
+      return {
+        success: true,
+        message: `Calculated revenue for ${revenueData.length} products (${period}) and pushed to n8n`,
+        timestamp: new Date().toISOString(),
+        data: revenueData,
+      };
+    } catch (error) {
+      this.logger.error(`Calc revenue product failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
+
+  @Post('calc-revenue-product-m6')
+  async calcRevenueProductM6(
+    @Body() body: { productCodes: string[]; month: number; year: number },
+  ) {
+    try {
+      const { productCodes, month, year } = body;
+
+      if (!productCodes || productCodes.length === 0) {
+        return {
+          success: false,
+          error: 'productCodes is required and cannot be empty',
+          timestamp: new Date().toISOString(),
+        };
+      }
+
+      if (!month || !year || month < 1 || month > 12) {
+        return {
+          success: false,
+          error: 'month (1-12) and year are required',
+          timestamp: new Date().toISOString(),
+        };
+      }
+
+      const startDate = new Date(year, month - 1, 1);
+      const endDate = new Date(year, month, 1);
+
+      this.logger.log(
+        `Starting calc revenue product for ${month}/${year}, ${productCodes.length} products...`,
+      );
+
+      const revenueData: Array<{
+        productCode: string;
+        productName: string;
+        totalRevenue: string;
+        totalQuantity: number;
+      }> = await this.prismaService.$queryRaw`
+        SELECT
+          id2."productCode" AS "productCode",
+          id2."productName" AS "productName",
+          SUM(id2."subTotal")::TEXT AS "totalRevenue",
+          SUM(id2."quantity")::INT AS "totalQuantity"
+        FROM "InvoiceDetail" id2
+        INNER JOIN "Invoice" i ON i.id = id2."invoiceId"
+        WHERE i."purchaseDate" >= ${startDate}
+          AND i."purchaseDate" < ${endDate}
+          AND id2."productCode" IN (${Prisma.join(productCodes)})
+        GROUP BY id2."productCode", id2."productName"
+        ORDER BY SUM(id2."subTotal") DESC
+      `;
+
+      this.logger.log(`Found ${revenueData.length} products with revenue data`);
+
+      const period = `${year}-${String(month).padStart(2, '0')}`;
+
+      const payload = {
+        period,
+        calculatedAt: new Date().toISOString(),
+        totalProducts: revenueData.length,
+        data: revenueData,
+      };
+
+      const response = await firstValueFrom(
+        this.httpService.post(
+          'https://n8n.hisweetievietnam.com/webhook/calc-revenue-product-m6',
           revenueData,
           {
             headers: { 'Content-Type': 'application/json' },
