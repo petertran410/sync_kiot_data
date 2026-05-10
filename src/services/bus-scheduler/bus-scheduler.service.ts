@@ -15,6 +15,7 @@ import { KiotVietTransferService } from '../kiot-viet/transfer/transfer.service'
 import { LarkTransferSyncService } from '../lark/transfer/lark-transfer-sync.service';
 import { KiotVietSupplierService } from '../kiot-viet/supplier/supplier.service';
 import { LarkSupplierSyncService } from '../lark/supplier/lark-supplier-sync.service';
+import { MisaVoucherService } from '../misa/misa-voucher.service';
 
 @Injectable()
 export class BusSchedulerService implements OnModuleInit {
@@ -42,6 +43,8 @@ export class BusSchedulerService implements OnModuleInit {
 
     private readonly transferService: KiotVietTransferService,
     private readonly larkTransferSyncService: LarkTransferSyncService,
+
+    private readonly misaVoucherService: MisaVoucherService,
   ) {}
 
   async onModuleInit() {
@@ -333,5 +336,119 @@ export class BusSchedulerService implements OnModuleInit {
         completedAt: status === 'completed' ? new Date() : undefined,
       },
     });
+  }
+
+  // ========================================
+  // MISA BATCH PROCESSING
+  // ========================================
+
+  /**
+   * Tạo mốc thời gian VN (UTC+7) cho ngày hiện tại hoặc hôm qua
+   */
+  private getVNTime(hour: number, dayOffset = 0): Date {
+    const now = new Date();
+    const d = new Date(now);
+    d.setDate(d.getDate() + dayOffset);
+    // VN = UTC+7 → UTC hour = VN hour - 7
+    d.setUTCHours(hour - 7, 0, 0, 0);
+    return d;
+  }
+
+  /**
+   * Đợt sáng - 12h: Đẩy hóa đơn 8h-12h hôm nay + hóa đơn tồn từ sau 17h hôm qua
+   */
+  @Cron('0 12 * * 1-6', { timeZone: 'Asia/Ho_Chi_Minh' })
+  async misaMorningBatch() {
+    this.logger.log('🕛 [MISA] Morning batch started (12h)');
+
+    try {
+      const from = this.getVNTime(17, -1); // Hôm qua 17h
+      const to = this.getVNTime(12); // Hôm nay 12h
+
+      const result = await this.misaVoucherService.batchCreateVouchers(
+        from,
+        to,
+      );
+
+      this.logger.log(
+        `✅ [MISA] Morning batch completed: ${JSON.stringify(result)}`,
+      );
+    } catch (error) {
+      this.logger.error(`❌ [MISA] Morning batch failed: ${error.message}`);
+    }
+  }
+
+  /**
+   * Cutoff sáng - 15h: Đẩy bổ sung hóa đơn sáng bị trễ hoặc FAILED
+   * Sau 15h, đơn buổi sáng sẽ KHÔNG được cập nhật nữa → defer sang đợt sáng ngày mai
+   */
+  @Cron('0 15 * * 1-6', { timeZone: 'Asia/Ho_Chi_Minh' })
+  async misaMorningCutoff() {
+    this.logger.log('🕐 [MISA] Morning cutoff started (15h)');
+
+    try {
+      const from = this.getVNTime(17, -1); // Hôm qua 17h
+      const to = this.getVNTime(12); // Hôm nay 12h
+
+      const result = await this.misaVoucherService.batchCreateVouchers(
+        from,
+        to,
+      );
+
+      this.logger.log(
+        `✅ [MISA] Morning cutoff completed: ${JSON.stringify(result)}`,
+      );
+    } catch (error) {
+      this.logger.error(`❌ [MISA] Morning cutoff failed: ${error.message}`);
+    }
+  }
+
+  /**
+   * Đợt chiều - 17h: Đẩy hóa đơn 12h-17h hôm nay
+   */
+  @Cron('0 17 * * 1-6', { timeZone: 'Asia/Ho_Chi_Minh' })
+  async misaAfternoonBatch() {
+    this.logger.log('🕔 [MISA] Afternoon batch started (17h)');
+
+    try {
+      const from = this.getVNTime(12); // Hôm nay 12h
+      const to = this.getVNTime(17); // Hôm nay 17h
+
+      const result = await this.misaVoucherService.batchCreateVouchers(
+        from,
+        to,
+      );
+
+      this.logger.log(
+        `✅ [MISA] Afternoon batch completed: ${JSON.stringify(result)}`,
+      );
+    } catch (error) {
+      this.logger.error(`❌ [MISA] Afternoon batch failed: ${error.message}`);
+    }
+  }
+
+  /**
+   * Cutoff chiều - 19h: Đẩy bổ sung hóa đơn chiều bị trễ hoặc FAILED
+   * Sau 19h, đơn buổi chiều sẽ KHÔNG được cập nhật nữa → defer sang đợt sáng ngày mai
+   */
+  @Cron('0 19 * * 1-6', { timeZone: 'Asia/Ho_Chi_Minh' })
+  async misaAfternoonCutoff() {
+    this.logger.log('🕖 [MISA] Afternoon cutoff started (19h)');
+
+    try {
+      const from = this.getVNTime(12); // Hôm nay 12h
+      const to = this.getVNTime(17); // Hôm nay 17h
+
+      const result = await this.misaVoucherService.batchCreateVouchers(
+        from,
+        to,
+      );
+
+      this.logger.log(
+        `✅ [MISA] Afternoon cutoff completed: ${JSON.stringify(result)}`,
+      );
+    } catch (error) {
+      this.logger.error(`❌ [MISA] Afternoon cutoff failed: ${error.message}`);
+    }
   }
 }

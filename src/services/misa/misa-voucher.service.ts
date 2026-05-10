@@ -872,4 +872,57 @@ export class MisaVoucherService {
       };
     }
   }
+
+  /**
+   * Batch đẩy chứng từ bán hàng lên Misa theo khoảng thời gian
+   */
+  async batchCreateVouchers(
+    from: Date,
+    to: Date,
+  ): Promise<{
+    total: number;
+    success: number;
+    failed: number;
+    skipped: number;
+  }> {
+    this.logger.log(
+      `📦 Batch push MISA vouchers: ${from.toISOString()} → ${to.toISOString()}`,
+    );
+
+    const invoices = await this.prismaService.invoice.findMany({
+      where: {
+        purchaseDate: { gte: from, lt: to },
+        misaSyncStatus: { in: ['PENDING', 'FAILED'] },
+      },
+      select: { code: true, purchaseDate: true },
+      orderBy: { purchaseDate: 'asc' },
+    });
+
+    const result = {
+      total: invoices.length,
+      success: 0,
+      failed: 0,
+      skipped: 0,
+    };
+
+    this.logger.log(`📋 Found ${invoices.length} invoices to push`);
+
+    for (const inv of invoices) {
+      try {
+        const res = await this.createSaleVoucherFromInvoice(inv.code);
+        if (res.success) {
+          result.success++;
+          this.logger.log(`✅ Pushed invoice ${inv.code}`);
+        } else {
+          result.skipped++;
+          this.logger.warn(`⏭️ Skipped invoice ${inv.code}: ${res.message}`);
+        }
+      } catch (error) {
+        result.failed++;
+        this.logger.error(`❌ Failed invoice ${inv.code}: ${error.message}`);
+      }
+    }
+
+    return result;
+  }
 }
