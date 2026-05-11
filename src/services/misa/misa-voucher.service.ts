@@ -465,11 +465,11 @@ export class MisaVoucherService {
       return null;
     }
 
-    // Calculate total amount
     const now = new Date();
-    const postedDate = this.formatDateForMisa(invoice.purchaseDate);
-    const refDate = this.formatDateForMisa(invoice.purchaseDate);
-    const inRefOrder = this.formatDateForMisa(invoice.purchaseDate);
+    const misaDate = this.getMisaPostingDate(invoice.purchaseDate);
+    const postedDate = this.formatDateForMisa(misaDate);
+    const refDate = this.formatDateForMisa(misaDate);
+    const inRefOrder = this.formatDateForMisa(invoice.purchaseDate); // Giờ xuất kho giữ nguyên thực tế
     const createdDate = this.formatDateForMisa(now);
 
     // Build voucher
@@ -614,6 +614,20 @@ export class MisaVoucherService {
     const seconds = String(date.getSeconds()).padStart(2, '0');
 
     return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+  }
+
+  /**
+   * Hóa đơn chiều (>= 12h VN) → chuyển ngày hạch toán sang hôm sau
+   * Sáng hôm sau mới chốt và phát hành nên ghi nhận ngày hôm sau
+   */
+  private getMisaPostingDate(purchaseDate: Date): Date {
+    const vnHour = (purchaseDate.getUTCHours() + 7) % 24;
+    if (vnHour >= 12) {
+      const nextDay = new Date(purchaseDate);
+      nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+      return nextDay;
+    }
+    return purchaseDate;
   }
 
   /**
