@@ -99,7 +99,7 @@ export class MisaVoucherService {
       }
 
       // 2. Kiểm tra đã sync chưa
-      if (invoice.misaSyncStatus === 'SYNCED' && invoice.misaConfirmed) {
+      if (invoice.misaSyncStatus === 'SYNCED') {
         return {
           success: false,
           orgRefId: invoice.misaOrgRefId,
