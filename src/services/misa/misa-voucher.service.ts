@@ -98,10 +98,9 @@ export class MisaVoucherService {
         };
       }
 
+      // 1.5. Bỏ qua hóa đơn điều chỉnh
       if (invoice.code.includes('.')) {
-        this.logger.log(
-          `⏭️ Skipping adjusted invoice ${invoice.code} - not eligible for Misa sync`,
-        );
+        this.logger.log(`⏭️ Skipping adjusted invoice ${invoice.code}`);
         return {
           success: false,
           orgRefId: null,
@@ -110,11 +109,11 @@ export class MisaVoucherService {
       }
 
       // 2. Kiểm tra đã sync chưa
-      if (invoice.misaSyncStatus === 'SYNCED') {
+      if (invoice.misaSyncStatus === 'SYNCED' || invoice.misaOrgRefId) {
         return {
           success: false,
           orgRefId: invoice.misaOrgRefId,
-          message: `Invoice already synced to Misa: ${invoice.code}`,
+          message: `Invoice already sent to Misa: ${invoice.code}`,
         };
       }
 
@@ -176,24 +175,15 @@ export class MisaVoucherService {
             misaErrorMessage: null,
           },
         });
-
-        this.logger.log(
-          `✅ Voucher sent to Misa queue for invoice ${invoice.code}, orgRefId: ${orgRefId}`,
-        );
       } else {
         await this.prismaService.invoice.update({
           where: { id: invoice.id },
           data: {
             misaSyncStatus: 'FAILED',
-            misaOrgRefId: orgRefId,
             misaSyncRetries: { increment: 1 },
             misaErrorMessage: result.message,
           },
         });
-
-        this.logger.error(
-          `❌ Failed to send voucher to Misa for invoice ${invoice.code}: ${result.message}`,
-        );
       }
 
       return {
@@ -911,7 +901,7 @@ export class MisaVoucherService {
           [toOp]: to,
         },
         saleChannelId: 1,
-        misaSyncStatus: { in: ['PENDING', 'FAILED', 'SKIP'] },
+        misaSyncStatus: { in: ['PENDING', 'SKIP'] },
         statusValue: { not: 'Đã hủy' },
         code: { not: { contains: '.' } },
       },
