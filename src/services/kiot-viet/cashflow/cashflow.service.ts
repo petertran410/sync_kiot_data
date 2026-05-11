@@ -41,7 +41,7 @@ interface KiotVietCashflow {
 export class KiotVietCashflowService {
   private readonly logger = new Logger(KiotVietCashflowService.name);
   private readonly baseUrl: string;
-  private readonly PAGE_SIZE = 100;
+  private readonly PAGE_SIZE = 200;
 
   constructor(
     private readonly httpService: HttpService,
@@ -171,7 +171,7 @@ export class KiotVietCashflowService {
         }
 
         const dateStart = new Date();
-        dateStart.setDate(dateStart.getDate() - 7);
+        dateStart.setDate(dateStart.getDate() - 350);
         const dateStartStr = dateStart.toISOString().split('T')[0];
 
         const dateEnd = new Date();

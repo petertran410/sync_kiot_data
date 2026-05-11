@@ -901,6 +901,7 @@ export class MisaVoucherService {
         },
         saleChannelId: 1,
         misaSyncStatus: { in: ['PENDING', 'FAILED', 'SKIP'] },
+        statusValue: { not: 'Đã hủy' },
       },
       select: { code: true, purchaseDate: true },
       orderBy: { purchaseDate: 'asc' },
