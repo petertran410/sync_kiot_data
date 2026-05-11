@@ -16,7 +16,6 @@ import {
 @Injectable()
 export class MisaDictionaryService {
   private readonly logger = new Logger(MisaDictionaryService.name);
-  private readonly DEFAULT_CREATED_BY = 'Trần Ngọc Nhân';
 
   constructor(
     private readonly configService: ConfigService,

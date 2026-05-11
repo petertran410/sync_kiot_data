@@ -879,20 +879,28 @@ export class MisaVoucherService {
   async batchCreateVouchers(
     from: Date,
     to: Date,
+    options?: { fromOp?: 'gte' | 'gt'; toOp?: 'lt' | 'lte' },
   ): Promise<{
     total: number;
     success: number;
     failed: number;
     skipped: number;
   }> {
+    const fromOp = options?.fromOp ?? 'gte';
+    const toOp = options?.toOp ?? 'lt';
+
     this.logger.log(
-      `📦 Batch push MISA vouchers: ${from.toISOString()} → ${to.toISOString()}`,
+      `📦 Batch push MISA vouchers: ${fromOp} ${from.toISOString()} → ${toOp} ${to.toISOString()}`,
     );
 
     const invoices = await this.prismaService.invoice.findMany({
       where: {
-        purchaseDate: { gte: from, lt: to },
-        misaSyncStatus: { in: ['PENDING', 'FAILED'] },
+        purchaseDate: {
+          [fromOp]: from,
+          [toOp]: to,
+        },
+        saleChannelId: 1,
+        misaSyncStatus: { in: ['PENDING', 'FAILED', 'SKIP'] },
       },
       select: { code: true, purchaseDate: true },
       orderBy: { purchaseDate: 'asc' },
