@@ -98,6 +98,17 @@ export class MisaVoucherService {
         };
       }
 
+      if (invoice.code.includes('.')) {
+        this.logger.log(
+          `⏭️ Skipping adjusted invoice ${invoice.code} - not eligible for Misa sync`,
+        );
+        return {
+          success: false,
+          orgRefId: null,
+          message: `Adjusted invoice ${invoice.code} is not eligible for Misa sync`,
+        };
+      }
+
       // 2. Kiểm tra đã sync chưa
       if (invoice.misaSyncStatus === 'SYNCED') {
         return {
@@ -549,7 +560,7 @@ export class MisaVoucherService {
         discount_type: 0,
         discount_rate_voucher: 0,
         payment_method: 'TM/CK',
-        buyer: invoice.customerName || invoice.customer?.name || '',
+        buyer: '',
 
         total_sale_amount_oc: totalSaleAmount,
         total_sale_amount: totalSaleAmount,
@@ -902,6 +913,7 @@ export class MisaVoucherService {
         saleChannelId: 1,
         misaSyncStatus: { in: ['PENDING', 'FAILED', 'SKIP'] },
         statusValue: { not: 'Đã hủy' },
+        code: { not: { contains: '.' } },
       },
       select: { code: true, purchaseDate: true },
       orderBy: { purchaseDate: 'asc' },
