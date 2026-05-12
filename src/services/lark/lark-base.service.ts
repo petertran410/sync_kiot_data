@@ -132,14 +132,19 @@ export class LarkBaseService {
     const codeToRecordId = new Map<string, string>();
     let pageToken: string | undefined;
     let hasMore = true;
+    let page = 0;
+    const t0 = Date.now();
+
+    this.logger.log(`🔍 fetchAllRecords: loading all Lark records...`);
 
     while (hasMore) {
+      page++;
       try {
         const res = await this.client.bitable.appTableRecord.list({
           path: { app_token: baseToken, table_id: tableId },
           params: {
             page_size: 500,
-            field_names: JSON.stringify([fieldName]),
+            // KHÔNG truyền field_names — giống hisweetie
             ...(pageToken ? { page_token: pageToken } : {}),
           },
         });
@@ -154,12 +159,21 @@ export class LarkBaseService {
 
         hasMore = res?.data?.has_more || false;
         pageToken = res?.data?.page_token;
+
+        this.logger.log(
+          `  📄 Page ${page}: ${items.length} records, total: ${codeToRecordId.size}${hasMore ? ' | more...' : ''}`,
+        );
       } catch (error) {
-        this.logger.error(`fetchAllRecords failed: ${error.message}`);
+        this.logger.error(
+          `  ❌ fetchAllRecords page ${page} failed: ${error.message}`,
+        );
         break;
       }
     }
 
+    this.logger.log(
+      `🔍 fetchAllRecords done: ${codeToRecordId.size} records (${Date.now() - t0}ms)`,
+    );
     return codeToRecordId;
   }
 

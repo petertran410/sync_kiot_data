@@ -417,8 +417,9 @@ export class LarkOrderSyncService {
             })
             .filter((op): op is NonNullable<typeof op> => op !== null);
 
-          if (updateOps.length > 0) {
-            await this.prisma.$transaction(updateOps);
+          const DB_CHUNK = 100;
+          for (let i = 0; i < updateOps.length; i += DB_CHUNK) {
+            await this.prisma.$transaction(updateOps.slice(i, i + DB_CHUNK));
           }
 
           success += updateOps.length;
@@ -441,12 +442,13 @@ export class LarkOrderSyncService {
 
     const result = await this.prisma.order.updateMany({
       where: { purchaseDate: { gte: threeMonthsAgo } },
-      data: { larkSyncStatus: 'PENDING' },
+      data: {
+        larkSyncStatus: 'PENDING',
+        larkRecordId: null, // reset để toCreate path dùng fetchAllRecords thay vì verifyRecordIds
+      },
     });
 
-    this.logger.log(
-      `📋 Marked ${result.count} orders as PENDING for full sync`,
-    );
+    this.logger.log(`📋 fullSync: marked ${result.count} orders as PENDING`);
     return this.syncPendingAndFailed();
   }
 
