@@ -75,7 +75,7 @@ export class WebhookService {
 
             await this.hisweetieNotify.notify('order', savedOrder.code);
 
-            await this.larkOrderSyncService.syncSingleOrderDirect(savedOrder);
+            this.larkOrderSyncService.syncSingleAsync(savedOrder.id);
           }
         }
       }

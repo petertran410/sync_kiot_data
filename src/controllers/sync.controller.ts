@@ -144,14 +144,7 @@ export class SyncController {
 
       await this.orderService.syncHistoricalOrders();
 
-      const ordersToSync = await this.prismaService.order.findMany({
-        where: {
-          OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
-        },
-        take: 1000,
-      });
-
-      await this.larkOrderSyncService.syncOrdersToLarkBase(ordersToSync);
+      await this.larkOrderSyncService.syncPendingAndFailed();
 
       return {
         success: true,
