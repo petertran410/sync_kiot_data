@@ -98,14 +98,35 @@ export class MisaVoucherService {
         };
       }
 
-      // 1.5. Bỏ qua hóa đơn điều chỉnh
+      // 1.5. Kiểm tra hóa đơn điều chỉnh — chỉ bỏ qua nếu đã qua thời gian cutoff
       if (invoice.code.includes('.')) {
-        this.logger.log(`⏭️ Skipping adjusted invoice ${invoice.code}`);
-        return {
-          success: false,
-          orgRefId: null,
-          message: `Adjusted invoice ${invoice.code} is not eligible for Misa sync`,
-        };
+        const vnPurchaseHour = (invoice.purchaseDate.getUTCHours() + 7) % 24;
+        const nowVnHour = (new Date().getUTCHours() + 7) % 24;
+
+        const isMorningWindow = vnPurchaseHour >= 8 && vnPurchaseHour < 12;
+        const isAfternoonWindow = vnPurchaseHour >= 12 && vnPurchaseHour < 19;
+
+        if (isMorningWindow && nowVnHour >= 15) {
+          this.logger.log(
+            `⏭️ Skipping adjusted invoice ${invoice.code}: past 15h cutoff for morning window (8h–12h)`,
+          );
+          return {
+            success: false,
+            orgRefId: null,
+            message: `Adjusted invoice ${invoice.code} is past the 15h cutoff for morning window`,
+          };
+        }
+
+        if (isAfternoonWindow && nowVnHour >= 19) {
+          this.logger.log(
+            `⏭️ Skipping adjusted invoice ${invoice.code}: past 19h cutoff for afternoon window (12h–19h)`,
+          );
+          return {
+            success: false,
+            orgRefId: null,
+            message: `Adjusted invoice ${invoice.code} is past the 19h cutoff for afternoon window`,
+          };
+        }
       }
 
       // 2. Kiểm tra đã sync chưa
@@ -627,9 +648,17 @@ export class MisaVoucherService {
    */
   private getMisaPostingDate(purchaseDate: Date): Date {
     const vnHour = (purchaseDate.getUTCHours() + 7) % 24;
-    if (vnHour >= 12) {
+    if (vnHour >= 12 && vnHour < 19) {
       const nextDay = new Date(purchaseDate);
       nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+      nextDay.setUTCHours(1, 30, 0, 0); // 8h30 VN = 1h30 UTC
+
+      // Nếu nextDay là Chủ nhật (0) → chuyển sang thứ Hai
+      const vnNextDay = new Date(nextDay.getTime() + 7 * 60 * 60 * 1000);
+      if (vnNextDay.getUTCDay() === 0) {
+        nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+      }
+
       return nextDay;
     }
     return purchaseDate;
@@ -922,7 +951,6 @@ export class MisaVoucherService {
         saleChannelId: 1,
         misaSyncStatus: { in: ['PENDING', 'SKIP'] },
         statusValue: { not: 'Đã hủy' },
-        code: { not: { contains: '.' } },
       },
       select: { code: true, purchaseDate: true },
       orderBy: { purchaseDate: 'asc' },
