@@ -18,6 +18,8 @@ import { LarkPaymentVoucherSyncService } from './payment-voucher/lark-payment-vo
 import { LarkVoucherCampaignSyncService } from './voucher-campaign/lark-voucher-campaign-sync.service';
 import { LarkTransferSyncService } from './transfer/lark-transfer-sync.service';
 import { LarkCustomerHistoricalSyncService } from './customer-historical/lark-customer-historical-sync.service';
+import { LarkBaseService } from './lark-base.service';
+import { LarkClientProvider } from './lark-client.provider';
 
 @Module({
   imports: [
@@ -45,6 +47,8 @@ import { LarkCustomerHistoricalSyncService } from './customer-historical/lark-cu
     LarkPaymentVoucherSyncService,
     LarkVoucherCampaignSyncService,
     LarkTransferSyncService,
+    LarkClientProvider,
+    LarkBaseService,
   ],
   exports: [
     LarkAuthService,
@@ -63,6 +67,7 @@ import { LarkCustomerHistoricalSyncService } from './customer-historical/lark-cu
     LarkPaymentVoucherSyncService,
     LarkVoucherCampaignSyncService,
     LarkTransferSyncService,
+    LarkBaseService,
   ],
 })
 export class LarkModule {}

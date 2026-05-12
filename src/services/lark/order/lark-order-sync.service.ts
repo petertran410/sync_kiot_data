@@ -1,9 +1,9 @@
+// src/services/lark/order/lark-order-sync.service.ts
+
 import { Injectable, Logger } from '@nestjs/common';
-import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { LarkAuthService } from '../auth/lark-auth.service';
-import { firstValueFrom } from 'rxjs';
+import { LarkBaseService } from '../lark-base.service';
 
 const LARK_ORDER_FIELDS = {
   PRIMARY_CODE: 'Mã Đơn Hàng',
@@ -29,14 +29,6 @@ const BRANCH_OPTIONS = {
   KHO_HA_NOI: 'Kho Hà Nội',
   KHO_SAI_GON: 'Kho Sài Gòn',
   CUA_HANG_DIEP_TRA: 'Cửa Hàng Diệp Trà',
-};
-
-const STATUS_OPTIONS = {
-  PHIEU_TAM: 'Phiếu Tạm',
-  DANG_GIAO_HANG: 'Đang Giao Hàng',
-  HOAN_THANH: 'Hoàn Thành',
-  DA_HUY: 'Đã Hủy',
-  DA_XAC_NHAN: 'Đã Xác Nhận',
 };
 
 const SALE_NAME = {
@@ -72,39 +64,59 @@ const SALE_NAME = {
   HO_SI_PHU: 'Hồ Sĩ Phú',
 };
 
-interface LarkBatchResponse {
-  code: number;
-  msg: string;
-  data?: {
-    records?: Array<{
-      record_id: string;
-      fields: Record<string, any>;
-    }>;
-    items?: Array<{
-      record_id: string;
-      fields: Record<string, any>;
-    }>;
-    page_token?: string;
-    total?: number;
-  };
-}
+const BRANCH_MAPPING: Record<number, string> = {
+  1: BRANCH_OPTIONS.CUA_HANG_DIEP_TRA,
+  2: BRANCH_OPTIONS.KHO_HA_NOI,
+  3: BRANCH_OPTIONS.KHO_SAI_GON,
+  4: BRANCH_OPTIONS.VAN_PHONG_HA_NOI,
+};
+
+const SELLER_MAPPING: Record<number, string> = {
+  1015579: SALE_NAME.ADMIN,
+  1031177: SALE_NAME.DINH_THI_LY_LY,
+  1015592: SALE_NAME.TRAN_XUAN_PHUONG,
+  1015596: SALE_NAME.LE_THI_HONG_LIEN,
+  1015604: SALE_NAME.PHI_THI_PHUONG_THANH,
+  1015610: SALE_NAME.LE_XUAN_TUNG,
+  1015613: SALE_NAME.TA_THI_TRANG,
+  1015698: SALE_NAME.BANG_ANH_VU,
+  1015722: SALE_NAME.MAI_THI_VAN_ANH,
+  1015729: SALE_NAME.LINH_THU_TRANG,
+  1015746: SALE_NAME.LY_THI_HONG_DAO,
+  1015761: SALE_NAME.NGUYEN_HUYEN_TRANG,
+  1015764: SALE_NAME.NGUYEN_THI_NGAN,
+  1015777: SALE_NAME.NGUYEN_THI_THUONG,
+  1015781: SALE_NAME.VU_HUYEN_TRANG,
+  1015788: SALE_NAME.LINH_THUY_DUONG,
+  1016818: SALE_NAME.NGUYEN_THI_PHUONG,
+  383855: SALE_NAME.NGUYEN_HUU_TOAN,
+  1032906: SALE_NAME.LE_BICH_NGOC,
+  1032972: SALE_NAME.NGUYEN_THI_LOAN,
+  1034030: SALE_NAME.NGUYEN_VIET_NAM,
+  1030913: SALE_NAME.CUA_HANG_DIEP_TRA_ANH_TUAN,
+  1034176: SALE_NAME.DO_THI_THUONG,
+  1034250: SALE_NAME.NGUYEN_THI_BICH_NGOC,
+  1034266: SALE_NAME.LE_BAO_NGAN,
+  1033767: SALE_NAME.HUYNH_MAN_NHI,
+  1042325: SALE_NAME.NGO_TRANG_NHUNG,
+  1062483: SALE_NAME.HO_SI_PHU,
+  1062484: SALE_NAME.DAM_THI_HONG_NHA,
+};
 
 @Injectable()
 export class LarkOrderSyncService {
   private readonly logger = new Logger(LarkOrderSyncService.name);
   private readonly baseToken: string;
   private readonly tableId: string;
+  private readonly MAX_RETRIES = 3;
 
   constructor(
-    private readonly httpService: HttpService,
-    private readonly configService: ConfigService,
-    private readonly prismaService: PrismaService,
-    private readonly larkAuthService: LarkAuthService,
+    private readonly larkBase: LarkBaseService,
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
   ) {
-    const baseToken = this.configService.get<string>(
-      'LARK_ORDER_SYNC_BASE_TOKEN',
-    );
-    const tableId = this.configService.get<string>('LARK_ORDER_SYNC_TABLE_ID');
+    const baseToken = this.config.get<string>('LARK_ORDER_SYNC_BASE_TOKEN');
+    const tableId = this.config.get<string>('LARK_ORDER_SYNC_TABLE_ID');
 
     if (!baseToken || !tableId) {
       throw new Error('LarkBase order configuration missing');
@@ -114,535 +126,384 @@ export class LarkOrderSyncService {
     this.tableId = tableId;
   }
 
-  async syncOrdersToLarkBase(orders: any[]): Promise<void> {
-    const lockKey = `lark_order_sync_lock_${Date.now()}`;
+  // ─── REAL-TIME SYNC ───────────────────────────────────────────────
 
+  async syncSingle(orderId: number): Promise<void> {
     try {
-      await this.acquireSyncLock(lockKey);
-
-      this.logger.log(`🚀 Starting batch sync for ${orders.length} orders...`);
-
-      const ordersToSync = orders.filter(
-        (o) => o.larkSyncStatus === 'PENDING' || o.larkSyncStatus === 'FAILED',
-      );
-
-      if (ordersToSync.length === 0) {
-        this.logger.log('✅ No orders need sync');
-        await this.releaseSyncLock(lockKey);
-        return;
-      }
-
-      this.logger.log(
-        `📊 Syncing ${ordersToSync.length} orders (PENDING + FAILED)`,
-      );
-
-      await this.testLarkBaseConnection();
-
-      const BATCH_SIZE = 50;
-      let totalSuccess = 0;
-      let totalFailed = 0;
-
-      for (let i = 0; i < ordersToSync.length; i += BATCH_SIZE) {
-        const batch = ordersToSync.slice(i, i + BATCH_SIZE);
-        const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
-        const totalBatches = Math.ceil(ordersToSync.length / BATCH_SIZE);
-
-        this.logger.log(
-          `🔄 Processing batch ${batchNumber}/${totalBatches} (${batch.length} orders)`,
-        );
-
-        for (const order of batch) {
-          try {
-            await this.syncSingleOrderDirect(order);
-            totalSuccess++;
-          } catch (error) {
-            this.logger.error(
-              `❌ Failed to sync order ${order.code}: ${error.message}`,
-            );
-            totalFailed++;
-          }
-
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        }
-
-        if (i + BATCH_SIZE < ordersToSync.length) {
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-        }
-      }
-
-      this.logger.log('🎯 Batch sync completed!');
-      this.logger.log(`✅ Success: ${totalSuccess}`);
-      this.logger.log(`❌ Failed: ${totalFailed}`);
-    } catch (error) {
-      this.logger.error(`❌ Batch sync failed: ${error.message}`);
-      throw error;
-    } finally {
-      await this.releaseSyncLock(lockKey);
-    }
-  }
-
-  async syncSingleOrderDirect(order: any): Promise<void> {
-    try {
-      if (this.shouldSkipSync(order.code)) {
-        this.logger.log(`⏭️  Skipping test order: ${order.code}`);
-        return;
-      }
-
-      this.logger.log(`🔄 Syncing order ${order.code} to Lark...`);
-
-      const existingRecordId = await this.searchRecordByCode(order.code);
-
-      const larkData = this.mapOrderToLarkBase(order);
-      const headers = await this.larkAuthService.getOrderHeaders();
-
-      if (existingRecordId) {
-        const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/${existingRecordId}`;
-
-        await firstValueFrom(
-          this.httpService.put(
-            url,
-            { fields: larkData },
-            { headers, timeout: 10000 },
-          ),
-        );
-
-        this.logger.log(`✅ Updated order ${order.code} in Lark`);
-      } else {
-        const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records`;
-
-        await firstValueFrom(
-          this.httpService.post(
-            url,
-            { fields: larkData },
-            { headers, timeout: 10000 },
-          ),
-        );
-
-        this.logger.log(`✅ Created order ${order.code} in Lark`);
-      }
-
-      await this.prismaService.order.update({
-        where: { id: order.id },
-        data: { larkSyncStatus: 'SYNCED', larkSyncedAt: new Date() },
+      const order = await this.prisma.order.findUnique({
+        where: { id: orderId },
       });
-    } catch (error) {
-      this.logger.error(`❌ Sync order ${order.code} failed: ${error.message}`);
 
-      await this.prismaService.order.update({
-        where: { id: order.id },
+      if (!order) {
+        this.logger.warn(`Order #${orderId} not found`);
+        return;
+      }
+
+      if (this.shouldSkipSync(order.code)) {
+        this.logger.debug(`Skip order: ${order.code}`);
+        return;
+      }
+
+      const fields = this.mapOrderToLarkBase(order);
+      let needSearchCreate = !order.larkRecordId;
+
+      if (order.larkRecordId) {
+        try {
+          await this.larkBase.updateRecord(
+            this.baseToken,
+            this.tableId,
+            order.larkRecordId,
+            fields,
+          );
+        } catch (updateError) {
+          if (this.isRecordNotFound(updateError)) {
+            this.logger.warn(
+              `⚠️ Record ${order.larkRecordId} not found on Lark, re-creating...`,
+            );
+            await this.prisma.order.update({
+              where: { id: orderId },
+              data: { larkRecordId: null },
+            });
+            needSearchCreate = true;
+          } else {
+            throw updateError;
+          }
+        }
+      }
+
+      if (needSearchCreate) {
+        let recordId = await this.larkBase.searchRecord(
+          this.baseToken,
+          this.tableId,
+          LARK_ORDER_FIELDS.PRIMARY_CODE,
+          order.code,
+        );
+
+        if (recordId) {
+          await this.larkBase.updateRecord(
+            this.baseToken,
+            this.tableId,
+            recordId,
+            fields,
+          );
+        } else {
+          recordId = await this.larkBase.createRecord(
+            this.baseToken,
+            this.tableId,
+            fields,
+          );
+        }
+
+        await this.prisma.order.update({
+          where: { id: orderId },
+          data: { larkRecordId: recordId },
+        });
+      }
+
+      await this.prisma.order.update({
+        where: { id: orderId },
         data: {
-          larkSyncStatus: 'FAILED',
-          larkSyncRetries: { increment: 1 },
+          larkSyncStatus: 'SYNCED',
+          larkSyncedAt: new Date(),
+          larkSyncRetries: 0,
         },
       });
 
-      throw error;
+      this.logger.log(`✅ Synced order ${order.code}`);
+    } catch (error) {
+      this.logger.error(`❌ Sync order #${orderId} failed: ${error.message}`);
+
+      const current = await this.prisma.order.findUnique({
+        where: { id: orderId },
+        select: { larkSyncRetries: true },
+      });
+
+      await this.prisma.order.update({
+        where: { id: orderId },
+        data: {
+          larkSyncStatus:
+            (current?.larkSyncRetries ?? 0) + 1 >= this.MAX_RETRIES
+              ? 'FAILED'
+              : 'PENDING',
+          larkSyncRetries: { increment: 1 },
+        },
+      });
     }
   }
 
-  private async searchRecordByCode(code: string): Promise<string | null> {
-    try {
-      const headers = await this.larkAuthService.getOrderHeaders();
-      const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records/search`;
+  syncSingleAsync(orderId: number): void {
+    this.syncSingle(orderId).catch((err) => {
+      this.logger.error(`Async sync order #${orderId} error: ${err.message}`);
+    });
+  }
 
-      const response = await firstValueFrom(
-        this.httpService.post(
-          url,
-          {
-            field_names: [LARK_ORDER_FIELDS.PRIMARY_CODE],
-            filter: {
-              conjunction: 'and',
-              conditions: [
-                {
-                  field_name: LARK_ORDER_FIELDS.PRIMARY_CODE,
-                  operator: 'is',
-                  value: [code],
-                },
-              ],
-            },
-          },
-          {
-            headers,
-            timeout: 10000,
-          },
-        ),
+  // ─── BATCH SYNC (CRON / MANUAL) ──────────────────────────────────
+
+  async syncPendingAndFailed(): Promise<{ success: number; failed: number }> {
+    const threeMonthsAgo = new Date();
+    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+
+    const orders = await this.prisma.order.findMany({
+      where: {
+        purchaseDate: { gte: threeMonthsAgo }, // sync_kiot_data dùng purchaseDate
+        larkSyncStatus: { in: ['PENDING', 'FAILED'] },
+      },
+      orderBy: { purchaseDate: 'desc' },
+    });
+
+    const validOrders = orders.filter((o) => !this.shouldSkipSync(o.code));
+
+    if (validOrders.length === 0) {
+      this.logger.log('No orders need sync');
+      return { success: 0, failed: 0 };
+    }
+
+    this.logger.log(`🔄 Syncing ${validOrders.length} orders...`);
+
+    const toUpdate = validOrders.filter((o) => o.larkRecordId);
+    let toCreate = validOrders.filter((o) => !o.larkRecordId);
+
+    let success = 0;
+    let failed = 0;
+
+    // ── BATCH UPDATE ─────────────────────────────────────────────
+    if (toUpdate.length > 0) {
+      const allRecordIds = toUpdate.map((o) => o.larkRecordId!);
+      const existingIds = await this.larkBase.verifyRecordIds(
+        this.baseToken,
+        this.tableId,
+        allRecordIds,
       );
 
-      if (response.data.code === 0) {
-        const items = response.data.data?.items || [];
-        if (items.length > 0) {
-          return items[0].record_id;
+      const validToUpdate = toUpdate.filter((o) =>
+        existingIds.has(o.larkRecordId!),
+      );
+      const staleOrders = toUpdate.filter(
+        (o) => !existingIds.has(o.larkRecordId!),
+      );
+
+      // Stale: reset larkRecordId → đẩy sang toCreate để fetchAllRecords match lại
+      if (staleOrders.length > 0) {
+        this.logger.warn(
+          `⚠️ ${staleOrders.length} stale records, resetting...`,
+        );
+        await this.prisma.order.updateMany({
+          where: { id: { in: staleOrders.map((o) => o.id) } },
+          data: { larkRecordId: null },
+        });
+        toCreate = [
+          ...toCreate,
+          ...staleOrders.map((o) => ({ ...o, larkRecordId: null })),
+        ];
+      }
+
+      if (validToUpdate.length > 0) {
+        try {
+          await this.larkBase.batchUpdateRecords(
+            this.baseToken,
+            this.tableId,
+            validToUpdate.map((o) => ({
+              record_id: o.larkRecordId!,
+              fields: this.mapOrderToLarkBase(o),
+            })),
+          );
+
+          await this.prisma.order.updateMany({
+            where: { id: { in: validToUpdate.map((o) => o.id) } },
+            data: {
+              larkSyncStatus: 'SYNCED',
+              larkSyncedAt: new Date(),
+              larkSyncRetries: 0,
+            },
+          });
+
+          success += validToUpdate.length;
+          this.logger.log(`✅ Batch updated ${validToUpdate.length} orders`);
+        } catch (error) {
+          this.logger.error(`❌ Batch update failed: ${error.message}`);
+          failed += validToUpdate.length;
+        }
+      }
+    }
+
+    // ── SEARCH + CREATE ───────────────────────────────────────────
+    if (toCreate.length > 0) {
+      this.logger.log(
+        `📝 Processing ${toCreate.length} orders (fetch all + match)...`,
+      );
+
+      // 1 lần fetch toàn bộ Lark records — O(1) API calls thay vì O(n)
+      const larkCodeMap = await this.larkBase.fetchAllRecords(
+        this.baseToken,
+        this.tableId,
+        LARK_ORDER_FIELDS.PRIMARY_CODE,
+      );
+      this.logger.log(`📋 Fetched ${larkCodeMap.size} records from Lark`);
+
+      const toMatchUpdate: Array<{
+        order: (typeof toCreate)[0];
+        larkRecordId: string;
+      }> = [];
+      const reallyNew: typeof toCreate = [];
+
+      for (const order of toCreate) {
+        const existingId = larkCodeMap.get(order.code);
+        if (existingId) {
+          toMatchUpdate.push({ order, larkRecordId: existingId });
+        } else {
+          reallyNew.push(order);
         }
       }
 
-      return null;
-    } catch (error) {
-      this.logger.warn(`Search order by code failed: ${error.message}`);
-      return null;
+      this.logger.log(
+        `🔍 Matched: ${toMatchUpdate.length} existing, ${reallyNew.length} new`,
+      );
+
+      // Update matched + lưu larkRecordId vào DB
+      if (toMatchUpdate.length > 0) {
+        try {
+          await this.larkBase.batchUpdateRecords(
+            this.baseToken,
+            this.tableId,
+            toMatchUpdate.map((m) => ({
+              record_id: m.larkRecordId,
+              fields: this.mapOrderToLarkBase(m.order),
+            })),
+          );
+
+          await this.prisma.$transaction(
+            toMatchUpdate.map((m) =>
+              this.prisma.order.update({
+                where: { id: m.order.id },
+                data: {
+                  larkRecordId: m.larkRecordId,
+                  larkSyncStatus: 'SYNCED',
+                  larkSyncedAt: new Date(),
+                  larkSyncRetries: 0,
+                },
+              }),
+            ),
+          );
+
+          success += toMatchUpdate.length;
+          this.logger.log(`✅ Matched updated ${toMatchUpdate.length} orders`);
+        } catch (error) {
+          this.logger.error(`❌ Matched update failed: ${error.message}`);
+          failed += toMatchUpdate.length;
+        }
+      }
+
+      // Create new records
+      if (reallyNew.length > 0) {
+        try {
+          const newRecordIds = await this.larkBase.batchCreateRecords(
+            this.baseToken,
+            this.tableId,
+            reallyNew.map((o) => ({ fields: this.mapOrderToLarkBase(o) })),
+          );
+
+          const updateOps = reallyNew
+            .map((order, i) => {
+              if (!newRecordIds[i]) return null;
+              return this.prisma.order.update({
+                where: { id: order.id },
+                data: {
+                  larkRecordId: newRecordIds[i],
+                  larkSyncStatus: 'SYNCED',
+                  larkSyncedAt: new Date(),
+                  larkSyncRetries: 0,
+                },
+              });
+            })
+            .filter((op): op is NonNullable<typeof op> => op !== null);
+
+          if (updateOps.length > 0) {
+            await this.prisma.$transaction(updateOps);
+          }
+
+          success += updateOps.length;
+          failed += reallyNew.length - updateOps.length;
+          this.logger.log(`✅ Batch created ${updateOps.length} orders`);
+        } catch (error) {
+          this.logger.error(`❌ Batch create failed: ${error.message}`);
+          failed += reallyNew.length;
+        }
+      }
     }
+
+    this.logger.log(`🎯 Sync done: ${success} success, ${failed} failed`);
+    return { success, failed };
   }
 
-  private shouldSkipSync(code: string): boolean {
-    if (!code) return false;
-    const upperCode = code.toUpperCase();
-    return upperCode.includes('SPE') || upperCode.includes('TTS');
+  async fullSync(): Promise<{ success: number; failed: number }> {
+    const threeMonthsAgo = new Date();
+    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+
+    const result = await this.prisma.order.updateMany({
+      where: { purchaseDate: { gte: threeMonthsAgo } },
+      data: { larkSyncStatus: 'PENDING' },
+    });
+
+    this.logger.log(
+      `📋 Marked ${result.count} orders as PENDING for full sync`,
+    );
+    return this.syncPendingAndFailed();
   }
+
+  // ─── FIELD MAPPING ───────────────────────────────────────────────
 
   private mapOrderToLarkBase(order: any): Record<string, any> {
     const fields: Record<string, any> = {};
 
-    if (order.code) {
-      fields[LARK_ORDER_FIELDS.PRIMARY_CODE] = order.code;
-    }
-
-    if (order.kiotVietId !== null && order.kiotVietId !== undefined) {
+    if (order.code) fields[LARK_ORDER_FIELDS.PRIMARY_CODE] = order.code;
+    if (order.kiotVietId != null)
       fields[LARK_ORDER_FIELDS.KIOTVIET_ID] = Number(order.kiotVietId);
-    }
-
-    if (order.branchId) {
-      const branchMapping = {
-        1: BRANCH_OPTIONS.CUA_HANG_DIEP_TRA,
-        2: BRANCH_OPTIONS.KHO_HA_NOI,
-        3: BRANCH_OPTIONS.KHO_SAI_GON,
-        4: BRANCH_OPTIONS.VAN_PHONG_HA_NOI,
-      };
-
-      fields[LARK_ORDER_FIELDS.BRANCH] = branchMapping[order.branchId] || '';
-    }
-
-    if (order.soldById !== null && order.soldById !== undefined) {
-      const sellerMapping = {
-        1015579: SALE_NAME.ADMIN,
-        1031177: SALE_NAME.DINH_THI_LY_LY,
-        1015592: SALE_NAME.TRAN_XUAN_PHUONG,
-        1015596: SALE_NAME.LE_THI_HONG_LIEN,
-        1015604: SALE_NAME.PHI_THI_PHUONG_THANH,
-        1015610: SALE_NAME.LE_XUAN_TUNG,
-        1015613: SALE_NAME.TA_THI_TRANG,
-        1015698: SALE_NAME.BANG_ANH_VU,
-        1015722: SALE_NAME.MAI_THI_VAN_ANH,
-        1015729: SALE_NAME.LINH_THU_TRANG,
-        1015746: SALE_NAME.LY_THI_HONG_DAO,
-        1015761: SALE_NAME.NGUYEN_HUYEN_TRANG,
-        1015764: SALE_NAME.NGUYEN_THI_NGAN,
-        1015777: SALE_NAME.NGUYEN_THI_THUONG,
-        1015781: SALE_NAME.VU_HUYEN_TRANG,
-        1015788: SALE_NAME.LINH_THUY_DUONG,
-        1016818: SALE_NAME.NGUYEN_THI_PHUONG,
-        383855: SALE_NAME.NGUYEN_HUU_TOAN,
-        1032906: SALE_NAME.LE_BICH_NGOC,
-        1032972: SALE_NAME.NGUYEN_THI_LOAN,
-        1034030: SALE_NAME.NGUYEN_VIET_NAM,
-        1030913: SALE_NAME.CUA_HANG_DIEP_TRA_ANH_TUAN,
-        1034176: SALE_NAME.DO_THI_THUONG,
-        1034250: SALE_NAME.NGUYEN_THI_BICH_NGOC,
-        1034266: SALE_NAME.LE_BAO_NGAN,
-        1033767: SALE_NAME.HUYNH_MAN_NHI,
-        1042325: SALE_NAME.NGO_TRANG_NHUNG,
-        1062483: SALE_NAME.HO_SI_PHU,
-        1062484: SALE_NAME.DAM_THI_HONG_NHA,
-      };
-
-      fields[LARK_ORDER_FIELDS.SELLER] = sellerMapping[order.soldById] || '';
-    }
-
-    if (order.customerCode) {
+    if (order.branchId)
+      fields[LARK_ORDER_FIELDS.BRANCH] = BRANCH_MAPPING[order.branchId] || '';
+    if (order.soldById != null)
+      fields[LARK_ORDER_FIELDS.SELLER] =
+        SELLER_MAPPING[Number(order.soldById)] || '';
+    if (order.customerCode)
       fields[LARK_ORDER_FIELDS.CUSTOMER_CODE] = order.customerCode;
-    }
-
-    if (order.saleChannelName) {
-      fields[LARK_ORDER_FIELDS.SALE_CHANNEL] = order.saleChannelName || '';
-    }
-
-    if (order.customerName) {
+    if (order.customerName)
       fields[LARK_ORDER_FIELDS.CUSTOMER_NAME] = order.customerName;
-    }
-
-    if (order.total !== null && order.total !== undefined) {
-      fields[LARK_ORDER_FIELDS.CUSTOMER_NEED_PAY] = Number(order.total || 0);
-    }
-
-    if (order.totalPayment !== null && order.totalPayment !== undefined) {
-      fields[LARK_ORDER_FIELDS.CUSTOMER_PAID] = Number(order.totalPayment || 0);
-    }
-
-    if (order.discount !== null && order.discount !== undefined) {
-      fields[LARK_ORDER_FIELDS.DISCOUNT] = Number(order.discount || 0);
-    }
-
-    if (order.discountRatio !== null && order.discountRatio !== undefined) {
-      fields[LARK_ORDER_FIELDS.DISCOUNT_RATIO] = Number(
-        order.discountRatio || 0,
-      );
-    }
-
-    if (order.status) {
-      const statusMapping = {
-        1: STATUS_OPTIONS.PHIEU_TAM,
-        2: STATUS_OPTIONS.DANG_GIAO_HANG,
-        3: STATUS_OPTIONS.HOAN_THANH,
-        4: STATUS_OPTIONS.DA_HUY,
-        5: STATUS_OPTIONS.DA_XAC_NHAN,
-      };
-
-      fields[LARK_ORDER_FIELDS.STATUS] =
-        statusMapping[order.status] || STATUS_OPTIONS.PHIEU_TAM;
-    }
-
-    if (order.description !== null && order.description !== undefined) {
-      fields[LARK_ORDER_FIELDS.COMMENT] = order.description || '';
-    }
-
-    if (order.purchaseDate) {
+    if (order.saleChannelName)
+      fields[LARK_ORDER_FIELDS.SALE_CHANNEL] = order.saleChannelName;
+    if (order.total != null)
+      fields[LARK_ORDER_FIELDS.CUSTOMER_NEED_PAY] = Number(order.total);
+    if (order.totalPayment != null)
+      fields[LARK_ORDER_FIELDS.CUSTOMER_PAID] = Number(order.totalPayment);
+    if (order.discount != null)
+      fields[LARK_ORDER_FIELDS.DISCOUNT] = Number(order.discount);
+    if (order.discountRatio != null)
+      fields[LARK_ORDER_FIELDS.DISCOUNT_RATIO] = order.discountRatio;
+    if (order.statusValue) fields[LARK_ORDER_FIELDS.STATUS] = order.statusValue;
+    if (order.description)
+      fields[LARK_ORDER_FIELDS.COMMENT] = order.description;
+    if (order.purchaseDate)
       fields[LARK_ORDER_FIELDS.ORDER_DATE] = new Date(
         order.purchaseDate,
       ).getTime();
-    }
-
-    if (order.createdDate) {
+    if (order.createdDate)
       fields[LARK_ORDER_FIELDS.CREATED_DATE] = new Date(
         order.createdDate,
       ).getTime();
-    }
-
-    if (order.modifiedDate !== null && order.modifiedDate !== undefined) {
+    if (order.modifiedDate)
       fields[LARK_ORDER_FIELDS.MODIFIED_DATE] = new Date(
         order.modifiedDate,
       ).getTime();
-    }
 
     return fields;
   }
 
-  async getSyncProgress(): Promise<any> {
-    const total = await this.prismaService.order.count();
-    const synced = await this.prismaService.order.count({
-      where: { larkSyncStatus: 'SYNCED' },
-    });
-    const pending = await this.prismaService.order.count({
-      where: { larkSyncStatus: 'PENDING' },
-    });
-    const failed = await this.prismaService.order.count({
-      where: { larkSyncStatus: 'FAILED' },
-    });
-
-    const progress = total > 0 ? Math.round((synced / total) * 100) : 0;
-
-    return {
-      total,
-      synced,
-      pending,
-      failed,
-      progress,
-      canRetryFailed: failed > 0,
-      summary: `${synced}/${total} synced (${progress}%)`,
-    };
+  private shouldSkipSync(code: string): boolean {
+    if (!code) return false;
+    const upper = code.toUpperCase();
+    return upper.includes('SPE') || upper.includes('TTS');
   }
 
-  private async testLarkBaseConnection(): Promise<void> {
-    const maxRetries = 3;
-
-    for (let retryCount = 0; retryCount <= maxRetries; retryCount++) {
-      try {
-        this.logger.log(
-          `🔍 Testing LarkBase connection (attempt ${retryCount + 1}/${maxRetries + 1})...`,
-        );
-
-        const headers = await this.larkAuthService.getOrderHeaders();
-        const url = `https://open.larksuite.com/open-apis/bitable/v1/apps/${this.baseToken}/tables/${this.tableId}/records`;
-        const params = new URLSearchParams({ page_size: '1' });
-
-        const response = await firstValueFrom(
-          this.httpService.get(`${url}?${params}`, {
-            headers,
-            timeout: 30000,
-          }),
-        );
-
-        if (response.data.code === 0) {
-          const totalRecords = response.data.data?.total || 0;
-          this.logger.log(`✅ LarkBase connection successful`);
-          this.logger.log(
-            `📊 LarkBase table has ${totalRecords} existing records`,
-          );
-          return;
-        }
-
-        throw new Error(`Connection test failed: ${response.data.msg}`);
-      } catch (error) {
-        if (retryCount < maxRetries) {
-          const delay = (retryCount + 1) * 2000;
-          this.logger.warn(
-            `⚠️ Connection attempt ${retryCount + 1} failed: ${error.message}`,
-          );
-          this.logger.log(`🔄 Retrying in ${delay / 1000}s...`);
-          await new Promise((resolve) => setTimeout(resolve, delay));
-        } else {
-          this.logger.error(
-            '❌ LarkBase connection test failed after all retries',
-          );
-          throw new Error(`Cannot connect to LarkBase: ${error.message}`);
-        }
-      }
-    }
-  }
-
-  private async acquireSyncLock(lockKey: string): Promise<void> {
-    const syncName = 'order_lark_sync';
-
-    const existingLock = await this.prismaService.syncControl.findFirst({
-      where: {
-        name: syncName,
-        isRunning: true,
-      },
-    });
-
-    if (existingLock && existingLock.startedAt) {
-      const lockAge = Date.now() - existingLock.startedAt.getTime();
-
-      if (lockAge < 10 * 60 * 1000) {
-        const isProcessActive = await this.isLockProcessActive(existingLock);
-
-        if (isProcessActive) {
-          throw new Error('Another sync is already running');
-        } else {
-          this.logger.warn(
-            `🔓 Clearing inactive lock (age: ${Math.round(lockAge / 1000)}s)`,
-          );
-          await this.forceReleaseLock(syncName);
-        }
-      } else {
-        this.logger.warn(
-          `🔓 Clearing stale lock (age: ${Math.round(lockAge / 60000)}min)`,
-        );
-        await this.forceReleaseLock(syncName);
-      }
-    }
-
-    await this.waitForLockAvailability(syncName);
-
-    await this.prismaService.syncControl.upsert({
-      where: { name: syncName },
-      create: {
-        name: syncName,
-        entities: ['order'],
-        syncMode: 'lark_sync',
-        isEnabled: true,
-        isRunning: true,
-        status: 'running',
-        lastRunAt: new Date(),
-        startedAt: new Date(),
-        progress: {
-          lockKey,
-          processId: process.pid,
-          hostname: require('os').hostname(),
-        },
-      },
-      update: {
-        isRunning: true,
-        status: 'running',
-        lastRunAt: new Date(),
-        startedAt: new Date(),
-        progress: {
-          lockKey,
-          processId: process.pid,
-          hostname: require('os').hostname(),
-        },
-      },
-    });
-
-    this.logger.debug(
-      `🔒 Acquired sync lock: ${lockKey} (PID: ${process.pid})`,
-    );
-  }
-
-  private async isLockProcessActive(lockRecord: any): Promise<boolean> {
-    try {
-      if (!lockRecord.progress || typeof lockRecord.progress !== 'object') {
-        return false;
-      }
-
-      const { processId, hostname } = lockRecord.progress;
-      const currentHostname = require('os').hostname();
-
-      if (hostname !== currentHostname) {
-        return false;
-      }
-
-      if (!processId) {
-        return false;
-      }
-
-      process.kill(processId, 0);
-      return true;
-    } catch (error) {
-      return false;
-    }
-  }
-
-  private async waitForLockAvailability(
-    syncName: string,
-    maxWaitMs: number = 30000,
-  ): Promise<void> {
-    const startTime = Date.now();
-
-    while (Date.now() - startTime < maxWaitMs) {
-      const existingLock = await this.prismaService.syncControl.findFirst({
-        where: { name: syncName, isRunning: true },
-      });
-
-      if (!existingLock) {
-        return;
-      }
-
-      this.logger.debug(
-        `⏳ Waiting for lock release... (${Math.round((Date.now() - startTime) / 1000)}s)`,
-      );
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-    }
-
-    throw new Error(`Lock wait timeout after ${maxWaitMs / 1000}s`);
-  }
-
-  private async forceReleaseLock(syncName: string): Promise<void> {
-    await this.prismaService.syncControl.updateMany({
-      where: { name: syncName },
-      data: {
-        isRunning: false,
-        status: 'force_released',
-        error: 'Lock force released due to inactivity',
-        completedAt: new Date(),
-        progress: {},
-      },
-    });
-  }
-
-  private async releaseSyncLock(lockKey: string): Promise<void> {
-    const lockRecord = await this.prismaService.syncControl.findFirst({
-      where: {
-        name: 'order_lark_sync',
-        isRunning: true,
-      },
-    });
-
-    if (
-      lockRecord &&
-      lockRecord.progress &&
-      typeof lockRecord.progress === 'object' &&
-      'lockKey' in lockRecord.progress &&
-      lockRecord.progress.lockKey === lockKey
-    ) {
-      await this.prismaService.syncControl.update({
-        where: { id: lockRecord.id },
-        data: {
-          isRunning: false,
-          status: 'completed',
-          completedAt: new Date(),
-          progress: {},
-        },
-      });
-
-      this.logger.debug(`🔓 Released sync lock: ${lockKey}`);
-    }
+  private isRecordNotFound(error: any): boolean {
+    const code = error?.code ?? error?.response?.data?.code ?? 0;
+    return code === 1254040 || code === 404;
   }
 }

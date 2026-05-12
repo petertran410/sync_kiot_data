@@ -318,6 +318,7 @@ model Order {
   @@index([saleChannelId])
   @@index([lastSyncedAt])
   @@index([larkSyncStatus])
+  @@index([larkSyncStatus, purchaseDate])
 }
 
 model OrderDetail {
@@ -567,6 +568,7 @@ model Invoice {
   @@index([lastSyncedAt])
   @@index([larkSyncStatus])
   @@index([misaSyncStatus])
+  @@index([larkSyncStatus, purchaseDate])
 }
 
 model InvoiceDetail {

@@ -855,10 +855,10 @@
     "@jridgewell/resolve-uri" "^3.1.0"
     "@jridgewell/sourcemap-codec" "^1.4.14"
 
-"@larksuiteoapi/node-sdk@^1.50.1":
-  version "1.60.0"
-  resolved "https://registry.yarnpkg.com/@larksuiteoapi/node-sdk/-/node-sdk-1.60.0.tgz#2b1b1e7d0a3f41da552b8e9e042795d2204ff574"
-  integrity sha512-MS1eXx7K6HHIyIcCBkJLb21okoa8ZatUGQWZaCCUePm6a37RWFmT6ZKlKvHxAanSX26wNuNlwP0RhgscsE+T6g==
+"@larksuiteoapi/node-sdk@^1.63.1":
+  version "1.63.1"
+  resolved "https://registry.yarnpkg.com/@larksuiteoapi/node-sdk/-/node-sdk-1.63.1.tgz#ee0275e1be0ebe3142f646099e43b69bb338bbfa"
+  integrity sha512-bVC2QVkITZ1i6kLP7hI7DXtp61ic9shP/F+bp/2qZ0ISSvrcHp2euu1xt6C29jPJVNieRgvdsBPuapOlybviVw==
   dependencies:
     axios "~1.13.3"
     lodash.identity "^3.0.0"
