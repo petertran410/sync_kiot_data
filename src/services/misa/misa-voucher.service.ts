@@ -43,11 +43,10 @@ export class MisaVoucherService {
   /**
    * Tạo chứng từ bán hàng Misa từ Invoice Code
    */
-  async createSaleVoucherFromInvoice(invoiceCode: string): Promise<{
-    success: boolean;
-    orgRefId: string | null;
-    message: string;
-  }> {
+  async createSaleVoucherFromInvoice(
+    invoiceCode: string,
+    options?: { bypassTimeCheck?: boolean },
+  ): Promise<{ success: boolean; orgRefId: string | null; message: string }> {
     this.logger.log(
       `🧾 Creating Misa voucher for invoice code: ${invoiceCode}`,
     );
@@ -98,8 +97,17 @@ export class MisaVoucherService {
         };
       }
 
+      if (invoice.status === 2) {
+        this.logger.log(`⏭️ Skipping cancelled invoice ${invoice.code}`);
+        return {
+          success: false,
+          orgRefId: null,
+          message: `Invoice ${invoice.code} is cancelled`,
+        };
+      }
+
       // 1.5. Kiểm tra hóa đơn điều chỉnh — chỉ bỏ qua nếu đã qua thời gian cutoff
-      if (invoice.code.includes('.')) {
+      if (invoice.code.includes('.') && !options?.bypassTimeCheck) {
         const vnPurchaseHour = (invoice.purchaseDate.getUTCHours() + 7) % 24;
         const nowVnHour = (new Date().getUTCHours() + 7) % 24;
 
@@ -950,7 +958,8 @@ export class MisaVoucherService {
         },
         saleChannelId: 1,
         misaSyncStatus: { in: ['PENDING', 'SKIP'] },
-        statusValue: { not: 'Đã hủy' },
+        statusValue: { notIn: ['Đã hủy', 'Cancelled'] },
+        status: { not: 2 },
       },
       select: { code: true, purchaseDate: true },
       orderBy: { purchaseDate: 'asc' },
@@ -967,10 +976,78 @@ export class MisaVoucherService {
 
     for (const inv of invoices) {
       try {
-        const res = await this.createSaleVoucherFromInvoice(inv.code);
+        const res = await this.createSaleVoucherFromInvoice(inv.code, {
+          bypassTimeCheck: true,
+        });
         if (res.success) {
           result.success++;
           this.logger.log(`✅ Pushed invoice ${inv.code}`);
+        } else {
+          result.skipped++;
+          this.logger.warn(`⏭️ Skipped invoice ${inv.code}: ${res.message}`);
+        }
+      } catch (error) {
+        result.failed++;
+        this.logger.error(`❌ Failed invoice ${inv.code}: ${error.message}`);
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Force push các hóa đơn điều chỉnh (.01) có purchaseDate trong khung 12h–19h VN
+   * Bỏ qua time check — dùng khi batch 19h đã chạy nhưng các hóa đơn này bị miss
+   */
+  async forcePushAdjustedAfternoonInvoices(dateStr?: string): Promise<{
+    total: number;
+    success: number;
+    failed: number;
+    skipped: number;
+  }> {
+    // Nếu không truyền date thì lấy ngày hiện tại theo VN
+    const vnDate = dateStr
+      ? dateStr
+      : new Date(Date.now() + 7 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+    // 12h00 VN = 05h00 UTC, 19h00 VN = 12h00 UTC
+    const from = new Date(`${vnDate}T05:00:00.000Z`);
+    const to = new Date(`${vnDate}T12:00:00.000Z`);
+
+    this.logger.log(
+      `🚀 Force push adjusted afternoon invoices for VN date: ${vnDate}`,
+    );
+
+    const invoices = await this.prismaService.invoice.findMany({
+      where: {
+        code: { contains: '.' },
+        purchaseDate: { gte: from, lt: to },
+        saleChannelId: 1,
+        misaSyncStatus: { not: 'SYNCED' },
+        statusValue: { notIn: ['Đã hủy', 'Cancelled'] },
+        status: { not: 2 },
+      },
+      select: { code: true, purchaseDate: true },
+      orderBy: { purchaseDate: 'asc' },
+    });
+
+    const result = {
+      total: invoices.length,
+      success: 0,
+      failed: 0,
+      skipped: 0,
+    };
+
+    this.logger.log(`📋 Found ${invoices.length} adjusted afternoon invoices`);
+
+    for (const inv of invoices) {
+      try {
+        const res = await this.createSaleVoucherFromInvoice(inv.code, {
+          bypassTimeCheck: true,
+        });
+        if (res.success) {
+          result.success++;
+          this.logger.log(`✅ Force pushed invoice ${inv.code}`);
         } else {
           result.skipped++;
           this.logger.warn(`⏭️ Skipped invoice ${inv.code}: ${res.message}`);

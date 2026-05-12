@@ -214,4 +214,38 @@ export class MisaCallbackController {
       };
     }
   }
+
+  /**
+   * Force push các hóa đơn điều chỉnh (.01) khung 12h–19h bị miss
+   * URL: POST /misa/voucher/force-push-adjusted-afternoon
+   * Body (optional): { "date": "2026-05-12" }
+   */
+  @Post('voucher/force-push-adjusted-afternoon')
+  @HttpCode(200)
+  async forcePushAdjustedAfternoon(@Body() body: { date?: string }): Promise<{
+    success: boolean;
+    message: string;
+    data?: { total: number; success: number; failed: number; skipped: number };
+  }> {
+    this.logger.log('🚀 Force push adjusted afternoon invoices triggered');
+
+    try {
+      const result =
+        await this.misaVoucherService.forcePushAdjustedAfternoonInvoices(
+          body?.date,
+        );
+
+      return {
+        success: true,
+        message: `Force push completed`,
+        data: result,
+      };
+    } catch (error) {
+      this.logger.error(`❌ Force push failed: ${error.message}`);
+      return {
+        success: false,
+        message: error.message,
+      };
+    }
+  }
 }
