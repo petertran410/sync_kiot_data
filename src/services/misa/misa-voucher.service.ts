@@ -498,14 +498,16 @@ export class MisaVoucherService {
       // Customer info
       account_object_id: matchedAccountObject?.accountObjectId,
       account_object_code:
-        customerTaxIdentifier || matchedAccountObject?.accountObjectCode,
+        matchedAccountObject?.accountObjectCode || customerTaxIdentifier,
       account_object_name:
         matchedAccountObject?.accountObjectName ||
         invoice.customerName ||
         invoice.customer?.name ||
         'Khách lẻ',
-      account_object_address: invoice.customer?.address || '',
-      account_object_tax_code: customerTaxIdentifier,
+      account_object_address:
+        matchedAccountObject?.address || invoice.customer?.address || '',
+      account_object_tax_code:
+        matchedAccountObject?.companyTaxCode || customerTaxIdentifier,
 
       // Employee info
       employee_id: '',
@@ -532,14 +534,16 @@ export class MisaVoucherService {
 
         account_object_id: matchedAccountObject?.accountObjectId,
         account_object_code:
-          customerTaxIdentifier || matchedAccountObject?.accountObjectCode,
+          matchedAccountObject?.accountObjectCode || customerTaxIdentifier,
         account_object_name:
           matchedAccountObject?.accountObjectName ||
           invoice.customerName ||
           invoice.customer?.name ||
           'Khách lẻ',
-        account_object_address: invoice.customer?.address || '',
-        account_object_tax_code: customerTaxIdentifier,
+        account_object_address:
+          matchedAccountObject?.address || invoice.customer?.address || '',
+        account_object_tax_code:
+          matchedAccountObject?.companyTaxCode || customerTaxIdentifier,
 
         employee_id: '',
         employee_code: '',
@@ -573,13 +577,14 @@ export class MisaVoucherService {
         in_reforder: inRefOrder,
         account_object_id: matchedAccountObject?.accountObjectId,
         account_object_code:
-          customerTaxIdentifier || matchedAccountObject?.accountObjectCode,
+          matchedAccountObject?.accountObjectCode || customerTaxIdentifier,
         account_object_name:
           matchedAccountObject?.accountObjectName ||
           invoice.customerName ||
           invoice.customer?.name ||
           'Khách lẻ',
-        account_object_address: invoice.customer?.address || '',
+        account_object_address:
+          matchedAccountObject?.address || invoice.customer?.address || '',
         employee_id: '',
         employee_code: '',
         employee_name: '',

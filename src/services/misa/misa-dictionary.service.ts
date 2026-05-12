@@ -654,6 +654,8 @@ export class MisaDictionaryService {
     accountObjectId: string;
     accountObjectCode: string;
     accountObjectName: string;
+    address: string | null;
+    companyTaxCode: string | null;
     receiveAccount: string | null;
   } | null> {
     const normalizedCustomerName = this.normalizeString(customerName);
@@ -667,6 +669,8 @@ export class MisaDictionaryService {
         accountObjectId: true,
         accountObjectCode: true,
         accountObjectName: true,
+        address: true,
+        companyTaxCode: true,
         receiveAccount: true,
       },
     });
