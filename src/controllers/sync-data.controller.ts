@@ -371,7 +371,7 @@ export class SyncDataController {
     const { skip, take } = this.parsePagination({ pageSize, currentItem });
     const since = this.parseModifiedFrom(modifiedFrom);
 
-    const where = since ? { modifiedDate: { gte: since } } : {};
+    const where = since ? { purchaseDate: { gte: since } } : {};
 
     const [data, total] = await Promise.all([
       this.prisma.invoice.findMany({
@@ -468,9 +468,8 @@ export class SyncDataController {
     @Query('currentItem') currentItem?: string,
   ) {
     const { skip, take } = this.parsePagination({ pageSize, currentItem });
-    const where = modifiedFrom
-      ? { lastSyncedAt: { gte: new Date(modifiedFrom) } }
-      : {};
+    const since = this.parseModifiedFrom(modifiedFrom);
+    const where = since ? { transDate: { gte: since } } : {};
 
     const [data, total] = await Promise.all([
       this.prisma.cashflow.findMany({
