@@ -364,13 +364,13 @@ export class BusSchedulerService implements OnModuleInit {
     this.logger.log('🕐 [MISA] Đợt 1 - Đẩy hóa đơn sáng (15h)');
 
     try {
-      const from = this.getVNTime(12, -1); // Hôm qua 12h
-      const to = this.getVNTime(12); // Hôm nay 12h
+      const from = this.getVNTime(8);
+      const to = this.getVNTime(12);
 
       const result = await this.misaVoucherService.batchCreateVouchers(
         from,
         to,
-        { fromOp: 'gt', toOp: 'lte' }, // > hôm qua 12h AND <= hôm nay 12h
+        { fromOp: 'gte', toOp: 'lt', preferAdjusted: true },
       );
 
       this.logger.log(`✅ [MISA] Đợt 1 completed: ${JSON.stringify(result)}`);
@@ -387,13 +387,13 @@ export class BusSchedulerService implements OnModuleInit {
     this.logger.log('🕖 [MISA] Đợt 2 - Đẩy hóa đơn chiều (19h)');
 
     try {
-      const from = this.getVNTime(12); // Hôm nay 12h
-      const to = this.getVNTime(19); // Hôm nay 19h
+      const from = this.getVNTime(12);
+      const to = this.getVNTime(19);
 
       const result = await this.misaVoucherService.batchCreateVouchers(
         from,
         to,
-        { fromOp: 'gt', toOp: 'lt' }, // > 12h AND < 19h
+        { fromOp: 'gte', toOp: 'lt', preferAdjusted: true },
       );
 
       this.logger.log(`✅ [MISA] Đợt 2 completed: ${JSON.stringify(result)}`);

@@ -936,7 +936,11 @@ export class MisaVoucherService {
   async batchCreateVouchers(
     from: Date,
     to: Date,
-    options?: { fromOp?: 'gte' | 'gt'; toOp?: 'lt' | 'lte' },
+    options?: {
+      fromOp?: 'gte' | 'gt';
+      toOp?: 'lt' | 'lte';
+      preferAdjusted?: boolean;
+    },
   ): Promise<{
     total: number;
     success: number;
@@ -952,10 +956,7 @@ export class MisaVoucherService {
 
     const invoices = await this.prismaService.invoice.findMany({
       where: {
-        purchaseDate: {
-          [fromOp]: from,
-          [toOp]: to,
-        },
+        purchaseDate: { [fromOp]: from, [toOp]: to },
         saleChannelId: 1,
         misaSyncStatus: { in: ['PENDING', 'SKIP'] },
         statusValue: { notIn: ['Đã hủy', 'Cancelled'] },
@@ -965,16 +966,45 @@ export class MisaVoucherService {
       orderBy: { purchaseDate: 'asc' },
     });
 
+    let invoicesToPush = invoices;
+
+    if (options?.preferAdjusted) {
+      const allAdjusted = await this.prismaService.invoice.findMany({
+        where: {
+          purchaseDate: { [fromOp]: from, [toOp]: to },
+          saleChannelId: 1,
+          code: { contains: '.' },
+          statusValue: { notIn: ['Đã hủy', 'Cancelled'] },
+          status: { not: 2 },
+        },
+        select: { code: true },
+      });
+
+      const basesWithAdjusted = new Set(
+        allAdjusted.map((inv) => inv.code.split('.')[0]),
+      );
+
+      invoicesToPush = invoices.filter((inv) => {
+        if (!inv.code.includes('.') && basesWithAdjusted.has(inv.code)) {
+          this.logger.log(
+            `⏭️ Skipping base invoice ${inv.code} — adjusted version exists`,
+          );
+          return false;
+        }
+        return true;
+      });
+    }
+
     const result = {
-      total: invoices.length,
+      total: invoicesToPush.length,
       success: 0,
       failed: 0,
       skipped: 0,
     };
 
-    this.logger.log(`📋 Found ${invoices.length} invoices to push`);
+    this.logger.log(`📋 Found ${invoicesToPush.length} invoices to push`);
 
-    for (const inv of invoices) {
+    for (const inv of invoicesToPush) {
       try {
         const res = await this.createSaleVoucherFromInvoice(inv.code, {
           bypassTimeCheck: true,
