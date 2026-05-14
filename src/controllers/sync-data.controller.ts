@@ -190,13 +190,12 @@ export class SyncDataController {
   ) {
     const { skip, take } = this.parsePagination({ pageSize, currentItem });
     const since = this.parseModifiedFrom(modifiedFrom);
-
     const where = since ? { modifiedDate: { gte: since } } : {};
 
     const [data, total] = await Promise.all([
       this.prisma.product.findMany({
         where,
-        include: { inventories: true },
+        include: { inventories: true, images: true },
         skip,
         take,
         orderBy: { id: 'asc' },
@@ -204,10 +203,34 @@ export class SyncDataController {
       this.prisma.product.count({ where }),
     ]);
 
+    const allBranchIds = [
+      ...new Set(
+        data
+          .flatMap((p) => p.inventories.map((inv) => inv.branchId))
+          .filter((id): id is number => id !== null && id !== undefined),
+      ),
+    ];
+
+    const branchKiotMap = new Map<number, number | null>();
+    if (allBranchIds.length) {
+      const branches = await this.prisma.branch.findMany({
+        where: { id: { in: allBranchIds } },
+        select: { id: true, kiotVietId: true },
+      });
+      branches.forEach((b) => branchKiotMap.set(b.id, b.kiotVietId ?? null));
+    }
+
     const serialized = data.map((p) => ({
       ...p,
       kiotVietId: p.kiotVietId?.toString(),
       masterProductId: p.masterProductId?.toString(),
+      inventories: p.inventories.map((inv) => ({
+        ...inv,
+        branchKiotVietId:
+          inv.branchId != null
+            ? (branchKiotMap.get(inv.branchId) ?? null)
+            : null,
+      })),
     }));
 
     return { data: serialized, total, pageSize: take, currentItem: skip };
@@ -217,13 +240,34 @@ export class SyncDataController {
   async getProductByCode(@Param('code') code: string) {
     const product = await this.prisma.product.findFirst({
       where: { code },
-      include: { inventories: true },
+      include: { inventories: true, images: true },
     });
     if (!product) return null;
+
+    const branchIds = product.inventories
+      .map((inv) => inv.branchId)
+      .filter((id): id is number => id !== null && id !== undefined);
+
+    const branchKiotMap = new Map<number, number | null>();
+    if (branchIds.length) {
+      const branches = await this.prisma.branch.findMany({
+        where: { id: { in: branchIds } },
+        select: { id: true, kiotVietId: true },
+      });
+      branches.forEach((b) => branchKiotMap.set(b.id, b.kiotVietId ?? null));
+    }
+
     return {
       ...product,
       kiotVietId: product.kiotVietId?.toString(),
       masterProductId: product.masterProductId?.toString(),
+      inventories: product.inventories.map((inv) => ({
+        ...inv,
+        branchKiotVietId:
+          inv.branchId != null
+            ? (branchKiotMap.get(inv.branchId) ?? null)
+            : null,
+      })),
     };
   }
 
@@ -267,7 +311,16 @@ export class SyncDataController {
       },
       orderBy: { id: 'asc' },
     });
-    return { data, total: data.length };
+
+    const serialized = data.map((pb) => ({
+      ...pb,
+      details: pb.details.map((d) => ({
+        ...d,
+        productKiotId: d.productKiotId?.toString() ?? null, // serialize BigInt
+      })),
+    }));
+
+    return { data: serialized, total: serialized.length };
   }
 
   @Get('price-books/:identifier')
@@ -286,7 +339,16 @@ export class SyncDataController {
         users: true,
       },
     });
-    return priceBook || null;
+
+    if (!priceBook) return null;
+
+    return {
+      ...priceBook,
+      details: priceBook.details.map((d) => ({
+        ...d,
+        productKiotId: d.productKiotId?.toString() ?? null, // serialize BigInt
+      })),
+    };
   }
 
   // ========== LAYER 3: Giao dịch ==========
