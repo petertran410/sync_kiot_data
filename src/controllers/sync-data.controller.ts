@@ -304,7 +304,11 @@ export class SyncDataController {
   async getPriceBooks() {
     const data = await this.prisma.priceBook.findMany({
       include: {
-        details: true,
+        details: {
+          include: {
+            product: { select: { kiotVietId: true } },
+          },
+        },
         branches: true,
         customerGroups: true,
         users: true,
@@ -316,7 +320,8 @@ export class SyncDataController {
       ...pb,
       details: pb.details.map((d) => ({
         ...d,
-        productKiotId: d.productKiotId?.toString() ?? null, // serialize BigInt
+        productKiotId: d.product?.kiotVietId?.toString() ?? null,
+        product: undefined,
       })),
     }));
 
@@ -333,7 +338,11 @@ export class SyncDataController {
         ],
       },
       include: {
-        details: true,
+        details: {
+          include: {
+            product: { select: { kiotVietId: true } },
+          },
+        },
         branches: true,
         customerGroups: true,
         users: true,
@@ -346,7 +355,8 @@ export class SyncDataController {
       ...priceBook,
       details: priceBook.details.map((d) => ({
         ...d,
-        productKiotId: d.productKiotId?.toString() ?? null, // serialize BigInt
+        productKiotId: d.product?.kiotVietId?.toString() ?? null,
+        product: undefined,
       })),
     };
   }
