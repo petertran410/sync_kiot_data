@@ -107,7 +107,7 @@ interface KiotVietInvoice {
 export class KiotVietInvoiceService {
   private readonly logger = new Logger(KiotVietInvoiceService.name);
   private readonly baseUrl: string;
-  private readonly PAGE_SIZE = 100;
+  private readonly PAGE_SIZE = 200;
 
   private readonly INVOICE_DETAIL_SYNC_KEYWORDS = [
     'lỗi',
@@ -250,7 +250,7 @@ export class KiotVietInvoiceService {
         }
 
         const dateStart = new Date();
-        dateStart.setDate(dateStart.getDate() - 90);
+        dateStart.setDate(dateStart.getDate() - 70);
         const dateStartStr = dateStart.toISOString().split('T')[0];
 
         const dateEnd = new Date();

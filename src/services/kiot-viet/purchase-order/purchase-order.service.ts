@@ -54,7 +54,7 @@ interface KiotVietPurchaseOrder {
 export class KiotVietPurchaseOrderService {
   private readonly logger = new Logger(KiotVietPurchaseOrderService.name);
   private readonly baseUrl: string;
-  private readonly PAGE_SIZE = 100;
+  private readonly PAGE_SIZE = 200;
 
   constructor(
     private readonly httpService: HttpService,
@@ -560,9 +560,7 @@ export class KiotVietPurchaseOrderService {
             discount: purchaseOrderData.discount ?? null,
             discountRatio: purchaseOrderData.discountRatio ?? null,
             total: new Prisma.Decimal(purchaseOrderData.total || 0),
-            totalPayment: new Prisma.Decimal(
-              purchaseOrderData.totalPayment || 0,
-            ),
+            paidAmount: new Prisma.Decimal(purchaseOrderData.totalPayment || 0),
             status: purchaseOrderData.status ?? null,
             createdDate: purchaseOrderData.createdDate
               ? new Date(purchaseOrderData.createdDate)
@@ -592,9 +590,7 @@ export class KiotVietPurchaseOrderService {
             discount: purchaseOrderData.discount ?? null,
             discountRatio: purchaseOrderData.discountRatio ?? null,
             total: new Prisma.Decimal(purchaseOrderData.total || 0),
-            totalPayment: new Prisma.Decimal(
-              purchaseOrderData.totalPayment || 0,
-            ),
+            paidAmount: new Prisma.Decimal(purchaseOrderData.totalPayment || 0),
             status: purchaseOrderData.status ?? null,
             createdDate: purchaseOrderData.createdDate
               ? new Date(purchaseOrderData.createdDate)

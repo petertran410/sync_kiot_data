@@ -41,7 +41,7 @@ interface KiotVietCustomer {
 export class KiotVietCustomerService {
   private readonly logger = new Logger(KiotVietCustomerService.name);
   private readonly baseUrl: string;
-  private readonly PAGE_SIZE = 100;
+  private readonly PAGE_SIZE = 200;
 
   private readonly CUSTOMER_CODE_SYNC_KEYWORDS = ['KHSPE', 'KHTTS'];
 
