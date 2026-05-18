@@ -149,6 +149,7 @@ model Customer {
   type                  Int?
   gender                Boolean?
   birthDate             DateTime?
+  misaEmployeeName      String?                 @db.VarChar(255)
   contactNumber         String?
   subNumber             String?
   identificationNumber  String?

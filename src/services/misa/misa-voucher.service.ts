@@ -84,6 +84,7 @@ export class MisaVoucherService {
               address: true,
               taxCode: true,
               identificationNumber: true,
+              misaEmployeeName: true,
             },
           },
         },
@@ -283,6 +284,14 @@ export class MisaVoucherService {
       stockCode: 'KHONK',
       stockName: 'KHO NHẬP KHẨU',
     };
+
+    const employeeName = invoice.customer?.misaEmployeeName?.trim() || '';
+
+    if (employeeName) {
+      this.logger.log(
+        `✅ Employee mapped for invoice ${invoice.code}: ${employeeName}`,
+      );
+    }
 
     // Tìm account object (khách hàng)
     const accountObject =
@@ -541,7 +550,7 @@ export class MisaVoucherService {
       // Employee info
       employee_id: '',
       employee_code: '',
-      employee_name: '',
+      employee_name: employeeName,
 
       // Discount
       discount_type: 0,
@@ -576,7 +585,7 @@ export class MisaVoucherService {
 
         employee_id: '',
         employee_code: '',
-        employee_name: '',
+        employee_name: employeeName,
 
         exchange_rate: 1,
         currency_id: 'VND',
@@ -616,7 +625,7 @@ export class MisaVoucherService {
           matchedAccountObject?.address || invoice.customer?.address || '',
         employee_id: '',
         employee_code: '',
-        employee_name: '',
+        employee_name: employeeName,
         journal_memo: `Xuất kho bán hàng - ${invoice.code}`,
       },
 
