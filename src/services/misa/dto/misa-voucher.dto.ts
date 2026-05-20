@@ -137,6 +137,11 @@ export interface MisaSaVoucherDetailDto {
   credit_account: string;
   cost_account?: string;
 
+  // Customer info per line (required for TK 131 tracking)  ← THÊM
+  account_object_id?: string;
+  account_object_code?: string;
+  account_object_name?: string;
+
   // Stock info
   stock_id?: string;
   stock_code?: string;
@@ -290,6 +295,11 @@ export interface MisaSaInvoiceDetailDto {
   debit_account: string;
   credit_account: string;
   sale_account?: string;
+
+  // Customer info per line  ← THÊM
+  account_object_id?: string;
+  account_object_code?: string;
+  account_object_name?: string;
 
   stock_id?: string;
   stock_code?: string;

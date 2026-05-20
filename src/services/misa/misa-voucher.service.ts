@@ -84,6 +84,8 @@ export class MisaVoucherService {
               address: true,
               taxCode: true,
               identificationNumber: true,
+              misaEmployeeId: true,
+              misaEmployeeCode: true,
               misaEmployeeName: true,
             },
           },
@@ -285,7 +287,19 @@ export class MisaVoucherService {
       stockName: 'KHO NHẬP KHẨU',
     };
 
+    const employeeId = invoice.customer?.misaEmployeeId?.trim() || '';
+    const employeeCode = invoice.customer?.misaEmployeeCode?.trim() || '';
     const employeeName = invoice.customer?.misaEmployeeName?.trim() || '';
+
+    if (employeeCode) {
+      this.logger.log(
+        `✅ Employee mapped for invoice ${invoice.code}: [${employeeCode}] ${employeeName}`,
+      );
+    } else {
+      this.logger.warn(
+        `⚠️ No employee mapped for customer of invoice ${invoice.code}`,
+      );
+    }
 
     if (employeeName) {
       this.logger.log(
@@ -411,6 +425,16 @@ export class MisaVoucherService {
         credit_account: this.CREDIT_ACCOUNT,
         cost_account: this.COST_ACCOUNT,
 
+        // Customer info per line  ← THÊM
+        account_object_id: matchedAccountObject?.accountObjectId || undefined,
+        account_object_code:
+          matchedAccountObject?.accountObjectCode || undefined,
+        account_object_name:
+          matchedAccountObject?.accountObjectName ||
+          invoice.customerName ||
+          invoice.customer?.name ||
+          undefined,
+
         stock_id: isHcmBranch
           ? STOCK_HCM.stockId
           : product.isCommerce
@@ -489,6 +513,10 @@ export class MisaVoucherService {
       credit_account: d.credit_account,
       sale_account: d.credit_account,
 
+      account_object_id: d.account_object_id,
+      account_object_code: d.account_object_code,
+      account_object_name: d.account_object_name,
+
       stock_id: d.stock_id,
       stock_code: d.stock_code,
       stock_name: d.stock_name,
@@ -548,8 +576,8 @@ export class MisaVoucherService {
         matchedAccountObject?.companyTaxCode || customerTaxIdentifier,
 
       // Employee info
-      employee_id: '',
-      employee_code: '',
+      employee_id: employeeId,
+      employee_code: employeeCode,
       employee_name: employeeName,
 
       // Discount
@@ -583,8 +611,8 @@ export class MisaVoucherService {
         account_object_tax_code:
           matchedAccountObject?.companyTaxCode || customerTaxIdentifier,
 
-        employee_id: '',
-        employee_code: '',
+        employee_id: employeeId,
+        employee_code: employeeCode,
         employee_name: employeeName,
 
         exchange_rate: 1,
@@ -623,8 +651,8 @@ export class MisaVoucherService {
           'Khách lẻ',
         account_object_address:
           matchedAccountObject?.address || invoice.customer?.address || '',
-        employee_id: '',
-        employee_code: '',
+        employee_id: employeeId,
+        employee_code: employeeCode,
         employee_name: employeeName,
         journal_memo: `Xuất kho bán hàng - ${invoice.code}`,
       },

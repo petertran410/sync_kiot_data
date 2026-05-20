@@ -150,6 +150,8 @@ model Customer {
   gender                Boolean?
   birthDate             DateTime?
   misaEmployeeName      String?                 @db.VarChar(255)
+  misaEmployeeCode  String?  @db.VarChar(50)
+  misaEmployeeId        String?   @db.VarChar(36)
   contactNumber         String?
   subNumber             String?
   identificationNumber  String?
