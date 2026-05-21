@@ -17,6 +17,7 @@ import { KiotVietSupplierService } from '../kiot-viet/supplier/supplier.service'
 import { LarkSupplierSyncService } from '../lark/supplier/lark-supplier-sync.service';
 import { MisaVoucherService } from '../misa/misa-voucher.service';
 import { MisaDictionaryService } from '../misa/misa-dictionary.service';
+import { KiotVietProductService } from '../kiot-viet/product/product.service';
 
 @Injectable()
 export class BusSchedulerService implements OnModuleInit {
@@ -47,6 +48,8 @@ export class BusSchedulerService implements OnModuleInit {
 
     private readonly misaVoucherService: MisaVoucherService,
     private readonly misaDictionaryService: MisaDictionaryService,
+
+    private readonly productService: KiotVietProductService,
   ) {}
 
   async onModuleInit() {
@@ -290,6 +293,20 @@ export class BusSchedulerService implements OnModuleInit {
         error: error.message,
         timestamp: new Date().toISOString(),
       };
+    }
+  }
+
+  @Cron('0 * * * *', { timeZone: 'Asia/Ho_Chi_Minh' })
+  async syncProducts() {
+    try {
+      this.logger.log('Starting product sync...');
+
+      await this.productService.enableHistoricalSync();
+      await this.productService.syncHistoricalProducts();
+
+      this.logger.log('Product sync completed');
+    } catch (error) {
+      this.logger.error(`Product sync failed: ${error.message}`);
     }
   }
 
