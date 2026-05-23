@@ -540,12 +540,16 @@ export class SyncDataController {
     @Query('currentItem') currentItem?: string,
   ) {
     const { skip, take } = this.parsePagination({ pageSize, currentItem });
-    const since = this.parseModifiedFrom(modifiedFrom);
-    const where = since ? { transDate: { gte: since } } : {};
+    const where = modifiedFrom
+      ? { lastSyncedAt: { gte: new Date(modifiedFrom) } }
+      : {};
 
     const [data, total] = await Promise.all([
       this.prisma.cashflow.findMany({
         where,
+        include: {
+          branch: { select: { id: true, kiotVietId: true } }, // ← THÊM
+        },
         skip,
         take,
         orderBy: { id: 'asc' },
@@ -553,11 +557,11 @@ export class SyncDataController {
       this.prisma.cashflow.count({ where }),
     ]);
 
-    const serialized = data.map((c) => ({
-      ...c,
-      kiotVietId: c.kiotVietId.toString(),
-      createdBy: c.createdBy?.toString(),
-      partnerId: c.partnerId?.toString(),
+    const serialized = data.map((cf) => ({
+      ...cf,
+      kiotVietId: cf.kiotVietId?.toString() ?? null,
+      branchKiotVietId: cf.branch?.kiotVietId ?? null, // ← THÊM
+      branch: undefined,
     }));
 
     return { data: serialized, total, pageSize: take, currentItem: skip };

@@ -222,7 +222,7 @@ export class KiotVietOrderService {
         }
 
         const dateStart = new Date();
-        dateStart.setDate(dateStart.getDate() - 10);
+        dateStart.setDate(dateStart.getDate() - 70);
         const dateStartStr = dateStart.toISOString().split('T')[0];
 
         const dateEnd = new Date();
@@ -361,18 +361,18 @@ export class KiotVietOrderService {
           processedCount += pageProcessedCount;
           currentItem += this.PAGE_SIZE;
 
-          // if (allSavedOrders.length > 0) {
-          //   try {
-          //     await this.syncOrdersToLarkBase(allSavedOrders);
-          //     this.logger.log(
-          //       `Synced ${allSavedOrders.length} orders to LarkBase`,
-          //     );
-          //   } catch (error) {
-          //     this.logger.warn(
-          //       `LarkBase sync failed for page ${currentPage}: ${error.message}`,
-          //     );
-          //   }
-          // }
+          if (allSavedOrders.length > 0) {
+            try {
+              await this.syncOrdersToLarkBase(allSavedOrders);
+              this.logger.log(
+                `Synced ${allSavedOrders.length} orders to LarkBase`,
+              );
+            } catch (error) {
+              this.logger.warn(
+                `LarkBase sync failed for page ${currentPage}: ${error.message}`,
+              );
+            }
+          }
 
           if (totalOrders > 0) {
             const completionPercentage = (processedCount / totalOrders) * 100;
