@@ -381,7 +381,7 @@ export class BusSchedulerService implements OnModuleInit {
     this.logger.log('🕐 [MISA] Đợt 1 - Đẩy hóa đơn sáng (15h)');
 
     try {
-      const from = this.getVNTime(8);
+      const from = this.getVNTime(6);
       const to = this.getVNTime(12);
 
       const result = await this.misaVoucherService.batchCreateVouchers(
