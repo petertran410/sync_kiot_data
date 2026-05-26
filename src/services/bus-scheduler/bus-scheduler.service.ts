@@ -108,7 +108,7 @@ export class BusSchedulerService implements OnModuleInit {
     }
   }
 
-  @Cron('0 2 * * *', { timeZone: 'Asia/Ho_Chi_Minh' })
+  @Cron('30 16 * * *', { timeZone: 'Asia/Ho_Chi_Minh' })
   async syncTransfers() {
     try {
       this.logger.log('Starting transfer sync...');

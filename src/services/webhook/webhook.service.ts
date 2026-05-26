@@ -966,7 +966,8 @@ export class WebhookService {
                 note: detail.note ?? null,
                 serialNumbers: detail.serialNumbers ?? null,
                 subTotal: new Prisma.Decimal(
-                  detail.price * detail.quantity - (detail.discount || 0),
+                  detail.subTotal ??
+                    (detail.price - (detail.discount || 0)) * detail.quantity,
                 ),
                 lineNumber: i + 1,
                 larkSyncStatus: detailLarkSyncStatus,
@@ -988,7 +989,8 @@ export class WebhookService {
                 note: detail.note ?? null,
                 serialNumbers: detail.serialNumbers ?? null,
                 subTotal: new Prisma.Decimal(
-                  detail.price * detail.quantity - (detail.discount || 0),
+                  detail.subTotal ??
+                    (detail.price - (detail.discount || 0)) * detail.quantity,
                 ),
                 lineNumber: i + 1,
                 larkSyncStatus: detailLarkSyncStatus,
