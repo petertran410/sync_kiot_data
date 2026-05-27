@@ -90,7 +90,7 @@ interface KiotVietOrder {
 export class KiotVietOrderService {
   private readonly logger = new Logger(KiotVietOrderService.name);
   private readonly baseUrl: string;
-  private readonly PAGE_SIZE = 200;
+  private readonly PAGE_SIZE = 100;
 
   constructor(
     private readonly httpService: HttpService,
@@ -147,15 +147,6 @@ export class KiotVietOrderService {
         );
         return;
       }
-
-      // if (recentSync?.isEnabled && !recentSync.isRunning) {
-      //   this.logger.log('Starting recent order sync...');
-      //   await this.syncRecentOrders();
-      //   return;
-      // }
-
-      // this.logger.log('Running default recent order sync...');
-      // await this.syncRecentOrders();
     } catch (error) {
       this.logger.error(`Sync check failed: ${error.message}`);
       throw error;
@@ -297,9 +288,11 @@ export class KiotVietOrderService {
             continue;
           }
 
+          const pageOrderIds = orders.map((order) => BigInt(order.id));
           const existingOrderIds = new Set(
             (
               await this.prismaService.order.findMany({
+                where: { kiotVietId: { in: pageOrderIds } },
                 select: { kiotVietId: true },
               })
             ).map((c) => Number(c.kiotVietId)),
@@ -549,71 +542,153 @@ export class KiotVietOrderService {
     return response.data?.data;
   }
 
-  private async enrichOrdersWithDetails(): Promise<KiotVietOrder[]> {
-    this.logger.log(`Enriching orders with details...`);
-
-    const enrichedOrders: any[] = [];
-
-    try {
-      const headers = await this.authService.getRequestHeaders();
-      const response = await firstValueFrom(
-        this.httpService.get(`${this.baseUrl}/orders`, {
-          headers,
-        }),
-      );
-      if (response.data) {
-        enrichedOrders.push(response.data);
-      } else {
-        // enrichedOrders.push(order);
-        console.log('No order');
-      }
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    } catch (error) {
-      this.logger.warn(`Failed to enrich order: ${error.message}`);
-      // enrichedOrders.push(order);
-    }
-
-    return enrichedOrders;
-  }
-
   private async saveOrdersToDatabase(orders: any[]): Promise<any[]> {
     this.logger.log(`Saving ${orders.length} orders to database...`);
 
     const savedOrders: any[] = [];
 
-    for (const orderData of orders) {
+    const customerIds = [
+      ...new Set(
+        orders.filter((o) => o.customerId).map((o) => BigInt(o.customerId)),
+      ),
+    ];
+    const branchIds = [
+      ...new Set(
+        orders.filter((o) => o.branchId != null).map((o) => o.branchId),
+      ),
+    ];
+    const userIds = [
+      ...new Set(
+        orders.filter((o) => o.soldById).map((o) => BigInt(o.soldById)),
+      ),
+    ];
+    const saleChannelIds = [
+      ...new Set(
+        orders.filter((o) => o.SaleChannelId).map((o) => o.SaleChannelId),
+      ),
+    ];
+    const productIds = [
+      ...new Set(
+        orders.flatMap((o) =>
+          (o.orderDetails ?? []).map((d) => BigInt(d.productId)),
+        ),
+      ),
+    ];
+    const bankAccountIds = [
+      ...new Set(
+        orders.flatMap((o) =>
+          (o.payments ?? []).filter((p) => p.accountId).map((p) => p.accountId),
+        ),
+      ),
+    ];
+    const surchargeIds = [
+      ...new Set(
+        orders.flatMap((o) =>
+          (o.invoiceOrderSurcharges ?? [])
+            .filter((s) => s.surchargeId)
+            .map((s) => s.surchargeId),
+        ),
+      ),
+    ];
+
+    const [
+      customers,
+      branches,
+      users,
+      saleChannels,
+      defaultSaleChannel,
+      products,
+      bankAccounts,
+      surcharges,
+    ] = await Promise.all([
+      customerIds.length
+        ? this.prismaService.customer.findMany({
+            where: { kiotVietId: { in: customerIds } },
+            select: { id: true, kiotVietId: true },
+          })
+        : [],
+      branchIds.length
+        ? this.prismaService.branch.findMany({
+            where: { kiotVietId: { in: branchIds } },
+            select: { id: true, name: true, kiotVietId: true },
+          })
+        : [],
+      userIds.length
+        ? this.prismaService.user.findMany({
+            where: { kiotVietId: { in: userIds } },
+            select: { kiotVietId: true },
+          })
+        : [],
+      saleChannelIds.length
+        ? this.prismaService.saleChannel.findMany({
+            where: { kiotVietId: { in: saleChannelIds } },
+            select: { id: true, name: true, kiotVietId: true },
+          })
+        : [],
+      this.prismaService.saleChannel.findFirst({
+        where: { id: 1 },
+        select: { id: true, name: true },
+      }),
+      productIds.length
+        ? this.prismaService.product.findMany({
+            where: { kiotVietId: { in: productIds } },
+            select: { id: true, name: true, code: true, kiotVietId: true },
+          })
+        : [],
+      bankAccountIds.length
+        ? this.prismaService.bankAccount.findMany({
+            where: { kiotVietId: { in: bankAccountIds } },
+            select: { id: true, kiotVietId: true },
+          })
+        : [],
+      surchargeIds.length
+        ? this.prismaService.surcharge.findMany({
+            where: { kiotVietId: { in: surchargeIds } },
+            select: { id: true, kiotVietId: true },
+          })
+        : [],
+    ]);
+
+    const customerMap = new Map(
+      customers.map((c): [number, any] => [Number(c.kiotVietId), c]),
+    );
+    const branchMap = new Map(
+      branches.map((b): [number, any] => [Number(b.kiotVietId), b]),
+    );
+    const userMap = new Map(
+      users.map((u): [number, any] => [Number(u.kiotVietId), u]),
+    );
+    const saleChannelMap = new Map(
+      saleChannels.map((s): [number, any] => [Number(s.kiotVietId), s]),
+    );
+    const productMap = new Map(
+      products.map((p): [number, any] => [Number(p.kiotVietId), p]),
+    );
+    const bankAccountMap = new Map(
+      bankAccounts.map((b): [number, any] => [Number(b.kiotVietId), b]),
+    );
+    const surchargeMap = new Map(
+      surcharges.map((s): [number, any] => [Number(s.kiotVietId), s]),
+    );
+
+    const processOrder = async (orderData: any) => {
       try {
         const customer = orderData.customerId
-          ? await this.prismaService.customer.findFirst({
-              where: { kiotVietId: BigInt(orderData.customerId) },
-              select: { id: true },
-            })
+          ? (customerMap.get(Number(orderData.customerId)) ?? null)
           : null;
 
-        const branch = await this.prismaService.branch.findFirst({
-          where: { kiotVietId: orderData.branchId },
-          select: { id: true, name: true },
-        });
+        const branch = branchMap.get(Number(orderData.branchId)) ?? null;
 
         const soldBy = orderData.soldById
-          ? await this.prismaService.user.findFirst({
-              where: { kiotVietId: BigInt(orderData.soldById) },
-              select: { kiotVietId: true },
-            })
+          ? (userMap.get(Number(orderData.soldById)) ?? null)
           : null;
 
         let saleChannel = orderData.SaleChannelId
-          ? await this.prismaService.saleChannel.findFirst({
-              where: { kiotVietId: orderData.SaleChannelId },
-              select: { id: true, name: true },
-            })
+          ? (saleChannelMap.get(Number(orderData.SaleChannelId)) ?? null)
           : null;
 
         if (!saleChannel) {
-          saleChannel = await this.prismaService.saleChannel.findFirst({
-            where: { id: 1 },
-            select: { id: true, name: true },
-          });
+          saleChannel = defaultSaleChannel;
         }
 
         const orderCode = orderData.code;
@@ -685,10 +760,7 @@ export class KiotVietOrderService {
         if (orderData.orderDetails && orderData.orderDetails.length > 0) {
           for (let i = 0; i < orderData.orderDetails.length; i++) {
             const detail = orderData.orderDetails[i];
-            const product = await this.prismaService.product.findFirst({
-              where: { kiotVietId: BigInt(detail.productId) },
-              select: { id: true, name: true, code: true },
-            });
+            const product = productMap.get(Number(detail.productId)) ?? null;
 
             if (product) {
               await this.prismaService.orderDetail.upsert({
@@ -773,10 +845,7 @@ export class KiotVietOrderService {
         if (orderData.payments && orderData.payments.length > 0) {
           for (const payment of orderData.payments) {
             const bankAccount = payment.accountId
-              ? await this.prismaService.bankAccount.findFirst({
-                  where: { kiotVietId: payment.accountId },
-                  select: { id: true },
-                })
+              ? (bankAccountMap.get(Number(payment.accountId)) ?? null)
               : null;
 
             await this.prismaService.payment.upsert({
@@ -814,10 +883,7 @@ export class KiotVietOrderService {
         ) {
           for (const surcharge of orderData.invoiceOrderSurcharges) {
             const surchargeRecord = surcharge.surchargeId
-              ? await this.prismaService.surcharge.findFirst({
-                  where: { kiotVietId: surcharge.surchargeId },
-                  select: { id: true },
-                })
+              ? (surchargeMap.get(Number(surcharge.surchargeId)) ?? null)
               : null;
 
             await this.prismaService.orderSurcharge.upsert({
@@ -850,12 +916,20 @@ export class KiotVietOrderService {
           }
         }
 
-        savedOrders.push(order);
+        return order;
       } catch (error) {
         this.logger.error(
           `❌ Failed to save order ${orderData.code}: ${error.message}`,
         );
+        return null;
       }
+    };
+
+    const CONCURRENCY = 8;
+    for (let i = 0; i < orders.length; i += CONCURRENCY) {
+      const chunk = orders.slice(i, i + CONCURRENCY);
+      const saved = await Promise.all(chunk.map(processOrder));
+      savedOrders.push(...saved.filter((o) => o));
     }
 
     this.logger.log(`💾 Saved ${savedOrders.length} orders to database`);

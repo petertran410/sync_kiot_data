@@ -186,6 +186,7 @@ export class KiotVietCashflowService {
             includeBranch: true,
             includeUser: true,
             startDate: dateStartStr,
+            // startDate: '2024-12-01',
             endDate: dateEndStr,
           });
 
@@ -245,9 +246,13 @@ export class KiotVietCashflowService {
             continue;
           }
 
+          const pageCashflowIds = cashflows.map((cashflow) =>
+            BigInt(cashflow.id),
+          );
           const existingCashflowIds = new Set(
             (
               await this.prismaService.cashflow.findMany({
+                where: { kiotVietId: { in: pageCashflowIds } },
                 select: { kiotVietId: true },
               })
             ).map((c) => Number(c.kiotVietId)),
@@ -748,28 +753,26 @@ export class KiotVietCashflowService {
 
     const savedCashflows: any[] = [];
 
-    for (const cashflowData of cashflows) {
+    const branchIds = [
+      ...new Set(
+        cashflows.filter((c) => c.branchId != null).map((c) => c.branchId),
+      ),
+    ];
+
+    const branches = branchIds.length
+      ? await this.prismaService.branch.findMany({
+          where: { kiotVietId: { in: branchIds } },
+          select: { id: true, name: true, kiotVietId: true },
+        })
+      : [];
+
+    const branchMap = new Map(
+      branches.map((b): [number, any] => [Number(b.kiotVietId), b]),
+    );
+
+    const processCashflow = async (cashflowData: KiotVietCashflow) => {
       try {
-        // const user = await this.prismaService.user.findFirst({
-        //   where: { kiotVietId: cashflowData.userId },
-        //   select: {
-        //     id: true,
-        //     userName: true,
-        //   },
-        // });
-
-        const branch = await this.prismaService.branch.findFirst({
-          where: { kiotVietId: cashflowData.branchId },
-          select: {
-            id: true,
-            name: true,
-          },
-        });
-
-        // const bank = await this.prismaService.bankAccount.findFirst({
-        //   where: { kiotVietId: cashflowData.accountId },
-        //   select: { id: true, bankName: true },
-        // });
+        const branch = branchMap.get(Number(cashflowData.branchId)) ?? null;
 
         const shouldSyncToLark = this.shouldSyncCashflowToLark(cashflowData);
 
@@ -842,12 +845,20 @@ export class KiotVietCashflowService {
           },
         });
 
-        savedCashflows.push(cashflow);
+        return cashflow;
       } catch (error) {
         this.logger.log(
           `Failed to save cashflow ${cashflowData.code}: ${error.message}`,
         );
+        return null;
       }
+    };
+
+    const CONCURRENCY = 10;
+    for (let i = 0; i < cashflows.length; i += CONCURRENCY) {
+      const chunk = cashflows.slice(i, i + CONCURRENCY);
+      const saved = await Promise.all(chunk.map(processCashflow));
+      savedCashflows.push(...saved.filter((c) => c));
     }
 
     this.logger.log(`Saved ${savedCashflows.length} cashflows successfully`);

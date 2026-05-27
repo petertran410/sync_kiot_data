@@ -107,7 +107,7 @@ interface KiotVietInvoice {
 export class KiotVietInvoiceService {
   private readonly logger = new Logger(KiotVietInvoiceService.name);
   private readonly baseUrl: string;
-  private readonly PAGE_SIZE = 200;
+  private readonly PAGE_SIZE = 100;
 
   private readonly INVOICE_DETAIL_SYNC_KEYWORDS = [
     'lỗi',
@@ -325,9 +325,11 @@ export class KiotVietInvoiceService {
             continue;
           }
 
+          const pageInvoiceIds = invoices.map((invoice) => BigInt(invoice.id));
           const existingInvoiceIds = new Set(
             (
               await this.prismaService.invoice.findMany({
+                where: { kiotVietId: { in: pageInvoiceIds } },
                 select: { kiotVietId: true },
               })
             ).map((c) => Number(c.kiotVietId)),
@@ -573,39 +575,158 @@ export class KiotVietInvoiceService {
 
     const savedInvoices: any[] = [];
 
-    for (const invoiceData of invoices) {
+    const customerIds = [
+      ...new Set(
+        invoices.filter((i) => i.customerId).map((i) => BigInt(i.customerId)),
+      ),
+    ];
+    const branchIds = [
+      ...new Set(
+        invoices.filter((i) => i.branchId != null).map((i) => i.branchId),
+      ),
+    ];
+    const userIds = [
+      ...new Set(
+        invoices.filter((i) => i.soldById).map((i) => BigInt(i.soldById)),
+      ),
+    ];
+    const saleChannelIds = [
+      ...new Set(
+        invoices.filter((i) => i.saleChannelId).map((i) => i.saleChannelId),
+      ),
+    ];
+    const orderIds = [
+      ...new Set(
+        invoices.filter((i) => i.orderId).map((i) => BigInt(i.orderId)),
+      ),
+    ];
+    const productIds = [
+      ...new Set(
+        invoices.flatMap((i) =>
+          (i.invoiceDetails ?? []).map((d) => BigInt(d.productId)),
+        ),
+      ),
+    ];
+    const bankAccountIds = [
+      ...new Set(
+        invoices.flatMap((i) =>
+          (i.payments ?? []).filter((p) => p.accountId).map((p) => p.accountId),
+        ),
+      ),
+    ];
+    const surchargeIds = [
+      ...new Set(
+        invoices.flatMap((i) =>
+          (i.invoiceOrderSurcharges ?? [])
+            .filter((s) => s.surchargeId)
+            .map((s) => s.surchargeId),
+        ),
+      ),
+    ];
+
+    const [
+      customers,
+      branches,
+      users,
+      saleChannels,
+      orders,
+      products,
+      bankAccounts,
+      surcharges,
+    ] = await Promise.all([
+      customerIds.length
+        ? this.prismaService.customer.findMany({
+            where: { kiotVietId: { in: customerIds } },
+            select: { id: true, kiotVietId: true },
+          })
+        : [],
+      branchIds.length
+        ? this.prismaService.branch.findMany({
+            where: { kiotVietId: { in: branchIds } },
+            select: { id: true, kiotVietId: true },
+          })
+        : [],
+      userIds.length
+        ? this.prismaService.user.findMany({
+            where: { kiotVietId: { in: userIds } },
+            select: { kiotVietId: true },
+          })
+        : [],
+      saleChannelIds.length
+        ? this.prismaService.saleChannel.findMany({
+            where: { kiotVietId: { in: saleChannelIds } },
+            select: { id: true, kiotVietId: true },
+          })
+        : [],
+      orderIds.length
+        ? this.prismaService.order.findMany({
+            where: { kiotVietId: { in: orderIds } },
+            select: { id: true, kiotVietId: true },
+          })
+        : [],
+      productIds.length
+        ? this.prismaService.product.findMany({
+            where: { kiotVietId: { in: productIds } },
+            select: { id: true, code: true, name: true, kiotVietId: true },
+          })
+        : [],
+      bankAccountIds.length
+        ? this.prismaService.bankAccount.findMany({
+            where: { kiotVietId: { in: bankAccountIds } },
+            select: { id: true, kiotVietId: true },
+          })
+        : [],
+      surchargeIds.length
+        ? this.prismaService.surcharge.findMany({
+            where: { kiotVietId: { in: surchargeIds } },
+            select: { id: true, kiotVietId: true },
+          })
+        : [],
+    ]);
+
+    const customerMap = new Map(
+      customers.map((c): [number, any] => [Number(c.kiotVietId), c]),
+    );
+    const branchMap = new Map(
+      branches.map((b): [number, any] => [Number(b.kiotVietId), b]),
+    );
+    const userMap = new Map(
+      users.map((u): [number, any] => [Number(u.kiotVietId), u]),
+    );
+    const saleChannelMap = new Map(
+      saleChannels.map((s): [number, any] => [Number(s.kiotVietId), s]),
+    );
+    const orderMap = new Map(
+      orders.map((o): [number, any] => [Number(o.kiotVietId), o]),
+    );
+    const productMap = new Map(
+      products.map((p): [number, any] => [Number(p.kiotVietId), p]),
+    );
+    const bankAccountMap = new Map(
+      bankAccounts.map((b): [number, any] => [Number(b.kiotVietId), b]),
+    );
+    const surchargeMap = new Map(
+      surcharges.map((s): [number, any] => [Number(s.kiotVietId), s]),
+    );
+
+    const processInvoice = async (invoiceData: any) => {
       try {
         const customer = invoiceData.customerId
-          ? await this.prismaService.customer.findFirst({
-              where: { kiotVietId: BigInt(invoiceData.customerId) },
-              select: { id: true },
-            })
+          ? (customerMap.get(Number(invoiceData.customerId)) ?? null)
           : null;
 
-        const branch = await this.prismaService.branch.findFirst({
-          where: { kiotVietId: invoiceData.branchId },
-          select: { id: true },
-        });
+        const branch = branchMap.get(Number(invoiceData.branchId)) ?? null;
 
         const soldBy = invoiceData.soldById
-          ? await this.prismaService.user.findFirst({
-              where: { kiotVietId: BigInt(invoiceData.soldById) },
-              select: { kiotVietId: true },
-            })
+          ? (userMap.get(Number(invoiceData.soldById)) ?? null)
           : null;
 
         const saleChannel = invoiceData.saleChannelId
-          ? await this.prismaService.saleChannel.findFirst({
-              where: { kiotVietId: invoiceData.saleChannelId },
-              select: { id: true },
-            })
+          ? (saleChannelMap.get(Number(invoiceData.saleChannelId)) ?? null)
           : null;
 
         const order = invoiceData.orderId
-          ? await this.prismaService.order.findFirst({
-              where: { kiotVietId: BigInt(invoiceData.orderId) },
-              select: { id: true },
-            })
+          ? (orderMap.get(Number(invoiceData.orderId)) ?? null)
           : null;
 
         const invoiceCode = invoiceData.code;
@@ -684,10 +805,7 @@ export class KiotVietInvoiceService {
         ) {
           for (let i = 0; i < invoiceData.invoiceDetails.length; i++) {
             const detail = invoiceData.invoiceDetails[i];
-            const product = await this.prismaService.product.findUnique({
-              where: { kiotVietId: BigInt(detail.productId) },
-              select: { id: true, code: true, name: true, kiotVietId: true },
-            });
+            const product = productMap.get(Number(detail.productId)) ?? null;
 
             const acsNumber: number = i + 1;
 
@@ -802,10 +920,7 @@ export class KiotVietInvoiceService {
         if (invoiceData.payments && invoiceData.payments.length > 0) {
           for (const payment of invoiceData.payments) {
             const bankAccount = payment.accountId
-              ? await this.prismaService.bankAccount.findFirst({
-                  where: { kiotVietId: payment.accountId },
-                  select: { id: true },
-                })
+              ? (bankAccountMap.get(Number(payment.accountId)) ?? null)
               : null;
 
             await this.prismaService.payment.upsert({
@@ -843,10 +958,7 @@ export class KiotVietInvoiceService {
         ) {
           for (const surcharge of invoiceData.invoiceOrderSurcharges) {
             const surchargeRecord = surcharge.surchargeId
-              ? await this.prismaService.surcharge.findFirst({
-                  where: { kiotVietId: surcharge.surchargeId },
-                  select: { id: true },
-                })
+              ? (surchargeMap.get(Number(surcharge.surchargeId)) ?? null)
               : null;
 
             await this.prismaService.invoiceSurcharge.upsert({
@@ -873,21 +985,28 @@ export class KiotVietInvoiceService {
                 price: surcharge.price
                   ? new Prisma.Decimal(surcharge.price)
                   : null,
-                createdDate: new Date(),
               },
             });
           }
         }
 
-        savedInvoices.push(invoice);
+        return invoice;
       } catch (error) {
         this.logger.error(
           `❌ Failed to save invoice ${invoiceData.code}: ${error.message}`,
         );
+        return null;
       }
+    };
+
+    const CONCURRENCY = 8;
+    for (let i = 0; i < invoices.length; i += CONCURRENCY) {
+      const chunk = invoices.slice(i, i + CONCURRENCY);
+      const saved = await Promise.all(chunk.map(processInvoice));
+      savedInvoices.push(...saved.filter((inv) => inv));
     }
 
-    this.logger.log(`Saved ${savedInvoices.length} invoices to database`);
+    this.logger.log(`💾 Saved ${savedInvoices.length} invoices to database`);
     return savedInvoices;
   }
 

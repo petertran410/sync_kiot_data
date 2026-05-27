@@ -54,7 +54,7 @@ interface KiotVietPurchaseOrder {
 export class KiotVietPurchaseOrderService {
   private readonly logger = new Logger(KiotVietPurchaseOrderService.name);
   private readonly baseUrl: string;
-  private readonly PAGE_SIZE = 200;
+  private readonly PAGE_SIZE = 100;
 
   constructor(
     private readonly httpService: HttpService,
