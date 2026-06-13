@@ -59,6 +59,10 @@ export class HisweetieNotifyService {
     code: string,
     action: string = 'upsert',
   ): Promise<void> {
+    // disabled: dừng hẳn việc gọi notify tới hisweetie (route /api/sync-kiot/webhook đã bỏ)
+    return;
+
+    // eslint-disable-next-line no-unreachable
     if (this.targets.length === 0) return;
 
     await Promise.allSettled(
