@@ -1286,6 +1286,8 @@ export class WebhookService {
           parent_name: category?.parent_name ?? null,
           child_name: category?.child_name ?? null,
           branch_name: category?.branch_name ?? null,
+          type: detailedProduct?.type ?? productData.Type ?? null,
+          isManufactured: (detailedProduct?.productFormulas?.length ?? 0) > 0,
           allowsSale: productData.AllowsSale ?? true,
           hasVariants: productData.HasVariants ?? false,
           basePrice: productData.BasePrice
@@ -1325,6 +1327,8 @@ export class WebhookService {
           parent_name: category?.parent_name ?? null,
           child_name: category?.child_name ?? null,
           branch_name: category?.branch_name ?? null,
+          type: detailedProduct?.type ?? productData.Type ?? null,
+          isManufactured: (detailedProduct?.productFormulas?.length ?? 0) > 0,
           allowsSale: productData.AllowsSale ?? true,
           hasVariants: productData.HasVariants ?? false,
           basePrice: productData.BasePrice
@@ -1501,6 +1505,71 @@ export class WebhookService {
             },
           });
         }
+      }
+
+      // Sync product formulas (định mức nguyên vật liệu) từ webhook detail
+      const formulas = detailedProduct?.productFormulas ?? [];
+      if (formulas.length > 0) {
+        await this.prismaService.productFormula.deleteMany({
+          where: {
+            productId: product.id,
+            lineNumber: { gt: formulas.length },
+          },
+        });
+
+        for (let i = 0; i < formulas.length; i++) {
+          const f = formulas[i];
+          await this.prismaService.productFormula.upsert({
+            where: {
+              productId_lineNumber: {
+                productId: product.id,
+                lineNumber: i + 1,
+              },
+            },
+            update: {
+              productKiotVietId: product.kiotVietId,
+              materialId: BigInt(f.materialId),
+              materialCode: f.materialCode,
+              materialName: f.materialName ?? null,
+              materialFullName: f.materialFullName ?? null,
+              quantity: f.quantity ?? null,
+              basePrice: f.basePrice ? new Prisma.Decimal(f.basePrice) : null,
+              lineNumber: i + 1,
+              lastSyncedAt: new Date(),
+            },
+            create: {
+              productId: product.id,
+              productKiotVietId: product.kiotVietId,
+              materialId: BigInt(f.materialId),
+              materialCode: f.materialCode,
+              materialName: f.materialName ?? null,
+              materialFullName: f.materialFullName ?? null,
+              quantity: f.quantity ?? null,
+              basePrice: f.basePrice ? new Prisma.Decimal(f.basePrice) : null,
+              lineNumber: i + 1,
+              lastSyncedAt: new Date(),
+            },
+          });
+        }
+
+        // Đánh dấu các nguyên liệu được tham chiếu là hàng sản xuất (isMaterial=true)
+        const materialCodes: string[] = Array.from(
+          new Set(
+            formulas
+              .map((f: any) => f.materialCode?.trim())
+              .filter((c: any): c is string => !!c),
+          ),
+        );
+        if (materialCodes.length > 0) {
+          await this.prismaService.product.updateMany({
+            where: { code: { in: materialCodes } },
+            data: { isMaterial: true },
+          });
+        }
+      } else {
+        await this.prismaService.productFormula.deleteMany({
+          where: { productId: product.id },
+        });
       }
 
       return product;
@@ -2002,6 +2071,7 @@ export class WebhookService {
       const queryParams = new URLSearchParams({
         includeInventory: 'true',
         includePricebook: 'true',
+        includeMaterial: 'true',
       });
 
       const url = `${baseUrl}/products/${productId}?${queryParams}`;

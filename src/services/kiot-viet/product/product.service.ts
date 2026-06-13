@@ -257,7 +257,7 @@ export class KiotVietProductService {
             currentItem,
             pageSize: this.PAGE_SIZE,
             orderBy: 'id',
-            orderDirection: 'ASC',
+            orderDirection: 'DESC',
             includeInventory: true,
             includePricebook: true,
             includeSerials: true,
@@ -393,18 +393,18 @@ export class KiotVietProductService {
           processedCount += pageProcessedCount;
           currentItem += this.PAGE_SIZE;
 
-          if (allSavedProducts.length > 0) {
-            try {
-              await this.syncProductsToLarkBase(allSavedProducts);
-              this.logger.log(
-                `Synced ${allSavedProducts.length} products to LarkBase`,
-              );
-            } catch (error) {
-              this.logger.warn(
-                `LarkBase sync failed for page${currentPage}: ${error.message}`,
-              );
-            }
-          }
+          // if (allSavedProducts.length > 0) {
+          //   try {
+          //     await this.syncProductsToLarkBase(allSavedProducts);
+          //     this.logger.log(
+          //       `Synced ${allSavedProducts.length} products to LarkBase`,
+          //     );
+          //   } catch (error) {
+          //     this.logger.warn(
+          //       `LarkBase sync failed for page${currentPage}: ${error.message}`,
+          //     );
+          //   }
+          // }
 
           if (totalProducts > 0) {
             const completionPercentage = (processedCount / totalProducts) * 100;
@@ -442,6 +442,8 @@ export class KiotVietProductService {
           await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }
+
+      await this.recomputeMaterialFlags();
 
       await this.updateSyncControl(syncName, {
         isRunning: false,
@@ -616,6 +618,7 @@ export class KiotVietProductService {
             description: productData.description ?? '',
             isLotSerialControl: productData.isLotSerialControl ?? false,
             isBatchExpireControl: productData.isBatchExpireControl ?? false,
+            isManufactured: (productData.productFormulas?.length ?? 0) > 0,
             orderTemplate: productData.orderTemplate?.trim() || null,
             minQuantity: productData.minQuantity ?? null,
             maxQuantity: productData.maxQuantity ?? null,
@@ -655,6 +658,7 @@ export class KiotVietProductService {
             description: productData.description ?? '',
             isLotSerialControl: productData.isLotSerialControl ?? false,
             isBatchExpireControl: productData.isBatchExpireControl ?? false,
+            isManufactured: (productData.productFormulas?.length ?? 0) > 0,
             orderTemplate: productData.orderTemplate?.trim() || null,
             minQuantity: productData.minQuantity ?? null,
             maxQuantity: productData.maxQuantity ?? null,
@@ -768,10 +772,105 @@ export class KiotVietProductService {
           }
         }
 
+        // Sync images
+        const images: any[] = [];
+        if (productData.images && productData.images.length > 0) {
+          // Xóa images cũ có lineNumber > số images mới (trường hợp giảm số ảnh)
+          await this.prismaService.productImage.deleteMany({
+            where: {
+              productId: product.id,
+              lineNumber: { gt: productData.images.length },
+            },
+          });
+
+          for (let i = 0; i < productData.images.length; i++) {
+            const img = productData.images[i];
+            const productImage =
+              await this.prismaService.productImage.upsert({
+                where: {
+                  productId_lineNumber: {
+                    productId: product.id,
+                    lineNumber: i + 1,
+                  },
+                },
+                update: {
+                  imageUrl: img.image ? { url: img.image } : Prisma.JsonNull,
+                  lastSyncedAt: new Date(),
+                },
+                create: {
+                  productId: product.id,
+                  imageUrl: img.image ? { url: img.image } : Prisma.JsonNull,
+                  lineNumber: i + 1,
+                  lastSyncedAt: new Date(),
+                },
+              });
+            images.push(productImage);
+          }
+        }
+
+        // Sync product formulas (định mức nguyên vật liệu)
+        const formulas: any[] = [];
+        if (productData.productFormulas && productData.productFormulas.length > 0) {
+          // Xóa formula cũ có lineNumber > số formula mới (trường hợp giảm)
+          await this.prismaService.productFormula.deleteMany({
+            where: {
+              productId: product.id,
+              lineNumber: { gt: productData.productFormulas.length },
+            },
+          });
+
+          for (let i = 0; i < productData.productFormulas.length; i++) {
+            const f = productData.productFormulas[i];
+            const formula = await this.prismaService.productFormula.upsert({
+              where: {
+                productId_lineNumber: {
+                  productId: product.id,
+                  lineNumber: i + 1,
+                },
+              },
+              update: {
+                productKiotVietId: product.kiotVietId,
+                materialId: BigInt(f.materialId),
+                materialCode: f.materialCode,
+                materialName: f.materialName ?? null,
+                materialFullName: f.materialFullName ?? null,
+                quantity: f.quantity ?? null,
+                basePrice: f.basePrice
+                  ? new Prisma.Decimal(f.basePrice)
+                  : null,
+                lineNumber: i + 1,
+                lastSyncedAt: new Date(),
+              },
+              create: {
+                productId: product.id,
+                productKiotVietId: product.kiotVietId,
+                materialId: BigInt(f.materialId),
+                materialCode: f.materialCode,
+                materialName: f.materialName ?? null,
+                materialFullName: f.materialFullName ?? null,
+                quantity: f.quantity ?? null,
+                basePrice: f.basePrice
+                  ? new Prisma.Decimal(f.basePrice)
+                  : null,
+                lineNumber: i + 1,
+                lastSyncedAt: new Date(),
+              },
+            });
+            formulas.push(formula);
+          }
+        } else {
+          // Không còn formula: dọn sạch dữ liệu cũ
+          await this.prismaService.productFormula.deleteMany({
+            where: { productId: product.id },
+          });
+        }
+
         savedProducts.push({
           ...product,
           inventories,
           priceBooks,
+          images,
+          formulas,
         });
       } catch (error) {
         this.logger.error(
@@ -784,25 +883,67 @@ export class KiotVietProductService {
     return savedProducts;
   }
 
-  async syncProductsToLarkBase(products: any[]): Promise<void> {
+  // async syncProductsToLarkBase(products: any[]): Promise<void> {
+  //   try {
+  //     this.logger.log(
+  //       `Starting LarkBase sync for ${products.length} products...`,
+  //     );
+
+  //     const productsToSync = products.filter(
+  //       (p) => p.larkSyncStatus === 'PENDING' || p.larkSyncStatus === 'FAILED',
+  //     );
+
+  //     if (productsToSync.length === 0) {
+  //       this.logger.log('No products need LarkBase sync');
+  //       return;
+  //     }
+
+  //     await this.larkProductSyncService.syncProductsToLarkBase(productsToSync);
+  //     this.logger.log('✅ LarkBase product sync completed');
+  //   } catch (error) {
+  //     this.logger.error(`LarkBase sync failed: ${error.message}`);
+  //     throw error;
+  //   }
+  // }
+
+  /**
+   * Tính lại cờ isMaterial cho toàn bộ sản phẩm dựa trên định mức KiotViet.
+   * Một sản phẩm là "hàng sản xuất" (nguyên liệu đầu vào) nếu mã của nó
+   * xuất hiện trong productFormulas[].materialCode của bất kỳ sản phẩm nào.
+   */
+  private async recomputeMaterialFlags(): Promise<void> {
     try {
-      this.logger.log(
-        `Starting LarkBase sync for ${products.length} products...`,
-      );
+      const materials = await this.prismaService.productFormula.findMany({
+        select: { materialCode: true },
+        distinct: ['materialCode'],
+      });
 
-      const productsToSync = products.filter(
-        (p) => p.larkSyncStatus === 'PENDING' || p.larkSyncStatus === 'FAILED',
-      );
+      const materialCodes = materials
+        .map((m) => m.materialCode?.trim())
+        .filter((c): c is string => !!c);
 
-      if (productsToSync.length === 0) {
-        this.logger.log('No products need LarkBase sync');
+      // Reset toàn bộ về false trước
+      await this.prismaService.product.updateMany({
+        data: { isMaterial: false },
+      });
+
+      if (materialCodes.length === 0) {
+        this.logger.log(
+          'No material codes found. All products isMaterial=false',
+        );
         return;
       }
 
-      await this.larkProductSyncService.syncProductsToLarkBase(productsToSync);
-      this.logger.log('✅ LarkBase product sync completed');
+      const result = await this.prismaService.product.updateMany({
+        where: { code: { in: materialCodes } },
+        data: { isMaterial: true },
+      });
+
+      this.logger.log(
+        `Recomputed isMaterial: ${result.count} products marked as material (from ${materialCodes.length} distinct material codes)`,
+      );
     } catch (error) {
-      this.logger.error(`LarkBase sync failed: ${error.message}`);
+      this.logger.error(`Failed to recompute material flags: ${error.message}`);
       throw error;
     }
   }

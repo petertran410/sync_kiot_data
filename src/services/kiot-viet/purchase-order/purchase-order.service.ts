@@ -316,18 +316,18 @@ export class KiotVietPurchaseOrderService {
           processedCount += pageProcessedCount;
           currentItem += this.PAGE_SIZE;
 
-          if (allSavedPurchaseOrders.length > 0) {
-            try {
-              await this.syncPurchaseOrdersToLarkBase(allSavedPurchaseOrders);
-              this.logger.log(
-                `Synced ${allSavedPurchaseOrders.length} purchase-orders to LarkBase`,
-              );
-            } catch (error) {
-              this.logger.warn(
-                `LarkBase sync failed for page ${currentPage}: ${error.message}`,
-              );
-            }
-          }
+          // if (allSavedPurchaseOrders.length > 0) {
+          //   try {
+          //     await this.syncPurchaseOrdersToLarkBase(allSavedPurchaseOrders);
+          //     this.logger.log(
+          //       `Synced ${allSavedPurchaseOrders.length} purchase-orders to LarkBase`,
+          //     );
+          //   } catch (error) {
+          //     this.logger.warn(
+          //       `LarkBase sync failed for page ${currentPage}: ${error.message}`,
+          //     );
+          //   }
+          // }
 
           if (totalPurchaseOrder > 0) {
             const completionPercentage =
@@ -715,53 +715,53 @@ export class KiotVietPurchaseOrderService {
     return savedPurchaseOrders;
   }
 
-  async syncPurchaseOrdersToLarkBase(purchase_orders: any[]): Promise<void> {
-    try {
-      this.logger.log(
-        `Starting LarkBase sync for ${purchase_orders.length} purchase_orders...`,
-      );
+  // async syncPurchaseOrdersToLarkBase(purchase_orders: any[]): Promise<void> {
+  //   try {
+  //     this.logger.log(
+  //       `Starting LarkBase sync for ${purchase_orders.length} purchase_orders...`,
+  //     );
 
-      const purchaseOrdersToSync = purchase_orders.filter(
-        (s) => s.larkSyncStatus === 'PENDING' || s.larkSyncStatus === 'FAILED',
-      );
+  //     const purchaseOrdersToSync = purchase_orders.filter(
+  //       (s) => s.larkSyncStatus === 'PENDING' || s.larkSyncStatus === 'FAILED',
+  //     );
 
-      if (purchaseOrdersToSync.length === 0) {
-        this.logger.log('No purchase_orders need LarkBase sync');
-        return;
-      }
+  //     if (purchaseOrdersToSync.length === 0) {
+  //       this.logger.log('No purchase_orders need LarkBase sync');
+  //       return;
+  //     }
 
-      await this.larkPurchaseOrderSyncService.syncPurchaseOrdersToLarkBase(
-        purchaseOrdersToSync,
-      );
-      this.logger.log(`LarkBase sync completed successfully`);
-    } catch (error) {
-      this.logger.error(
-        `LarkBase order_supplier sync failed: ${error.message}`,
-      );
+  //     await this.larkPurchaseOrderSyncService.syncPurchaseOrdersToLarkBase(
+  //       purchaseOrdersToSync,
+  //     );
+  //     this.logger.log(`LarkBase sync completed successfully`);
+  //   } catch (error) {
+  //     this.logger.error(
+  //       `LarkBase order_supplier sync failed: ${error.message}`,
+  //     );
 
-      try {
-        const purchaseOrderIds = purchase_orders
-          .map((o) => o.id)
-          .filter((id) => id !== undefined);
+  //     try {
+  //       const purchaseOrderIds = purchase_orders
+  //         .map((o) => o.id)
+  //         .filter((id) => id !== undefined);
 
-        if (purchaseOrderIds.length > 0) {
-          await this.prismaService.purchaseOrder.updateMany({
-            where: { id: { in: purchaseOrderIds } },
-            data: {
-              larkSyncedAt: new Date(),
-              larkSyncStatus: 'FAILED',
-            },
-          });
-        }
-      } catch (error) {
-        this.logger.error(
-          `Failed to update purchase_order status: ${error.message}`,
-        );
-      }
+  //       if (purchaseOrderIds.length > 0) {
+  //         await this.prismaService.purchaseOrder.updateMany({
+  //           where: { id: { in: purchaseOrderIds } },
+  //           data: {
+  //             larkSyncedAt: new Date(),
+  //             larkSyncStatus: 'FAILED',
+  //           },
+  //         });
+  //       }
+  //     } catch (error) {
+  //       this.logger.error(
+  //         `Failed to update purchase_order status: ${error.message}`,
+  //       );
+  //     }
 
-      throw new Error(`LarkBase sync failed: ${error.message}`);
-    }
-  }
+  //     throw new Error(`LarkBase sync failed: ${error.message}`);
+  //   }
+  // }
 
   // async syncPurchaseOrderDetailsToLarkBase(
   //   purchase_orders_details: any[],

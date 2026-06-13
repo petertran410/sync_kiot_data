@@ -178,7 +178,7 @@ export class KiotVietReturnService {
             orderBy: 'id',
             orderDirection: 'DESC',
             includePayment: true,
-            fromReturnDate: '2024-12-01',
+            fromReturnDate: '2024-12-1',
             toReturnDate: dateEndStr,
           });
 

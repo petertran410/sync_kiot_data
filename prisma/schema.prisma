@@ -61,6 +61,8 @@ model Product {
   isLotSerialControl   Boolean                  @default(false)
   isBatchExpireControl Boolean                  @default(false)
   isCommerce           Boolean                  @default(false)
+  isMaterial           Boolean                  @default(false)
+  isManufactured       Boolean                  @default(false)
   orderTemplate        String?
   minQuantity          Int?
   maxQuantity          Int?
@@ -80,6 +82,7 @@ model Product {
   orderSupplierDetails OrderSupplierDetail[]
   priceBookDetails     PriceBookDetail[]
   attributes           ProductAttribute[]
+  formulas             ProductFormula[]         @relation("ProductFormulaOutput")
   images               ProductImage[]
   inventories          ProductInventory[]
   purchaseOrderDetails PurchaseOrderDetail[]
@@ -139,6 +142,26 @@ model ProductInventory {
   @@unique([productId, lineNumber])
   @@index([productId])
   @@index([branchId])
+}
+
+model ProductFormula {
+  id                Int      @id @default(autoincrement())
+  productId         Int
+  productKiotVietId BigInt
+  materialId        BigInt
+  materialCode      String
+  materialName      String?
+  materialFullName  String?
+  quantity          Float?
+  basePrice         Decimal? @db.Decimal(15, 2)
+  lineNumber        Int
+  lastSyncedAt      DateTime @default(now())
+  product           Product  @relation("ProductFormulaOutput", fields: [productId], references: [id])
+
+  @@unique([productId, lineNumber])
+  @@index([productId])
+  @@index([materialCode])
+  @@index([materialId])
 }
 
 model Customer {
@@ -322,6 +345,7 @@ model Order {
   @@index([lastSyncedAt])
   @@index([larkSyncStatus])
   @@index([larkSyncStatus, purchaseDate])
+  @@index([purchaseDate])
 }
 
 model OrderDetail {

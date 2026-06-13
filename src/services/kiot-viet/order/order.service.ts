@@ -228,7 +228,8 @@ export class KiotVietOrderService {
             orderDirection: 'DESC',
             includePayment: true,
             includeOrderDelivery: true,
-            lastModifiedFrom: dateStartStr,
+            // lastModifiedFrom: dateStartStr,
+            lastModifiedFrom: '2024-12-1',
             toDate: dateEndStr,
           });
 
@@ -354,18 +355,18 @@ export class KiotVietOrderService {
           processedCount += pageProcessedCount;
           currentItem += this.PAGE_SIZE;
 
-          if (allSavedOrders.length > 0) {
-            try {
-              await this.syncOrdersToLarkBase(allSavedOrders);
-              this.logger.log(
-                `Synced ${allSavedOrders.length} orders to LarkBase`,
-              );
-            } catch (error) {
-              this.logger.warn(
-                `LarkBase sync failed for page ${currentPage}: ${error.message}`,
-              );
-            }
-          }
+          // if (allSavedOrders.length > 0) {
+          //   try {
+          //     await this.syncOrdersToLarkBase(allSavedOrders);
+          //     this.logger.log(
+          //       `Synced ${allSavedOrders.length} orders to LarkBase`,
+          //     );
+          //   } catch (error) {
+          //     this.logger.warn(
+          //       `LarkBase sync failed for page ${currentPage}: ${error.message}`,
+          //     );
+          //   }
+          // }
 
           if (totalOrders > 0) {
             const completionPercentage = (processedCount / totalOrders) * 100;
@@ -936,37 +937,37 @@ export class KiotVietOrderService {
     return savedOrders;
   }
 
-  private async syncOrdersToLarkBase(orders: any[]): Promise<void> {
-    try {
-      this.logger.log(`Starting LarkBase sync for ${orders.length} orders...`);
+  // private async syncOrdersToLarkBase(orders: any[]): Promise<void> {
+  //   try {
+  //     this.logger.log(`Starting LarkBase sync for ${orders.length} orders...`);
 
-      const ordersToSync = orders.filter(
-        (c) => c.larkSyncStatus === 'PENDING' || c.larkSyncStatus === 'FAILED',
-      );
+  //     const ordersToSync = orders.filter(
+  //       (c) => c.larkSyncStatus === 'PENDING' || c.larkSyncStatus === 'FAILED',
+  //     );
 
-      if (ordersToSync.length === 0) {
-        this.logger.log('No orders need LarkBase sync');
-        return;
-      }
+  //     if (ordersToSync.length === 0) {
+  //       this.logger.log('No orders need LarkBase sync');
+  //       return;
+  //     }
 
-      await this.larkOrderSyncService.syncPendingAndFailed();
-      this.logger.log(`LarkBase sync completed successfully`);
-    } catch (error) {
-      this.logger.error(`LarkBase sync FAILED: ${error.message}`);
-      this.logger.error(`STOPPING sync to prevent data duplication`);
+  //     await this.larkOrderSyncService.syncPendingAndFailed();
+  //     this.logger.log(`LarkBase sync completed successfully`);
+  //   } catch (error) {
+  //     this.logger.error(`LarkBase sync FAILED: ${error.message}`);
+  //     this.logger.error(`STOPPING sync to prevent data duplication`);
 
-      const orderIds = orders.map((c) => c.id);
-      await this.prismaService.order.updateMany({
-        where: { id: { in: orderIds } },
-        data: {
-          larkSyncStatus: 'FAILED',
-          larkSyncedAt: new Date(),
-        },
-      });
+  //     const orderIds = orders.map((c) => c.id);
+  //     await this.prismaService.order.updateMany({
+  //       where: { id: { in: orderIds } },
+  //       data: {
+  //         larkSyncStatus: 'FAILED',
+  //         larkSyncedAt: new Date(),
+  //       },
+  //     });
 
-      throw new Error(`LarkBase sync failed: ${error.message}`);
-    }
-  }
+  //     throw new Error(`LarkBase sync failed: ${error.message}`);
+  //   }
+  // }
 
   private async updateSyncControl(name: string, updates: any) {
     await this.prismaService.syncControl.upsert({

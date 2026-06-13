@@ -285,18 +285,18 @@ export class KiotVietSupplierService {
           processedCount += pageProcessedCount;
           currentItem += this.PAGE_SIZE;
 
-          if (allSavedSuppliers.length > 0) {
-            try {
-              await this.syncSuppliersToLarkBase(allSavedSuppliers);
-              this.logger.log(
-                `Synced ${allSavedSuppliers.length} supplier to LarkBase`,
-              );
-            } catch (error) {
-              this.logger.warn(
-                `LarkBase sync failed for page ${currentPage}: ${error.message}`,
-              );
-            }
-          }
+          // if (allSavedSuppliers.length > 0) {
+          //   try {
+          //     await this.syncSuppliersToLarkBase(allSavedSuppliers);
+          //     this.logger.log(
+          //       `Synced ${allSavedSuppliers.length} supplier to LarkBase`,
+          //     );
+          //   } catch (error) {
+          //     this.logger.warn(
+          //       `LarkBase sync failed for page ${currentPage}: ${error.message}`,
+          //     );
+          //   }
+          // }
 
           if (totalSuppliers > 0) {
             const completionPercentage =
@@ -513,52 +513,52 @@ export class KiotVietSupplierService {
     return savedSuppliers;
   }
 
-  async syncSuppliersToLarkBase(suppliers: any[]): Promise<void> {
-    try {
-      this.logger.log(
-        `Starting LarkBase sync for ${suppliers.length} suppliers...`,
-      );
+  // async syncSuppliersToLarkBase(suppliers: any[]): Promise<void> {
+  //   try {
+  //     this.logger.log(
+  //       `Starting LarkBase sync for ${suppliers.length} suppliers...`,
+  //     );
 
-      const suppliersToSync = suppliers.filter(
-        (s) => s.larkSyncStatus === 'PENDING' || s.larkSyncStatus === 'FAILED',
-      );
+  //     const suppliersToSync = suppliers.filter(
+  //       (s) => s.larkSyncStatus === 'PENDING' || s.larkSyncStatus === 'FAILED',
+  //     );
 
-      if (suppliersToSync.length === 0) {
-        this.logger.log('No suppliers need LarkBase sync');
-        return;
-      }
+  //     if (suppliersToSync.length === 0) {
+  //       this.logger.log('No suppliers need LarkBase sync');
+  //       return;
+  //     }
 
-      await this.larkSupplierSyncService.syncSuppliersToLarkBase(
-        suppliersToSync,
-      );
+  //     await this.larkSupplierSyncService.syncSuppliersToLarkBase(
+  //       suppliersToSync,
+  //     );
 
-      this.logger.log(`LarkBase sync completed successfully`);
-    } catch (error) {
-      this.logger.error(`❌ LarkBase supplier sync failed: ${error.message}`);
+  //     this.logger.log(`LarkBase sync completed successfully`);
+  //   } catch (error) {
+  //     this.logger.error(`❌ LarkBase supplier sync failed: ${error.message}`);
 
-      try {
-        const supplierIds = suppliers
-          .map((s) => s.id)
-          .filter((id) => id !== undefined);
+  //     try {
+  //       const supplierIds = suppliers
+  //         .map((s) => s.id)
+  //         .filter((id) => id !== undefined);
 
-        if (supplierIds.length > 0) {
-          await this.prismaService.supplier.updateMany({
-            where: { id: { in: supplierIds } },
-            data: {
-              larkSyncedAt: new Date(),
-              larkSyncStatus: 'FAILED',
-            },
-          });
-        }
-      } catch (updateError) {
-        this.logger.error(
-          `Failed to update supplier status: ${updateError.message}`,
-        );
-      }
+  //       if (supplierIds.length > 0) {
+  //         await this.prismaService.supplier.updateMany({
+  //           where: { id: { in: supplierIds } },
+  //           data: {
+  //             larkSyncedAt: new Date(),
+  //             larkSyncStatus: 'FAILED',
+  //           },
+  //         });
+  //       }
+  //     } catch (updateError) {
+  //       this.logger.error(
+  //         `Failed to update supplier status: ${updateError.message}`,
+  //       );
+  //     }
 
-      throw new Error(`LarkBase sync failed: ${error.message}`);
-    }
-  }
+  //     throw new Error(`LarkBase sync failed: ${error.message}`);
+  //   }
+  // }
 
   private async updateSyncControl(name: string, data: any): Promise<void> {
     try {

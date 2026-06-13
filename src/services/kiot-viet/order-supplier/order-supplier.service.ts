@@ -319,18 +319,18 @@ export class KiotVietOrderSupplierService {
           processedCount += pageProcessedCount;
           currentItem += this.PAGE_SIZE;
 
-          if (allSavedOrderSuppliers.length > 0) {
-            try {
-              await this.syncOrderSuppliersToLarkBase(allSavedOrderSuppliers);
-              this.logger.log(
-                `Synced ${allSavedOrderSuppliers.length} order-suppliers to LarkBase`,
-              );
-            } catch (error) {
-              this.logger.warn(
-                `LarkBase sync failed for page ${currentPage}: ${error.message}`,
-              );
-            }
-          }
+          // if (allSavedOrderSuppliers.length > 0) {
+          //   try {
+          //     await this.syncOrderSuppliersToLarkBase(allSavedOrderSuppliers);
+          //     this.logger.log(
+          //       `Synced ${allSavedOrderSuppliers.length} order-suppliers to LarkBase`,
+          //     );
+          //   } catch (error) {
+          //     this.logger.warn(
+          //       `LarkBase sync failed for page ${currentPage}: ${error.message}`,
+          //     );
+          //   }
+          // }
 
           if (totalOrderSuppliers > 0) {
             const completionPercentage =
@@ -646,54 +646,54 @@ export class KiotVietOrderSupplierService {
     return savedOrderSuppliers;
   }
 
-  async syncOrderSuppliersToLarkBase(order_suppliers: any[]): Promise<void> {
-    try {
-      this.logger.log(
-        `Starting LarkBase sync for ${order_suppliers.length} order_suppliers...`,
-      );
+  // async syncOrderSuppliersToLarkBase(order_suppliers: any[]): Promise<void> {
+  //   try {
+  //     this.logger.log(
+  //       `Starting LarkBase sync for ${order_suppliers.length} order_suppliers...`,
+  //     );
 
-      const orderSuppliersToSync = order_suppliers.filter(
-        (s) => s.larkSyncStatus === 'PENDING' || s.larkSyncStatus === 'FAILED',
-      );
+  //     const orderSuppliersToSync = order_suppliers.filter(
+  //       (s) => s.larkSyncStatus === 'PENDING' || s.larkSyncStatus === 'FAILED',
+  //     );
 
-      if (orderSuppliersToSync.length === 0) {
-        this.logger.log('No order_suppliers need LarkBase sync');
-        return;
-      }
+  //     if (orderSuppliersToSync.length === 0) {
+  //       this.logger.log('No order_suppliers need LarkBase sync');
+  //       return;
+  //     }
 
-      await this.larkOrderSupplierSyncService.syncOrderSuppliersToLarkBase(
-        orderSuppliersToSync,
-      );
+  //     await this.larkOrderSupplierSyncService.syncOrderSuppliersToLarkBase(
+  //       orderSuppliersToSync,
+  //     );
 
-      this.logger.log(`LarkBase sync completed successfully`);
-    } catch (error) {
-      this.logger.error(
-        `LarkBase order_supplier sync failed: ${error.message}`,
-      );
+  //     this.logger.log(`LarkBase sync completed successfully`);
+  //   } catch (error) {
+  //     this.logger.error(
+  //       `LarkBase order_supplier sync failed: ${error.message}`,
+  //     );
 
-      try {
-        const orderSupplierIds = order_suppliers
-          .map((o) => o.id)
-          .filter((id) => id !== undefined);
+  //     try {
+  //       const orderSupplierIds = order_suppliers
+  //         .map((o) => o.id)
+  //         .filter((id) => id !== undefined);
 
-        if (orderSupplierIds.length > 0) {
-          await this.prismaService.orderSupplier.updateMany({
-            where: { id: { in: orderSupplierIds } },
-            data: {
-              larkSyncedAt: new Date(),
-              larkSyncStatus: 'FAILED',
-            },
-          });
-        }
-      } catch (updateError) {
-        this.logger.error(
-          `Failed to update order_supplier status: ${updateError.message}`,
-        );
-      }
+  //       if (orderSupplierIds.length > 0) {
+  //         await this.prismaService.orderSupplier.updateMany({
+  //           where: { id: { in: orderSupplierIds } },
+  //           data: {
+  //             larkSyncedAt: new Date(),
+  //             larkSyncStatus: 'FAILED',
+  //           },
+  //         });
+  //       }
+  //     } catch (updateError) {
+  //       this.logger.error(
+  //         `Failed to update order_supplier status: ${updateError.message}`,
+  //       );
+  //     }
 
-      throw new Error(`LarkBase sync failed: ${error.message}`);
-    }
-  }
+  //     throw new Error(`LarkBase sync failed: ${error.message}`);
+  //   }
+  // }
 
   private async updateSyncControl(name: string, data: any): Promise<void> {
     try {

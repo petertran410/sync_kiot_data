@@ -179,7 +179,7 @@ export class KiotVietCustomerService {
             includeCustomerGroup: true,
             includeCustomerSocial: true,
             lastModifiedFrom: dateStartStr,
-            // lastModifiedFrom: '2024-12-01',
+            // lastModifiedFrom: '2024-12-1',
             toDate: dateEndStr,
           });
 
@@ -309,18 +309,18 @@ export class KiotVietCustomerService {
           processedCount += pageProcessedCount;
           currentItem += this.PAGE_SIZE;
 
-          if (allSavedCustomers.length > 0) {
-            try {
-              await this.syncCustomersToLarkBase(allSavedCustomers);
-              this.logger.log(
-                `Synced ${allSavedCustomers.length} customers to LarkBase`,
-              );
-            } catch (larkError) {
-              this.logger.warn(
-                `LarkBase sync failed for page ${currentPage}: ${larkError.message}`,
-              );
-            }
-          }
+          // if (allSavedCustomers.length > 0) {
+          //   try {
+          //     await this.syncCustomersToLarkBase(allSavedCustomers);
+          //     this.logger.log(
+          //       `Synced ${allSavedCustomers.length} customers to LarkBase`,
+          //     );
+          //   } catch (larkError) {
+          //     this.logger.warn(
+          //       `LarkBase sync failed for page ${currentPage}: ${larkError.message}`,
+          //     );
+          //   }
+          // }
 
           if (totalCustomers > 0) {
             const completionPercentage =
@@ -616,42 +616,42 @@ export class KiotVietCustomerService {
     return savedCustomers;
   }
 
-  async syncCustomersToLarkBase(customers: any[]): Promise<void> {
-    try {
-      this.logger.log(
-        `Starting LarkBase sync for ${customers.length} customers...`,
-      );
+  // async syncCustomersToLarkBase(customers: any[]): Promise<void> {
+  //   try {
+  //     this.logger.log(
+  //       `Starting LarkBase sync for ${customers.length} customers...`,
+  //     );
 
-      const customersToSync = customers.filter(
-        (c) => c.larkSyncStatus === 'PENDING' || c.larkSyncStatus === 'FAILED',
-      );
+  //     const customersToSync = customers.filter(
+  //       (c) => c.larkSyncStatus === 'PENDING' || c.larkSyncStatus === 'FAILED',
+  //     );
 
-      if (customersToSync.length === 0) {
-        this.logger.log('No customers need LarkBase sync');
-        return;
-      }
+  //     if (customersToSync.length === 0) {
+  //       this.logger.log('No customers need LarkBase sync');
+  //       return;
+  //     }
 
-      await this.larkCustomerHistoricalSyncService.syncCustomersToLarkBase(
-        customersToSync,
-      );
+  //     await this.larkCustomerHistoricalSyncService.syncCustomersToLarkBase(
+  //       customersToSync,
+  //     );
 
-      this.logger.log(`LarkBase sync completed successfully`);
-    } catch (error) {
-      this.logger.error(`LarkBase sync FAILED: ${error.message}`);
-      this.logger.error(`STOPPING sync to prevent data duplication`);
+  //     this.logger.log(`LarkBase sync completed successfully`);
+  //   } catch (error) {
+  //     this.logger.error(`LarkBase sync FAILED: ${error.message}`);
+  //     this.logger.error(`STOPPING sync to prevent data duplication`);
 
-      const customerIds = customers.map((c) => c.id);
-      await this.prismaService.customer.updateMany({
-        where: { id: { in: customerIds } },
-        data: {
-          larkSyncStatus: 'FAILED',
-          larkSyncedAt: new Date(),
-        },
-      });
+  //     const customerIds = customers.map((c) => c.id);
+  //     await this.prismaService.customer.updateMany({
+  //       where: { id: { in: customerIds } },
+  //       data: {
+  //         larkSyncStatus: 'FAILED',
+  //         larkSyncedAt: new Date(),
+  //       },
+  //     });
 
-      throw new Error(`LarkBase sync failed: ${error.message}`);
-    }
-  }
+  //     throw new Error(`LarkBase sync failed: ${error.message}`);
+  //   }
+  // }
 
   private async updateSyncControl(name: string, updates: any) {
     await this.prismaService.syncControl.upsert({

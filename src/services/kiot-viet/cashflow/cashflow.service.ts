@@ -185,8 +185,8 @@ export class KiotVietCashflowService {
             includeAccount: true,
             includeBranch: true,
             includeUser: true,
-            startDate: dateStartStr,
-            // startDate: '2024-12-01',
+            // startDate: dateStartStr,
+            startDate: '2024-12-01',
             endDate: dateEndStr,
           });
 
@@ -316,18 +316,18 @@ export class KiotVietCashflowService {
           processedCount += pageProcessedCount;
           currentItem += this.PAGE_SIZE;
 
-          if (allSavedCashflows.length > 0) {
-            try {
-              await this.syncCashflowToLarkBase(allSavedCashflows);
-              this.logger.log(
-                `Synced ${allSavedCashflows.length} cashflows to LarkBase`,
-              );
-            } catch (error) {
-              this.logger.warn(
-                `LarkBase sync failed for page ${currentPage}: ${error.message}`,
-              );
-            }
-          }
+          // if (allSavedCashflows.length > 0) {
+          //   try {
+          //     await this.syncCashflowToLarkBase(allSavedCashflows);
+          //     this.logger.log(
+          //       `Synced ${allSavedCashflows.length} cashflows to LarkBase`,
+          //     );
+          //   } catch (error) {
+          //     this.logger.warn(
+          //       `LarkBase sync failed for page ${currentPage}: ${error.message}`,
+          //     );
+          //   }
+          // }
 
           if (totalCashflows > 0) {
             const completionPercentage =
@@ -585,18 +585,18 @@ export class KiotVietCashflowService {
           processedCount += pageProcessedCount;
           currentItem += this.PAGE_SIZE;
 
-          if (allSavedCashflows.length > 0) {
-            try {
-              await this.syncCashflowToLarkBase(allSavedCashflows);
-              this.logger.log(
-                `Synced ${allSavedCashflows.length} cashflows to LarkBase`,
-              );
-            } catch (error) {
-              this.logger.warn(
-                `LarkBase sync failed for page ${currentPage}: ${error.message}`,
-              );
-            }
-          }
+          // if (allSavedCashflows.length > 0) {
+          //   try {
+          //     await this.syncCashflowToLarkBase(allSavedCashflows);
+          //     this.logger.log(
+          //       `Synced ${allSavedCashflows.length} cashflows to LarkBase`,
+          //     );
+          //   } catch (error) {
+          //     this.logger.warn(
+          //       `LarkBase sync failed for page ${currentPage}: ${error.message}`,
+          //     );
+          //   }
+          // }
 
           if (totalCashflows > 0) {
             const completionPercentage =
@@ -865,39 +865,39 @@ export class KiotVietCashflowService {
     return savedCashflows;
   }
 
-  private async syncCashflowToLarkBase(cashflows: any[]): Promise<void> {
-    try {
-      this.logger.log(
-        `Starting LarkBase sync for ${cashflows.length} cashflows...`,
-      );
+  // private async syncCashflowToLarkBase(cashflows: any[]): Promise<void> {
+  //   try {
+  //     this.logger.log(
+  //       `Starting LarkBase sync for ${cashflows.length} cashflows...`,
+  //     );
 
-      const cashflowToSync = cashflows.filter(
-        (c) => c.larkSyncStatus === 'PENDING' || c.larkSyncStatus === 'FAILED',
-      );
+  //     const cashflowToSync = cashflows.filter(
+  //       (c) => c.larkSyncStatus === 'PENDING' || c.larkSyncStatus === 'FAILED',
+  //     );
 
-      if (cashflowToSync.length === 0) {
-        this.logger.log('No cashflows need LarkBase sync');
-        return;
-      }
+  //     if (cashflowToSync.length === 0) {
+  //       this.logger.log('No cashflows need LarkBase sync');
+  //       return;
+  //     }
 
-      await this.larkCashflowSyncService.syncCashflowToLarkBase(cashflowToSync);
-      this.logger.log(`LarkBase sync completed successfully`);
-    } catch (error) {
-      this.logger.error(`LarkBase sync FAILED: ${error.message}`);
-      this.logger.error(`STOPPING sync to prevent data duplication`);
+  //     await this.larkCashflowSyncService.syncCashflowToLarkBase(cashflowToSync);
+  //     this.logger.log(`LarkBase sync completed successfully`);
+  //   } catch (error) {
+  //     this.logger.error(`LarkBase sync FAILED: ${error.message}`);
+  //     this.logger.error(`STOPPING sync to prevent data duplication`);
 
-      const cashflowIds = cashflows.map((c) => c.id);
-      await this.prismaService.cashflow.updateMany({
-        where: { id: { in: cashflowIds } },
-        data: {
-          larkSyncStatus: 'FAILED',
-          lastSyncedAt: new Date(),
-        },
-      });
+  //     const cashflowIds = cashflows.map((c) => c.id);
+  //     await this.prismaService.cashflow.updateMany({
+  //       where: { id: { in: cashflowIds } },
+  //       data: {
+  //         larkSyncStatus: 'FAILED',
+  //         lastSyncedAt: new Date(),
+  //       },
+  //     });
 
-      throw new Error(`LarkBase sync failed: ${error.message}`);
-    }
-  }
+  //     throw new Error(`LarkBase sync failed: ${error.message}`);
+  //   }
+  // }
 
   private async updateSyncControl(name: string, updates: any): Promise<void> {
     await this.prismaService.syncControl.upsert({

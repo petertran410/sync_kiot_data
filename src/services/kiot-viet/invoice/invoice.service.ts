@@ -250,7 +250,7 @@ export class KiotVietInvoiceService {
         }
 
         const dateStart = new Date();
-        dateStart.setDate(dateStart.getDate() - 70);
+        dateStart.setDate(dateStart.getDate() - 200);
         const dateStartStr = dateStart.toISOString().split('T')[0];
 
         const dateEnd = new Date();
@@ -393,18 +393,18 @@ export class KiotVietInvoiceService {
           processedCount += pageProcessedCount;
           currentItem += this.PAGE_SIZE;
 
-          if (allSavedInvoices.length > 0) {
-            try {
-              await this.syncInvoicesToLarkBase(allSavedInvoices);
-              this.logger.log(
-                `Synced ${allSavedInvoices.length} invoices to LarkBase`,
-              );
-            } catch (error) {
-              this.logger.warn(
-                `LarkBase sync failed for page ${currentPage}: ${error.message}`,
-              );
-            }
-          }
+          // if (allSavedInvoices.length > 0) {
+          //   try {
+          //     await this.syncInvoicesToLarkBase(allSavedInvoices);
+          //     this.logger.log(
+          //       `Synced ${allSavedInvoices.length} invoices to LarkBase`,
+          //     );
+          //   } catch (error) {
+          //     this.logger.warn(
+          //       `LarkBase sync failed for page ${currentPage}: ${error.message}`,
+          //     );
+          //   }
+          // }
 
           if (totalInvoices > 0) {
             const completionPercentage = (processedCount / totalInvoices) * 100;
@@ -1010,41 +1010,41 @@ export class KiotVietInvoiceService {
     return savedInvoices;
   }
 
-  private async syncInvoicesToLarkBase(invoices: any[]): Promise<void> {
-    try {
-      this.logger.log(
-        `Starting LarkBase sync for ${invoices.length} invoices...`,
-      );
+  // private async syncInvoicesToLarkBase(invoices: any[]): Promise<void> {
+  //   try {
+  //     this.logger.log(
+  //       `Starting LarkBase sync for ${invoices.length} invoices...`,
+  //     );
 
-      const invoicesToSync = invoices.filter(
-        (c) => c.larkSyncStatus === 'PENDING' || c.larkSyncStatus === 'FAILED',
-      );
+  //     const invoicesToSync = invoices.filter(
+  //       (c) => c.larkSyncStatus === 'PENDING' || c.larkSyncStatus === 'FAILED',
+  //     );
 
-      if (invoicesToSync.length === 0) {
-        this.logger.log('No invoices need LarkBase sync');
-        return;
-      }
+  //     if (invoicesToSync.length === 0) {
+  //       this.logger.log('No invoices need LarkBase sync');
+  //       return;
+  //     }
 
-      await this.larkInvoiceHistoricalSyncService.syncInvoicesToLarkBase(
-        invoicesToSync,
-      );
-      this.logger.log(`LarkBase sync completed successfully`);
-    } catch (error) {
-      this.logger.error(`LarkBase sync FAILED: ${error.message}`);
-      this.logger.error(`STOPPING sync to prevent data duplication`);
+  //     await this.larkInvoiceHistoricalSyncService.syncInvoicesToLarkBase(
+  //       invoicesToSync,
+  //     );
+  //     this.logger.log(`LarkBase sync completed successfully`);
+  //   } catch (error) {
+  //     this.logger.error(`LarkBase sync FAILED: ${error.message}`);
+  //     this.logger.error(`STOPPING sync to prevent data duplication`);
 
-      const invoiceIds = invoices.map((c) => c.id);
-      await this.prismaService.invoice.updateMany({
-        where: { id: { in: invoiceIds } },
-        data: {
-          larkSyncStatus: 'FAILED',
-          larkSyncedAt: new Date(),
-        },
-      });
+  //     const invoiceIds = invoices.map((c) => c.id);
+  //     await this.prismaService.invoice.updateMany({
+  //       where: { id: { in: invoiceIds } },
+  //       data: {
+  //         larkSyncStatus: 'FAILED',
+  //         larkSyncedAt: new Date(),
+  //       },
+  //     });
 
-      throw new Error(`LarkBase sync failed: ${error.message}`);
-    }
-  }
+  //     throw new Error(`LarkBase sync failed: ${error.message}`);
+  //   }
+  // }
 
   private async updateSyncControl(name: string, updates: any) {
     await this.prismaService.syncControl.upsert({

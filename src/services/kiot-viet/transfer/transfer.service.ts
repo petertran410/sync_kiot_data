@@ -288,18 +288,18 @@ export class KiotVietTransferService {
           processedCount += pageProcessedCount;
           currentItem += this.PAGE_SIZE;
 
-          if (allSavedTransfers.length > 0) {
-            try {
-              await this.syncTransfersToLarkBase(allSavedTransfers);
-              this.logger.log(
-                `Synced ${allSavedTransfers.length} transfers to LarkBase`,
-              );
-            } catch (error) {
-              this.logger.warn(
-                `LarkBase sync failed for page ${currentPage}: ${error.message}`,
-              );
-            }
-          }
+          // if (allSavedTransfers.length > 0) {
+          //   try {
+          //     await this.syncTransfersToLarkBase(allSavedTransfers);
+          //     this.logger.log(
+          //       `Synced ${allSavedTransfers.length} transfers to LarkBase`,
+          //     );
+          //   } catch (error) {
+          //     this.logger.warn(
+          //       `LarkBase sync failed for page ${currentPage}: ${error.message}`,
+          //     );
+          //   }
+          // }
 
           if (totalTransfers > 0) {
             const completionPercentage =
@@ -571,48 +571,48 @@ export class KiotVietTransferService {
     return savedTransfers;
   }
 
-  async syncTransfersToLarkBase(transfers: any[]): Promise<void> {
-    try {
-      this.logger.log(
-        `Starting LarkBase sync for ${transfers.length} transfers...`,
-      );
+  // async syncTransfersToLarkBase(transfers: any[]): Promise<void> {
+  //   try {
+  //     this.logger.log(
+  //       `Starting LarkBase sync for ${transfers.length} transfers...`,
+  //     );
 
-      const transfersToSync = transfers.filter(
-        (s) => s.larkSyncStatus === 'PENDING' || s.larkSyncStatus === 'FAILED',
-      );
+  //     const transfersToSync = transfers.filter(
+  //       (s) => s.larkSyncStatus === 'PENDING' || s.larkSyncStatus === 'FAILED',
+  //     );
 
-      if (transfersToSync.length === 0) {
-        return;
-      }
+  //     if (transfersToSync.length === 0) {
+  //       return;
+  //     }
 
-      await this.larkTransferSyncService.syncTransferToLarkBase(
-        transfersToSync,
-      );
-      this.logger.log(`LarkBase sync completed successfully`);
-    } catch (error) {
-      this.logger.error(`LarkBase transfers sync failed: ${error.message}`);
+  //     await this.larkTransferSyncService.syncTransferToLarkBase(
+  //       transfersToSync,
+  //     );
+  //     this.logger.log(`LarkBase sync completed successfully`);
+  //   } catch (error) {
+  //     this.logger.error(`LarkBase transfers sync failed: ${error.message}`);
 
-      try {
-        const transferIds = transfers
-          .map((t) => t.id)
-          .filter((id) => id !== undefined);
+  //     try {
+  //       const transferIds = transfers
+  //         .map((t) => t.id)
+  //         .filter((id) => id !== undefined);
 
-        if (transferIds.length > 0) {
-          await this.prismaService.transfer.updateMany({
-            where: { id: { in: transferIds } },
-            data: {
-              larkSyncedAt: new Date(),
-              larkSyncStatus: 'FAILED',
-            },
-          });
-        }
-      } catch (error) {
-        this.logger.error(`Failed to update transfer status: ${error.message}`);
-      }
+  //       if (transferIds.length > 0) {
+  //         await this.prismaService.transfer.updateMany({
+  //           where: { id: { in: transferIds } },
+  //           data: {
+  //             larkSyncedAt: new Date(),
+  //             larkSyncStatus: 'FAILED',
+  //           },
+  //         });
+  //       }
+  //     } catch (error) {
+  //       this.logger.error(`Failed to update transfer status: ${error.message}`);
+  //     }
 
-      throw new Error(`LarkBase sync failed: ${error.message}`);
-    }
-  }
+  //     throw new Error(`LarkBase sync failed: ${error.message}`);
+  //   }
+  // }
 
   private async updateSyncControl(name: string, data: any): Promise<void> {
     try {

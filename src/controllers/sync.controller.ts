@@ -18,6 +18,7 @@ import { KiotVietTransferService } from '../services/kiot-viet/transfer/transfer
 import { LarkDemandSyncService } from '../services/lark/demand/lark-demand-sync.service';
 import { LarkInvoiceDetailSyncService } from '../services/lark/invoice-detail/lark-invoice-detail-sync.service';
 import { KiotVietVoucherCampaign } from '../services/kiot-viet/voucher-campaign/voucher-campaign.service';
+import { KiotVietPriceBookService } from '../services/kiot-viet/pricebook/pricebook.service';
 import { LarkTransferSyncService } from '../services/lark/transfer/lark-transfer-sync.service';
 import { KiotVietUserService } from '../services/kiot-viet/user/user.service';
 import { KiotVietSupplierService } from '../services/kiot-viet/supplier/supplier.service';
@@ -56,6 +57,7 @@ export class SyncController {
     private readonly larkTransferSyncService: LarkTransferSyncService,
     private readonly larkDemandSyncService: LarkDemandSyncService,
     private readonly voucherCampaignService: KiotVietVoucherCampaign,
+    private readonly priceBookService: KiotVietPriceBookService,
     private readonly userService: KiotVietUserService,
     private readonly supplierService: KiotVietSupplierService,
     private readonly larkSupplierSyncService: LarkSupplierSyncService,
@@ -70,18 +72,18 @@ export class SyncController {
       await this.customerService.enableHistoricalSync();
       await this.customerService.syncHistoricalCustomers();
 
-      const customersToSync = await this.prismaService.customer.findMany({
-        where: {
-          OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
-        },
-        take: 1000,
-      });
+      // const customersToSync = await this.prismaService.customer.findMany({
+      //   where: {
+      //     OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+      //   },
+      //   take: 1000,
+      // });
 
-      await this.larkCustomerSyncService.syncCustomersToLarkBase(
-        customersToSync,
-      );
+      // await this.larkCustomerSyncService.syncCustomersToLarkBase(
+      //   customersToSync,
+      // );
 
-      this.logger.log(`Synced ${customersToSync.length} customers to LarkBase`);
+      // this.logger.log(`Synced ${customersToSync.length} customers to LarkBase`);
 
       return {
         success: true,
@@ -106,17 +108,17 @@ export class SyncController {
       await this.invoiceService.enableHistoricalSync();
       await this.invoiceService.syncHistoricalInvoices();
 
-      const invoicesToSync = await this.prismaService.invoice.findMany({
-        where: {
-          OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
-        },
-      });
+      // const invoicesToSync = await this.prismaService.invoice.findMany({
+      //   where: {
+      //     OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+      //   },
+      // });
 
-      await this.larkInvoiceSyncService.syncInvoicesToLarkBase(invoicesToSync);
+      // await this.larkInvoiceSyncService.syncInvoicesToLarkBase(invoicesToSync);
 
-      await this.larkInvoiceDetailSyncService.syncInvoiceDetailsToLarkBase();
+      // await this.larkInvoiceDetailSyncService.syncInvoiceDetailsToLarkBase();
 
-      this.logger.log(`Synced ${invoicesToSync.length} invoices to LarkBase`);
+      // this.logger.log(`Synced ${invoicesToSync.length} invoices to LarkBase`);
 
       return {
         success: true,
@@ -144,7 +146,7 @@ export class SyncController {
 
       await this.orderService.syncHistoricalOrders();
 
-      await this.larkOrderSyncService.syncPendingAndFailed();
+      // await this.larkOrderSyncService.syncPendingAndFailed();
 
       return {
         success: true,
@@ -171,17 +173,17 @@ export class SyncController {
       await this.transferService.enableHistoricalSync();
       await this.transferService.syncHistoricalTransfers();
 
-      const transfersToSync = await this.prismaService.transfer.findMany({
-        where: {
-          OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
-        },
-      });
+      // const transfersToSync = await this.prismaService.transfer.findMany({
+      //   where: {
+      //     OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+      //   },
+      // });
 
-      await this.larkTransferSyncService.syncTransferToLarkBase(
-        transfersToSync,
-      );
+      // await this.larkTransferSyncService.syncTransferToLarkBase(
+      //   transfersToSync,
+      // );
 
-      await this.larkTransferSyncService.syncTransferDetailsToLarkBase();
+      // await this.larkTransferSyncService.syncTransferDetailsToLarkBase();
 
       return {
         success: true,
@@ -270,6 +272,29 @@ export class SyncController {
     }
   }
 
+  @Post('pricebook')
+  async syncPriceBooks() {
+    try {
+      this.logger.log('Starting pricebook sync...');
+
+      await this.priceBookService.enableHistoricalSync();
+      await this.priceBookService.syncHistoricalPriceBooks();
+
+      return {
+        success: true,
+        message: 'Pricebook sync completed successfully',
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error) {
+      this.logger.error(`❌ Pricebook sync failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
+
   @Post('suppliers')
   async syncSuppliers() {
     try {
@@ -301,18 +326,18 @@ export class SyncController {
       await this.orderSupplierService.enableHistoricalSync();
       await this.orderSupplierService.syncHistoricalOrderSuppliers();
 
-      const orderSuppliersToSync =
-        await this.prismaService.orderSupplier.findMany({
-          where: {
-            OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
-          },
-        });
+      // const orderSuppliersToSync =
+      //   await this.prismaService.orderSupplier.findMany({
+      //     where: {
+      //       OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+      //     },
+      //   });
 
-      await this.larkOrderSupplierService.syncOrderSuppliersToLarkBase(
-        orderSuppliersToSync,
-      );
+      // await this.larkOrderSupplierService.syncOrderSuppliersToLarkBase(
+      //   orderSuppliersToSync,
+      // );
 
-      await this.larkOrderSupplierService.syncOrderSupplierDetailsToLarkBase();
+      // await this.larkOrderSupplierService.syncOrderSupplierDetailsToLarkBase();
 
       return {
         success: true,
@@ -337,18 +362,18 @@ export class SyncController {
       await this.purchaseOrderService.enableHistoricalSync();
       await this.purchaseOrderService.syncHistoricalPurchaseOrder();
 
-      const purchaseOrdersToSync =
-        await this.prismaService.purchaseOrder.findMany({
-          where: {
-            OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
-          },
-        });
+      // const purchaseOrdersToSync =
+      //   await this.prismaService.purchaseOrder.findMany({
+      //     where: {
+      //       OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
+      //     },
+      //   });
 
-      await this.larkPurchaseOrderSyncService.syncPurchaseOrdersToLarkBase(
-        purchaseOrdersToSync,
-      );
+      // await this.larkPurchaseOrderSyncService.syncPurchaseOrdersToLarkBase(
+      //   purchaseOrdersToSync,
+      // );
 
-      await this.larkPurchaseOrderSyncService.syncPurchaseOrderDetailsToLarkBase();
+      // await this.larkPurchaseOrderSyncService.syncPurchaseOrderDetailsToLarkBase();
 
       return {
         success: true,
