@@ -119,7 +119,6 @@ export class SePayPaymentService {
         price: item.price,
       }));
     return {
-      purchaseDate: order.purchaseDate,
       branchId: order.branchId,
       soldById: order.soldById ?? undefined,
       cashierId: order.cashierId ?? undefined,

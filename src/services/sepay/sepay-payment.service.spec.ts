@@ -99,6 +99,7 @@ describe('SePayPaymentService account resolution', () => {
     );
 
     expect(payload).not.toHaveProperty('customer');
+    expect(payload).not.toHaveProperty('purchaseDate');
     expect(payload.orderDelivery).not.toHaveProperty('status');
     expect(payload.orderDelivery).not.toHaveProperty('serviceType');
     expect(payload.orderDelivery).not.toHaveProperty('wardId');
