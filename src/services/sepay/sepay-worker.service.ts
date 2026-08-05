@@ -138,13 +138,20 @@ export class SePayWorkerService implements OnModuleInit, OnModuleDestroy {
         return;
       }
 
-      const document = extractDocumentCode(transaction.content);
-      if (!document) {
+      const parsedDocument = extractDocumentCode(transaction.content);
+      if (!parsedDocument) {
         await this.finish(transaction.id, SEPAY_STATUS.Ignored, {
           errorMessage: 'No DH/HD document code in transfer content',
         });
         return;
       }
+      const document = {
+        ...parsedDocument,
+        code: await this.resolveDocumentCode(
+          parsedDocument.type,
+          parsedDocument.code,
+        ),
+      };
 
       await this.prisma.sePayTransaction.update({
         where: { id: transaction.id },
@@ -232,6 +239,41 @@ export class SePayWorkerService implements OnModuleInit, OnModuleDestroy {
       where: { id },
       data: { ...data, status, processedAt: new Date() },
     });
+  }
+
+  private async resolveDocumentCode(
+    type: 'ORDER' | 'INVOICE',
+    rawCode: string,
+  ): Promise<string> {
+    const normalized = this.normalizeDocumentCode(rawCode);
+    const rows =
+      type === 'INVOICE'
+        ? await this.prisma.$queryRaw<Array<{ code: string }>>`
+            SELECT "code"
+            FROM "Invoice"
+            WHERE UPPER(REGEXP_REPLACE("code", '[^A-Za-z0-9]', '', 'g')) = ${normalized}
+            LIMIT 2
+          `
+        : await this.prisma.$queryRaw<Array<{ code: string }>>`
+            SELECT "code"
+            FROM "Order"
+            WHERE UPPER(REGEXP_REPLACE("code", '[^A-Za-z0-9]', '', 'g')) = ${normalized}
+            LIMIT 2
+          `;
+
+    if (rows.length === 0) return rawCode;
+    if (rows.length > 1) {
+      throw new Error(
+        `Ambiguous ${type.toLowerCase()} code ${rawCode}: ${rows
+          .map((row) => row.code)
+          .join(', ')}`,
+      );
+    }
+    return rows[0].code;
+  }
+
+  private normalizeDocumentCode(code: string): string {
+    return code.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
   }
 
   async retryFailed(id: number): Promise<boolean> {
