@@ -3,6 +3,7 @@ import {
   Post,
   Body,
   Param,
+  Req,
   HttpCode,
   HttpStatus,
   Logger,
@@ -10,6 +11,7 @@ import {
   BadRequestException,
   InternalServerErrorException,
 } from '@nestjs/common';
+import { Request } from 'express';
 import { WebhookIngestService } from '../services/webhook/webhook-ingest.service';
 import { WebhookSignatureGuard } from './webhook-signature.guard';
 import {
@@ -75,13 +77,28 @@ export class WebhookController {
     return this.accept(type, payload);
   }
 
-  /** Legacy endpoints, e.g. POST /webhook/order — kept so existing registrations keep working. */
-  @Post(':legacy')
+  /**
+   * Legacy endpoints kept for existing KiotViet registrations. These are explicit
+   * paths rather than `:legacy`, otherwise `/webhook/sepay` is captured here and
+   * incorrectly verified with KiotViet's X-Hub-Signature guard.
+   */
+  @Post([
+    'order',
+    'invoice',
+    'customer',
+    'product',
+    'stock',
+    'pricebook',
+    'pricebookdetail',
+    'category',
+    'branch',
+  ])
   @HttpCode(HttpStatus.OK)
   async handleLegacy(
-    @Param('legacy') legacy: string,
+    @Req() request: Request,
     @Body() payload: WebhookEnvelope,
   ) {
+    const legacy = request.path.split('/').filter(Boolean).at(-1) ?? '';
     const type = WebhookController.LEGACY_ROUTES[legacy?.toLowerCase()];
     if (!type) {
       throw new BadRequestException(

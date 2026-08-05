@@ -38,7 +38,13 @@ export class SePayWorkerService implements OnModuleInit, OnModuleDestroy {
   }
 
   onModuleInit(): void {
-    if (!this.enabled) return;
+    if (!this.enabled) {
+      this.logger.warn(
+        'SEPAY_WORKER_ENABLED=false - SePay transactions will remain unprocessed',
+      );
+      return;
+    }
+    this.logger.log(`SePay worker started (poll=${this.pollMs}ms)`);
     this.schedule(0);
   }
 
