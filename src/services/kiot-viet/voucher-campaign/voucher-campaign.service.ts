@@ -1,156 +1,110 @@
-import { LarkVoucherCampaignSyncService } from './../../lark/voucher-campaign/lark-voucher-campaign-sync.service';
 import { Injectable, Logger } from '@nestjs/common';
-import { HttpService } from '@nestjs/axios';
-import { ConfigService } from '@nestjs/config';
-import { firstValueFrom } from 'rxjs';
-import { PrismaService } from '../../../prisma/prisma.service';
-import { KiotVietAuthService } from '../auth.service';
-import { Prisma } from '@prisma/client';
+import { KiotPageFetcher } from '../shared/kiot-page-fetcher';
+import { BulkUpsertHelper, ColumnSpec } from '../shared/bulk-upsert.helper';
+import { SyncControlHelper } from '../shared/sync-control.helper';
 
-interface VoucherCampaignData {
-  id: number;
-  code: string;
-  name: string;
-  isActive: boolean;
-  startDate: string;
-  endDate: string;
-  prereqPrice?: number;
-  quantity: number;
-  price: number;
-  isGlobal: boolean;
-  forAllCusGroup: boolean;
-  forAllUser: boolean;
-}
+const SYNC_NAME = 'voucher_campaign_historical';
+
+const COLUMNS: ColumnSpec[] = [
+  { name: 'kiotVietId', type: 'int' },
+  { name: 'code', type: 'text' },
+  { name: 'name', type: 'text' },
+  { name: 'isActive', type: 'boolean' },
+  { name: 'startDate', type: 'timestamp' },
+  { name: 'endDate', type: 'timestamp' },
+  { name: 'prereqPrice', type: 'numeric' },
+  { name: 'quantity', type: 'int' },
+  { name: 'price', type: 'numeric' },
+  { name: 'isGlobal', type: 'boolean' },
+  { name: 'forAllCusGroup', type: 'boolean' },
+  { name: 'forAllUser', type: 'boolean' },
+  { name: 'lastSyncedAt', type: 'timestamp' },
+];
+
+const UPDATE_COLUMNS = [
+  'code',
+  'name',
+  'isActive',
+  'startDate',
+  'endDate',
+  'prereqPrice',
+  'quantity',
+  'price',
+  'isGlobal',
+  'forAllCusGroup',
+  'forAllUser',
+  'lastSyncedAt',
+];
 
 @Injectable()
 export class KiotVietVoucherCampaign {
   private readonly logger = new Logger(KiotVietVoucherCampaign.name);
-  private readonly baseUrl: string;
 
   constructor(
-    private readonly httpService: HttpService,
-    private readonly configService: ConfigService,
-    private readonly prismaService: PrismaService,
-    private readonly authService: KiotVietAuthService,
-    private readonly larkVoucherCampaignSyncService: LarkVoucherCampaignSyncService,
-  ) {
-    const baseUrl = this.configService.get<string>('KIOT_BASE_URL');
-    if (!baseUrl) {
-      throw new Error('KIOT_BASE_URL environment variable is not configured');
-    }
-    this.baseUrl = baseUrl;
+    private readonly pageFetcher: KiotPageFetcher,
+    private readonly bulkUpsert: BulkUpsertHelper,
+    private readonly syncControl: SyncControlHelper,
+  ) {}
+
+  async syncFull() {
+    return this.runSync('full');
+  }
+
+  async syncIncremental() {
+    return this.runSync('incremental');
   }
 
   async syncAllVoucherCampaigns(): Promise<void> {
-    try {
-      this.logger.log('🔄 Starting voucher campaign sync from KiotViet...');
-
-      const campaigns = await this.fetchAllVoucherCampaigns();
-
-      this.logger.log(
-        `📦 Fetched ${campaigns.length} voucher campaigns from KiotViet`,
-      );
-
-      for (const campaign of campaigns) {
-        await this.upsertVoucherCampaign(campaign);
-      }
-
-      this.logger.log('✅ Saved all voucher campaigns to database');
-
-      // Sync lên LarkBase
-      const campaignsToSync = await this.prismaService.voucherCampaign.findMany(
-        {
-          orderBy: { lastSyncedAt: 'asc' },
-        },
-      );
-
-      this.logger.log(
-        `📤 Starting sync ${campaignsToSync.length} campaigns to LarkBase...`,
-      );
-
-      await this.larkVoucherCampaignSyncService.syncVoucherCampaignsToLarkBase(
-        campaignsToSync,
-      );
-
-      this.logger.log('✅ Voucher campaign sync completed successfully');
-    } catch (error) {
-      this.logger.error(`❌ Voucher campaign sync failed: ${error.message}`);
-      throw error;
-    }
+    await this.syncFull();
   }
 
-  private async fetchAllVoucherCampaigns(): Promise<VoucherCampaignData[]> {
-    try {
-      // Sử dụng getRequestHeaders thay vì getAuthHeaders
-      const headers = await this.authService.getRequestHeaders();
-      const url = `${this.baseUrl}/vouchercampaign`;
-
-      this.logger.log(`🌐 Fetching voucher campaigns from: ${url}`);
-
-      const response = await firstValueFrom(
-        this.httpService.get(url, {
-          headers,
-          timeout: 30000,
-        }),
-      );
-
-      const campaigns = response.data?.data || [];
-
-      this.logger.log(`✅ Fetched ${campaigns.length} voucher campaigns`);
-
-      return campaigns;
-    } catch (error) {
-      this.logger.error(
-        `❌ Failed to fetch voucher campaigns: ${error.message}`,
-      );
-      if (error.response) {
-        this.logger.error(
-          `Response status: ${error.response.status}, data: ${JSON.stringify(error.response.data)}`,
-        );
-      }
-      throw error;
+  private async runSync(mode: 'full' | 'incremental') {
+    if (await this.syncControl.isRunning(SYNC_NAME)) {
+      this.logger.warn(`VoucherCampaign sync already running, skipping`);
+      return { total: 0, processed: 0 };
     }
-  }
-
-  private async upsertVoucherCampaign(
-    campaignData: VoucherCampaignData,
-  ): Promise<void> {
+    await this.syncControl.markRunning(SYNC_NAME, mode, ['voucher_campaign']);
     try {
-      const kiotVietId = campaignData.id;
-
-      // Chỉ các field có trong schema
-      const campaignPayload = {
-        kiotVietId,
-        code: campaignData.code,
-        name: campaignData.name,
-        isActive: campaignData.isActive,
-        startDate: new Date(campaignData.startDate),
-        endDate: new Date(campaignData.endDate),
-        prereqPrice: campaignData.prereqPrice
-          ? new Prisma.Decimal(campaignData.prereqPrice)
-          : null,
-        quantity: campaignData.quantity,
-        price: new Prisma.Decimal(campaignData.price),
-        isGlobal: campaignData.isGlobal,
-        forAllCusGroup: campaignData.forAllCusGroup,
-        forAllUser: campaignData.forAllUser,
-        lastSyncedAt: new Date(),
-      };
-
-      // Upsert campaign
-      const savedCampaign = await this.prismaService.voucherCampaign.upsert({
-        where: { kiotVietId },
-        update: campaignPayload,
-        create: campaignPayload,
+      const resp = await this.pageFetcher.fetchPage<any>('/vouchercampaign', {
+        currentItem: 0,
+        pageSize: 100,
       });
-
+      const data = resp.data || [];
+      const now = new Date();
+      const rows = data.map((c: any) => ({
+        kiotVietId: c.id,
+        code: c.code,
+        name: c.name,
+        isActive: c.isActive ?? true,
+        startDate: c.startDate ? new Date(c.startDate) : now,
+        endDate: c.endDate ? new Date(c.endDate) : now,
+        prereqPrice: c.prereqPrice ?? null,
+        quantity: c.quantity ?? 0,
+        price: c.price ?? 0,
+        isGlobal: c.isGlobal ?? false,
+        forAllCusGroup: c.forAllCusGroup ?? false,
+        forAllUser: c.forAllUser ?? false,
+        lastSyncedAt: now,
+      }));
+      const affected = await this.bulkUpsert.bulkUpsert({
+        table: '"VoucherCampaign"',
+        columns: COLUMNS,
+        rows,
+        conflictTarget: '"kiotVietId"',
+        updateColumns: UPDATE_COLUMNS,
+      });
+      await this.syncControl.markCompleted(
+        SYNC_NAME,
+        { processedCount: rows.length, expectedTotal: rows.length, affected },
+        resp.timestamp,
+      );
       this.logger.log(
-        `✅ Upserted voucher campaign: ${savedCampaign.code} (${savedCampaign.name})`,
+        `voucher-campaign-${mode} completed: ${rows.length} (affected ${affected})`,
       );
+      return { total: rows.length, processed: rows.length, affected };
     } catch (error) {
-      this.logger.error(
-        `❌ Failed to upsert voucher campaign ${campaignData.code}: ${error.message}`,
-      );
+      this.logger.error(`voucher-campaign-${mode} failed: ${error.message}`);
+      await this.syncControl.markFailed(SYNC_NAME, error.message);
       throw error;
     }
   }

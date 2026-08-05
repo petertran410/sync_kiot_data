@@ -1,653 +1,193 @@
-import { LarkCustomerHistoricalSyncService } from './../services/lark/customer-historical/lark-customer-historical-sync.service';
-import { LarkPurchaseOrderSyncService } from './../services/lark/purchase-order/lark-purchase-order-sync.service';
-import { Controller, Get, Post, Query, Logger, Body } from '@nestjs/common';
-import { KiotVietCustomerService } from '../services/kiot-viet/customer/customer.service';
-import { KiotVietInvoiceService } from '../services/kiot-viet/invoice/invoice.service';
-import { LarkInvoiceHistoricalSyncService } from '../services/lark/invoice-historical/lark-invoice-historical-sync.service';
-import { KiotVietOrderService } from '../services/kiot-viet/order/order.service';
-import { LarkOrderSyncService } from './../services/lark/order/lark-order-sync.service';
-import { KiotVietProductService } from '../services/kiot-viet/product/product.service';
-import { KiotVietCategoryService } from '../services/kiot-viet/category/category.service';
-import { KiotVietReturnService } from '../services/kiot-viet/returns/return.service';
-import { PrismaService } from '../prisma/prisma.service';
-import { KiotVietOrderSupplierService } from '../services/kiot-viet/order-supplier/order-supplier.service';
-import { LarkOrderSupplierSyncService } from '../services/lark/order-supplier/lark-order-supplier-sync.service';
-import { KiotVietPurchaseOrderService } from '../services/kiot-viet/purchase-order/purchase-order.service';
-import { KiotVietCashflowService } from '../services/kiot-viet/cashflow/cashflow.service';
-import { KiotVietTransferService } from '../services/kiot-viet/transfer/transfer.service';
-import { LarkDemandSyncService } from '../services/lark/demand/lark-demand-sync.service';
-import { LarkInvoiceDetailSyncService } from '../services/lark/invoice-detail/lark-invoice-detail-sync.service';
-import { KiotVietVoucherCampaign } from '../services/kiot-viet/voucher-campaign/voucher-campaign.service';
-import { KiotVietPriceBookService } from '../services/kiot-viet/pricebook/pricebook.service';
-import { LarkTransferSyncService } from '../services/lark/transfer/lark-transfer-sync.service';
-import { KiotVietUserService } from '../services/kiot-viet/user/user.service';
-import { KiotVietSupplierService } from '../services/kiot-viet/supplier/supplier.service';
-import { LarkSupplierSyncService } from '../services/lark/supplier/lark-supplier-sync.service';
-import { HttpService } from '@nestjs/axios';
-import { Prisma } from '@prisma/client';
-import { firstValueFrom } from 'rxjs';
+import {
+  Controller,
+  Get,
+  Post,
+  Param,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
+import { SyncOrchestratorService } from '../services/sync/sync-orchestrator.service';
+import { SyncControlHelper } from '../services/kiot-viet/shared/sync-control.helper';
+import { ReconciliationService } from '../services/sync/reconciliation.service';
+import { LarkCustomerSyncService } from '../services/lark/customer/lark-customer-sync.service';
 
+/**
+ * Manual sync API. All sync triggers are async — they return immediately with a jobId
+ * and run in the background. Poll status via GET /sync/status.
+ *
+ * Endpoints:
+ *   POST /sync/full              — sync all entities (full, no date filter)
+ *   POST /sync/incremental       — sync all entities (only changes since last success)
+ *   POST /sync/:entity/full      — sync a single entity (full)
+ *   POST /sync/:entity/incremental — sync a single entity (incremental)
+ *   GET  /sync/status            — status of all entity syncs + the aggregate job
+ *   GET  /sync/status/:entity    — status of a single entity
+ *   GET  /sync/entities          — list of syncable entity keys
+ */
 @Controller('sync')
 export class SyncController {
   private readonly logger = new Logger(SyncController.name);
 
   constructor(
-    private readonly customerService: KiotVietCustomerService,
-
-    private readonly larkCustomerSyncService: LarkCustomerHistoricalSyncService,
-
-    private readonly invoiceService: KiotVietInvoiceService,
-
-    private readonly larkInvoiceSyncService: LarkInvoiceHistoricalSyncService,
-
-    private readonly larkInvoiceDetailSyncService: LarkInvoiceDetailSyncService,
-
-    private readonly orderService: KiotVietOrderService,
-    private readonly larkOrderSyncService: LarkOrderSyncService,
-    private readonly productService: KiotVietProductService,
-    private readonly categoryService: KiotVietCategoryService,
-    private readonly returnService: KiotVietReturnService,
-    private readonly prismaService: PrismaService,
-    private readonly orderSupplierService: KiotVietOrderSupplierService,
-    private readonly larkOrderSupplierService: LarkOrderSupplierSyncService,
-    private readonly purchaseOrderService: KiotVietPurchaseOrderService,
-    private readonly larkPurchaseOrderSyncService: LarkPurchaseOrderSyncService,
-    private readonly cashflowService: KiotVietCashflowService,
-    private readonly transferService: KiotVietTransferService,
-    private readonly larkTransferSyncService: LarkTransferSyncService,
-    private readonly larkDemandSyncService: LarkDemandSyncService,
-    private readonly voucherCampaignService: KiotVietVoucherCampaign,
-    private readonly priceBookService: KiotVietPriceBookService,
-    private readonly userService: KiotVietUserService,
-    private readonly supplierService: KiotVietSupplierService,
-    private readonly larkSupplierSyncService: LarkSupplierSyncService,
-    private readonly httpService: HttpService,
+    private readonly orchestrator: SyncOrchestratorService,
+     private readonly syncControl: SyncControlHelper,
+     private readonly reconciliation: ReconciliationService,
+     private readonly larkCustomerSync: LarkCustomerSyncService,
   ) {}
 
-  @Post('customer/historical')
-  async triggerHistoricalCustomer() {
-    try {
-      this.logger.log('Manual historical customer sync triggered');
+   @Post('customer/lark')
+   async syncCustomerLark() {
+     const result = await this.larkCustomerSync.syncPending(100);
+     return { success: true, ...result, timestamp: new Date().toISOString() };
+   }
 
-      await this.customerService.enableHistoricalSync();
-      await this.customerService.syncHistoricalCustomers();
+   @Post('customer/lark/drain')
+   async drainCustomerLark() {
+     const result = await this.larkCustomerSync.drainPending();
+     return { success: true, ...result, timestamp: new Date().toISOString() };
+   }
 
-      // const customersToSync = await this.prismaService.customer.findMany({
-      //   where: {
-      //     OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
-      //   },
-      //   take: 1000,
-      // });
+   @Get('customer/lark/status')
+   async getCustomerLarkStatus() {
+     const stats = await this.larkCustomerSync.getStats();
+     return { success: true, ...stats, timestamp: new Date().toISOString() };
+   }
 
-      // await this.larkCustomerSyncService.syncCustomersToLarkBase(
-      //   customersToSync,
-      // );
-
-      // this.logger.log(`Synced ${customersToSync.length} customers to LarkBase`);
-
-      return {
-        success: true,
-        message: 'Historical customer sync enabled and started',
-        timestamp: new Date().toISOString(),
-      };
-    } catch (error) {
-      this.logger.error(`Manual historical sync failed: ${error.message}`);
-      return {
-        success: false,
-        error: error.message,
-        timestamp: new Date().toISOString(),
-      };
-    }
+   @Post('full')
+  triggerFullSync() {
+    const res = this.orchestrator.startFullSync();
+    this.logger.log(`Full sync triggered: ${res.jobId}`);
+    return { success: true, ...res, timestamp: new Date().toISOString() };
   }
 
-  @Post('invoice/historical')
-  async triggerHistoricalInvoice() {
-    try {
-      this.logger.log('Manual historical invoice sync triggered');
-
-      await this.invoiceService.enableHistoricalSync();
-      await this.invoiceService.syncHistoricalInvoices();
-
-      // const invoicesToSync = await this.prismaService.invoice.findMany({
-      //   where: {
-      //     OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
-      //   },
-      // });
-
-      // await this.larkInvoiceSyncService.syncInvoicesToLarkBase(invoicesToSync);
-
-      // await this.larkInvoiceDetailSyncService.syncInvoiceDetailsToLarkBase();
-
-      // this.logger.log(`Synced ${invoicesToSync.length} invoices to LarkBase`);
-
-      return {
-        success: true,
-        message: 'Historical invoice sync enabled and started',
-        timestamp: new Date().toISOString(),
-      };
-    } catch (error) {
-      this.logger.error(
-        `Manual historical invoice sync failed: ${error.message}`,
-      );
-      return {
-        success: false,
-        error: error.message,
-        timestamp: new Date().toISOString(),
-      };
-    }
+  @Post('incremental')
+  triggerIncrementalSync() {
+    const res = this.orchestrator.startIncrementalSync();
+    this.logger.log(`Incremental sync triggered: ${res.jobId}`);
+    return { success: true, ...res, timestamp: new Date().toISOString() };
   }
 
-  @Post('order/historical')
-  async triggerHistoricalOrder() {
-    try {
-      this.logger.log('Manual historical order sync triggered');
-
-      await this.orderService.enableHistoricalSync();
-
-      await this.orderService.syncHistoricalOrders();
-
-      // await this.larkOrderSyncService.syncPendingAndFailed();
-
-      return {
-        success: true,
-        message: 'Historical order sync enabled and started',
-        timestamp: new Date().toISOString(),
-      };
-    } catch (error) {
-      this.logger.error(
-        `Manual historical order sync failed: ${error.message}`,
-      );
-      return {
-        success: false,
-        error: error.message,
-        timestamp: new Date().toISOString(),
-      };
-    }
+  /**
+   * Reset sync status flags without deleting any synced data.
+   * Clears stuck `isRunning`/`error` (e.g. after a crash) so new syncs can start.
+   * POST /sync/reset            — reset all sync rows
+   * POST /sync/reset/:name      — reset a single row by its SyncControl name
+   *                               (e.g. product_historical, full_sync)
+   */
+  @Post('reset')
+  async resetAll() {
+    const count = await this.syncControl.reset();
+    this.logger.log(`Reset ${count} sync status row(s)`);
+    return { success: true, reset: count, timestamp: new Date().toISOString() };
   }
 
-  @Post('transfers')
-  async syncTransfers() {
-    try {
-      this.logger.log('Starting transfer sync...');
-
-      await this.transferService.enableHistoricalSync();
-      await this.transferService.syncHistoricalTransfers();
-
-      // const transfersToSync = await this.prismaService.transfer.findMany({
-      //   where: {
-      //     OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
-      //   },
-      // });
-
-      // await this.larkTransferSyncService.syncTransferToLarkBase(
-      //   transfersToSync,
-      // );
-
-      // await this.larkTransferSyncService.syncTransferDetailsToLarkBase();
-
-      return {
-        success: true,
-        message: 'Transfers and Transfers Detail sync completed',
-        timestamp: new Date().toISOString(),
-      };
-    } catch (error) {
-      this.logger.error(`Transfers sync failed: ${error.message}`);
-      return {
-        success: false,
-        error: error.message,
-        timestamp: new Date().toISOString(),
-      };
-    }
+  @Post('reset/:name')
+  async resetOne(@Param('name') name: string) {
+    const count = await this.syncControl.reset(name);
+    this.logger.log(`Reset sync status for '${name}': ${count} row(s)`);
+    return {
+      success: true,
+      name,
+      reset: count,
+      timestamp: new Date().toISOString(),
+    };
   }
 
-  @Post('categories')
-  async syncCategories() {
-    try {
-      this.logger.log('🗂️ Starting category sync...');
-
-      await this.categoryService.enableHistoricalSync();
-
-      await this.categoryService.syncHistoricalCategories();
-
-      return {
-        success: true,
-        message: 'Category sync completed successfully',
-        timestamp: new Date().toISOString(),
-      };
-    } catch (error) {
-      this.logger.error(`❌ Category sync failed: ${error.message}`);
-      return {
-        success: false,
-        error: error.message,
-        timestamp: new Date().toISOString(),
-      };
-    }
+  @Post(':entity/full')
+  async triggerEntityFull(@Param('entity') entity: string) {
+    return this.runEntity(entity, 'full');
   }
 
-  @Post('cashflows-historical')
-  async syncCashflowsHistorical() {
-    try {
-      this.logger.log('Starting cashflow sync...');
-
-      await this.cashflowService.enableHistoricalSync();
-
-      await this.cashflowService.syncHistoricalCashflows();
-
-      return {
-        success: true,
-        message: 'Cashflow sync completed successfully',
-        timestamp: new Date().toISOString,
-      };
-    } catch (error) {
-      this.logger.error(`❌ Cashflow sync failed: ${error.message}`);
-      return {
-        success: false,
-        error: error.message,
-        timestamp: new Date().toISOString(),
-      };
-    }
+  @Post(':entity/incremental')
+  async triggerEntityIncremental(@Param('entity') entity: string) {
+    return this.runEntity(entity, 'incremental');
   }
 
-  @Post('products')
-  async syncProducts() {
-    try {
-      this.logger.log('Starting product sync...');
-
-      await this.productService.enableHistoricalSync();
-
-      await this.productService.syncHistoricalProducts();
-
-      return {
-        success: true,
-        message: 'Product sync completed successfully',
-        timestamp: new Date().toISOString,
-      };
-    } catch (error) {
-      this.logger.error(`❌ Product sync failed: ${error.message}`);
-      return {
-        success: false,
-        error: error.message,
-        timestamp: new Date().toISOString(),
-      };
-    }
+  @Get('status')
+  async getStatus() {
+    const rows = await this.syncControl.getAll();
+    return { success: true, syncs: rows, timestamp: new Date().toISOString() };
   }
 
-  @Post('pricebook')
-  async syncPriceBooks() {
-    try {
-      this.logger.log('Starting pricebook sync...');
-
-      await this.priceBookService.enableHistoricalSync();
-      await this.priceBookService.syncHistoricalPriceBooks();
-
-      return {
-        success: true,
-        message: 'Pricebook sync completed successfully',
-        timestamp: new Date().toISOString(),
-      };
-    } catch (error) {
-      this.logger.error(`❌ Pricebook sync failed: ${error.message}`);
-      return {
-        success: false,
-        error: error.message,
-        timestamp: new Date().toISOString(),
-      };
-    }
+  @Get('status/:entity')
+  async getEntityStatus(@Param('entity') entity: string) {
+    const map: Record<string, string> = {
+      branch: 'branch_historical',
+      user: 'user_historical',
+      'sale-channel': 'salechannel_historical',
+      surcharge: 'surcharge_historical',
+      'bank-account': 'bankaccount_historical',
+      trademark: 'trademark_historical',
+      'customer-group': 'customer_group_historical',
+      supplier: 'supplier_historical',
+      'voucher-campaign': 'voucher_campaign_historical',
+      category: 'category_historical',
+      customer: 'customer_historical',
+      pricebook: 'pricebook_historical',
+      product: 'product_historical',
+      'product-onhand': 'product_onhand_historical',
+      order: 'order_historical',
+      'order-supplier': 'order_supplier_historical',
+      'purchase-order': 'purchase_order_historical',
+      transfer: 'transfer_historical',
+      cashflow: 'cashflow_historical',
+      invoice: 'invoice_historical',
+      return: 'return_historical',
+      location: 'location_historical',
+      settings: 'settings_historical',
+      voucher: 'voucher_historical',
+      full_sync: 'full_sync',
+      incremental_sync: 'incremental_sync',
+    };
+    const name = map[entity];
+    if (!name) throw new NotFoundException(`Unknown entity: ${entity}`);
+    const row = await this.syncControl.getOne(name);
+    return {
+      success: true,
+      entity,
+      sync: row,
+      timestamp: new Date().toISOString(),
+    };
   }
 
-  @Post('suppliers')
-  async syncSuppliers() {
-    try {
-      this.logger.log('Starting supplier sync...');
-
-      await this.supplierService.enableHistoricalSync();
-      await this.supplierService.syncHistoricalSuppliers();
-
-      return {
-        success: true,
-        message: 'Supplier sync completed successfully',
-        timestamp: new Date().toISOString,
-      };
-    } catch (error) {
-      this.logger.error(`❌ Supplier sync failed: ${error.message}`);
-      return {
-        success: false,
-        error: error.message,
-        timestamp: new Date().toISOString(),
-      };
-    }
+  /**
+   * Compare row counts in the database against the totals KiotViet reports.
+   * Read-only. Use this to confirm a sync actually landed the data, rather than
+   * trusting the "processed" number a sync run prints.
+   */
+  @Get('reconcile')
+  async reconcile() {
+    const report = await this.reconciliation.run();
+    return { success: report.summary.healthy, ...report };
   }
 
-  @Post('order-supplier')
-  async syncOrderSuppliers() {
-    try {
-      this.logger.log('Starting order-supplier sync...');
-
-      await this.orderSupplierService.enableHistoricalSync();
-      await this.orderSupplierService.syncHistoricalOrderSuppliers();
-
-      // const orderSuppliersToSync =
-      //   await this.prismaService.orderSupplier.findMany({
-      //     where: {
-      //       OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
-      //     },
-      //   });
-
-      // await this.larkOrderSupplierService.syncOrderSuppliersToLarkBase(
-      //   orderSuppliersToSync,
-      // );
-
-      // await this.larkOrderSupplierService.syncOrderSupplierDetailsToLarkBase();
-
-      return {
-        success: true,
-        message: 'Order supplier and detail sync completed',
-        timestamp: new Date().toISOString(),
-      };
-    } catch (error) {
-      this.logger.error(`Order supplier sync failed: ${error.message}`);
-      return {
-        success: false,
-        error: error.message,
-        timestamp: new Date().toISOString(),
-      };
-    }
+  @Get('entities')
+  getEntities() {
+    return {
+      success: true,
+      entities: this.orchestrator.getEntityKeys(),
+      timestamp: new Date().toISOString(),
+    };
   }
 
-  @Post('purchase-order')
-  async syncPurchaseOrders() {
+  private async runEntity(entity: string, mode: 'full' | 'incremental') {
     try {
-      this.logger.log('Starting purchase-order sync...');
-
-      await this.purchaseOrderService.enableHistoricalSync();
-      await this.purchaseOrderService.syncHistoricalPurchaseOrder();
-
-      // const purchaseOrdersToSync =
-      //   await this.prismaService.purchaseOrder.findMany({
-      //     where: {
-      //       OR: [{ larkSyncStatus: 'PENDING' }, { larkSyncStatus: 'FAILED' }],
-      //     },
-      //   });
-
-      // await this.larkPurchaseOrderSyncService.syncPurchaseOrdersToLarkBase(
-      //   purchaseOrdersToSync,
-      // );
-
-      // await this.larkPurchaseOrderSyncService.syncPurchaseOrderDetailsToLarkBase();
-
+      this.logger.log(`Manual ${mode} sync triggered for entity: ${entity}`);
+      const result = await this.orchestrator.syncSingle(entity, mode);
       return {
         success: true,
-        message: 'Purchase Order and Purchase Order Detail sync completed',
+        entity,
+        mode,
+        result,
         timestamp: new Date().toISOString(),
       };
     } catch (error) {
-      this.logger.error(`Purchase Order sync failed: ${error.message}`);
+      if (error instanceof NotFoundException) throw error;
+      this.logger.error(`${mode} sync for ${entity} failed: ${error.message}`);
       return {
         success: false,
-        error: error.message,
-        timestamp: new Date().toISOString(),
-      };
-    }
-  }
-
-  @Post('return-historical')
-  async syncReturnsHistorical() {
-    try {
-      this.logger.log('Starting return sync...');
-
-      await this.returnService.enableHistoricalSync();
-
-      await this.returnService.syncHistoricalReturns();
-
-      return {
-        success: true,
-        message: 'Returns sync completed successfully',
-        timestamp: new Date().toISOString,
-      };
-    } catch (error) {
-      this.logger.error(`❌ Return Historical sync failed: ${error.message}`);
-      return {
-        success: false,
-        error: error.message,
-        timestamp: new Date().toISOString(),
-      };
-    }
-  }
-
-  @Get('demand/from-lark')
-  async syncDemandFromLark() {
-    try {
-      this.logger.log('Starting demand sync from LarkBase...');
-      const result = await this.larkDemandSyncService.syncDemandsFromLarkBase();
-      return {
-        success: true,
-        message: 'Demand sync from LarkBase completed',
-        data: result,
-      };
-    } catch (error) {
-      this.logger.error(`❌ Demand sync failed: ${error.message}`);
-      throw error;
-    }
-  }
-
-  @Post('voucher-campaign')
-  async syncVoucherCampaigns() {
-    try {
-      this.logger.log('🎫 Starting voucher campaign sync...');
-
-      await this.voucherCampaignService.syncAllVoucherCampaigns();
-
-      return {
-        success: true,
-        message: 'Voucher campaign sync completed successfully',
-        timestamp: new Date().toISOString(),
-      };
-    } catch (error) {
-      this.logger.error(`❌ Voucher campaign sync failed: ${error.message}`);
-      return {
-        success: false,
-        error: error.message,
-        timestamp: new Date().toISOString(),
-      };
-    }
-  }
-
-  @Post('user')
-  async syncUser() {
-    try {
-      this.logger.log('Starting user sync...');
-
-      await this.userService.syncHistoricalUsers();
-
-      return {
-        success: true,
-        message: 'User sync completed successfully',
-        timestamp: new Date().toISOString(),
-      };
-    } catch (error) {
-      this.logger.log(`User sync failed: ${error.message}`);
-      return {
-        success: false,
-        error: error.message,
-        timestampt: new Date().toISOString(),
-      };
-    }
-  }
-
-  @Post('calc-revenue-product-m5')
-  async calcRevenueProductM5(
-    @Body() body: { productCodes: string[]; month: number; year: number },
-  ) {
-    try {
-      const { productCodes, month, year } = body;
-
-      if (!productCodes || productCodes.length === 0) {
-        return {
-          success: false,
-          error: 'productCodes is required and cannot be empty',
-          timestamp: new Date().toISOString(),
-        };
-      }
-
-      if (!month || !year || month < 1 || month > 12) {
-        return {
-          success: false,
-          error: 'month (1-12) and year are required',
-          timestamp: new Date().toISOString(),
-        };
-      }
-
-      const startDate = new Date(year, month - 1, 1);
-      const endDate = new Date(year, month, 1);
-
-      this.logger.log(
-        `Starting calc revenue product for ${month}/${year}, ${productCodes.length} products...`,
-      );
-
-      const revenueData: Array<{
-        productCode: string;
-        productName: string;
-        totalRevenue: string;
-        totalQuantity: number;
-      }> = await this.prismaService.$queryRaw`
-        SELECT
-          id2."productCode" AS "productCode",
-          id2."productName" AS "productName",
-          SUM(id2."subTotal")::TEXT AS "totalRevenue",
-          SUM(id2."quantity")::INT AS "totalQuantity"
-        FROM "InvoiceDetail" id2
-        INNER JOIN "Invoice" i ON i.id = id2."invoiceId"
-        WHERE i."purchaseDate" >= ${startDate}
-          AND i."purchaseDate" < ${endDate}
-          AND id2."productCode" IN (${Prisma.join(productCodes)})
-        GROUP BY id2."productCode", id2."productName"
-        ORDER BY SUM(id2."subTotal") DESC
-      `;
-
-      this.logger.log(`Found ${revenueData.length} products with revenue data`);
-
-      const period = `${year}-${String(month).padStart(2, '0')}`;
-
-      const payload = {
-        period,
-        calculatedAt: new Date().toISOString(),
-        totalProducts: revenueData.length,
-        data: revenueData,
-      };
-
-      const response = await firstValueFrom(
-        this.httpService.post(
-          'https://n8n.hisweetievietnam.com/webhook/calc-revenue-product-m5',
-          revenueData,
-          {
-            headers: { 'Content-Type': 'application/json' },
-            timeout: 30000,
-          },
-        ),
-      );
-
-      this.logger.log(`Pushed revenue data to n8n, status: ${response.status}`);
-
-      return {
-        success: true,
-        message: `Calculated revenue for ${revenueData.length} products (${period}) and pushed to n8n`,
-        timestamp: new Date().toISOString(),
-        data: revenueData,
-      };
-    } catch (error) {
-      this.logger.error(`Calc revenue product failed: ${error.message}`);
-      return {
-        success: false,
-        error: error.message,
-        timestamp: new Date().toISOString(),
-      };
-    }
-  }
-
-  @Post('calc-revenue-product-m6')
-  async calcRevenueProductM6(
-    @Body() body: { productCodes: string[]; month: number; year: number },
-  ) {
-    try {
-      const { productCodes, month, year } = body;
-
-      if (!productCodes || productCodes.length === 0) {
-        return {
-          success: false,
-          error: 'productCodes is required and cannot be empty',
-          timestamp: new Date().toISOString(),
-        };
-      }
-
-      if (!month || !year || month < 1 || month > 12) {
-        return {
-          success: false,
-          error: 'month (1-12) and year are required',
-          timestamp: new Date().toISOString(),
-        };
-      }
-
-      const startDate = new Date(year, month - 1, 1);
-      const endDate = new Date(year, month, 1);
-
-      this.logger.log(
-        `Starting calc revenue product for ${month}/${year}, ${productCodes.length} products...`,
-      );
-
-      const revenueData: Array<{
-        productCode: string;
-        productName: string;
-        totalRevenue: string;
-        totalQuantity: number;
-      }> = await this.prismaService.$queryRaw`
-        SELECT
-          id2."productCode" AS "productCode",
-          id2."productName" AS "productName",
-          SUM(id2."subTotal")::TEXT AS "totalRevenue",
-          SUM(id2."quantity")::INT AS "totalQuantity"
-        FROM "InvoiceDetail" id2
-        INNER JOIN "Invoice" i ON i.id = id2."invoiceId"
-        WHERE i."purchaseDate" >= ${startDate}
-          AND i."purchaseDate" < ${endDate}
-          AND id2."productCode" IN (${Prisma.join(productCodes)})
-        GROUP BY id2."productCode", id2."productName"
-        ORDER BY SUM(id2."subTotal") DESC
-      `;
-
-      this.logger.log(`Found ${revenueData.length} products with revenue data`);
-
-      const period = `${year}-${String(month).padStart(2, '0')}`;
-
-      const payload = {
-        period,
-        calculatedAt: new Date().toISOString(),
-        totalProducts: revenueData.length,
-        data: revenueData,
-      };
-
-      const response = await firstValueFrom(
-        this.httpService.post(
-          'https://n8n.hisweetievietnam.com/webhook/calc-revenue-product-m6',
-          revenueData,
-          {
-            headers: { 'Content-Type': 'application/json' },
-            timeout: 30000,
-          },
-        ),
-      );
-
-      this.logger.log(`Pushed revenue data to n8n, status: ${response.status}`);
-
-      return {
-        success: true,
-        message: `Calculated revenue for ${revenueData.length} products (${period}) and pushed to n8n`,
-        timestamp: new Date().toISOString(),
-        data: revenueData,
-      };
-    } catch (error) {
-      this.logger.error(`Calc revenue product failed: ${error.message}`);
-      return {
-        success: false,
+        entity,
+        mode,
         error: error.message,
         timestamp: new Date().toISOString(),
       };

@@ -1,170 +1,125 @@
-// src/services/kiot-viet/surcharge/surcharge.service.ts
 import { Injectable, Logger } from '@nestjs/common';
-import { PrismaService } from '../../../prisma/prisma.service';
-import { ConfigService } from '@nestjs/config';
-import { HttpService } from '@nestjs/axios';
-import { KiotVietAuthService } from '../auth.service';
+import { KiotPageFetcher } from '../shared/kiot-page-fetcher';
+import { BulkUpsertHelper, ColumnSpec } from '../shared/bulk-upsert.helper';
+import { SyncControlHelper } from '../shared/sync-control.helper';
+
+const SYNC_NAME = 'surcharge_historical';
+
+const COLUMNS: ColumnSpec[] = [
+  { name: 'kiotVietId', type: 'int' },
+  { name: 'code', type: 'text' },
+  { name: 'name', type: 'text' },
+  { name: 'valueRatio', type: 'numeric' },
+  { name: 'value', type: 'numeric' },
+  { name: 'retailerId', type: 'int' },
+  { name: 'isActive', type: 'boolean' },
+  { name: 'createdDate', type: 'timestamp' },
+  { name: 'modifiedDate', type: 'timestamp' },
+];
+
+const UPDATE_COLUMNS = [
+  'code',
+  'name',
+  'valueRatio',
+  'value',
+  'retailerId',
+  'isActive',
+  'modifiedDate',
+];
 
 @Injectable()
 export class KiotVietSurchargeService {
   private readonly logger = new Logger(KiotVietSurchargeService.name);
 
   constructor(
-    private readonly prismaService: PrismaService,
-    private readonly configService: ConfigService,
-    private readonly httpService: HttpService,
-    private readonly authService: KiotVietAuthService,
+    private readonly pageFetcher: KiotPageFetcher,
+    private readonly bulkUpsert: BulkUpsertHelper,
+    private readonly syncControl: SyncControlHelper,
   ) {}
 
+  async syncFull() {
+    return this.runSync('full');
+  }
+
+  async syncIncremental() {
+    return this.runSync('incremental');
+  }
+
   async syncSurcharges(): Promise<void> {
+    await this.syncFull();
+  }
+
+  private async runSync(mode: 'full' | 'incremental') {
+    if (await this.syncControl.isRunning(SYNC_NAME)) {
+      this.logger.warn(`Surcharge sync already running, skipping`);
+      return { total: 0, processed: 0 };
+    }
+    await this.syncControl.markRunning(SYNC_NAME, mode, ['surcharge']);
     try {
-      await this.prismaService.syncControl.upsert({
-        where: { name: 'surcharge_historical' },
-        create: {
-          name: 'surcharge_historical',
-          entities: ['surcharge'],
-          syncMode: 'historical',
-          isRunning: true,
-          status: 'in_progress',
-          startedAt: new Date(),
-        },
-        update: {
-          isRunning: true,
-          status: 'in_progress',
-          startedAt: new Date(),
-          error: null,
-        },
+      // `/surchages` — the misspelling is KiotViet's own and is the real path
+      // (doc 2.10, "Cập nhật lại URL: https://public.kiotapi.com/surchages").
+      // `/surcharges` returns 404.
+      const resp = await this.pageFetcher.fetchPage<any>('/surchages', {
+        currentItem: 0,
+        pageSize: 100,
       });
-
-      const response = await this.fetchSurcharges();
-      let totalProcessed = 0;
-
-      if (response.data && response.data.length > 0) {
-        const { created, updated } = await this.saveSurchargesToDatabase(
-          response.data,
-        );
-        totalProcessed = created + updated;
-      }
-
-      await this.prismaService.syncControl.update({
-        where: { name: 'surcharge_historical' },
-        data: {
-          isRunning: false,
-          status: 'completed',
-          completedAt: new Date(),
-          progress: { totalProcessed },
-        },
+      const data = resp.data || [];
+      const rows = data.map((s: any) => ({
+        kiotVietId: s.id,
+        code: s.code || null,
+        name: s.name,
+        valueRatio: s.valueRatio ?? null,
+        value: s.value != null ? parseFloat(s.value) : null,
+        retailerId: s.retailerId ?? null,
+        isActive: s.isActive !== undefined ? s.isActive : true,
+        createdDate: s.createdDate ? new Date(s.createdDate) : new Date(),
+        modifiedDate: s.modifiedDate ? new Date(s.modifiedDate) : new Date(),
+      }));
+      const affected = await this.bulkUpsert.bulkUpsert({
+        table: '"Surcharge"',
+        columns: COLUMNS,
+        rows,
+        conflictTarget: '"kiotVietId"',
+        updateColumns: UPDATE_COLUMNS,
       });
-
-      this.logger.log(
-        `Surcharge sync completed: ${totalProcessed} surcharges processed`,
+      await this.syncControl.markCompleted(
+        SYNC_NAME,
+        { processedCount: rows.length, expectedTotal: rows.length, affected },
+        resp.timestamp,
       );
+      this.logger.log(
+        `surcharge-${mode} completed: ${rows.length} (affected ${affected})`,
+      );
+      return { total: rows.length, processed: rows.length, affected };
     } catch (error) {
-      await this.prismaService.syncControl.update({
-        where: { name: 'surcharge_historical' },
-        data: {
-          isRunning: false,
-          status: 'failed',
-          completedAt: new Date(),
-          error: error.message,
-        },
-      });
-
-      this.logger.error(`Surcharge sync failed: ${error.message}`);
-      throw error;
-    }
-  }
-
-  private async fetchSurcharges(): Promise<any> {
-    try {
-      const accessToken = await this.authService.getAccessToken();
-      const baseUrl = this.configService.get<string>('KIOT_BASE_URL');
-
-      const url = `${baseUrl}/surcharges`;
-
-      const response = await this.httpService
-        .get(url, {
-          headers: {
-            Retailer: this.configService.get<string>('KIOT_SHOP_NAME'),
-            Authorization: `Bearer ${accessToken}`,
-          },
-        })
-        .toPromise();
-
-      return response?.data;
-    } catch (error) {
-      this.logger.error(`Failed to fetch surcharges: ${error.message}`);
-      throw error;
-    }
-  }
-
-  private async saveSurchargesToDatabase(
-    surcharges: any[],
-  ): Promise<{ created: number; updated: number }> {
-    let createdCount = 0;
-    let updatedCount = 0;
-
-    for (const surchargeData of surcharges) {
-      try {
-        const existingSurcharge = await this.prismaService.surcharge.findUnique(
-          {
-            where: { kiotVietId: surchargeData.id },
-          },
+      // KiotViet answers HTTP 420 with KvValidateSurchargeException ("Chưa bật thu
+      // khác trong thiết lập cửa hàng") when the surcharge feature is switched off
+      // for the shop. That is a store configuration state, not a failure: there is
+      // simply nothing to sync, and retrying can never succeed. Treat it as an
+      // empty, skipped run so it does not mark the whole sync job as failed.
+      if (this.isFeatureDisabled(error)) {
+        this.logger.warn(
+          `surcharge-${mode} skipped: the surcharge feature ("thu khác") is disabled ` +
+            `for this shop. Enable it in KiotViet store settings to sync surcharges.`,
         );
-
-        if (existingSurcharge) {
-          await this.prismaService.surcharge.update({
-            where: { id: existingSurcharge.id },
-            data: {
-              code: surchargeData.code || null,
-              name: surchargeData.name,
-              valueRatio: surchargeData.valueRatio || null,
-              value: surchargeData.value
-                ? parseFloat(surchargeData.value)
-                : null,
-              retailerId: surchargeData.retailerId || null,
-              isActive:
-                surchargeData.isActive !== undefined
-                  ? surchargeData.isActive
-                  : true,
-              modifiedDate: surchargeData.modifiedDate
-                ? new Date(surchargeData.modifiedDate)
-                : new Date(),
-            },
-          });
-          updatedCount++;
-        } else {
-          await this.prismaService.surcharge.create({
-            data: {
-              kiotVietId: surchargeData.id,
-              code: surchargeData.code || null,
-              name: surchargeData.name,
-              valueRatio: surchargeData.valueRatio || null,
-              value: surchargeData.value
-                ? parseFloat(surchargeData.value)
-                : null,
-              retailerId: surchargeData.retailerId || null,
-              isActive:
-                surchargeData.isActive !== undefined
-                  ? surchargeData.isActive
-                  : true,
-              createdDate: surchargeData.createdDate
-                ? new Date(surchargeData.createdDate)
-                : new Date(),
-              modifiedDate: surchargeData.modifiedDate
-                ? new Date(surchargeData.modifiedDate)
-                : new Date(),
-            },
-          });
-          createdCount++;
-        }
-      } catch (error) {
-        this.logger.error(
-          `Failed to save surcharge ${surchargeData.id}: ${error.message}`,
-        );
+        await this.syncControl.markCompleted(SYNC_NAME, {
+          processedCount: 0,
+          expectedTotal: 0,
+          skipped: 'feature_disabled',
+        });
+        return { total: 0, processed: 0, skipped: true };
       }
-    }
 
-    return { created: createdCount, updated: updatedCount };
+      this.logger.error(`surcharge-${mode} failed: ${error.message}`);
+      await this.syncControl.markFailed(SYNC_NAME, error.message);
+      throw error;
+    }
+  }
+
+  /** True when the shop has the surcharge feature turned off. */
+  private isFeatureDisabled(error: any): boolean {
+    const status = error?.response?.status;
+    const code = error?.response?.data?.responseStatus?.errorCode;
+    return status === 420 || code === 'KvValidateSurchargeException';
   }
 }

@@ -1,261 +1,321 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { HttpService } from '@nestjs/axios';
-import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { KiotVietAuthService } from '../auth.service';
-import { LarkProductSyncService } from '../../lark/product/lark-product-sync.service';
-import { async, firstValueFrom } from 'rxjs';
-import { Prisma } from '@prisma/client';
+import { KiotPageFetcher } from '../shared/kiot-page-fetcher';
+import { BulkUpsertHelper, ColumnSpec } from '../shared/bulk-upsert.helper';
+import { RelationMapHelper } from '../shared/relation-map.helper';
+import { SyncControlHelper } from '../shared/sync-control.helper';
+import { RemovedIdsHandler } from '../shared/removed-ids.handler';
 
-interface KiotVietProduct {
-  id: number;
-  code: string;
-  barCode?: string;
-  name: string;
-  fullName: string;
-  categoryId?: number;
-  categoryName?: string;
-  tradeMarkId?: number;
-  tradeMarkName?: string;
-  type?: number;
-  description?: string;
-  allowsSale?: boolean;
-  hasVariants?: boolean;
-  basePrice?: number;
-  unit?: string;
-  masterProductId?: number;
-  masterCode?: string;
-  masterUnitId?: number;
-  conversionValue?: number;
-  weight?: number;
-  isLotSerialControl?: boolean;
-  isBatchExpireControl?: boolean;
-  orderTemplate?: string;
-  minQuantity?: number;
-  maxQuantity?: number;
-  isRewardPoint?: boolean;
-  isActive?: boolean;
-  retailerId?: number;
-  modifiedDate?: string;
-  createdDate?: string;
+const SYNC_NAME = 'product_historical';
 
-  attributes?: Array<{
-    productId: number;
-    attributeName: string;
-    attributeValue: string;
-  }>;
+const PRODUCT_COLUMNS: ColumnSpec[] = [
+  { name: 'kiotVietId', type: 'bigint' },
+  { name: 'code', type: 'text' },
+  { name: 'barCode', type: 'text' },
+  { name: 'name', type: 'text' },
+  { name: 'fullName', type: 'text' },
+  { name: 'categoryId', type: 'int' },
+  { name: 'categoryName', type: 'text' },
+  { name: 'parent_name', type: 'varchar' },
+  { name: 'child_name', type: 'varchar' },
+  { name: 'branch_name', type: 'varchar' },
+  { name: 'tradeMarkId', type: 'int' },
+  { name: 'tradeMarkName', type: 'text' },
+  { name: 'type', type: 'int' },
+  { name: 'description', type: 'text' },
+  { name: 'allowsSale', type: 'boolean' },
+  { name: 'hasVariants', type: 'boolean' },
+  { name: 'basePrice', type: 'numeric' },
+  { name: 'unit', type: 'text' },
+  { name: 'masterProductId', type: 'bigint' },
+  { name: 'masterUnitId', type: 'bigint' },
+  { name: 'conversionValue', type: 'real' },
+  { name: 'weight', type: 'real' },
+  { name: 'isLotSerialControl', type: 'boolean' },
+  { name: 'isBatchExpireControl', type: 'boolean' },
+  { name: 'isManufactured', type: 'boolean' },
+  { name: 'orderTemplate', type: 'text' },
+  { name: 'minQuantity', type: 'int' },
+  { name: 'maxQuantity', type: 'int' },
+  { name: 'isRewardPoint', type: 'boolean' },
+  { name: 'isActive', type: 'boolean' },
+  { name: 'retailerId', type: 'int' },
+  { name: 'createdDate', type: 'timestamp' },
+  { name: 'modifiedDate', type: 'timestamp' },
+  { name: 'lastSyncedAt', type: 'timestamp' },
+];
 
-  units?: Array<{
-    id: number;
-    code: string;
-    name: string;
-    fullName: string;
-    unit: string;
-    conversionValue: number;
-    basePrice: number;
-  }>;
+const PRODUCT_UPDATE = [
+  'code',
+  'barCode',
+  'name',
+  'fullName',
+  'categoryId',
+  'categoryName',
+  'parent_name',
+  'child_name',
+  'branch_name',
+  'tradeMarkId',
+  'tradeMarkName',
+  'type',
+  'description',
+  'allowsSale',
+  'hasVariants',
+  'basePrice',
+  'unit',
+  'masterProductId',
+  'masterUnitId',
+  'conversionValue',
+  'weight',
+  'isLotSerialControl',
+  'isBatchExpireControl',
+  'isManufactured',
+  'orderTemplate',
+  'minQuantity',
+  'maxQuantity',
+  'isRewardPoint',
+  'isActive',
+  'retailerId',
+  'createdDate',
+  'modifiedDate',
+  'lastSyncedAt',
+];
 
-  inventories: Array<{
-    productId: number;
-    productCode?: string;
-    productName?: string;
-    branchId: number;
-    branchName?: string;
-    cost: number;
-    onHand: number;
-    reserved: number;
-    lineNumber: number;
-    actualReserved?: number;
-    minQuantity?: number;
-    maxQuantity?: number;
-    isActive?: boolean;
-    onOrder?: number;
-  }>;
+const INVENTORY_COLUMNS: ColumnSpec[] = [
+  { name: 'productId', type: 'int' },
+  { name: 'branchId', type: 'int' },
+  { name: 'onHand', type: 'int' },
+  { name: 'reserved', type: 'int' },
+  { name: 'onOrder', type: 'int' },
+  { name: 'cost', type: 'numeric' },
+  { name: 'minQuantity', type: 'int' },
+  { name: 'maxQuantity', type: 'int' },
+  { name: 'modifiedDate', type: 'timestamp' },
+  { name: 'lastSyncedAt', type: 'timestamp' },
+  { name: 'branchName', type: 'text' },
+  { name: 'productCode', type: 'text' },
+  { name: 'productName', type: 'text' },
+  { name: 'actualReserved', type: 'int' },
+  { name: 'isActive', type: 'boolean' },
+  { name: 'lineNumber', type: 'int' },
+];
 
-  priceBooks?: Array<{
-    productId: number;
-    productName: string;
-    priceBookId: number;
-    priceBookName: string;
-    price: number;
-    isActive?: boolean;
-    startDate?: string;
-    endDate?: string;
-  }>;
+const INVENTORY_UPDATE = [
+  'branchId',
+  'onHand',
+  'reserved',
+  'onOrder',
+  'cost',
+  'minQuantity',
+  'maxQuantity',
+  'modifiedDate',
+  'lastSyncedAt',
+  'branchName',
+  'productCode',
+  'productName',
+  'actualReserved',
+  'isActive',
+];
 
-  images?: Array<{
-    image: string;
-  }>;
+const PRICEBOOK_DETAIL_COLUMNS: ColumnSpec[] = [
+  { name: 'priceBookId', type: 'int' },
+  { name: 'productId', type: 'int' },
+  { name: 'productKiotId', type: 'bigint' },
+  { name: 'price', type: 'numeric' },
+  { name: 'lastSyncedAt', type: 'timestamp' },
+  { name: 'lineNumber', type: 'int' },
+  { name: 'priceBookName', type: 'text' },
+  { name: 'productName', type: 'text' },
+];
 
-  productSerials?: Array<{
-    productId: number;
-    serialNumber: string;
-    status: number;
-    branchId: number;
-    quantity?: number;
-    createdDate?: string;
-    modifiedDate?: string;
-  }>;
+const PRICEBOOK_DETAIL_UPDATE = [
+  'priceBookId',
+  'productKiotId',
+  'price',
+  'lastSyncedAt',
+  'priceBookName',
+  'productName',
+];
 
-  productBatchExpires?: Array<{
-    productId: number;
-    onHand: number;
-    batchName: string;
-    expireDate?: string;
-    fullNameVirgule: string;
-    branchId: number;
-  }>;
+const IMAGE_COLUMNS: ColumnSpec[] = [
+  { name: 'productId', type: 'int' },
+  { name: 'lineNumber', type: 'int' },
+  { name: 'lastSyncedAt', type: 'timestamp' },
+  { name: 'imageUrl', type: 'jsonb' },
+];
 
-  warranties?: Array<{
-    productId: number;
-    description?: string;
-    numberTime: number;
-    timeType: number;
-    warrantyType: number;
-    createdDate?: string;
-    modifiedDate?: string;
-  }>;
+const IMAGE_UPDATE = ['imageUrl', 'lastSyncedAt'];
 
-  productFormulas?: Array<{
-    materialId: number;
-    materialCode: string;
-    materialFullName: string;
-    materialName: string;
-    quantity: number;
-    basePrice: number;
-    productId?: number;
-  }>;
-}
+const FORMULA_COLUMNS: ColumnSpec[] = [
+  { name: 'productId', type: 'int' },
+  { name: 'productKiotVietId', type: 'bigint' },
+  { name: 'materialId', type: 'bigint' },
+  { name: 'materialCode', type: 'text' },
+  { name: 'materialName', type: 'text' },
+  { name: 'materialFullName', type: 'text' },
+  { name: 'quantity', type: 'real' },
+  { name: 'basePrice', type: 'numeric' },
+  { name: 'lineNumber', type: 'int' },
+  { name: 'lastSyncedAt', type: 'timestamp' },
+];
+
+const FORMULA_UPDATE = [
+  'productKiotVietId',
+  'materialId',
+  'materialCode',
+  'materialName',
+  'materialFullName',
+  'quantity',
+  'basePrice',
+  'lastSyncedAt',
+];
+
+// The four blocks below persist data the API was already being asked for
+// (includeSerials / includeBatchExpires / includeWarranties, plus the always-present
+// `units` array) but which previously had nowhere to go and was silently discarded.
+
+const UNIT_COLUMNS: ColumnSpec[] = [
+  { name: 'productId', type: 'int' },
+  { name: 'unitKiotVietId', type: 'bigint' },
+  { name: 'code', type: 'text' },
+  { name: 'name', type: 'text' },
+  { name: 'fullName', type: 'text' },
+  { name: 'unit', type: 'text' },
+  { name: 'conversionValue', type: 'real' },
+  { name: 'basePrice', type: 'numeric' },
+  { name: 'isCurrent', type: 'boolean' },
+  { name: 'lastSyncedAt', type: 'timestamp' },
+];
+
+const UNIT_UPDATE = [
+  'code',
+  'name',
+  'fullName',
+  'unit',
+  'conversionValue',
+  'basePrice',
+  'isCurrent',
+  'lastSyncedAt',
+];
+
+const SERIAL_COLUMNS: ColumnSpec[] = [
+  { name: 'productId', type: 'int' },
+  { name: 'branchId', type: 'int' },
+  { name: 'serialNumber', type: 'text' },
+  { name: 'status', type: 'int' },
+  { name: 'quantity', type: 'real' },
+  { name: 'isCurrent', type: 'boolean' },
+  { name: 'createdDate', type: 'timestamp' },
+  { name: 'modifiedDate', type: 'timestamp' },
+  { name: 'lastSyncedAt', type: 'timestamp' },
+];
+
+const SERIAL_UPDATE = [
+  'status',
+  'quantity',
+  'isCurrent',
+  'createdDate',
+  'modifiedDate',
+  'lastSyncedAt',
+];
+
+const BATCH_COLUMNS: ColumnSpec[] = [
+  { name: 'productId', type: 'int' },
+  { name: 'branchId', type: 'int' },
+  { name: 'batchName', type: 'text' },
+  { name: 'onHand', type: 'real' },
+  { name: 'expireDate', type: 'timestamp' },
+  { name: 'fullNameVirgule', type: 'text' },
+  { name: 'isCurrent', type: 'boolean' },
+  { name: 'lastSyncedAt', type: 'timestamp' },
+];
+
+const BATCH_UPDATE = [
+  'onHand',
+  'expireDate',
+  'fullNameVirgule',
+  'isCurrent',
+  'lastSyncedAt',
+];
+
+const WARRANTY_COLUMNS: ColumnSpec[] = [
+  { name: 'kiotVietId', type: 'bigint' },
+  { name: 'productId', type: 'int' },
+  { name: 'description', type: 'text' },
+  { name: 'numberTime', type: 'int' },
+  { name: 'timeType', type: 'int' },
+  { name: 'warrantyType', type: 'int' },
+  { name: 'retailerId', type: 'int' },
+  { name: 'createdBy', type: 'bigint' },
+  { name: 'isCurrent', type: 'boolean' },
+  { name: 'createdDate', type: 'timestamp' },
+  { name: 'modifiedDate', type: 'timestamp' },
+  { name: 'lastSyncedAt', type: 'timestamp' },
+];
+
+const WARRANTY_UPDATE = [
+  'productId',
+  'description',
+  'numberTime',
+  'timeType',
+  'warrantyType',
+  'retailerId',
+  'createdBy',
+  'isCurrent',
+  'createdDate',
+  'modifiedDate',
+  'lastSyncedAt',
+];
 
 @Injectable()
 export class KiotVietProductService {
   private readonly logger = new Logger(KiotVietProductService.name);
-  private readonly baseUrl: string;
-  private readonly PAGE_SIZE = 100;
+  private materialCodes = new Set<string>();
 
   constructor(
-    private readonly httpService: HttpService,
-    private readonly configService: ConfigService,
     private readonly prismaService: PrismaService,
-    private readonly authService: KiotVietAuthService,
-    private readonly larkProductSyncService: LarkProductSyncService,
-  ) {
-    const baseUrl = this.configService.get<string>('KIOT_BASE_URL');
-    if (!baseUrl) {
-      throw new Error('KIOT_BASE_URL environment variable is not configured');
-    }
-    this.baseUrl = baseUrl;
+    private readonly pageFetcher: KiotPageFetcher,
+    private readonly bulkUpsert: BulkUpsertHelper,
+    private readonly relationMap: RelationMapHelper,
+    private readonly syncControl: SyncControlHelper,
+    private readonly removedIdsHandler: RemovedIdsHandler,
+  ) {}
+
+  async syncFull() {
+    return this.runSync('full', {});
   }
 
-  async checkAndRunAppropriateSync(): Promise<void> {
-    try {
-      const runningProductSyncs = await this.prismaService.syncControl.findMany(
-        {
-          where: {
-            OR: [{ name: 'product_historical' }, { name: 'product_lark_sync' }],
-            isRunning: true,
-          },
-        },
-      );
-
-      if (runningProductSyncs.length > 0) {
-        this.logger.warn(
-          `Found ${runningProductSyncs.length} Product syncs still running: ${runningProductSyncs.map((s) => s.name).join(', ')}`,
-        );
-        this.logger.warn('Skipping product sync to avoid conficts');
-        return;
-      }
-
-      const historicalSync = await this.prismaService.syncControl.findFirst({
-        where: { name: 'product_historical' },
-      });
-
-      if (historicalSync?.isEnabled && !historicalSync.isRunning) {
-        this.logger.log('Starting historical product sync...');
-        await this.syncHistoricalProducts();
-        return;
-      }
-
-      if (historicalSync?.isRunning) {
-        this.logger.log('Historical product sync is running');
-        return;
-      }
-
-      this.logger.log('Running default historical product sync...');
-      await this.syncHistoricalProducts();
-    } catch (error) {
-      this.logger.error(`Sync check failed: ${error.message}`);
-      throw error;
-    }
-  }
-
-  async enableHistoricalSync(): Promise<void> {
-    await this.updateSyncControl('product_historical', {
-      isEnabled: true,
-      isRunning: false,
-      status: 'idle',
+  async syncIncremental() {
+    const last = await this.syncControl.getLastCompletedAt(SYNC_NAME);
+    const lastModifiedFrom = last ?? new Date('2024-12-01');
+    return this.runSync('incremental', {
+      lastModifiedFrom: lastModifiedFrom.toISOString(),
     });
-
-    this.logger.log('Historical product sync enabled');
   }
 
   async syncHistoricalProducts(): Promise<void> {
-    const syncName = 'product_historical';
+    await this.syncFull();
+  }
 
-    let currentItem = 0;
-    let processedCount = 0;
-    let totalProducts = 0;
-    let consecutiveEmptyPages = 0;
-    let consecutiveErrorPages = 0;
-    let lastValidTotal = 0;
-    let processedProductIds = new Set<number>();
+  async enableHistoricalSync(): Promise<void> {}
 
+  private async runSync(
+    mode: 'full' | 'incremental',
+    extra: Record<string, any>,
+  ) {
+    if (await this.syncControl.isRunning(SYNC_NAME)) {
+      this.logger.warn(`Product sync already running, skipping`);
+      return { total: 0, processed: 0 };
+    }
+    this.materialCodes = new Set<string>();
+    await this.syncControl.markRunning(SYNC_NAME, mode, ['product']);
+    let processed = 0;
+    let total = 0;
     try {
-      await this.updateSyncControl(syncName, {
-        isRunning: true,
-        status: 'running',
-        startedAt: new Date(),
-        error: null,
-      });
-
-      this.logger.log('Starting historical product sync...');
-
-      const MAX_CONSECUTIVE_EMPTY_PAGES = 5;
-      const MAX_CONSECUTIVE_ERROR_PAGES = 3;
-      const RETRY_DELAY_MS = 2000;
-      const MAX_TOTAL_RETRIES = 10;
-
-      let totalRetries = 0;
-
-      while (true) {
-        const currentPage = Math.floor(currentItem / this.PAGE_SIZE) + 1;
-
-        if (totalProducts > 0) {
-          if (currentItem >= totalProducts) {
-            this.logger.log(
-              `Pagination complete. Processed ${processedCount}/${totalProducts} products`,
-            );
-            break;
-          }
-
-          const progressPercentage = (currentItem / totalProducts) * 100;
-          this.logger.log(
-            `Fetching page ${currentPage} (${currentItem}/${totalProducts} - ${progressPercentage.toFixed(1)}%)`,
-          );
-        } else {
-          this.logger.log(
-            `Fetching page ${currentPage} (currentItem: ${currentItem})`,
-          );
-        }
-
-        const dateEnd = new Date();
-        dateEnd.setDate(dateEnd.getDate() + 1);
-        const dateEndStr = dateEnd.toISOString().split('T')[0];
-
-        try {
-          const response = await this.fetchProductsListWithRetry({
-            currentItem,
-            pageSize: this.PAGE_SIZE,
+      const { total: t, serverTimestamp, removedIds } =
+        await this.pageFetcher.fetchAll<any>({
+          endpoint: '/products',
+          baseParams: { includeRemoveIds: true,
             orderBy: 'id',
             orderDirection: 'DESC',
             includeInventory: true,
@@ -265,715 +325,467 @@ export class KiotVietProductService {
             includeWarranties: true,
             includeQuantity: true,
             includeMaterial: true,
-            includeCombo: true,
-            lastModifiedFrom: '2024-12-1',
-            toDate: dateEndStr,
-          });
-
-          if (!response) {
-            this.logger.warn('Received null response from KiotViet API');
-
-            consecutiveEmptyPages++;
-
-            if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
-              this.logger.log(
-                `🔚 Reached end after ${consecutiveEmptyPages} empty pages`,
-              );
-              break;
-            }
-
-            await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
-            continue;
-          }
-
-          consecutiveEmptyPages = 0;
-          consecutiveErrorPages = 0;
-
-          const { data: products, total } = response;
-
-          if (total !== undefined && total !== null) {
-            if (totalProducts === 0) {
-              this.logger.log(
-                `Total products detected: ${total}. Starting processing...`,
-              );
-
-              totalProducts = total;
-            } else if (total !== totalProducts) {
-              this.logger.warn(
-                `Total count changed: ${totalProducts} → ${total}. Using latest.`,
-              );
-              totalProducts = total;
-            }
-            lastValidTotal = total;
-          }
-
-          if (!products || products.length === 0) {
-            this.logger.warn(`Empty page received at position ${currentItem}`);
-            consecutiveEmptyPages++;
-
-            if (totalProducts > 0 && currentItem >= totalProducts) {
-              this.logger.log('Reached end of data (empty page past total)');
-              break;
-            }
-
-            if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
-              this.logger.log(
-                `🔚 Stopping after ${consecutiveEmptyPages} consecutive empty pages`,
-              );
-              break;
-            }
-
-            currentItem += this.PAGE_SIZE;
-            continue;
-          }
-
-          const existingProductIds = new Set(
-            (
-              await this.prismaService.product.findMany({
-                select: { kiotVietId: true },
-              })
-            ).map((c) => Number(c.kiotVietId)),
-          );
-
-          const newProducts = products.filter((product) => {
-            if (
-              !existingProductIds.has(product.id) &&
-              !processedProductIds.has(product.id)
-            ) {
-              processedProductIds.add(product.id);
-              return true;
-            }
-            return false;
-          });
-
-          const existingProducts = products.filter((product) => {
-            if (
-              existingProductIds.has(product.id) &&
-              !processedProductIds.has(product.id)
-            ) {
-              processedProductIds.add(product.id);
-              return true;
-            }
-            return false;
-          });
-
-          if (newProducts.length === 0 && existingProducts.length === 0) {
-            this.logger.log(
-              `Skipping page ${currentPage} - all products already processed in this run`,
-            );
-            currentItem += this.PAGE_SIZE;
-            continue;
-          }
-
-          let pageProcessedCount = 0;
-          let allSavedProducts: any[] = [];
-
-          if (newProducts.length > 0) {
-            this.logger.log(
-              `Processing ${newProducts.length} NEW products from page ${currentPage}...`,
-            );
-
-            const savedProducts =
-              await this.saveProductsToDatabase(newProducts);
-            pageProcessedCount += savedProducts.length;
-            allSavedProducts.push(...savedProducts);
-          }
-
-          if (existingProducts.length > 0) {
-            this.logger.log(
-              `Processing ${existingProducts.length} EXISTING products from page ${currentPage}...`,
-            );
-
-            const savedProducts =
-              await this.saveProductsToDatabase(existingProducts);
-            pageProcessedCount += savedProducts.length;
-            allSavedProducts.push(...savedProducts);
-          }
-
-          processedCount += pageProcessedCount;
-          currentItem += this.PAGE_SIZE;
-
-          // if (allSavedProducts.length > 0) {
-          //   try {
-          //     await this.syncProductsToLarkBase(allSavedProducts);
-          //     this.logger.log(
-          //       `Synced ${allSavedProducts.length} products to LarkBase`,
-          //     );
-          //   } catch (error) {
-          //     this.logger.warn(
-          //       `LarkBase sync failed for page${currentPage}: ${error.message}`,
-          //     );
-          //   }
-          // }
-
-          if (totalProducts > 0) {
-            const completionPercentage = (processedCount / totalProducts) * 100;
-            this.logger.log(
-              `Progress: ${processedCount}/${totalProducts} (${completionPercentage.toFixed(1)}%)`,
-            );
-
-            if (processedCount >= totalProducts) {
-              this.logger.log('All products processed successfully');
-              break;
-            }
-          }
-
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        } catch (error) {
-          consecutiveErrorPages++;
-          totalRetries++;
-
-          this.logger.error(
-            `API error on page ${currentPage}: ${error.message}`,
-          );
-
-          if (consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES) {
-            throw new Error(
-              `Multiple consecutive API failures: ${error.message}`,
-            );
-          }
-
-          if (totalRetries >= MAX_TOTAL_RETRIES) {
-            throw new Error(`Maximum total retries exceeded: ${error.message}`);
-          }
-
-          const delay = RETRY_DELAY_MS * Math.pow(2, consecutiveErrorPages - 1);
-          this.logger.log(`Retrying after ${delay}ms delay...`);
-          await new Promise((resolve) => setTimeout(resolve, delay));
-        }
+            ...extra,
+          },
+          label: `product-${mode}`,
+          onPage: async (pageData) => {
+            processed += await this.processPage(pageData);
+            this.logger.log(`product-${mode}: processed ${processed} so far`);
+          },
+        });
+      total = t;
+      await this.recomputeMaterialFlags();
+      // Stamp rows KiotViet reports as deleted. Without webhooks this is the
+      // only deletion signal, and it was previously never read.
+      if (removedIds?.length) {
+        await this.removedIdsHandler.apply('product', removedIds);
       }
 
-      await this.recomputeMaterialFlags();
-
-      await this.updateSyncControl(syncName, {
-        isRunning: false,
-        isEnabled: false,
-        status: 'completed',
-        completedAt: new Date(),
-        lastRunAt: new Date(),
-        progress: { processedCount, expectedTotal: totalProducts },
-      });
-
-      const completionRate =
-        totalProducts > 0 ? (processedCount / totalProducts) * 100 : 100;
-
-      this.logger.log(
-        `Historical product sync completed: ${processedCount}/${totalProducts} (${completionRate.toFixed(1)}% completion rate)`,
+      await this.syncControl.markCompleted(
+        SYNC_NAME,
+        { processedCount: processed, expectedTotal: total },
+        serverTimestamp,
       );
+      return { total, processed };
     } catch (error) {
-      this.logger.error(`❌ Historical product sync failed: ${error.message}`);
-
-      await this.updateSyncControl(syncName, {
-        isRunning: false,
-        status: 'failed',
-        error: error.message,
-        progress: { processedCount, expectedTotal: totalProducts },
+      this.logger.error(`product-${mode} failed: ${error.message}`);
+      await this.syncControl.markFailed(SYNC_NAME, error.message, {
+        processedCount: processed,
+        expectedTotal: total,
       });
-
       throw error;
     }
   }
 
-  async fetchProductsListWithRetry(
-    params: {
-      currentItem?: number;
-      pageSize?: number;
-      orderBy?: string;
-      orderDirection?: string;
-      includeInventory?: boolean;
-      includePricebook?: boolean;
-      includeSerials?: boolean;
-      includeBatchExpires?: boolean;
-      includeWarranties?: boolean;
-      includeRemoveIds?: boolean;
-      includeQuantity?: boolean;
-      includeMaterial?: boolean;
-      includeCombo?: boolean;
-      lastModifiedFrom?: string;
-      toDate?: string;
-    },
-    maxRetries: number = 5,
-  ): Promise<any> {
-    let lastError: Error | undefined;
+  private async processPage(products: any[]): Promise<number> {
+    if (!products.length) return 0;
+    const now = new Date();
 
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        return await this.fetchProductsList(params);
-      } catch (error) {
-        lastError = error as Error;
-        this.logger.warn(
-          `API attempt ${attempt}/${maxRetries} failed: ${error.message}`,
-        );
-
-        if (attempt < maxRetries) {
-          const delay = 2000 * attempt;
-          this.logger.log(`Retrying after ${delay / 1000}s delay...`);
-          await new Promise((resolve) => setTimeout(resolve, delay));
-        }
-      }
-    }
-
-    throw lastError;
-  }
-
-  async fetchProductsList(params: {
-    currentItem?: number;
-    pageSize?: number;
-    orderBy?: string;
-    orderDirection?: string;
-    includeInventory?: boolean;
-    includePricebook?: boolean;
-    includeSerials?: boolean;
-    includeBatchExpires?: boolean;
-    includeWarranties?: boolean;
-    includeRemoveIds?: boolean;
-    includeQuantity?: boolean;
-    includeMaterial?: boolean;
-    includeCombo?: boolean;
-    lastModifiedFrom?: string;
-    toDate?: string;
-  }): Promise<any> {
-    const headers = await this.authService.getRequestHeaders();
-
-    const queryParams = new URLSearchParams({
-      currentItem: (params.currentItem || 0).toString(),
-      pageSize: (params.pageSize || this.PAGE_SIZE).toString(),
-      orderBy: params.orderBy || 'createdDate',
-      orderDirection: params.orderDirection || 'DESC',
-      includeInventory: (params.includeInventory || true).toString(),
-      includePricebook: (params.includePricebook || true).toString(),
-      includeSerials: (params.includeSerials || true).toString(),
-      includeBatchExpires: (params.includeBatchExpires || true).toString(),
-      includeWarranties: (params.includeWarranties || true).toString(),
-      includeRemoveIds: (params.includeRemoveIds || false).toString(),
-      includeQuantity: (params.includeQuantity || true).toString(),
-      includeMaterial: (params.includeMaterial || true).toString(),
-      includeCombo: (params.includeCombo || true).toString(),
-    });
-
-    if (params.lastModifiedFrom) {
-      queryParams.append('lastModifiedFrom', params.lastModifiedFrom);
-    }
-    if (params.toDate) {
-      queryParams.append('toDate', params.toDate);
-    }
-
-    const response = await firstValueFrom(
-      this.httpService.get(`${this.baseUrl}/products?${queryParams}`, {
-        headers,
-        timeout: 45000,
-      }),
+    const categoryIds = this.uniqueNum(products.map((p) => p.categoryId));
+    const tradeMarkIds = this.uniqueNum(products.map((p) => p.tradeMarkId));
+    const branchIds = this.uniqueNum(
+      products.flatMap((p) => (p.inventories ?? []).map((i) => i.branchId)),
+    );
+    const priceBookIds = this.uniqueNum(
+      products.flatMap((p) => (p.priceBooks ?? []).map((pb) => pb.priceBookId)),
     );
 
-    return response.data;
-  }
+    const [categoryMap, tradeMarkMap, branchMap, priceBookMap] =
+      await Promise.all([
+        this.relationMap.buildIdMap('category', categoryIds),
+        this.relationMap.buildIdMap('tradeMark', tradeMarkIds),
+        this.relationMap.buildIdMap('branch', branchIds),
+        this.relationMap.buildIdMap('priceBook', priceBookIds),
+      ]);
 
-  private async saveProductsToDatabase(
-    products: KiotVietProduct[],
-  ): Promise<any[]> {
-    this.logger.log(`Saving ${products.length} products to database...`);
+    const productRows = products.map((p) => ({
+      kiotVietId: p.id,
+      code: (p.code || '').trim(),
+      barCode: p.barCode || null,
+      name: p.name,
+      fullName: p.fullName ?? p.name,
+      categoryId: p.categoryId
+        ? (categoryMap.get(Number(p.categoryId)) ?? null)
+        : null,
+      categoryName: p.categoryName || null,
+      parent_name: null,
+      child_name: null,
+      branch_name: null,
+      tradeMarkId: p.tradeMarkId
+        ? (tradeMarkMap.get(Number(p.tradeMarkId)) ?? null)
+        : null,
+      tradeMarkName: p.tradeMarkName || null,
+      type: p.type ?? 1,
+      description: p.description ?? '',
+      allowsSale: p.allowsSale ?? true,
+      hasVariants: p.hasVariants ?? false,
+      basePrice: p.basePrice ?? 0,
+      unit: p.unit ?? '',
+      masterProductId: p.masterProductId ? BigInt(p.masterProductId) : null,
+      masterUnitId: p.masterUnitId ? BigInt(p.masterUnitId) : null,
+      conversionValue: p.conversionValue ?? 1,
+      weight: p.weight ?? 0,
+      isLotSerialControl: p.isLotSerialControl ?? false,
+      isBatchExpireControl: p.isBatchExpireControl ?? false,
+      isManufactured: (p.productFormulas?.length ?? 0) > 0,
+      orderTemplate: p.orderTemplate?.trim() || null,
+      minQuantity: p.minQuantity ?? null,
+      maxQuantity: p.maxQuantity ?? null,
+      isRewardPoint: p.isRewardPoint ?? true,
+      isActive: p.isActive ?? true,
+      retailerId: p.retailerId ?? null,
+      createdDate: p.createdDate ? new Date(p.createdDate) : now,
+      modifiedDate: p.modifiedDate ? new Date(p.modifiedDate) : now,
+      lastSyncedAt: now,
+    }));
 
-    const savedProducts: any[] = [];
+    await this.bulkUpsert.bulkUpsert({
+      table: '"Product"',
+      columns: PRODUCT_COLUMNS,
+      rows: productRows,
+      conflictTarget: '"kiotVietId"',
+      updateColumns: PRODUCT_UPDATE,
+    });
 
-    for (const productData of products) {
-      try {
-        const category = await this.prismaService.category.findFirst({
-          where: { kiotVietId: productData.categoryId },
-          select: {
-            id: true,
-            name: true,
-            parent_name: true,
-            child_name: true,
-            branch_name: true,
-          },
-        });
+    await this.backfillUnresolvedProductReferences();
 
-        const tradeMark = await this.prismaService.tradeMark.findFirst({
-          where: { kiotVietId: productData.tradeMarkId },
-          select: { id: true, name: true },
-        });
+    const productIdMap = await this.relationMap.buildIdMap(
+      'product',
+      this.uniqueNum(products.map((p) => p.id)),
+    );
 
-        const product = await this.prismaService.product.upsert({
-          where: { kiotVietId: BigInt(productData.id) },
-          update: {
-            code: productData.code.trim(),
-            name: productData.name,
-            fullName: productData.fullName ?? productData.name,
-            categoryId: category?.id,
-            categoryName: category?.name,
-            parent_name: category?.parent_name,
-            child_name: category?.child_name,
-            branch_name: category?.branch_name,
-            tradeMarkId: tradeMark?.id,
-            tradeMarkName: tradeMark?.name,
-            allowsSale: productData.allowsSale ?? true,
-            type: productData.type ?? 1,
-            hasVariants: productData.hasVariants ?? false,
-            basePrice: productData.basePrice
-              ? new Prisma.Decimal(productData.basePrice)
-              : 0,
-            weight: productData.weight ?? 0,
-            unit: productData.unit ?? '',
-            conversionValue: productData.conversionValue ?? 1,
-            description: productData.description ?? '',
-            isLotSerialControl: productData.isLotSerialControl ?? false,
-            isBatchExpireControl: productData.isBatchExpireControl ?? false,
-            isManufactured: (productData.productFormulas?.length ?? 0) > 0,
-            orderTemplate: productData.orderTemplate?.trim() || null,
-            minQuantity: productData.minQuantity ?? null,
-            maxQuantity: productData.maxQuantity ?? null,
-            isRewardPoint: productData.isRewardPoint ?? true,
-            isActive: productData.isActive ?? true,
-            retailerId: productData.retailerId ?? null,
-            createdDate: productData.createdDate
-              ? new Date(productData.createdDate)
-              : new Date(),
-            modifiedDate: productData.modifiedDate
-              ? new Date(productData.modifiedDate)
-              : new Date(),
-            lastSyncedAt: new Date(),
-            larkSyncStatus: 'PENDING',
-          },
-          create: {
-            kiotVietId: BigInt(productData.id),
-            code: productData.code.trim(),
-            name: productData.name,
-            fullName: productData.fullName ?? productData.name,
-            categoryId: category?.id,
-            categoryName: category?.name,
-            parent_name: category?.parent_name,
-            child_name: category?.child_name,
-            branch_name: category?.branch_name,
-            tradeMarkId: tradeMark?.id,
-            tradeMarkName: tradeMark?.name,
-            allowsSale: productData.allowsSale ?? true,
-            type: productData.type ?? 1,
-            hasVariants: productData.hasVariants ?? false,
-            basePrice: productData.basePrice
-              ? new Prisma.Decimal(productData.basePrice)
-              : 0,
-            weight: productData.weight ?? 0,
-            unit: productData.unit ?? '',
-            conversionValue: productData.conversionValue ?? 1,
-            description: productData.description ?? '',
-            isLotSerialControl: productData.isLotSerialControl ?? false,
-            isBatchExpireControl: productData.isBatchExpireControl ?? false,
-            isManufactured: (productData.productFormulas?.length ?? 0) > 0,
-            orderTemplate: productData.orderTemplate?.trim() || null,
-            minQuantity: productData.minQuantity ?? null,
-            maxQuantity: productData.maxQuantity ?? null,
-            isRewardPoint: productData.isRewardPoint ?? true,
-            isActive: productData.isActive ?? true,
-            retailerId: productData.retailerId ?? null,
-            createdDate: productData.createdDate
-              ? new Date(productData.createdDate)
-              : new Date(),
-            modifiedDate: productData.modifiedDate
-              ? new Date(productData.modifiedDate)
-              : new Date(),
-            lastSyncedAt: new Date(),
-            larkSyncStatus: 'PENDING',
-          },
-        });
+    const inventoryRows: any[] = [];
+    const priceBookDetailRows: any[] = [];
+    const imageRows: any[] = [];
+    const formulaRows: any[] = [];
+    const unitRows: any[] = [];
+    const serialRows: any[] = [];
+    const batchRows: any[] = [];
+    const warrantyRows: any[] = [];
+    // Serial/batch rows are keyed on (productId, branchId, ...). Postgres treats NULL
+    // as distinct in a unique index, so a null branchId would defeat the upsert and
+    // insert a duplicate on every run. Those rows are skipped and counted instead.
+    let skippedNoBranch = 0;
 
-        const inventories: any[] = [];
-        if (productData.inventories && productData.inventories.length > 0) {
-          for (let i = 0; i < productData.inventories.length; i++) {
-            const detail = productData.inventories[i];
+    for (const p of products) {
+      const productDbId = productIdMap.get(Number(p.id));
+      if (!productDbId) continue;
+      const productKvId = BigInt(p.id);
 
-            const branch = await this.prismaService.branch.findFirst({
-              where: { kiotVietId: detail.branchId },
-              select: { id: true },
-            });
-
-            const inventory = await this.prismaService.productInventory.upsert({
-              where: {
-                productId_lineNumber: {
-                  productId: product.id,
-                  lineNumber: i + 1,
-                },
-              },
-              update: {
-                productCode: product.code,
-                productName: product.name,
-                branchId: branch?.id ?? null,
-                branchName: detail.branchName ?? null,
-                cost: detail.cost ?? 0,
-                onHand: detail.onHand ?? 0,
-                reserved: detail.reserved ?? 0,
-                lineNumber: i + 1,
-                actualReserved: detail.actualReserved ?? 0,
-                minQuantity: detail.minQuantity ?? 0,
-                maxQuantity: detail.maxQuantity ?? 0,
-                isActive: detail.isActive,
-                onOrder: detail.onOrder ?? 0,
-                lastSyncedAt: new Date(),
-              },
-              create: {
-                productId: product.id,
-                productCode: product.code,
-                productName: product.name,
-                branchId: branch?.id ?? null,
-                branchName: detail.branchName ?? null,
-                cost: detail.cost ?? 0,
-                onHand: detail.onHand ?? 0,
-                reserved: detail.reserved ?? 0,
-                lineNumber: i + 1,
-                actualReserved: detail.actualReserved ?? 0,
-                minQuantity: detail.minQuantity ?? 0,
-                maxQuantity: detail.maxQuantity ?? 0,
-                isActive: detail.isActive,
-                onOrder: detail.onOrder ?? 0,
-                lastSyncedAt: new Date(),
-              },
-            });
-            inventories.push(inventory);
-          }
+      (p.inventories ?? []).forEach((inv: any, idx: number) => {
+        const branchKvId = inv.branchId ? Number(inv.branchId) : null;
+        const branchDbId = branchKvId
+          ? (branchMap.get(branchKvId) ?? null)
+          : null;
+        // The conflict target is ("productId","branchId"). Postgres treats NULL as
+        // distinct in a unique index, so a null branch would insert a fresh duplicate
+        // on every sync instead of updating. Skip and report those instead.
+        if (branchDbId === null) {
+          skippedNoBranch++;
+          return;
         }
-
-        const priceBooks: any[] = [];
-        if (productData.priceBooks && productData.priceBooks.length > 0) {
-          for (let i = 0; i < productData.priceBooks.length; i++) {
-            const detail = productData.priceBooks[i];
-            const pricebook = await this.prismaService.priceBook.findFirst({
-              where: { kiotVietId: detail.priceBookId },
-            });
-
-            const priceBookDetail =
-              await this.prismaService.priceBookDetail.upsert({
-                where: {
-                  productId_lineNumber: {
-                    productId: product.id,
-                    lineNumber: i + 1,
-                  },
-                },
-                update: {
-                  lineNumber: i + 1,
-                  priceBookId: pricebook?.id ?? null,
-                  priceBookName: pricebook?.name,
-                  price: detail.price ?? 0,
-                  lastSyncedAt: new Date(),
-                  productId: product.id,
-                  productName: product.name,
-                  productKiotId: product.kiotVietId,
-                },
-                create: {
-                  lineNumber: i + 1,
-                  priceBookId: pricebook?.id ?? null,
-                  priceBookName: pricebook?.name,
-                  price: detail.price ?? 0,
-                  lastSyncedAt: new Date(),
-                  productId: product.id,
-                  productName: product.name,
-                  productKiotId: product.kiotVietId,
-                },
-              });
-            priceBooks.push(priceBookDetail);
-          }
-        }
-
-        // Sync images
-        const images: any[] = [];
-        if (productData.images && productData.images.length > 0) {
-          // Xóa images cũ có lineNumber > số images mới (trường hợp giảm số ảnh)
-          await this.prismaService.productImage.deleteMany({
-            where: {
-              productId: product.id,
-              lineNumber: { gt: productData.images.length },
-            },
-          });
-
-          for (let i = 0; i < productData.images.length; i++) {
-            const img = productData.images[i];
-            const productImage =
-              await this.prismaService.productImage.upsert({
-                where: {
-                  productId_lineNumber: {
-                    productId: product.id,
-                    lineNumber: i + 1,
-                  },
-                },
-                update: {
-                  imageUrl: img.image ? { url: img.image } : Prisma.JsonNull,
-                  lastSyncedAt: new Date(),
-                },
-                create: {
-                  productId: product.id,
-                  imageUrl: img.image ? { url: img.image } : Prisma.JsonNull,
-                  lineNumber: i + 1,
-                  lastSyncedAt: new Date(),
-                },
-              });
-            images.push(productImage);
-          }
-        }
-
-        // Sync product formulas (định mức nguyên vật liệu)
-        const formulas: any[] = [];
-        if (productData.productFormulas && productData.productFormulas.length > 0) {
-          // Xóa formula cũ có lineNumber > số formula mới (trường hợp giảm)
-          await this.prismaService.productFormula.deleteMany({
-            where: {
-              productId: product.id,
-              lineNumber: { gt: productData.productFormulas.length },
-            },
-          });
-
-          for (let i = 0; i < productData.productFormulas.length; i++) {
-            const f = productData.productFormulas[i];
-            const formula = await this.prismaService.productFormula.upsert({
-              where: {
-                productId_lineNumber: {
-                  productId: product.id,
-                  lineNumber: i + 1,
-                },
-              },
-              update: {
-                productKiotVietId: product.kiotVietId,
-                materialId: BigInt(f.materialId),
-                materialCode: f.materialCode,
-                materialName: f.materialName ?? null,
-                materialFullName: f.materialFullName ?? null,
-                quantity: f.quantity ?? null,
-                basePrice: f.basePrice
-                  ? new Prisma.Decimal(f.basePrice)
-                  : null,
-                lineNumber: i + 1,
-                lastSyncedAt: new Date(),
-              },
-              create: {
-                productId: product.id,
-                productKiotVietId: product.kiotVietId,
-                materialId: BigInt(f.materialId),
-                materialCode: f.materialCode,
-                materialName: f.materialName ?? null,
-                materialFullName: f.materialFullName ?? null,
-                quantity: f.quantity ?? null,
-                basePrice: f.basePrice
-                  ? new Prisma.Decimal(f.basePrice)
-                  : null,
-                lineNumber: i + 1,
-                lastSyncedAt: new Date(),
-              },
-            });
-            formulas.push(formula);
-          }
-        } else {
-          // Không còn formula: dọn sạch dữ liệu cũ
-          await this.prismaService.productFormula.deleteMany({
-            where: { productId: product.id },
-          });
-        }
-
-        savedProducts.push({
-          ...product,
-          inventories,
-          priceBooks,
-          images,
-          formulas,
+        inventoryRows.push({
+          productId: productDbId,
+          branchId: branchDbId,
+          onHand: inv.onHand ?? inv.onhand ?? 0,
+          reserved: inv.reserved ?? 0,
+          onOrder: inv.onOrder ?? null,
+          cost: inv.cost ?? null,
+          minQuantity: inv.minQuantity ?? inv.minQuality ?? null,
+          maxQuantity: inv.maxQuantity ?? inv.maxQuality ?? null,
+          modifiedDate: now,
+          lastSyncedAt: now,
+          branchName: inv.branchName || null,
+          productCode: p.code,
+          productName: p.name,
+          actualReserved: inv.actualReserved ?? null,
+          isActive: inv.isActive ?? null,
+          // lineNumber stores the local Branch.id so it stays readable and matches `branchId`.
+          // Fallback to KiotViet branchId only when the local Branch row is missing.
+          lineNumber: branchDbId ?? branchKvId ?? idx + 1,
         });
-      } catch (error) {
-        this.logger.error(
-          `❌ Failed to save product ${productData.code}: ${error.message}`,
-        );
+      });
+
+      (p.priceBooks ?? []).forEach((pb: any, idx: number) => {
+        priceBookDetailRows.push({
+          priceBookId: pb.priceBookId
+            ? (priceBookMap.get(Number(pb.priceBookId)) ?? null)
+            : null,
+          productId: productDbId,
+          productKiotId: productKvId,
+          price: pb.price ?? 0,
+          lastSyncedAt: now,
+          lineNumber: idx + 1,
+          priceBookName: pb.priceBookName || null,
+          productName: p.name,
+        });
+      });
+
+      (p.images ?? []).forEach((img: any, idx: number) => {
+        imageRows.push({
+          productId: productDbId,
+          lineNumber: idx + 1,
+          lastSyncedAt: now,
+          imageUrl: img.image ? { url: img.image } : null,
+        });
+      });
+
+      (p.productFormulas ?? []).forEach((f: any, idx: number) => {
+        if (f.materialCode) this.materialCodes.add(f.materialCode.trim());
+        formulaRows.push({
+          productId: productDbId,
+          productKiotVietId: productKvId,
+          materialId: BigInt(f.materialId),
+          materialCode: f.materialCode,
+          materialName: f.materialName ?? null,
+          materialFullName: f.materialFullName ?? null,
+          quantity: f.quantity ?? null,
+          basePrice: f.basePrice ?? null,
+          lineNumber: idx + 1,
+          lastSyncedAt: now,
+        });
+      });
+
+      // --- units -------------------------------------------------------------
+      // Alternate packagings of the same item. Previously requested from the API
+      // and discarded because no table existed.
+      const seenUnits = new Set<string>();
+      for (const u of p.units ?? []) {
+        if (u?.id === null || u?.id === undefined) continue;
+        const key = String(u.id);
+        if (seenUnits.has(key)) continue;
+        seenUnits.add(key);
+        unitRows.push({
+          productId: productDbId,
+          unitKiotVietId: BigInt(u.id),
+          code: u.code ?? null,
+          name: u.name ?? null,
+          fullName: u.fullName ?? null,
+          unit: u.unit ?? null,
+          conversionValue: u.conversionValue ?? null,
+          basePrice: u.basePrice ?? null,
+          isCurrent: true,
+          lastSyncedAt: now,
+        });
+      }
+
+      // --- serials (IMEI) ----------------------------------------------------
+      // The doc's indentation is ambiguous about whether these sit on the product
+      // or inside each inventory entry, so both shapes are accepted.
+      const serialSources = [
+        ...(p.productSerials ?? []),
+        ...(p.inventories ?? []).flatMap(
+          (inv: any) => inv?.productSerials ?? [],
+        ),
+      ];
+      const seenSerials = new Set<string>();
+      for (const s of serialSources) {
+        const serialNumber = s?.serialNumber ?? s?.SerialNumber;
+        if (!serialNumber) continue;
+        const branchKvId = s.branchId ?? s.BranchId;
+        const branchDbId = branchKvId
+          ? (branchMap.get(Number(branchKvId)) ?? null)
+          : null;
+        if (branchDbId === null) {
+          skippedNoBranch++;
+          continue;
+        }
+        const key = `${branchDbId}|${serialNumber}`;
+        if (seenSerials.has(key)) continue;
+        seenSerials.add(key);
+        serialRows.push({
+          productId: productDbId,
+          branchId: branchDbId,
+          serialNumber: String(serialNumber),
+          status: s.status ?? null,
+          quantity: s.quantity ?? null,
+          isCurrent: true,
+          createdDate: s.createdDate ? new Date(s.createdDate) : null,
+          modifiedDate: s.modifiedDate ? new Date(s.modifiedDate) : null,
+          lastSyncedAt: now,
+        });
+      }
+
+      // --- batch / expiry ----------------------------------------------------
+      const batchSources = [
+        ...(p.productBatchExpires ?? []),
+        ...(p.inventories ?? []).flatMap(
+          (inv: any) => inv?.productBatchExpires ?? [],
+        ),
+      ];
+      const seenBatches = new Set<string>();
+      for (const b of batchSources) {
+        const batchName = b?.batchName ?? b?.BatchName;
+        if (!batchName) continue;
+        const branchKvId = b.branchId ?? b.BranchId;
+        const branchDbId = branchKvId
+          ? (branchMap.get(Number(branchKvId)) ?? null)
+          : null;
+        if (branchDbId === null) {
+          skippedNoBranch++;
+          continue;
+        }
+        const key = `${branchDbId}|${batchName}`;
+        if (seenBatches.has(key)) continue;
+        seenBatches.add(key);
+        batchRows.push({
+          productId: productDbId,
+          branchId: branchDbId,
+          batchName: String(batchName),
+          onHand: b.onHand ?? null,
+          expireDate: b.expireDate ? new Date(b.expireDate) : null,
+          fullNameVirgule: b.fullNameVirgule ?? null,
+          isCurrent: true,
+          lastSyncedAt: now,
+        });
+      }
+
+      // --- warranties --------------------------------------------------------
+      // The doc spells this id `Id` (capital) while its siblings are lower-camel,
+      // so both spellings are read.
+      const seenWarranties = new Set<string>();
+      for (const w of p.productWarranties ?? []) {
+        const kvId = w?.id ?? w?.Id;
+        if (kvId === null || kvId === undefined) continue;
+        const key = String(kvId);
+        if (seenWarranties.has(key)) continue;
+        seenWarranties.add(key);
+        warrantyRows.push({
+          kiotVietId: BigInt(kvId),
+          productId: productDbId,
+          description: w.description ?? null,
+          numberTime: w.numberTime ?? null,
+          timeType: w.timeType ?? null,
+          warrantyType: w.warrantyType ?? null,
+          retailerId: w.retailerId ?? null,
+          createdBy: w.createdBy ? BigInt(w.createdBy) : null,
+          isCurrent: true,
+          createdDate: w.createdDate ? new Date(w.createdDate) : null,
+          modifiedDate: w.modifiedDate ? new Date(w.modifiedDate) : null,
+          lastSyncedAt: now,
+        });
       }
     }
 
-    this.logger.log(`Saved ${savedProducts.length} products successfully`);
-    return savedProducts;
+    if (skippedNoBranch > 0) {
+      this.logger.warn(
+        `${skippedNoBranch} serial/batch row(s) skipped: branch could not be resolved. ` +
+          `Run the branch sync first so these can be keyed correctly.`,
+      );
+    }
+
+    // Archive mode: existing child rows are retained even when KiotViet omits them.
+    await Promise.all([
+      this.bulkUpsert.bulkUpsert({
+        table: '"ProductInventory"',
+        columns: INVENTORY_COLUMNS,
+        rows: inventoryRows,
+        // Natural key, per the Phase 1 schema change. The previous
+        // ("productId","lineNumber") target no longer has a matching unique index.
+        conflictTarget: '("productId", "branchId")',
+        updateColumns: INVENTORY_UPDATE,
+        skipUnchanged: false,
+      }),
+      this.bulkUpsert.bulkUpsert({
+        table: '"PriceBookDetail"',
+        columns: PRICEBOOK_DETAIL_COLUMNS,
+        rows: priceBookDetailRows,
+        conflictTarget: '("priceBookId", "productId")',
+        updateColumns: PRICEBOOK_DETAIL_UPDATE,
+        skipUnchanged: false,
+      }),
+      this.bulkUpsert.bulkUpsert({
+        table: '"ProductImage"',
+        columns: IMAGE_COLUMNS,
+        rows: imageRows,
+        conflictTarget: '("productId", "lineNumber")',
+        updateColumns: IMAGE_UPDATE,
+        skipUnchanged: false,
+      }),
+      this.bulkUpsert.bulkUpsert({
+        table: '"ProductFormula"',
+        columns: FORMULA_COLUMNS,
+        rows: formulaRows,
+        conflictTarget: '("productId", "lineNumber")',
+        updateColumns: FORMULA_UPDATE,
+        skipUnchanged: false,
+      }),
+      // Four tables that previously had no writer: the API data was requested via
+      // includeSerials / includeBatchExpires / includeWarranties, parsed, then dropped.
+      this.bulkUpsert.bulkUpsert({
+        table: '"ProductUnit"',
+        columns: UNIT_COLUMNS,
+        rows: unitRows,
+        conflictTarget: '("productId", "unitKiotVietId")',
+        updateColumns: UNIT_UPDATE,
+        skipUnchanged: false,
+      }),
+      this.bulkUpsert.bulkUpsert({
+        table: '"ProductSerial"',
+        columns: SERIAL_COLUMNS,
+        rows: serialRows,
+        conflictTarget: '("productId", "branchId", "serialNumber")',
+        updateColumns: SERIAL_UPDATE,
+        skipUnchanged: false,
+      }),
+      this.bulkUpsert.bulkUpsert({
+        table: '"ProductBatchExpire"',
+        columns: BATCH_COLUMNS,
+        rows: batchRows,
+        conflictTarget: '("productId", "branchId", "batchName")',
+        updateColumns: BATCH_UPDATE,
+        skipUnchanged: false,
+      }),
+      this.bulkUpsert.bulkUpsert({
+        table: '"ProductWarranty"',
+        columns: WARRANTY_COLUMNS,
+        rows: warrantyRows,
+        conflictTarget: '"kiotVietId"',
+        updateColumns: WARRANTY_UPDATE,
+        skipUnchanged: false,
+      }),
+    ]);
+
+    return products.length;
   }
 
-  // async syncProductsToLarkBase(products: any[]): Promise<void> {
-  //   try {
-  //     this.logger.log(
-  //       `Starting LarkBase sync for ${products.length} products...`,
-  //     );
-
-  //     const productsToSync = products.filter(
-  //       (p) => p.larkSyncStatus === 'PENDING' || p.larkSyncStatus === 'FAILED',
-  //     );
-
-  //     if (productsToSync.length === 0) {
-  //       this.logger.log('No products need LarkBase sync');
-  //       return;
-  //     }
-
-  //     await this.larkProductSyncService.syncProductsToLarkBase(productsToSync);
-  //     this.logger.log('✅ LarkBase product sync completed');
-  //   } catch (error) {
-  //     this.logger.error(`LarkBase sync failed: ${error.message}`);
-  //     throw error;
-  //   }
-  // }
-
-  /**
-   * Tính lại cờ isMaterial cho toàn bộ sản phẩm dựa trên định mức KiotViet.
-   * Một sản phẩm là "hàng sản xuất" (nguyên liệu đầu vào) nếu mã của nó
-   * xuất hiện trong productFormulas[].materialCode của bất kỳ sản phẩm nào.
-   */
-  private async recomputeMaterialFlags(): Promise<void> {
-    try {
-      const materials = await this.prismaService.productFormula.findMany({
-        select: { materialCode: true },
-        distinct: ['materialCode'],
-      });
-
-      const materialCodes = materials
-        .map((m) => m.materialCode?.trim())
-        .filter((c): c is string => !!c);
-
-      // Reset toàn bộ về false trước
+  private async recomputeMaterialFlags() {
+    const codes = Array.from(this.materialCodes);
+    if (codes.length === 0) return;
+    this.logger.log(
+      `Recomputing isMaterial flags for ${codes.length} material codes`,
+    );
+    await this.prismaService.product.updateMany({
+      where: { isMaterial: true },
+      data: { isMaterial: false },
+    });
+    // Update in chunks to avoid huge IN clauses
+    const CHUNK = 500;
+    for (let i = 0; i < codes.length; i += CHUNK) {
       await this.prismaService.product.updateMany({
-        data: { isMaterial: false },
-      });
-
-      if (materialCodes.length === 0) {
-        this.logger.log(
-          'No material codes found. All products isMaterial=false',
-        );
-        return;
-      }
-
-      const result = await this.prismaService.product.updateMany({
-        where: { code: { in: materialCodes } },
+        where: { code: { in: codes.slice(i, i + CHUNK) } },
         data: { isMaterial: true },
       });
-
-      this.logger.log(
-        `Recomputed isMaterial: ${result.count} products marked as material (from ${materialCodes.length} distinct material codes)`,
-      );
-    } catch (error) {
-      this.logger.error(`Failed to recompute material flags: ${error.message}`);
-      throw error;
     }
   }
 
-  private async updateSyncControl(name: string, data: any): Promise<void> {
-    try {
-      await this.prismaService.syncControl.upsert({
-        where: { name },
-        create: {
-          name,
-          entities: ['product'],
-          syncMode: 'historical',
-          isRunning: false,
-          isEnabled: true,
-          status: 'idle',
-          ...data,
-        },
-        update: {
-          ...data,
-          lastRunAt:
-            data.status === 'completed' || data.status === 'failed'
-              ? new Date()
-              : undefined,
-        },
-      });
-    } catch (error) {
-      this.logger.error(
-        `Failed to update sync control '${name}': ${error.message}`,
+  private async backfillUnresolvedProductReferences(): Promise<void> {
+    const [orderDetails, invoiceDetails, returnDetails] = await this.prismaService.$transaction([
+      this.prismaService.$executeRaw`
+        UPDATE "OrderDetail" AS detail
+        SET "productId" = product.id
+        FROM "Product" AS product
+        WHERE detail."productId" IS NULL
+          AND detail."productKiotVietId" = product."kiotVietId"
+      `,
+      this.prismaService.$executeRaw`
+        UPDATE "InvoiceDetail" AS detail
+        SET "productId" = product.id
+        FROM "Product" AS product
+        WHERE detail."productId" IS NULL
+          AND detail."productKiotVietId" = product."kiotVietId"
+      `,
+      this.prismaService.$executeRaw`
+        UPDATE "ReturnDetail" AS detail
+        SET "productId" = product.id
+        FROM "Product" AS product
+        WHERE detail."productId" IS NULL
+          AND detail."productKiotVietId" = product."kiotVietId"
+      `,
+    ]);
+
+    const total = orderDetails + invoiceDetails + returnDetails;
+    if (total > 0) {
+      this.logger.log(
+        `Back-filled ${total} transaction detail product reference(s) ` +
+          `(orders=${orderDetails}, invoices=${invoiceDetails}, returns=${returnDetails})`,
       );
-      throw error;
     }
+  }
+
+  private uniqueNum(arr: any[]): number[] {
+    return Array.from(
+      new Set(arr.filter((v) => v !== null && v !== undefined).map(Number)),
+    );
   }
 }

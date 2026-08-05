@@ -1,1061 +1,567 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { HttpService } from '@nestjs/axios';
-import { ConfigService } from '@nestjs/config';
-import { async, firstValueFrom } from 'rxjs';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { KiotVietAuthService } from '../auth.service';
-import { LarkInvoiceHistoricalSyncService } from '../../lark/invoice-historical/lark-invoice-historical-sync.service';
-import { Prisma } from '@prisma/client';
+import { KiotPageFetcher } from '../shared/kiot-page-fetcher';
+import { BulkUpsertHelper, ColumnSpec } from '../shared/bulk-upsert.helper';
+import { RelationMapHelper } from '../shared/relation-map.helper';
+import { SyncControlHelper } from '../shared/sync-control.helper';
+import { RetailerContext } from '../shared/retailer-context';
+import { lineSubTotal } from '../shared/line-math';
 
-interface KiotVietInvoice {
-  id: number;
-  code: string;
-  orderCode?: string;
-  purchaseDate?: string;
-  branchId?: number;
-  branchName?: string;
-  customerId?: number;
-  customerCode?: string;
-  customerName?: string;
-  soldById?: number;
-  soldByName?: string;
-  total?: number;
-  totalPayment?: number;
-  status?: number;
-  statusValue?: string;
-  createdDate?: string;
-  modifiedDate?: string;
-  usingCod?: boolean;
-  description?: string;
-  retailerId: number;
-  invoiceOrderSurcharges?: Array<{
-    id?: number;
-    invoiceId: number;
-    surchargeId?: number;
-    surchargeName?: string;
-    surValue?: number;
-    price?: number;
-    createdDate?: string;
-  }>;
-  invoiceDetails: Array<{
-    productId: number;
-    productCode?: string;
-    productName?: string;
-    quantity: number;
-    price: number;
-    discount?: number;
-    discountRatio?: number;
-    note?: string;
-    serialNumbers?: string;
-    productBatchExpire?: Array<{
-      id: number;
-      productId: number;
-      batchName?: string;
-      fullNameVirgule?: string;
-      createdDate?: string;
-      expireDate?: string;
-    }>;
-  }>;
-  invoiceDelivery?: {
-    deliveryCode?: string;
-    type?: number;
-    status?: number;
-    price?: number;
-    receiver?: string;
-    contactNumber?: string;
-    address?: string;
-    locationId?: number;
-    locationName?: string;
-    usingPriceCod?: boolean;
-    priceCodPayment?: number;
-    weight?: number;
-    length?: number;
-    width?: number;
-    height?: number;
-    partnerDeliveryId?: number;
-    partnerDelivery?: {
-      code?: string;
-      name?: string;
-      address?: string;
-      contactNumber?: string;
-      email?: string;
-    };
-  };
-  payments?: Array<{
-    id?: number;
-    code?: string;
-    amount: number;
-    method: string;
-    status?: number;
-    transDate: string;
-    accountId?: number;
-    description?: string;
-  }>;
-  SaleChannel?: {
-    IsNotDelete?: boolean;
-    RetailerId?: number;
-    Position?: number;
-    IsActivate?: boolean;
-    CreatedBy?: number;
-    CreatedDate?: string;
-    Id: number;
-    Name: string;
-  };
-}
+const SYNC_NAME = 'invoice_historical';
+
+const INVOICE_COLUMNS: ColumnSpec[] = [
+  { name: 'kiotVietId', type: 'bigint' },
+  { name: 'code', type: 'text' },
+  { name: 'orderCode', type: 'text' },
+  { name: 'orderId', type: 'int' },
+  { name: 'purchaseDate', type: 'timestamp' },
+  { name: 'branchId', type: 'int' },
+  { name: 'soldById', type: 'bigint' },
+  { name: 'soldByKiotVietId', type: 'bigint' },
+  { name: 'soldByName', type: 'text' },
+  { name: 'customerId', type: 'int' },
+  { name: 'total', type: 'numeric' },
+  { name: 'totalPayment', type: 'numeric' },
+  { name: 'discount', type: 'numeric' },
+  { name: 'discountRatio', type: 'real' },
+  { name: 'status', type: 'int' },
+  { name: 'description', type: 'text' },
+  { name: 'usingCod', type: 'boolean' },
+  { name: 'saleChannelId', type: 'int' },
+  { name: 'isApplyVoucher', type: 'boolean' },
+  { name: 'retailerId', type: 'int' },
+  { name: 'createdDate', type: 'timestamp' },
+  { name: 'modifiedDate', type: 'timestamp' },
+  { name: 'lastSyncedAt', type: 'timestamp' },
+  { name: 'customerCode', type: 'text' },
+  { name: 'customerName', type: 'text' },
+  { name: 'statusValue', type: 'text' },
+];
+
+const INVOICE_UPDATE = [
+  'code',
+  'orderCode',
+  'orderId',
+  'purchaseDate',
+  'branchId',
+  'soldById',
+  'soldByKiotVietId',
+  'soldByName',
+  'customerId',
+  'total',
+  'totalPayment',
+  'discount',
+  'discountRatio',
+  'status',
+  'description',
+  'usingCod',
+  'saleChannelId',
+  'isApplyVoucher',
+  'retailerId',
+  'createdDate',
+  'modifiedDate',
+  'lastSyncedAt',
+  'customerCode',
+  'customerName',
+  'statusValue',
+];
+
+const INVOICE_DETAIL_COLUMNS: ColumnSpec[] = [
+  { name: 'invoiceId', type: 'int' },
+  { name: 'productId', type: 'int' },
+  { name: 'invoiceKiotVietId', type: 'bigint' },
+  { name: 'productKiotVietId', type: 'bigint' },
+  { name: 'quantity', type: 'real' },
+  { name: 'price', type: 'numeric' },
+  { name: 'discount', type: 'numeric' },
+  { name: 'discountRatio', type: 'real' },
+  { name: 'note', type: 'text' },
+  { name: 'serialNumbers', type: 'text' },
+  { name: 'subTotal', type: 'numeric' },
+  { name: 'lineNumber', type: 'int' },
+  { name: 'productCode', type: 'text' },
+  { name: 'productName', type: 'text' },
+  { name: 'uniqueKey', type: 'text' },
+];
+
+const INVOICE_DETAIL_UPDATE = [
+  'productId',
+  'invoiceKiotVietId',
+  'productKiotVietId',
+  'quantity',
+  'price',
+  'discount',
+  'discountRatio',
+  'note',
+  'serialNumbers',
+  'subTotal',
+  'productCode',
+  'productName',
+  'uniqueKey',
+];
+
+const INVOICE_DELIVERY_COLUMNS: ColumnSpec[] = [
+  { name: 'invoiceId', type: 'int' },
+  { name: 'deliveryCode', type: 'text' },
+  { name: 'status', type: 'int' },
+  { name: 'type', type: 'int' },
+  { name: 'price', type: 'numeric' },
+  { name: 'receiver', type: 'text' },
+  { name: 'contactNumber', type: 'text' },
+  { name: 'address', type: 'text' },
+  { name: 'locationId', type: 'int' },
+  { name: 'locationName', type: 'text' },
+  { name: 'wardName', type: 'text' },
+  { name: 'usingPriceCod', type: 'boolean' },
+  { name: 'priceCodPayment', type: 'numeric' },
+  { name: 'weight', type: 'real' },
+  { name: 'length', type: 'real' },
+  { name: 'width', type: 'real' },
+  { name: 'height', type: 'real' },
+];
+
+const INVOICE_DELIVERY_UPDATE = [
+  'deliveryCode',
+  'status',
+  'type',
+  'price',
+  'receiver',
+  'contactNumber',
+  'address',
+  'locationId',
+  'locationName',
+  'wardName',
+  'usingPriceCod',
+  'priceCodPayment',
+  'weight',
+  'length',
+  'width',
+  'height',
+];
+
+const PAYMENT_COLUMNS: ColumnSpec[] = [
+  { name: 'kiotVietId', type: 'bigint' },
+  { name: 'code', type: 'text' },
+  { name: 'amount', type: 'numeric' },
+  { name: 'method', type: 'text' },
+  { name: 'status', type: 'int' },
+  { name: 'transDate', type: 'timestamp' },
+  { name: 'accountId', type: 'int' },
+  { name: 'invoiceId', type: 'int' },
+  { name: 'description', type: 'text' },
+];
+
+const PAYMENT_UPDATE = [
+  'code',
+  'amount',
+  'method',
+  'status',
+  'transDate',
+  'accountId',
+  'invoiceId',
+  'description',
+];
+
+const INVOICE_SURCHARGE_COLUMNS: ColumnSpec[] = [
+  { name: 'kiotVietId', type: 'bigint' },
+  { name: 'invoiceId', type: 'int' },
+  { name: 'surchargeId', type: 'int' },
+  { name: 'surchargeName', type: 'text' },
+  { name: 'surValue', type: 'numeric' },
+  { name: 'price', type: 'numeric' },
+];
+
+const INVOICE_SURCHARGE_UPDATE = [
+  'surchargeId',
+  'surchargeName',
+  'surValue',
+  'price',
+];
 
 @Injectable()
 export class KiotVietInvoiceService {
   private readonly logger = new Logger(KiotVietInvoiceService.name);
-  private readonly baseUrl: string;
-  private readonly PAGE_SIZE = 100;
-
-  private readonly INVOICE_DETAIL_SYNC_KEYWORDS = [
-    'lỗi',
-    'date',
-    'thanh lý',
-    'rách',
-    'bục',
-    '3m',
-  ];
+  /** Rows whose soldById could not satisfy the FK, tallied per sync run. */
+  private unknownSoldBy = 0;
+  /** Rows examined for soldById, so the summary ratio has a correct denominator. */
+  private soldBySeen = 0;
+  /** staff "id|name" -> row count, so the summary names who is missing. */
+  private unknownSoldByNames = new Map<string, number>();
 
   constructor(
-    private readonly httpService: HttpService,
-    private readonly configService: ConfigService,
     private readonly prismaService: PrismaService,
-    private readonly authService: KiotVietAuthService,
-    private readonly larkInvoiceHistoricalSyncService: LarkInvoiceHistoricalSyncService,
-  ) {
-    const baseUrl = this.configService.get<string>('KIOT_BASE_URL');
-    if (!baseUrl) {
-      throw new Error('KIOT_BASE_URL environment variable is not configured');
-    }
-    this.baseUrl = baseUrl;
+    private readonly pageFetcher: KiotPageFetcher,
+    private readonly bulkUpsert: BulkUpsertHelper,
+    private readonly relationMap: RelationMapHelper,
+    private readonly syncControl: SyncControlHelper,
+    private readonly retailer: RetailerContext,
+  ) {}
+
+  async syncFull() {
+    return this.runSync('full', {});
   }
 
-  async checkAndRunAppropriateSync(): Promise<void> {
-    try {
-      const runningInvoiceSyncs = await this.prismaService.syncControl.findMany(
-        {
-          where: {
-            OR: [{ name: 'invoice_historical' }, { name: 'invoice_lark_sync' }],
-            isRunning: true,
-          },
-        },
-      );
-
-      if (runningInvoiceSyncs.length > 0) {
-        this.logger.warn(
-          `Found ${runningInvoiceSyncs.length} Invoice syncs still running: ${runningInvoiceSyncs.map((s) => s.name).join(', ')}`,
-        );
-        this.logger.warn('Skipping invoice sync to avoid conflicts');
-        return;
-      }
-
-      const historicalSync = await this.prismaService.syncControl.findFirst({
-        where: { name: 'invoice_historical' },
-      });
-
-      if (historicalSync?.isEnabled && !historicalSync.isRunning) {
-        this.logger.log('Starting historical invoice sync...');
-        await this.syncHistoricalInvoices();
-        return;
-      }
-
-      if (historicalSync?.isRunning) {
-        this.logger.log(
-          'Historical invoice sync is running, skipping recent sync',
-        );
-        return;
-      }
-    } catch (error) {
-      this.logger.error(`Sync check failed: ${error.message}`);
-      throw error;
-    }
-  }
-
-  async enableHistoricalSync(): Promise<void> {
-    await this.updateSyncControl('invoice_historical', {
-      isEnabled: true,
-      isRunning: false,
-      status: 'idle',
+  async syncIncremental() {
+    const last = await this.syncControl.getLastCompletedAt(SYNC_NAME);
+    const fromPurchaseDate = last ?? new Date('2024-12-01');
+    return this.runSync('incremental', {
+      fromPurchaseDate: fromPurchaseDate.toISOString().slice(0, 10),
     });
-
-    this.logger.log('Historical invoice sync enabled');
-  }
-
-  private shouldSyncInvoiceDetail(
-    note: string | null,
-    productCode?: string,
-  ): boolean {
-    if (productCode === 'SP007489' || productCode === 'SP007500') {
-      return true;
-    }
-
-    if (!note) return false;
-
-    const noteLower = note.toLowerCase().trim();
-
-    return this.INVOICE_DETAIL_SYNC_KEYWORDS.some((keyword) =>
-      noteLower.includes(keyword.toLowerCase()),
-    );
   }
 
   async syncHistoricalInvoices(): Promise<void> {
-    const syncName = 'invoice_historical';
+    await this.syncFull();
+  }
 
-    let currentItem = 0;
-    let processedCount = 0;
-    let totalInvoices = 0;
-    let consecutiveEmptyPages = 0;
-    let consecutiveErrorPages = 0;
-    let lastValidTotal = 0;
-    let processedInvoiceIds = new Set<number>();
+  async enableHistoricalSync(): Promise<void> {}
 
+  private async runSync(
+    mode: 'full' | 'incremental',
+    extra: Record<string, any>,
+  ) {
+    if (await this.syncControl.isRunning(SYNC_NAME)) {
+      this.logger.warn(`Invoice sync already running, skipping`);
+      return { total: 0, processed: 0 };
+    }
+    await this.syncControl.markRunning(SYNC_NAME, mode, ['invoice']);
+    let processed = 0;
+    let total = 0;
+    // Accumulated across pages and reported once at the end. Logging per page
+    // produced a warning every 100 rows, which reads like a recurring failure.
+    this.unknownSoldBy = 0;
+    this.soldBySeen = 0;
+    this.unknownSoldByNames = new Map<string, number>();
     try {
-      await this.updateSyncControl(syncName, {
-        isRunning: true,
-        status: 'running',
-        startedAt: new Date(),
-        error: null,
-      });
-
-      this.logger.log('Starting historical invoice sync...');
-
-      const MAX_CONSECUTIVE_EMPTY_PAGES = 5;
-      const MAX_CONSECUTIVE_ERROR_PAGES = 3;
-      const RETRY_DELAY_MS = 2000;
-      const MAX_TOTAL_RETRIES = 10;
-
-      let totalRetries = 0;
-
-      while (true) {
-        const currentPage = Math.floor(currentItem / this.PAGE_SIZE) + 1;
-
-        if (totalInvoices > 0) {
-          if (currentItem >= totalInvoices) {
-            this.logger.log(
-              `Pagination complete. Processed: ${processedCount}/${totalInvoices} customers`,
-            );
-            break;
-          }
-
-          const progressPercentage = (currentItem / totalInvoices) * 100;
-          this.logger.log(
-            `Fetching page ${currentPage} (${currentItem}/${totalInvoices} - ${progressPercentage.toFixed(1)}%)`,
-          );
-        } else {
-          this.logger.log(
-            `Fetching page ${currentPage} (currentItem: ${currentItem})`,
-          );
-        }
-
-        const dateStart = new Date();
-        dateStart.setDate(dateStart.getDate() - 200);
-        const dateStartStr = dateStart.toISOString().split('T')[0];
-
-        const dateEnd = new Date();
-        dateEnd.setDate(dateEnd.getDate() + 1);
-        const dateEndStr = dateEnd.toISOString().split('T')[0];
-
-        try {
-          const invoiceListResponse = await this.fetchInvoicesListWithRetry({
-            currentItem,
-            pageSize: this.PAGE_SIZE,
+      const { total: t, serverTimestamp } =
+        await this.pageFetcher.fetchAll<any>({
+          endpoint: '/invoices',
+          baseParams: {
             orderBy: 'id',
             orderDirection: 'DESC',
             includeInvoiceDelivery: true,
             includePayment: true,
             includeTotal: true,
-            // fromPurchaseDate: '2024-12-1',
-            fromPurchaseDate: dateStartStr,
-            toPurchaseDate: dateEndStr,
-          });
-
-          if (!invoiceListResponse) {
-            this.logger.warn('Received null response from KiotViet API');
-            consecutiveEmptyPages++;
-
-            if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
-              this.logger.log(
-                `Reached end after ${consecutiveEmptyPages} empty pages`,
-              );
-              break;
-            }
-
-            await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
-            continue;
-          }
-
-          consecutiveEmptyPages = 0;
-          consecutiveErrorPages = 0;
-
-          const { total, data: invoices } = invoiceListResponse;
-
-          if (total !== undefined && total !== null) {
-            if (totalInvoices === 0) {
-              this.logger.log(`Total invoices detected: ${totalInvoices}`);
-
-              totalInvoices = total;
-            } else if (total !== totalInvoices) {
-              this.logger.warn(
-                `Total count changed: ${totalInvoices} -> ${total}. Using latest.`,
-              );
-              totalInvoices = total;
-            }
-            lastValidTotal = total;
-          }
-
-          if (!invoices || invoices.length === 0) {
-            this.logger.warn(`Empty page received at position ${currentItem}`);
-            consecutiveEmptyPages++;
-
-            if (totalInvoices > 0 && currentItem >= totalInvoices) {
-              this.logger.log('Reached end of data (empty page past total)');
-              break;
-            }
-
-            if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
-              this.logger.log(
-                `🔚 Stopping after ${consecutiveEmptyPages} consecutive empty pages`,
-              );
-              break;
-            }
-
-            currentItem += this.PAGE_SIZE;
-            continue;
-          }
-
-          const pageInvoiceIds = invoices.map((invoice) => BigInt(invoice.id));
-          const existingInvoiceIds = new Set(
-            (
-              await this.prismaService.invoice.findMany({
-                where: { kiotVietId: { in: pageInvoiceIds } },
-                select: { kiotVietId: true },
-              })
-            ).map((c) => Number(c.kiotVietId)),
-          );
-
-          const newInvoices = invoices.filter((invoice) => {
-            if (
-              !existingInvoiceIds.has(invoice.id) &&
-              !processedInvoiceIds.has(invoice.id)
-            ) {
-              processedInvoiceIds.add(invoice.id);
-              return true;
-            }
-            return false;
-          });
-
-          const existingInvoices = invoices.filter((invoice) => {
-            if (
-              existingInvoiceIds.has(invoice.id) &&
-              !processedInvoiceIds.has(invoice.id)
-            ) {
-              processedInvoiceIds.add(invoice.id);
-              return true;
-            }
-            return false;
-          });
-
-          if (newInvoices.length === 0 && existingInvoices.length === 0) {
-            this.logger.log(
-              `Skipping page ${currentPage} - all invoices already processed in this run`,
-            );
-            currentItem += this.PAGE_SIZE;
-            continue;
-          }
-
-          let pageProcessedCount = 0;
-          let allSavedInvoices: any[] = [];
-
-          if (newInvoices.length > 0) {
-            this.logger.log(
-              `Processing ${newInvoices.length} NEW invoices from page ${currentPage}...`,
-            );
-
-            const savedInvoices =
-              await this.saveInvoicesToDatabase(newInvoices);
-            pageProcessedCount += savedInvoices.length;
-            allSavedInvoices.push(...savedInvoices);
-          }
-
-          if (existingInvoices.length > 0) {
-            this.logger.log(
-              `Processing ${existingInvoices.length} EXISTING invoices from page ${currentPage}`,
-            );
-
-            const savedInvoices =
-              await this.saveInvoicesToDatabase(existingInvoices);
-            pageProcessedCount += savedInvoices.length;
-            allSavedInvoices.push(...savedInvoices);
-          }
-
-          processedCount += pageProcessedCount;
-          currentItem += this.PAGE_SIZE;
-
-          // if (allSavedInvoices.length > 0) {
-          //   try {
-          //     await this.syncInvoicesToLarkBase(allSavedInvoices);
-          //     this.logger.log(
-          //       `Synced ${allSavedInvoices.length} invoices to LarkBase`,
-          //     );
-          //   } catch (error) {
-          //     this.logger.warn(
-          //       `LarkBase sync failed for page ${currentPage}: ${error.message}`,
-          //     );
-          //   }
-          // }
-
-          if (totalInvoices > 0) {
-            const completionPercentage = (processedCount / totalInvoices) * 100;
-            this.logger.log(
-              `Progress: ${processedCount}/${totalInvoices} (${completionPercentage.toFixed(1)}%)`,
-            );
-
-            if (processedCount >= totalInvoices) {
-              this.logger.log('All invoices processed successfully');
-              break;
-            }
-          }
-
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        } catch (error) {
-          consecutiveErrorPages++;
-          totalRetries++;
-
-          this.logger.error(
-            `API error on page ${currentPage}: ${error.message}`,
-          );
-
-          if (consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES) {
-            throw new Error(
-              `Multiple consecutive API failures: ${error.message}`,
-            );
-          }
-
-          if (totalRetries >= MAX_TOTAL_RETRIES) {
-            throw new Error(`Maximum total retries exceeded: ${error.message}`);
-          }
-
-          const delay = RETRY_DELAY_MS * Math.pow(2, consecutiveErrorPages - 1);
-          this.logger.log(`Retrying after ${delay}ms delay...`);
-          await new Promise((resolve) => setTimeout(resolve, delay));
-        }
-      }
-
-      await this.updateSyncControl(syncName, {
-        isRunning: false,
-        isEnabled: false,
-        status: 'completed',
-        completedAt: new Date(),
-        lastRunAt: new Date(),
-        progress: { processedCount, expectedTotal: totalInvoices },
-      });
-
-      await this.updateSyncControl('invoice_recent', {
-        isEnabled: true,
-        isRunning: false,
-        status: 'idle',
-      });
-
-      const completionRate =
-        totalInvoices > 0 ? (processedCount / totalInvoices) * 100 : 100;
-
-      this.logger.log(
-        `Historical invoice sync completed: ${processedCount}/${totalInvoices} (${completionRate.toFixed(1)}% completion rate)`,
+            ...extra,
+          },
+          label: `invoice-${mode}`,
+          onPage: async (pageData) => {
+            processed += await this.processPage(pageData);
+            this.logger.log(`invoice-${mode}: processed ${processed} so far`);
+          },
+        });
+      total = t;
+      this.reportUnknownSoldBy(processed);
+      await this.syncControl.markCompleted(
+        SYNC_NAME,
+        { processedCount: processed, expectedTotal: total },
+        serverTimestamp,
       );
-      this.logger.log(
-        `AUTO-TRANSITION: Historical sync disabled, Recent sync enabled for future cycles`,
-      );
+      return { total, processed };
     } catch (error) {
-      this.logger.error(`Historical invoice sync failed: ${error.message}`);
-
-      await this.updateSyncControl(syncName, {
-        isRunning: false,
-        status: 'failed',
-        error: error.message,
-        progress: { processedCount, expectedTotal: totalInvoices },
+      this.logger.error(`invoice-${mode} failed: ${error.message}`);
+      await this.syncControl.markFailed(SYNC_NAME, error.message, {
+        processedCount: processed,
+        expectedTotal: total,
       });
-
       throw error;
     }
   }
 
-  async fetchInvoicesListWithRetry(
-    params: {
-      currentItem?: number;
-      pageSize?: number;
-      orderBy?: string;
-      orderDirection?: string;
-      includeInvoiceDelivery?: boolean;
-      includePayment?: boolean;
-      includeTotal?: boolean;
-      // lastModifiedFrom?: string;
-      // toDate?: string;
-      fromPurchaseDate?: string;
-      toPurchaseDate?: string;
-    },
-    maxRetries: number = 5,
-  ): Promise<any> {
-    let lastError: Error | undefined;
+  private async processPage(invoices: any[]): Promise<number> {
+    if (!invoices.length) return 0;
+    const now = new Date();
 
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        return await this.fetchInvoicesList(params);
-      } catch (error) {
-        lastError = error as Error;
-        this.logger.warn(
-          `API attempt ${attempt}/${maxRetries} failed: ${error.message}`,
-        );
-
-        if (attempt < maxRetries) {
-          const delay = 2000 * attempt;
-          this.logger.log(`Retrying after ${delay / 1000}s delay...`);
-          await new Promise((resolve) => setTimeout(resolve, delay));
-        }
-      }
-    }
-
-    throw lastError;
-  }
-
-  async fetchInvoicesList(params: {
-    currentItem?: number;
-    pageSize?: number;
-    orderBy?: string;
-    orderDirection?: string;
-    includeInvoiceDelivery?: boolean;
-    includePayment?: boolean;
-    includeTotal?: boolean;
-    // lastModifiedFrom?: string;
-    // toDate?: string;
-    fromPurchaseDate?: string;
-    toPurchaseDate?: string;
-  }): Promise<any> {
-    const headers = await this.authService.getRequestHeaders();
-
-    const queryParams = new URLSearchParams({
-      currentItem: (params.currentItem || 0).toString(),
-      pageSize: (params.pageSize || this.PAGE_SIZE).toString(),
-      orderBy: params.orderBy || 'id',
-      orderDirection: params.orderDirection || 'DESC',
-      includeInvoiceDelivery: (
-        params.includeInvoiceDelivery || true
-      ).toString(),
-      includePayment: (params.includePayment || true).toString(),
-      includeTotal: (params.includeTotal || true).toString(),
-    });
-
-    // if (params.lastModifiedFrom) {
-    //   queryParams.append('lastModifiedFrom', params.lastModifiedFrom);
-    // }
-    // if (params.toDate) {
-    //   queryParams.append('toDate', params.toDate);
-    // }
-
-    if (params.fromPurchaseDate) {
-      queryParams.append('fromPurchaseDate', params.fromPurchaseDate);
-    }
-    if (params.toPurchaseDate) {
-      queryParams.append('toPurchaseDate', params.toPurchaseDate);
-    }
-
-    const response = await firstValueFrom(
-      this.httpService.get(`${this.baseUrl}/invoices?${queryParams}`, {
-        headers,
-        timeout: 45000,
-      }),
+    // Collect relation ids
+    const branchIds = this.uniqueNum(invoices.map((i) => i.branchId));
+    const customerIds = this.uniqueNum(invoices.map((i) => i.customerId));
+    const saleChannelIds = this.uniqueNum(invoices.map((i) => i.saleChannelId));
+    const orderIds = this.uniqueNum(invoices.map((i) => i.orderId));
+    const productIds = this.uniqueNum(
+      invoices.flatMap((i) => (i.invoiceDetails ?? []).map((d) => d.productId)),
+    );
+    const bankAccountIds = this.uniqueNum(
+      invoices.flatMap((i) =>
+        (i.payments ?? []).filter((p) => p.accountId).map((p) => p.accountId),
+      ),
+    );
+    const surchargeIds = this.uniqueNum(
+      invoices.flatMap((i) =>
+        (i.invoiceOrderSurcharges ?? [])
+          .filter((s) => s.surchargeId)
+          .map((s) => s.surchargeId),
+      ),
     );
 
-    return response.data;
-  }
-
-  private async saveInvoicesToDatabase(invoices: any[]): Promise<any[]> {
-    this.logger.log(`Saving ${invoices.length} invoices to database...`);
-
-    const savedInvoices: any[] = [];
-
-    const customerIds = [
-      ...new Set(
-        invoices.filter((i) => i.customerId).map((i) => BigInt(i.customerId)),
-      ),
-    ];
-    const branchIds = [
-      ...new Set(
-        invoices.filter((i) => i.branchId != null).map((i) => i.branchId),
-      ),
-    ];
-    const userIds = [
-      ...new Set(
-        invoices.filter((i) => i.soldById).map((i) => BigInt(i.soldById)),
-      ),
-    ];
-    const saleChannelIds = [
-      ...new Set(
-        invoices.filter((i) => i.saleChannelId).map((i) => i.saleChannelId),
-      ),
-    ];
-    const orderIds = [
-      ...new Set(
-        invoices.filter((i) => i.orderId).map((i) => BigInt(i.orderId)),
-      ),
-    ];
-    const productIds = [
-      ...new Set(
-        invoices.flatMap((i) =>
-          (i.invoiceDetails ?? []).map((d) => BigInt(d.productId)),
-        ),
-      ),
-    ];
-    const bankAccountIds = [
-      ...new Set(
-        invoices.flatMap((i) =>
-          (i.payments ?? []).filter((p) => p.accountId).map((p) => p.accountId),
-        ),
-      ),
-    ];
-    const surchargeIds = [
-      ...new Set(
-        invoices.flatMap((i) =>
-          (i.invoiceOrderSurcharges ?? [])
-            .filter((s) => s.surchargeId)
-            .map((s) => s.surchargeId),
-        ),
-      ),
-    ];
+    const soldByIds = this.uniqueNum(
+      invoices.map((i) => i.soldById).filter((v) => v != null),
+    );
 
     const [
-      customers,
-      branches,
-      users,
-      saleChannels,
-      orders,
-      products,
-      bankAccounts,
-      surcharges,
+      branchMap,
+      customerMap,
+      saleChannelMap,
+      orderMap,
+      productMap,
+      bankAccountMap,
+      surchargeMap,
+      userMap,
     ] = await Promise.all([
-      customerIds.length
-        ? this.prismaService.customer.findMany({
-            where: { kiotVietId: { in: customerIds } },
-            select: { id: true, kiotVietId: true },
-          })
-        : [],
-      branchIds.length
-        ? this.prismaService.branch.findMany({
-            where: { kiotVietId: { in: branchIds } },
-            select: { id: true, kiotVietId: true },
-          })
-        : [],
-      userIds.length
-        ? this.prismaService.user.findMany({
-            where: { kiotVietId: { in: userIds } },
-            select: { kiotVietId: true },
-          })
-        : [],
-      saleChannelIds.length
-        ? this.prismaService.saleChannel.findMany({
-            where: { kiotVietId: { in: saleChannelIds } },
-            select: { id: true, kiotVietId: true },
-          })
-        : [],
-      orderIds.length
-        ? this.prismaService.order.findMany({
-            where: { kiotVietId: { in: orderIds } },
-            select: { id: true, kiotVietId: true },
-          })
-        : [],
-      productIds.length
-        ? this.prismaService.product.findMany({
-            where: { kiotVietId: { in: productIds } },
-            select: { id: true, code: true, name: true, kiotVietId: true },
-          })
-        : [],
-      bankAccountIds.length
-        ? this.prismaService.bankAccount.findMany({
-            where: { kiotVietId: { in: bankAccountIds } },
-            select: { id: true, kiotVietId: true },
-          })
-        : [],
-      surchargeIds.length
-        ? this.prismaService.surcharge.findMany({
-            where: { kiotVietId: { in: surchargeIds } },
-            select: { id: true, kiotVietId: true },
-          })
-        : [],
+      this.relationMap.buildIdMap('branch', branchIds),
+      this.relationMap.buildIdMap('customer', customerIds),
+      this.relationMap.buildIdMap('saleChannel', saleChannelIds),
+      this.relationMap.buildIdMap('order', orderIds),
+      this.relationMap.buildIdMap('product', productIds),
+      this.relationMap.buildIdMap('bankAccount', bankAccountIds),
+      this.relationMap.buildIdMap('surcharge', surchargeIds),
+      // Invoice.soldById is a FK onto User.kiotVietId, but GET /users returns only
+      // active staff while invoices keep referencing removed staff. Unresolvable ids
+      // violated Invoice_soldById_fkey and the invoice was dropped silently.
+      this.relationMap.buildIdMap('user', soldByIds),
     ]);
 
-    const customerMap = new Map(
-      customers.map((c): [number, any] => [Number(c.kiotVietId), c]),
-    );
-    const branchMap = new Map(
-      branches.map((b): [number, any] => [Number(b.kiotVietId), b]),
-    );
-    const userMap = new Map(
-      users.map((u): [number, any] => [Number(u.kiotVietId), u]),
-    );
-    const saleChannelMap = new Map(
-      saleChannels.map((s): [number, any] => [Number(s.kiotVietId), s]),
-    );
-    const orderMap = new Map(
-      orders.map((o): [number, any] => [Number(o.kiotVietId), o]),
-    );
-    const productMap = new Map(
-      products.map((p): [number, any] => [Number(p.kiotVietId), p]),
-    );
-    const bankAccountMap = new Map(
-      bankAccounts.map((b): [number, any] => [Number(b.kiotVietId), b]),
-    );
-    const surchargeMap = new Map(
-      surcharges.map((s): [number, any] => [Number(s.kiotVietId), s]),
+    // Build + upsert invoices
+    const invoiceRows = invoices.map((inv) => {
+      const rawSoldBy = inv.soldById ?? null;
+      const soldByKnown = rawSoldBy != null && userMap.has(Number(rawSoldBy));
+      this.soldBySeen++;
+      if (rawSoldBy != null && !soldByKnown) {
+        this.unknownSoldBy++;
+        const key = `${rawSoldBy}|${inv.soldByName || 'unknown'}`;
+        this.unknownSoldByNames.set(
+          key,
+          (this.unknownSoldByNames.get(key) ?? 0) + 1,
+        );
+      }
+
+      return {
+        kiotVietId: inv.id,
+        code: inv.code,
+        orderCode: inv.orderCode || null,
+        orderId: inv.orderId
+          ? (orderMap.get(Number(inv.orderId)) ?? null)
+          : null,
+        purchaseDate: inv.purchaseDate ? new Date(inv.purchaseDate) : now,
+        branchId: inv.branchId
+          ? (branchMap.get(Number(inv.branchId)) ?? null)
+          : null,
+        soldById: soldByKnown ? BigInt(rawSoldBy) : null,
+        // Retained even when the FK cannot be satisfied, so a deleted staff
+        // member's identity survives. Back-filled if the user syncs in later.
+        soldByKiotVietId: rawSoldBy != null ? BigInt(rawSoldBy) : null,
+        soldByName: inv.soldByName || null,
+        customerId: inv.customerId
+          ? (customerMap.get(Number(inv.customerId)) ?? null)
+          : null,
+        total: inv.total ?? 0,
+        totalPayment: inv.totalPayment ?? 0,
+        discount: inv.discount ?? 0,
+        discountRatio: inv.discountRatio || 0,
+        status: inv.status ?? 0,
+        description: inv.description || null,
+        usingCod: inv.usingCod || false,
+        saleChannelId: inv.saleChannelId
+          ? (saleChannelMap.get(Number(inv.saleChannelId)) ?? 1)
+          : 1,
+        isApplyVoucher: inv.isApplyVoucher || false,
+        retailerId: this.retailer.resolve(inv.retailerId),
+        createdDate: inv.createdDate ? new Date(inv.createdDate) : now,
+        modifiedDate: inv.modifiedDate ? new Date(inv.modifiedDate) : now,
+        lastSyncedAt: now,
+        customerCode: inv.customerCode || null,
+        customerName: inv.customerName || null,
+        statusValue: inv.statusValue || null,
+      };
+    });
+
+    await this.bulkUpsert.bulkUpsert({
+      table: '"Invoice"',
+      columns: INVOICE_COLUMNS,
+      rows: invoiceRows,
+      conflictTarget: '"kiotVietId"',
+      updateColumns: INVOICE_UPDATE,
+    });
+
+    // Map invoice kiotVietId -> db id
+    const invoiceIdMap = await this.relationMap.buildIdMap(
+      'invoice',
+      this.uniqueNum(invoices.map((i) => i.id)),
     );
 
-    const processInvoice = async (invoiceData: any) => {
-      try {
-        const customer = invoiceData.customerId
-          ? (customerMap.get(Number(invoiceData.customerId)) ?? null)
-          : null;
+    // Build children
+    const detailRows: any[] = [];
+    /** Detail lines kept with a null productId because the product is absent locally. */
+    let unresolvedProducts = 0;
+    const deliveryRows: any[] = [];
+    const paymentRows: any[] = [];
+    const surchargeRows: any[] = [];
 
-        const branch = branchMap.get(Number(invoiceData.branchId)) ?? null;
+    for (const inv of invoices) {
+      const invoiceDbId = invoiceIdMap.get(Number(inv.id));
+      if (!invoiceDbId) continue;
+      const invoiceKvId = BigInt(inv.id);
 
-        const soldBy = invoiceData.soldById
-          ? (userMap.get(Number(invoiceData.soldById)) ?? null)
-          : null;
-
-        const saleChannel = invoiceData.saleChannelId
-          ? (saleChannelMap.get(Number(invoiceData.saleChannelId)) ?? null)
-          : null;
-
-        const order = invoiceData.orderId
-          ? (orderMap.get(Number(invoiceData.orderId)) ?? null)
-          : null;
-
-        const invoiceCode = invoiceData.code;
-        const shouldSyncToLark =
-          invoiceCode &&
-          (invoiceCode.includes('HD0') || invoiceCode.includes('HD1'));
-
-        const invoice = await this.prismaService.invoice.upsert({
-          where: { kiotVietId: BigInt(invoiceData.id) },
-          update: {
-            code: invoiceData.code,
-            purchaseDate: new Date(invoiceData.purchaseDate),
-            branchId: branch?.id ?? null,
-            soldById: soldBy?.kiotVietId ?? null,
-            customerId: customer?.id ?? null,
-            customerCode: invoiceData.customerCode || null,
-            customerName: invoiceData.customerName || null,
-            orderId: order?.id ?? null,
-            orderCode: invoiceData.orderCode || null,
-            total: new Prisma.Decimal(invoiceData.total || 0),
-            totalPayment: new Prisma.Decimal(invoiceData.totalPayment || 0),
-            discount: invoiceData.discount ?? 0,
-            discountRatio: invoiceData.discountRatio || 0,
-            status: invoiceData.status,
-            statusValue: invoiceData.statusValue || null,
-            description: invoiceData.description || null,
-            usingCod: invoiceData.usingCod || false,
-            saleChannelId: saleChannel?.id ? saleChannel?.id : 1,
-            isApplyVoucher: invoiceData.isApplyVoucher || false,
-            createdDate: invoiceData.createdDate
-              ? new Date(invoiceData.createdDate)
-              : new Date(),
-            modifiedDate: invoiceData.modifiedDate
-              ? new Date(invoiceData.modifiedDate)
-              : new Date(),
-            retailerId: 310831,
-            lastSyncedAt: new Date(),
-            larkSyncStatus: shouldSyncToLark ? 'PENDING' : 'SKIP',
-          },
-          create: {
-            kiotVietId: BigInt(invoiceData.id),
-            code: invoiceData.code,
-            purchaseDate: new Date(invoiceData.purchaseDate),
-            branchId: branch?.id ?? null,
-            soldById: soldBy?.kiotVietId ?? null,
-            customerId: customer?.id ?? null,
-            customerCode: invoiceData.customerCode || null,
-            customerName: invoiceData.customerName || null,
-            orderId: order?.id ?? null,
-            orderCode: invoiceData.orderCode || null,
-            total: new Prisma.Decimal(invoiceData.total || 0),
-            totalPayment: new Prisma.Decimal(invoiceData.totalPayment || 0),
-            discount: invoiceData.discount ?? 0,
-            discountRatio: invoiceData.discountRatio || 0,
-            status: invoiceData.status,
-            statusValue: invoiceData.statusValue || null,
-            description: invoiceData.description || null,
-            usingCod: invoiceData.usingCod || false,
-            saleChannelId: saleChannel?.id ? saleChannel?.id : 1,
-            isApplyVoucher: invoiceData.isApplyVoucher || false,
-            createdDate: invoiceData.createdDate
-              ? new Date(invoiceData.createdDate)
-              : new Date(),
-            modifiedDate: invoiceData.modifiedDate
-              ? new Date(invoiceData.modifiedDate)
-              : new Date(),
-            retailerId: 310831,
-            lastSyncedAt: new Date(),
-            larkSyncStatus: shouldSyncToLark ? 'PENDING' : 'SKIP',
-          },
+      // Details
+      if (inv.invoiceDetails) {
+        inv.invoiceDetails.forEach((d: any, idx: number) => {
+          // `productId` is nullable now: a line whose product is absent locally
+          // (deleted upstream, or not yet synced) is KEPT instead of being dropped
+          // by the FK. productCode/productName/productKiotVietId preserve what was
+          // sold, so invoice totals still reconcile against KiotViet.
+          const product = productMap.get(Number(d.productId)) ?? null;
+          if (!product) unresolvedProducts++;
+          const ln = d.lineNumber ?? idx + 1;
+          detailRows.push({
+            invoiceId: invoiceDbId,
+            productId: product,
+            invoiceKiotVietId: invoiceKvId,
+            productKiotVietId: d.productId ? BigInt(d.productId) : null,
+            quantity: d.quantity ?? 0,
+            price: d.price ?? 0,
+            discount: d.discount ?? null,
+            discountRatio: d.discountRatio ?? null,
+            note: d.note || null,
+            serialNumbers: d.serialNumbers || null,
+            subTotal: lineSubTotal({ subTotal: d.subTotal, price: d.price, discount: d.discount, quantity: d.quantity }),
+            lineNumber: ln,
+            productCode: d.productCode || null,
+            productName: d.productName || null,
+            uniqueKey: `${inv.id}.${ln}`,
+          });
         });
+      }
 
-        if (
-          invoiceData.invoiceDetails &&
-          invoiceData.invoiceDetails.length > 0
-        ) {
-          for (let i = 0; i < invoiceData.invoiceDetails.length; i++) {
-            const detail = invoiceData.invoiceDetails[i];
-            const product = productMap.get(Number(detail.productId)) ?? null;
+      // Delivery
+      if (inv.invoiceDelivery) {
+        const dl = inv.invoiceDelivery;
+        deliveryRows.push({
+          invoiceId: invoiceDbId,
+          deliveryCode: dl.deliveryCode || null,
+          status: dl.status ?? 0,
+          type: dl.type ?? null,
+          price: dl.price ?? null,
+          receiver: dl.receiver || null,
+          contactNumber: dl.contactNumber || null,
+          address: dl.address || null,
+          locationId: dl.locationId ?? null,
+          locationName: dl.locationName || null,
+          wardName: dl.wardName || null,
+          usingPriceCod: dl.usingPriceCod || false,
+          priceCodPayment: dl.priceCodPayment ?? null,
+          weight: dl.weight ?? null,
+          length: dl.length ?? null,
+          width: dl.width ?? null,
+          height: dl.height ?? null,
+        });
+      }
 
-            const acsNumber: number = i + 1;
-
-            const shouldSyncDetail = this.shouldSyncInvoiceDetail(
-              detail.note,
-              product?.code,
-            );
-
-            const detailLarkSyncStatus = shouldSyncDetail ? 'PENDING' : 'SKIP';
-
-            if (product) {
-              await this.prismaService.invoiceDetail.upsert({
-                where: {
-                  invoiceId_lineNumber: {
-                    invoiceId: invoice.id,
-                    lineNumber: i + 1,
-                  },
-                },
-                update: {
-                  invoiceId: invoice.id,
-                  productId: product.id,
-                  invoiceKiotVietId: invoice.kiotVietId,
-                  productKiotVietId: product.kiotVietId,
-                  productCode: product.code,
-                  productName: product.name,
-                  quantity: detail.quantity,
-                  uniqueKey: `${invoice.kiotVietId}.${acsNumber}`,
-                  price: new Prisma.Decimal(detail.price),
-                  discount: detail.discount
-                    ? new Prisma.Decimal(detail.discount)
-                    : null,
-                  discountRatio: detail.discountRatio,
-                  note: detail.note,
-                  serialNumbers: detail.serialNumbers,
-                  lineNumber: i + 1,
-                  subTotal: new Prisma.Decimal(detail.subTotal),
-                  larkSyncStatus: detailLarkSyncStatus,
-                },
-                create: {
-                  invoiceId: invoice.id,
-                  productId: product.id,
-                  invoiceKiotVietId: invoice.kiotVietId,
-                  productKiotVietId: product.kiotVietId,
-                  productCode: product.code,
-                  productName: product.name,
-                  quantity: detail.quantity,
-                  uniqueKey: `${invoice.kiotVietId}.${acsNumber}`,
-                  price: new Prisma.Decimal(detail.price),
-                  discount: detail.discount
-                    ? new Prisma.Decimal(detail.discount)
-                    : null,
-                  discountRatio: detail.discountRatio,
-                  note: detail.note,
-                  serialNumbers: detail.serialNumbers,
-                  lineNumber: i + 1,
-                  subTotal: new Prisma.Decimal(detail.subTotal),
-                  larkSyncStatus: detailLarkSyncStatus,
-                },
-              });
-            }
-          }
-        }
-
-        if (invoiceData.invoiceDelivery) {
-          const detail = invoiceData.invoiceDelivery;
-          await this.prismaService.invoiceDelivery.upsert({
-            where: { invoiceId: invoice?.id },
-            update: {
-              deliveryCode: detail.deliveryCode,
-              status: detail.status,
-              type: detail.type,
-              price: detail.price ? new Prisma.Decimal(detail.price) : null,
-              receiver: detail.receiver,
-              contactNumber: detail.contactNumber,
-              address: detail.address,
-              locationId: detail.locationId,
-              locationName: detail.locationName,
-              wardName: detail.wardName,
-              usingPriceCod: detail.usingPriceCod || false,
-              priceCodPayment: detail.priceCodPayment
-                ? new Prisma.Decimal(detail.priceCodPayment)
-                : null,
-              weight: detail.weight,
-              length: detail.length,
-              width: detail.width,
-              height: detail.height,
-            },
-            create: {
-              invoiceId: invoice.id,
-              deliveryCode: detail.deliveryCode,
-              status: detail.status,
-              type: detail.type,
-              price: detail.price ? new Prisma.Decimal(detail.price) : null,
-              receiver: detail.receiver,
-              contactNumber: detail.contactNumber,
-              address: detail.address,
-              locationId: detail.locationId,
-              locationName: detail.locationName,
-              wardName: detail.wardName,
-              usingPriceCod: detail.usingPriceCod || false,
-              priceCodPayment: detail.priceCodPayment
-                ? new Prisma.Decimal(detail.priceCodPayment)
-                : null,
-              weight: detail.weight,
-              length: detail.length,
-              width: detail.width,
-              height: detail.height,
-            },
+      // Payments
+      if (inv.payments) {
+        for (const p of inv.payments) {
+          paymentRows.push({
+            kiotVietId: p.id ? BigInt(p.id) : null,
+            code: p.code || null,
+            amount: p.amount ?? 0,
+            method: p.method || 'Cash',
+            status: p.status ?? null,
+            transDate: p.transDate ? new Date(p.transDate) : now,
+            accountId: p.accountId
+              ? (bankAccountMap.get(Number(p.accountId)) ?? null)
+              : null,
+            invoiceId: invoiceDbId,
+            description: p.description || null,
           });
         }
-
-        if (invoiceData.payments && invoiceData.payments.length > 0) {
-          for (const payment of invoiceData.payments) {
-            const bankAccount = payment.accountId
-              ? (bankAccountMap.get(Number(payment.accountId)) ?? null)
-              : null;
-
-            await this.prismaService.payment.upsert({
-              where: {
-                kiotVietId: payment.id ? BigInt(payment.id) : BigInt(0),
-              },
-              update: {
-                invoiceId: invoice.id,
-                code: payment.code,
-                amount: new Prisma.Decimal(payment.amount),
-                method: payment.method,
-                status: payment.status,
-                transDate: new Date(payment.transDate),
-                accountId: bankAccount?.id ?? null,
-                description: payment.description,
-              },
-              create: {
-                kiotVietId: payment.id ? BigInt(payment.id) : null,
-                invoiceId: invoice.id,
-                code: payment.code,
-                amount: new Prisma.Decimal(payment.amount),
-                method: payment.method,
-                status: payment.status,
-                transDate: new Date(payment.transDate),
-                accountId: bankAccount?.id ?? null,
-                description: payment.description,
-              },
-            });
-          }
-        }
-
-        if (
-          invoiceData.invoiceOrderSurcharges &&
-          invoiceData.invoiceOrderSurcharges.length > 0
-        ) {
-          for (const surcharge of invoiceData.invoiceOrderSurcharges) {
-            const surchargeRecord = surcharge.surchargeId
-              ? (surchargeMap.get(Number(surcharge.surchargeId)) ?? null)
-              : null;
-
-            await this.prismaService.invoiceSurcharge.upsert({
-              where: {
-                kiotVietId: surcharge.id ? BigInt(surcharge.id) : BigInt(0),
-              },
-              update: {
-                surchargeName: surcharge.surchargeName,
-                surValue: surcharge.surValue
-                  ? new Prisma.Decimal(surcharge.surValue)
-                  : null,
-                price: surcharge.price
-                  ? new Prisma.Decimal(surcharge.price)
-                  : null,
-              },
-              create: {
-                kiotVietId: surcharge.id ? BigInt(surcharge.id) : null,
-                invoiceId: invoice.id,
-                surchargeId: surchargeRecord?.id ?? null,
-                surchargeName: surcharge.surchargeName,
-                surValue: surcharge.surValue
-                  ? new Prisma.Decimal(surcharge.surValue)
-                  : null,
-                price: surcharge.price
-                  ? new Prisma.Decimal(surcharge.price)
-                  : null,
-              },
-            });
-          }
-        }
-
-        return invoice;
-      } catch (error) {
-        this.logger.error(
-          `❌ Failed to save invoice ${invoiceData.code}: ${error.message}`,
-        );
-        return null;
       }
-    };
 
-    const CONCURRENCY = 8;
-    for (let i = 0; i < invoices.length; i += CONCURRENCY) {
-      const chunk = invoices.slice(i, i + CONCURRENCY);
-      const saved = await Promise.all(chunk.map(processInvoice));
-      savedInvoices.push(...saved.filter((inv) => inv));
+      // Surcharges
+      if (inv.invoiceOrderSurcharges) {
+        for (const s of inv.invoiceOrderSurcharges) {
+          surchargeRows.push({
+            kiotVietId: s.id ? BigInt(s.id) : null,
+            invoiceId: invoiceDbId,
+            surchargeId: s.surchargeId
+              ? (surchargeMap.get(Number(s.surchargeId)) ?? null)
+              : null,
+            surchargeName: s.surchargeName || null,
+            surValue: s.surValue ?? null,
+            price: s.price ?? null,
+          });
+        }
+      }
     }
 
-    this.logger.log(`💾 Saved ${savedInvoices.length} invoices to database`);
-    return savedInvoices;
+    // Bulk upsert children in parallel
+    if (unresolvedProducts > 0) {
+      this.logger.warn(
+        `${unresolvedProducts}/${detailRows.length} invoice line(s) reference a product ` +
+          `missing from the Product table. Kept with productId=null (was previously ` +
+          `dropped, losing revenue lines). Re-run after a product sync to back-fill.`,
+      );
+    }
+
+    await Promise.all([
+      this.bulkUpsert.bulkUpsert({
+        table: '"InvoiceDetail"',
+        columns: INVOICE_DETAIL_COLUMNS,
+        rows: detailRows,
+        conflictTarget: '("invoiceId", "lineNumber")',
+        updateColumns: INVOICE_DETAIL_UPDATE,
+      }),
+      this.bulkUpsert.bulkUpsert({
+        table: '"InvoiceDelivery"',
+        columns: INVOICE_DELIVERY_COLUMNS,
+        rows: deliveryRows,
+        conflictTarget: '"invoiceId"',
+        updateColumns: INVOICE_DELIVERY_UPDATE,
+      }),
+      this.bulkUpsert.bulkUpsert({
+        table: '"Payment"',
+        columns: PAYMENT_COLUMNS,
+        rows: paymentRows,
+        conflictTarget: '"kiotVietId"',
+        updateColumns: PAYMENT_UPDATE,
+      }),
+      this.bulkUpsert.bulkUpsert({
+        table: '"InvoiceSurcharge"',
+        columns: INVOICE_SURCHARGE_COLUMNS,
+        rows: surchargeRows,
+        conflictTarget: '"kiotVietId"',
+        updateColumns: INVOICE_SURCHARGE_UPDATE,
+      }),
+    ]);
+
+    return invoices.length;
   }
 
-  // private async syncInvoicesToLarkBase(invoices: any[]): Promise<void> {
-  //   try {
-  //     this.logger.log(
-  //       `Starting LarkBase sync for ${invoices.length} invoices...`,
-  //     );
+  /**
+   * One summary line per sync run instead of a warning every page.
+   *
+   * These rows are not errors or data loss: `GET /users` only lists active staff,
+   * so transactions made by removed staff can never satisfy the FK. The identity
+   * is preserved in `soldByKiotVietId` / `soldByName`, and the user sync back-fills
+   * `soldById` if that staff member ever reappears.
+   */
+  private reportUnknownSoldBy(processed: number): void {
+    void processed;
+    if (this.unknownSoldBy === 0) return;
+    const staff = Array.from(this.unknownSoldByNames.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([key, count]) => {
+        const [id, name] = key.split('|');
+        return `${name} (id=${id}, ${count} row(s))`;
+      })
+      .join('; ');
+    this.logger.log(
+      `${this.unknownSoldBy}/${this.soldBySeen} invoice(s) were sold by staff no longer ` +
+        `returned by GET /users, so soldById is null. Identity preserved in ` +
+        `soldByKiotVietId/soldByName. Staff: ${staff}`,
+    );
+  }
 
-  //     const invoicesToSync = invoices.filter(
-  //       (c) => c.larkSyncStatus === 'PENDING' || c.larkSyncStatus === 'FAILED',
-  //     );
-
-  //     if (invoicesToSync.length === 0) {
-  //       this.logger.log('No invoices need LarkBase sync');
-  //       return;
-  //     }
-
-  //     await this.larkInvoiceHistoricalSyncService.syncInvoicesToLarkBase(
-  //       invoicesToSync,
-  //     );
-  //     this.logger.log(`LarkBase sync completed successfully`);
-  //   } catch (error) {
-  //     this.logger.error(`LarkBase sync FAILED: ${error.message}`);
-  //     this.logger.error(`STOPPING sync to prevent data duplication`);
-
-  //     const invoiceIds = invoices.map((c) => c.id);
-  //     await this.prismaService.invoice.updateMany({
-  //       where: { id: { in: invoiceIds } },
-  //       data: {
-  //         larkSyncStatus: 'FAILED',
-  //         larkSyncedAt: new Date(),
-  //       },
-  //     });
-
-  //     throw new Error(`LarkBase sync failed: ${error.message}`);
-  //   }
-  // }
-
-  private async updateSyncControl(name: string, updates: any) {
-    await this.prismaService.syncControl.upsert({
-      where: { name },
-      create: {
-        name,
-        entities: ['invoice'],
-        syncMode: name.includes('historical') ? 'historical' : 'recent',
-        ...updates,
-      },
-      update: updates,
-    });
+  private uniqueNum(arr: any[]): number[] {
+    return Array.from(
+      new Set(arr.filter((v) => v !== null && v !== undefined).map(Number)),
+    );
   }
 }

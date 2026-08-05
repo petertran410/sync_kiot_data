@@ -25,20 +25,24 @@ model Category {
   children                Category[]                @relation("CategoryHierarchy")
   VoucherCampaignCategory VoucherCampaignCategory[]
 
-  products                Product[]
+  products  Product[]
+  /// Stamped when KiotViet reports this record as deleted (*.delete webhook or removedIds).
+  /// The row is NEVER removed; queries should filter on this.
+  deletedAt DateTime?
 
   @@index([kiotVietId])
   @@index([parentId])
   @@index([lastSyncedAt])
+  @@index([deletedAt])
 }
 
 model Product {
   id                   Int                      @id @default(autoincrement())
   kiotVietId           BigInt                   @unique
   code                 String
-  misa_code             String  @default("")
-  misa_name             String  @default("")
-  misa_unit             String  @default("")
+  misa_code            String                   @default("")
+  misa_name            String                   @default("")
+  misa_unit            String                   @default("")
   barCode              String?
   name                 String
   fullName             String
@@ -69,6 +73,7 @@ model Product {
   isRewardPoint        Boolean                  @default(true)
   isActive             Boolean                  @default(true)
   retailerId           Int?
+  isCurrentForCode     Boolean                  @default(true)
   createdDate          DateTime                 @default(now())
   modifiedDate         DateTime                 @updatedAt
   lastSyncedAt         DateTime                 @default(now())
@@ -85,13 +90,23 @@ model Product {
   formulas             ProductFormula[]         @relation("ProductFormulaOutput")
   images               ProductImage[]
   inventories          ProductInventory[]
+  units                ProductUnit[]
+  serials              ProductSerial[]
+  batchExpires         ProductBatchExpire[]
+  warranties           ProductWarranty[]
   purchaseOrderDetails PurchaseOrderDetail[]
   returnDetails        ReturnDetail[]
   transferDetails      TransferDetail[]
   voucherCampaigns     VoucherCampaignProduct[]
 
-  category             Category?                @relation(fields: [categoryId], references: [id])
-  tradeMark            TradeMark?               @relation(fields: [tradeMarkId], references: [id])
+  category  Category?  @relation(fields: [categoryId], references: [id])
+  tradeMark TradeMark? @relation(fields: [tradeMarkId], references: [id])
+  /// Stamped when KiotViet reports this record as deleted (*.delete webhook or removedIds).
+  /// The row is NEVER removed; queries should filter on this.
+  deletedAt DateTime?
+
+  @@index([code, isCurrentForCode])
+  @@index([deletedAt])
 }
 
 model ProductAttribute {
@@ -101,10 +116,12 @@ model ProductAttribute {
   attributeValue String
   lineNumber     Int
   lastSyncedAt   DateTime @default(now())
+  isCurrent      Boolean  @default(true)
   product        Product  @relation(fields: [productId], references: [id])
 
   @@unique([productId, lineNumber])
   @@index([productId])
+  @@index([isCurrent])
 }
 
 model ProductImage {
@@ -113,10 +130,12 @@ model ProductImage {
   lineNumber   Int
   lastSyncedAt DateTime @default(now())
   imageUrl     Json?
+  isCurrent    Boolean  @default(true)
   product      Product  @relation(fields: [productId], references: [id])
 
   @@unique([productId, lineNumber])
   @@index([productId])
+  @@index([isCurrent])
 }
 
 model ProductInventory {
@@ -137,11 +156,17 @@ model ProductInventory {
   actualReserved Int?
   isActive       Boolean?
   lineNumber     Int?
+  // True while KiotViet still reports this branch for this product.
+  // Set to false (never deleted) when KiotViet stops reporting it.
+  isCurrent      Boolean  @default(true)
   product        Product  @relation(fields: [productId], references: [id])
 
-  @@unique([productId, lineNumber])
+  // Natural key. Replaces the old ([productId, lineNumber]) key, which two
+  // different writers computed incompatibly (branch db id vs max+1).
+  @@unique([productId, branchId])
   @@index([productId])
   @@index([branchId])
+  @@index([isCurrent])
 }
 
 model ProductFormula {
@@ -156,12 +181,14 @@ model ProductFormula {
   basePrice         Decimal? @db.Decimal(15, 2)
   lineNumber        Int
   lastSyncedAt      DateTime @default(now())
+  isCurrent         Boolean  @default(true)
   product           Product  @relation("ProductFormulaOutput", fields: [productId], references: [id])
 
   @@unique([productId, lineNumber])
   @@index([productId])
   @@index([materialCode])
   @@index([materialId])
+  @@index([isCurrent])
 }
 
 model Customer {
@@ -173,8 +200,8 @@ model Customer {
   gender                Boolean?
   birthDate             DateTime?
   misaEmployeeName      String?                 @db.VarChar(255)
-  misaEmployeeCode  String?  @db.VarChar(50)
-  misaEmployeeId        String?   @db.VarChar(36)
+  misaEmployeeCode      String?                 @db.VarChar(50)
+  misaEmployeeId        String?                 @db.VarChar(36)
   contactNumber         String?
   subNumber             String?
   identificationNumber  String?
@@ -192,6 +219,7 @@ model Customer {
   rewardPoint           BigInt?
   psidFacebook          BigInt?
   retailerId            Int?
+  isCurrentForCode      Boolean                 @default(true)
   branchId              Int?
   isActive              Boolean                 @default(true)
   createdDate           DateTime?
@@ -207,6 +235,9 @@ model Customer {
   invoices              Invoice[]
   orders                Order[]
   Return                Return[]
+  /// Stamped when KiotViet reports this record as deleted (*.delete webhook or removedIds).
+  /// The row is NEVER removed; queries should filter on this.
+  deletedAt             DateTime?
 
   @@index([kiotVietId])
   @@index([code])
@@ -214,6 +245,8 @@ model Customer {
   @@index([larkSyncStatus])
   @@index([branchId])
   @@index([groups])
+  @@index([code, isCurrentForCode])
+  @@index([deletedAt])
 }
 
 model CustomerGroup {
@@ -237,12 +270,14 @@ model CustomerGroupRelation {
   kiotVietId      BigInt?       @unique
   customerId      Int
   customerGroupId Int
+  isCurrent       Boolean       @default(true)
   CustomerGroup   CustomerGroup @relation(fields: [customerGroupId], references: [id])
   customer        Customer      @relation(fields: [customerId], references: [id])
 
   @@unique([customerId, customerGroupId])
   @@index([customerId])
   @@index([customerGroupId])
+  @@index([isCurrent])
 }
 
 model Branch {
@@ -273,8 +308,12 @@ model Branch {
   voucherCampaigns VoucherCampaignBranch[]
   invoices         Invoice[]               @relation("BranchInvoices")
   orders           Order[]                 @relation("BranchOrders")
+  /// Stamped when KiotViet reports this record as deleted (*.delete webhook or removedIds).
+  /// The row is NEVER removed; queries should filter on this.
+  deletedAt        DateTime?
 
   @@index([kiotVietId])
+  @@index([deletedAt])
 }
 
 model User {
@@ -290,9 +329,13 @@ model User {
   orders           Order[]               @relation("OrderSoldBy")
   priceBooks       PriceBookUser[]
   voucherCampaigns VoucherCampaignUser[]
+  // Cashflow Cashflow[]
+  /// Stamped when KiotViet reports this record via `removedIds`.
+  /// The row is NEVER deleted; queries should filter on this.
+  deletedAt        DateTime?
 
   @@index([kiotVietId])
-  // Cashflow Cashflow[]
+  @@index([deletedAt])
 }
 
 model Order {
@@ -301,7 +344,13 @@ model Order {
   code             String           @unique
   purchaseDate     DateTime
   branchId         Int?
+  // `soldById` is a FK onto User.kiotVietId, but GET /users only returns active
+  // staff while transactions keep referencing removed staff. When the referenced
+  // user is absent locally `soldById` stays null and the two columns below preserve
+  // who sold it. `soldById` is back-filled if that user ever syncs in.
   soldById         BigInt?
+  soldByKiotVietId BigInt?
+  soldByName       String?
   cashierId        BigInt?
   customerId       Int?
   total            Decimal          @db.Decimal(15, 2)
@@ -341,6 +390,7 @@ model Order {
   @@index([branchId])
   @@index([customerId])
   @@index([soldById])
+  @@index([soldByKiotVietId])
   @@index([saleChannelId])
   @@index([lastSyncedAt])
   @@index([larkSyncStatus])
@@ -349,25 +399,33 @@ model Order {
 }
 
 model OrderDetail {
-  id            Int      @id @default(autoincrement())
-  orderId       Int
-  productId     Int
-  quantity      Float
-  price         Decimal  @db.Decimal(15, 2)
-  discount      Decimal? @db.Decimal(15, 2)
-  discountRatio Float?
-  note          String?
-  isMaster      Boolean  @default(true)
-  productCode   String
-  productName   String
-  lineNumber    Int?
-  order         Order    @relation(fields: [orderId], references: [id])
-  product       Product  @relation(fields: [productId], references: [id])
+  id                Int      @id @default(autoincrement())
+  orderId           Int
+  // Nullable: a line can reference a product not (yet) present locally — deleted
+  // upstream, or not synced yet. The line is retained (code/name/kiotVietId are
+  // stored here) instead of being dropped by the FK. Back-filled when the product
+  // later syncs in.
+  productId         Int?
+  productKiotVietId BigInt?
+  quantity          Float
+  price             Decimal  @db.Decimal(15, 2)
+  discount          Decimal? @db.Decimal(15, 2)
+  discountRatio     Float?
+  note              String?
+  isMaster          Boolean  @default(true)
+  productCode       String
+  productName       String
+  lineNumber        Int?
+  isCurrent         Boolean  @default(true)
+  order             Order    @relation(fields: [orderId], references: [id])
+  product           Product? @relation(fields: [productId], references: [id])
 
   @@unique([orderId, lineNumber])
+  @@index([isCurrent])
   @@index([orderId])
   @@index([productId])
   @@index([orderId, productId])
+  @@index([productKiotVietId])
 }
 
 model OrderDelivery {
@@ -400,11 +458,13 @@ model OrderSurcharge {
   surValue      Decimal?   @db.Decimal(15, 2)
   price         Decimal?   @db.Decimal(15, 2)
   createdDate   DateTime   @default(now())
+  isCurrent     Boolean    @default(true)
   order         Order      @relation(fields: [orderId], references: [id])
   surcharge     Surcharge? @relation(fields: [surchargeId], references: [id])
 
   @@index([orderId])
   @@index([surchargeId])
+  @@index([isCurrent])
 }
 
 model OrderSupplier {
@@ -437,7 +497,7 @@ model OrderSupplier {
   purchaseOrderCodes    String?
   supplierId            BigInt?
   supplierCode          String?
-  supplierName           String?
+  supplierName          String?
   createdBy             BigInt?
   createdDate           DateTime?
   modifiedDate          DateTime                     @updatedAt
@@ -447,7 +507,7 @@ model OrderSupplier {
   larkSyncedAt          DateTime?
   larkSyncRetries       Int                          @default(0)
   branch                Branch?                      @relation(fields: [branchId], references: [id])
-  supplier              Supplier? @relation(fields: [supplierId], references: [kiotVietId])
+  supplier              Supplier?                    @relation(fields: [supplierId], references: [kiotVietId])
   orderSupplierDetails  OrderSupplierDetail[]
   orderSupplierExpenses OrderSupplierExpense[]
   purchaseOrderLinks    OrderSupplierPurchaseOrder[]
@@ -486,12 +546,14 @@ model OrderSupplierDetail {
   larkSyncRetries      Int            @default(0)
   larkSyncStatus       LarkSyncStatus @default(PENDING)
   larkSyncedAt         DateTime?
+  isCurrent            Boolean        @default(true)
   orderSupplier        OrderSupplier? @relation(fields: [orderSupplierId], references: [id], onDelete: Cascade)
   product              Product?       @relation(fields: [productId], references: [id])
 
   @@index([orderSupplierId])
   @@index([productId])
   @@index([kiotVietId])
+  @@index([isCurrent])
 }
 
 model OrderSupplierExpense {
@@ -534,43 +596,47 @@ model OrderSupplierPurchaseOrder {
 }
 
 model Invoice {
-  id                Int                @id @default(autoincrement())
-  kiotVietId        BigInt             @unique
-  code              String             @unique
-  orderCode         String?
-  orderId           Int?
-  purchaseDate      DateTime
-  branchId          Int?
-  soldById          BigInt?
-  customerId        Int?
-  total             Decimal            @db.Decimal(15, 2)
-  totalPayment      Decimal            @db.Decimal(15, 2)
-  discount          Decimal?           @db.Decimal(15, 2)
-  discountRatio     Float?
-  status            Int
-  description       String?
-  usingCod          Boolean            @default(false)
-  saleChannelId     Int?
-  isApplyVoucher    Boolean            @default(false)
-  retailerId        Int?
-  createdDate       DateTime?
-  modifiedDate      DateTime?
-  lastSyncedAt      DateTime           @default(now())
-  larkRecordId      String?
-  larkSyncRetries   Int                @default(0)
-  larkSyncStatus    LarkSyncStatus     @default(PENDING)
-  larkSyncedAt      DateTime?
-  customerCode      String?
-  customerName      String?
-  statusValue       String?
+  id               Int            @id @default(autoincrement())
+  kiotVietId       BigInt         @unique
+  code             String         @unique
+  orderCode        String?
+  orderId          Int?
+  purchaseDate     DateTime
+  branchId         Int?
+  // See Order.soldById: null when the referenced staff member is absent locally
+  // (deleted upstream). The two columns below keep the original identity.
+  soldById         BigInt?
+  soldByKiotVietId BigInt?
+  soldByName       String?
+  customerId       Int?
+  total            Decimal        @db.Decimal(15, 2)
+  totalPayment     Decimal        @db.Decimal(15, 2)
+  discount         Decimal?       @db.Decimal(15, 2)
+  discountRatio    Float?
+  status           Int
+  description      String?
+  usingCod         Boolean        @default(false)
+  saleChannelId    Int?
+  isApplyVoucher   Boolean        @default(false)
+  retailerId       Int?
+  createdDate      DateTime?
+  modifiedDate     DateTime?
+  lastSyncedAt     DateTime       @default(now())
+  larkRecordId     String?
+  larkSyncRetries  Int            @default(0)
+  larkSyncStatus   LarkSyncStatus @default(PENDING)
+  larkSyncedAt     DateTime?
+  customerCode     String?
+  customerName     String?
+  statusValue      String?
 
-  misaSyncStatus           MisaSyncStatus  @default(SKIP)
-  misaSyncRetries          Int             @default(0)
-  misaSyncedAt             DateTime?
-  misaOrgRefId             String?         @unique
-  misaCallbackReceivedAt   DateTime?
-  misaConfirmed            Boolean         @default(false)
-  misaErrorMessage         String?
+  misaSyncStatus         MisaSyncStatus @default(SKIP)
+  misaSyncRetries        Int            @default(0)
+  misaSyncedAt           DateTime?
+  misaOrgRefId           String?        @unique
+  misaCallbackReceivedAt DateTime?
+  misaConfirmed          Boolean        @default(false)
+  misaErrorMessage       String?
 
   branch            Branch?            @relation(fields: [branchId], references: [id])
   customer          Customer?          @relation(fields: [customerId], references: [id])
@@ -591,6 +657,7 @@ model Invoice {
   @@index([customerCode])
   @@index([customerName])
   @@index([soldById])
+  @@index([soldByKiotVietId])
   @@index([saleChannelId])
   @@index([lastSyncedAt])
   @@index([larkSyncStatus])
@@ -599,30 +666,34 @@ model Invoice {
 }
 
 model InvoiceDetail {
-  id            Int      @id @default(autoincrement())
-  invoiceId     Int
-  productId     Int
-  invoiceKiotVietId   BigInt?
-  productKiotVietId   BigInt?
-  quantity      Float
-  price         Decimal  @db.Decimal(15, 2)
-  discount      Decimal? @db.Decimal(15, 2)
-  discountRatio Float?
-  note          String?
-  serialNumbers String?
-  subTotal      Decimal  @db.Decimal(15, 2)
-  lineNumber    Int?
-  productCode   String?
-  productName   String?
-  uniqueKey     String?                    @unique
+  id                Int            @id @default(autoincrement())
+  invoiceId         Int
+  productId         Int?
+  invoiceKiotVietId BigInt?
+  productKiotVietId BigInt?
+  quantity          Float
+  price             Decimal        @db.Decimal(15, 2)
+  discount          Decimal?       @db.Decimal(15, 2)
+  discountRatio     Float?
+  note              String?
+  serialNumbers     String?
+  subTotal          Decimal        @db.Decimal(15, 2)
+  lineNumber        Int?
+  productCode       String?
+  productName       String?
+  uniqueKey         String?        @unique
+  isCurrent         Boolean        @default(true)
   larkRecordId      String?
   larkSyncRetries   Int            @default(0)
   larkSyncStatus    LarkSyncStatus @default(PENDING)
   larkSyncedAt      DateTime?
-  invoice       Invoice  @relation(fields: [invoiceId], references: [id])
-  product       Product  @relation(fields: [productId], references: [id])
+  invoice           Invoice        @relation(fields: [invoiceId], references: [id])
+  // Nullable: retain the line even when the product is absent locally. `productCode`,
+  // `productName` and `productKiotVietId` above preserve what was sold.
+  product           Product?       @relation(fields: [productId], references: [id])
 
   @@unique([invoiceId, lineNumber])
+  @@index([isCurrent])
   @@index([invoiceId])
   @@index([productId])
   @@index([invoiceId, productId])
@@ -665,11 +736,13 @@ model InvoiceSurcharge {
   surValue      Decimal?   @db.Decimal(15, 2)
   price         Decimal?   @db.Decimal(15, 2)
   createdDate   DateTime   @default(now())
+  isCurrent     Boolean    @default(true)
   invoice       Invoice    @relation(fields: [invoiceId], references: [id])
   surcharge     Surcharge? @relation(fields: [surchargeId], references: [id])
 
   @@index([invoiceId])
   @@index([surchargeId])
+  @@index([isCurrent])
 }
 
 model Payment {
@@ -689,6 +762,7 @@ model Payment {
   description     String?
   createdDate     DateTime?
   statusValue     String?
+  isCurrent       Boolean        @default(true)
   bankAccount     BankAccount?   @relation(fields: [accountId], references: [id])
   invoice         Invoice?       @relation(fields: [invoiceId], references: [id])
   order           Order?         @relation(fields: [orderId], references: [id])
@@ -701,6 +775,7 @@ model Payment {
   @@index([purchaseOrderId])
   @@index([accountId])
   @@index([transDate])
+  @@index([isCurrent])
 }
 
 model Surcharge {
@@ -721,16 +796,20 @@ model Surcharge {
 }
 
 model BankAccount {
-  id            Int        @id @default(autoincrement())
-  kiotVietId    Int        @unique
+  id            Int       @id @default(autoincrement())
+  kiotVietId    Int       @unique
   bankName      String
   accountNumber String?
   retailerId    Int?
   createdDate   DateTime
   // Cashflow      Cashflow[]
   payments      Payment[]
+  /// Stamped when KiotViet reports this record via `removedIds`.
+  /// The row is NEVER deleted; queries should filter on this.
+  deletedAt     DateTime?
 
   @@index([kiotVietId])
+  @@index([deletedAt])
 }
 
 model SaleChannel {
@@ -813,6 +892,7 @@ model PurchaseOrderDetail {
   larkSyncStatus    LarkSyncStatus             @default(PENDING)
   larkSyncedAt      DateTime?
   uniqueKey         String?                    @unique
+  isCurrent         Boolean                    @default(true)
   product           Product?                   @relation(fields: [productId], references: [id])
   purchaseOrder     PurchaseOrder?             @relation(fields: [purchaseOrderId], references: [id])
   batchExpires      PurchaseOrderDetailBatch[]
@@ -823,6 +903,7 @@ model PurchaseOrderDetail {
   @@index([purchaseOrderId, productId])
   @@index([larkSyncStatus])
   @@index([larkRecordId])
+  @@index([isCurrent])
 }
 
 model PurchaseOrderDetailBatch {
@@ -856,22 +937,22 @@ model PurchaseOrderSurcharge {
 }
 
 model Transfer {
-  id                Int              @id @default(autoincrement())
-  kiotVietId        BigInt           @unique
-  code              String
-  description       String?
-  dispatchedDate    DateTime?
-  fromBranchId      Int?
-  receivedDate      DateTime?
-  retailerId        Int?
-  status            Int?
-  toBranchId        Int?
-  lastSyncedAt      DateTime?
-  larkRecordId       String?
-  larkSyncRetries    Int                          @default(0)
-  larkSyncStatus     LarkSyncStatus               @default(PENDING)
-  larkSyncedAt       DateTime?
-  details           TransferDetail[]
+  id              Int              @id @default(autoincrement())
+  kiotVietId      BigInt           @unique
+  code            String
+  description     String?
+  dispatchedDate  DateTime?
+  fromBranchId    Int?
+  receivedDate    DateTime?
+  retailerId      Int?
+  status          Int?
+  toBranchId      Int?
+  lastSyncedAt    DateTime?
+  larkRecordId    String?
+  larkSyncRetries Int              @default(0)
+  larkSyncStatus  LarkSyncStatus   @default(PENDING)
+  larkSyncedAt    DateTime?
+  details         TransferDetail[]
 
   @@index([kiotVietId])
   @@index([code])
@@ -880,28 +961,30 @@ model Transfer {
 }
 
 model TransferDetail {
-  id                  Int      @id @default(autoincrement())
-  productId           Int?
-  productCode         String?
-  productName         String?
-  sendQuantity        Int?
-  receivedQuantity    Int?
-  sendPrice           Int?
-  receivePrice        Int?
-  price               Int?
-  transferId          Int
-  lineNumber          Int?
-  uniqueKey     String?                    @unique
-  larkRecordId      String?
-  larkSyncRetries   Int                        @default(0)
-  larkSyncStatus    LarkSyncStatus             @default(PENDING)
-  larkSyncedAt      DateTime?
-  product             Product?  @relation(fields: [productId], references: [id])
-  transfer            Transfer @relation(fields: [transferId], references: [id])
+  id               Int            @id @default(autoincrement())
+  productId        Int?
+  productCode      String?
+  productName      String?
+  sendQuantity     Int?
+  receivedQuantity Int?
+  sendPrice        Int?
+  receivePrice     Int?
+  price            Int?
+  transferId       Int
+  lineNumber       Int?
+  uniqueKey        String?        @unique
+  larkRecordId     String?
+  larkSyncRetries  Int            @default(0)
+  larkSyncStatus   LarkSyncStatus @default(PENDING)
+  larkSyncedAt     DateTime?
+  isCurrent        Boolean        @default(true)
+  product          Product?       @relation(fields: [productId], references: [id])
+  transfer         Transfer       @relation(fields: [transferId], references: [id])
 
   @@unique([transferId, lineNumber])
   @@index([transferId])
   @@index([productId])
+  @@index([isCurrent])
 }
 
 model Return {
@@ -936,23 +1019,29 @@ model Return {
 }
 
 model ReturnDetail {
-  id          Int     @id @default(autoincrement())
-  returnId    Int
-  productId   Int
-  quantity    Float
-  price       Decimal @db.Decimal(15, 2)
-  note        String?
-  usePoint    Boolean @default(false)
-  subTotal    Decimal @db.Decimal(15, 2)
-  lineNumber  Int
-  productCode String
-  productName String
-  product     Product @relation(fields: [productId], references: [id])
-  return      Return  @relation(fields: [returnId], references: [id])
+  id                Int      @id @default(autoincrement())
+  returnId          Int
+  // Nullable for the same reason as Order/InvoiceDetail: keep the returned line
+  // even when the product row is missing locally.
+  productId         Int?
+  productKiotVietId BigInt?
+  quantity          Float
+  price             Decimal  @db.Decimal(15, 2)
+  note              String?
+  usePoint          Boolean  @default(false)
+  subTotal          Decimal  @db.Decimal(15, 2)
+  lineNumber        Int
+  productCode       String
+  productName       String
+  isCurrent         Boolean  @default(true)
+  product           Product? @relation(fields: [productId], references: [id])
+  return            Return   @relation(fields: [returnId], references: [id])
 
   @@unique([returnId, lineNumber])
   @@index([returnId])
   @@index([productId])
+  @@index([productKiotVietId])
+  @@index([isCurrent])
 }
 
 model PriceBook {
@@ -973,8 +1062,12 @@ model PriceBook {
   customerGroups PriceBookCustomerGroup[]
   details        PriceBookDetail[]
   users          PriceBookUser[]
+  /// Stamped when KiotViet reports this record as deleted (*.delete webhook or removedIds).
+  /// The row is NEVER removed; queries should filter on this.
+  deletedAt      DateTime?
 
   @@index([kiotVietId])
+  @@index([deletedAt])
 }
 
 model PriceBookDetail {
@@ -987,12 +1080,16 @@ model PriceBookDetail {
   lineNumber    Int?
   priceBookName String?
   productName   String?
+  isCurrent     Boolean    @default(true)
   priceBook     PriceBook? @relation(fields: [priceBookId], references: [id])
   product       Product    @relation(fields: [productId], references: [id])
 
-  @@unique([productId, lineNumber])
+  // Natural key. The old ([productId, lineNumber]) key meant a product could
+  // only ever hold the price of one pricebook.
+  @@unique([priceBookId, productId])
   @@index([priceBookId])
   @@index([productId])
+  @@index([isCurrent])
 }
 
 model PriceBookBranch {
@@ -1004,12 +1101,14 @@ model PriceBookBranch {
   retailerId   Int?
   lineNumber   Int
   lastSyncedAt DateTime  @default(now())
+  isCurrent    Boolean   @default(true)
   branch       Branch?   @relation(fields: [branchId], references: [id])
   priceBook    PriceBook @relation(fields: [priceBookId], references: [id])
 
   @@unique([priceBookId, lineNumber])
   @@index([priceBookId])
   @@index([branchId])
+  @@index([isCurrent])
 }
 
 model PriceBookCustomerGroup {
@@ -1021,12 +1120,14 @@ model PriceBookCustomerGroup {
   customerGroupId   Int?
   customerGroupName String?
   lastSyncedAt      DateTime       @default(now())
+  isCurrent         Boolean        @default(true)
   CustomerGroup     CustomerGroup? @relation(fields: [customerGroupId], references: [id])
   priceBook         PriceBook      @relation(fields: [priceBookId], references: [id])
 
   @@unique([priceBookId, lineNumber])
   @@index([priceBookId])
   @@index([customerGroupId])
+  @@index([isCurrent])
 }
 
 model PriceBookUser {
@@ -1037,12 +1138,14 @@ model PriceBookUser {
   userName     String?
   lineNumber   Int
   lastSyncedAt DateTime  @default(now())
+  isCurrent    Boolean   @default(true)
   priceBook    PriceBook @relation(fields: [priceBookId], references: [id])
   user         User?     @relation(fields: [userId], references: [kiotVietId])
 
   @@unique([priceBookId, lineNumber])
   @@index([priceBookId])
   @@index([userId])
+  @@index([isCurrent])
 }
 
 model TradeMark {
@@ -1054,7 +1157,7 @@ model TradeMark {
   modifiedDate DateTime @updatedAt
   lastSyncedAt DateTime @default(now())
 
-  products     Product[]
+  products Product[]
 
   @@index([kiotVietId])
 }
@@ -1077,6 +1180,7 @@ model Supplier {
   totalInvoiced              Decimal?        @db.Decimal(15, 2)
   totalInvoicedWithoutReturn Decimal?        @db.Decimal(15, 2)
   retailerId                 Int?
+  isCurrentForCode           Boolean         @default(true)
   branchId                   Int?
   createdDate                DateTime?
   modifiedDate               DateTime?       @updatedAt
@@ -1088,33 +1192,38 @@ model Supplier {
   larkSyncedAt               DateTime?
   purchaseOrders             PurchaseOrder[]
   orderSuppliers             OrderSupplier[]
+  /// Stamped when KiotViet reports this record via `removedIds`.
+  /// The row is NEVER deleted; queries should filter on this.
+  deletedAt                  DateTime?
 
   @@index([kiotVietId])
   @@index([code])
+  @@index([code, isCurrentForCode])
+  @@index([deletedAt])
 }
 
 model Demand {
-  id                    Int            @id @default(autoincrement())
-  larkRecordId          String?        @unique
-  customerCode          String?
-  customerName          String?
-  productCode           String?
-  productName           String?
-  quantity              Float
-  convertedQuantity     Float?
-  unit                  String?
-  unitType              String?
-  conversionRate        Float?
-  month                 String
-  year                  Int
-  notes                 String?
-  createdBy             String?
-  content               String?        // ADD: Nội dung field
-  countValue            Int?           // ADD: Đếm field
-  createdDate           DateTime       @default(now())
-  updatedDate           DateTime       @updatedAt
-  larkSyncStatus        LarkSyncStatus @default(SYNCED)
-  larkSyncedAt          DateTime?
+  id                Int            @id @default(autoincrement())
+  larkRecordId      String?        @unique
+  customerCode      String?
+  customerName      String?
+  productCode       String?
+  productName       String?
+  quantity          Float
+  convertedQuantity Float?
+  unit              String?
+  unitType          String?
+  conversionRate    Float?
+  month             String
+  year              Int
+  notes             String?
+  createdBy         String?
+  content           String? // ADD: Nội dung field
+  countValue        Int? // ADD: Đếm field
+  createdDate       DateTime       @default(now())
+  updatedDate       DateTime       @updatedAt
+  larkSyncStatus    LarkSyncStatus @default(SYNCED)
+  larkSyncedAt      DateTime?
 
   @@index([larkRecordId])
   @@index([customerCode])
@@ -1146,25 +1255,25 @@ model Ward {
 }
 
 model VoucherCampaign {
-  id                       Int                       @id @default(autoincrement())
-  kiotVietId               Int                       @unique
-  code                     String
-  name                     String
-  isActive                 Boolean                   @default(true)
-  startDate                DateTime
-  endDate                  DateTime
-  prereqPrice              Decimal?                  @db.Decimal(15, 2)
-  quantity                 Int
-  price                    Decimal                   @db.Decimal(15, 2)
-  isGlobal                 Boolean                   @default(false)
-  forAllCusGroup           Boolean                   @default(false)
-  forAllUser               Boolean                   @default(false)
-  lastSyncedAt             DateTime                  @default(now())
-  vouchers                 Voucher[]
-  branches                 VoucherCampaignBranch[]
-  categories               VoucherCampaignCategory[]
-  products                 VoucherCampaignProduct[]
-  users                    VoucherCampaignUser[]
+  id             Int                       @id @default(autoincrement())
+  kiotVietId     Int                       @unique
+  code           String
+  name           String
+  isActive       Boolean                   @default(true)
+  startDate      DateTime
+  endDate        DateTime
+  prereqPrice    Decimal?                  @db.Decimal(15, 2)
+  quantity       Int
+  price          Decimal                   @db.Decimal(15, 2)
+  isGlobal       Boolean                   @default(false)
+  forAllCusGroup Boolean                   @default(false)
+  forAllUser     Boolean                   @default(false)
+  lastSyncedAt   DateTime                  @default(now())
+  vouchers       Voucher[]
+  branches       VoucherCampaignBranch[]
+  categories     VoucherCampaignCategory[]
+  products       VoucherCampaignProduct[]
+  users          VoucherCampaignUser[]
 
   @@index([kiotVietId])
 }
@@ -1282,9 +1391,9 @@ model Webhook {
 }
 
 model Cashflow {
-  id                        Int          @id @default(autoincrement())
-  kiotVietId                BigInt       @unique
-  code                      String       @unique
+  id                        Int            @id @default(autoincrement())
+  kiotVietId                BigInt         @unique
+  code                      String         @unique
   userId                    Int?
   address                   String?
   locationName              String?
@@ -1308,15 +1417,15 @@ model Cashflow {
   branchId                  Int?
   retailerId                Int
   transDate                 DateTime?
-  amount                    Decimal?      @db.Decimal(15, 2)
+  amount                    Decimal?       @db.Decimal(15, 2)
   description               String?
-  lastSyncedAt              DateTime           @default(now())
+  lastSyncedAt              DateTime       @default(now())
   larkRecordId              String?
-  larkSyncRetries           Int                @default(0)
-  larkSyncStatus            LarkSyncStatus     @default(PENDING)
+  larkSyncRetries           Int            @default(0)
+  larkSyncStatus            LarkSyncStatus @default(PENDING)
   larkSyncedAt              DateTime?
   // bankAccount               BankAccount? @relation(fields: [accountId], references: [id])
-  branch                    Branch?      @relation(fields: [branchId], references: [id])
+  branch                    Branch?        @relation(fields: [branchId], references: [id])
   // user                      User? @relation(fields: [userId], references: [id])
 
   @@index([kiotVietId])
@@ -1327,115 +1436,119 @@ model Cashflow {
 }
 
 model MisaInventoryItem {
-  id                          Int       @id @default(autoincrement())
-  inventoryItemId             String    @unique @db.VarChar(36)
-  inventoryItemCode           String    @db.VarChar(100)
-  inventoryItemName           String    @db.VarChar(255)
-  inventoryItemType           Int       @default(0)
-  unitId                      String?   @db.VarChar(36)
-  unitName                    String?   @db.VarChar(100)
-  defaultStockId              String?   @db.VarChar(36)
-  branchId                    String?   @db.VarChar(36)
-  unitPrice                   Decimal?  @db.Decimal(15, 2)
-  salePrice1                  Decimal?  @db.Decimal(15, 2)
-  inactive                    Boolean   @default(false)
-  inventoryAccount            String?   @db.VarChar(20)
-  cogsAccount                 String?   @db.VarChar(20)
-  saleAccount                 String?   @db.VarChar(20)
-  discountAccount             String?   @db.VarChar(20)
-  createdAt                   DateTime  @default(now())
-  updatedAt                   DateTime  @updatedAt
+  id                Int      @id @default(autoincrement())
+  inventoryItemId   String   @unique @db.VarChar(36)
+  inventoryItemCode String   @db.VarChar(100)
+  inventoryItemName String   @db.VarChar(255)
+  inventoryItemType Int      @default(0)
+  unitId            String?  @db.VarChar(36)
+  unitName          String?  @db.VarChar(100)
+  defaultStockId    String?  @db.VarChar(36)
+  branchId          String?  @db.VarChar(36)
+  unitPrice         Decimal? @db.Decimal(15, 2)
+  salePrice1        Decimal? @db.Decimal(15, 2)
+  inactive          Boolean  @default(false)
+  inventoryAccount  String?  @db.VarChar(20)
+  cogsAccount       String?  @db.VarChar(20)
+  saleAccount       String?  @db.VarChar(20)
+  discountAccount   String?  @db.VarChar(20)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   @@index([inventoryItemCode])
   @@index([inventoryItemName])
 }
 
 model MisaStock {
-  id              Int       @id @default(autoincrement())
-  stockId         String    @unique @db.VarChar(36)
-  stockCode       String    @db.VarChar(50)
-  stockName       String    @db.VarChar(255)
-  branchId        String?   @db.VarChar(36)
-  inactive        Boolean   @default(false)
+  id               Int      @id @default(autoincrement())
+  stockId          String   @unique @db.VarChar(36)
+  stockCode        String   @db.VarChar(50)
+  stockName        String   @db.VarChar(255)
+  branchId         String?  @db.VarChar(36)
+  inactive         Boolean  @default(false)
   inventoryAccount String?  @db.VarChar(20)
-  isDefault       Boolean   @default(false)
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  isDefault        Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   @@index([stockCode])
   @@index([stockName])
 }
 
 model MisaAccountObject {
-  id                    Int       @id @default(autoincrement())
-  accountObjectId       String    @unique @db.VarChar(36)
-  accountObjectCode     String    @db.VarChar(50)
-  accountObjectName     String    @db.VarChar(255)
-  accountObjectType     Int       @default(0)
-  address               String?   @db.VarChar(500)
-  companyTaxCode        String?   @db.VarChar(50)
-  branchId              String?   @db.VarChar(36)
-  isCustomer            Boolean   @default(false)
-  isVendor              Boolean   @default(false)
-  isEmployee            Boolean   @default(false)
-  inactive              Boolean   @default(false)
-  payAccount            String?   @db.VarChar(20)
-  receiveAccount        String?   @db.VarChar(20)
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
+  id                Int      @id @default(autoincrement())
+  accountObjectId   String   @unique @db.VarChar(36)
+  accountObjectCode String   @db.VarChar(50)
+  accountObjectName String   @db.VarChar(255)
+  accountObjectType Int      @default(0)
+  address           String?  @db.VarChar(500)
+  companyTaxCode    String?  @db.VarChar(50)
+  branchId          String?  @db.VarChar(36)
+  isCustomer        Boolean  @default(false)
+  isVendor          Boolean  @default(false)
+  isEmployee        Boolean  @default(false)
+  inactive          Boolean  @default(false)
+  payAccount        String?  @db.VarChar(20)
+  receiveAccount    String?  @db.VarChar(20)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   @@index([accountObjectCode])
   @@index([accountObjectName])
 }
 
 model MisaOrganizationUnit {
-  id                      Int       @id @default(autoincrement())
-  organizationUnitId      String    @unique @db.VarChar(36)
-  organizationUnitCode    String    @db.VarChar(50)
-  organizationUnitName    String    @db.VarChar(255)
-  organizationUnitTypeId  Int       @default(1)
-  parentId                String?   @db.VarChar(36)
-  branchId                String?   @db.VarChar(36)
-  createdAt               DateTime  @default(now())
-  updatedAt               DateTime  @updatedAt
+  id                     Int      @id @default(autoincrement())
+  organizationUnitId     String   @unique @db.VarChar(36)
+  organizationUnitCode   String   @db.VarChar(50)
+  organizationUnitName   String   @db.VarChar(255)
+  organizationUnitTypeId Int      @default(1)
+  parentId               String?  @db.VarChar(36)
+  branchId               String?  @db.VarChar(36)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
 
   @@index([organizationUnitCode])
   @@index([organizationUnitName])
 }
 
 model MisaSyncLog {
-  id            Int       @id @default(autoincrement())
-  syncType      String    @db.VarChar(50)
-  dataType      Int
-  totalRecords  Int       @default(0)
-  successCount  Int       @default(0)
-  failedCount   Int       @default(0)
-  status        String    @db.VarChar(20)
-  errorMessage  String?   @db.Text
-  startedAt     DateTime  @default(now())
-  completedAt   DateTime?
+  id           Int       @id @default(autoincrement())
+  syncType     String    @db.VarChar(50)
+  dataType     Int
+  totalRecords Int       @default(0)
+  successCount Int       @default(0)
+  failedCount  Int       @default(0)
+  status       String    @db.VarChar(20)
+  errorMessage String?   @db.Text
+  startedAt    DateTime  @default(now())
+  completedAt  DateTime?
 
   @@index([syncType])
   @@index([startedAt])
 }
 
 model SyncControl {
-  id                Int       @id @default(autoincrement())
-  name              String    @unique
-  entities          String[]
-  isRunning         Boolean   @default(false)
-  isEnabled         Boolean   @default(true)
-  startedAt         DateTime?
-  completedAt       DateTime?
-  progress          Json?
-  completedEntities String[]
-  currentEntity     String?
-  syncMode          String
-  status            String
-  error             String?
-  lastRunAt         DateTime?
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  id                  Int       @id @default(autoincrement())
+  name                String    @unique
+  entities            String[]
+  isRunning           Boolean   @default(false)
+  isEnabled           Boolean   @default(true)
+  startedAt           DateTime?
+  completedAt         DateTime?
+  progress            Json?
+  completedEntities   String[]
+  currentEntity       String?
+  syncMode            String
+  status              String
+  error               String?
+  lastRunAt           DateTime?
+  /// Cursor for incremental sync: the `timestamp` KiotViet returned on the last
+  /// successful run. Preferred over `completedAt`, which is OUR clock — any skew
+  /// between this host and KiotViet silently drops records from the next window.
+  lastServerTimestamp DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
   @@index([isRunning, status])
 }
@@ -1459,4 +1572,142 @@ enum MeInvoiceSyncStatus {
   SYNCED
   FAILED
   SKIP
+}
+
+// ---------------------------------------------------------------------------
+// Product sub-entities. product.service.ts already requests includeSerials,
+// includeBatchExpires, includeWarranties and the units[] array, but before
+// these tables existed the payload was parsed and thrown away.
+// branchId holds the local Branch.id and is stored without an FK relation,
+// matching the existing ProductInventory precedent.
+// ---------------------------------------------------------------------------
+
+/// Unit variants of a product (doc 2.4.1 / 2.4.2 `units[]`).
+/// Each unit is itself a product in KiotViet with its own id/code.
+model ProductUnit {
+  id              Int      @id @default(autoincrement())
+  productId       Int
+  unitKiotVietId  BigInt
+  code            String?
+  name            String?
+  fullName        String?
+  unit            String?
+  conversionValue Float?
+  basePrice       Decimal? @db.Decimal(15, 2)
+  isCurrent       Boolean  @default(true)
+  lastSyncedAt    DateTime @default(now())
+  product         Product  @relation(fields: [productId], references: [id])
+
+  @@unique([productId, unitKiotVietId])
+  @@index([productId])
+  @@index([unitKiotVietId])
+  @@index([isCurrent])
+}
+
+/// Serial / IMEI records (doc 2.4.1 `productSerials[]`).
+model ProductSerial {
+  id           Int       @id @default(autoincrement())
+  productId    Int
+  branchId     Int?
+  serialNumber String
+  status       Int?
+  quantity     Float?
+  isCurrent    Boolean   @default(true)
+  createdDate  DateTime?
+  modifiedDate DateTime?
+  lastSyncedAt DateTime  @default(now())
+  product      Product   @relation(fields: [productId], references: [id])
+
+  @@unique([productId, branchId, serialNumber])
+  @@index([productId])
+  @@index([branchId])
+  @@index([serialNumber])
+  @@index([isCurrent])
+}
+
+/// Batch / expiry records (doc 2.4.1 `productBatchExpires[]`).
+model ProductBatchExpire {
+  id              Int       @id @default(autoincrement())
+  productId       Int
+  branchId        Int?
+  batchName       String
+  onHand          Float?
+  expireDate      DateTime?
+  fullNameVirgule String?
+  isCurrent       Boolean   @default(true)
+  lastSyncedAt    DateTime  @default(now())
+  product         Product   @relation(fields: [productId], references: [id])
+
+  @@unique([productId, branchId, batchName])
+  @@index([productId])
+  @@index([branchId])
+  @@index([batchName])
+  @@index([expireDate])
+  @@index([isCurrent])
+}
+
+/// Warranty / maintenance records (doc 2.4.1 `productWarranties[]`).
+/// timeType: 1=day 2=month 3=year. warrantyType: 1=warranty 3=maintenance.
+model ProductWarranty {
+  id           Int       @id @default(autoincrement())
+  kiotVietId   BigInt    @unique
+  productId    Int
+  description  String?
+  numberTime   Int?
+  timeType     Int?
+  warrantyType Int?
+  retailerId   Int?
+  createdBy    BigInt?
+  isCurrent    Boolean   @default(true)
+  createdDate  DateTime?
+  modifiedDate DateTime?
+  lastSyncedAt DateTime  @default(now())
+  product      Product   @relation(fields: [productId], references: [id])
+
+  @@index([productId])
+  @@index([kiotVietId])
+  @@index([isCurrent])
+}
+
+// ---------------------------------------------------------------------------
+// Durable webhook queue. The controller does exactly one INSERT here and
+// returns 200 immediately, so the KiotViet 5s budget (doc 2.11) is never at
+// risk. A worker drains the table separately.
+// ---------------------------------------------------------------------------
+
+model WebhookEvent {
+  id             Int       @id @default(autoincrement())
+  /// Notifications[].Id from the payload. Null when KiotViet omits it.
+  notificationId String?
+  /// Raw event type, e.g. "product.update" / "customer.delete".
+  type           String
+  /// Entity family parsed from `type`, e.g. "product".
+  entity         String
+  /// Verb parsed from `type`: "update" | "delete".
+  action         String
+  /// KiotViet id of the subject, used to coalesce redundant events.
+  entityId       String?
+  /// Stable idempotency key. A redelivery of the same event collides here
+  /// instead of being processed twice.
+  dedupKey       String    @unique
+  payload        Json
+  /// KiotViet's own delivery attempt counter from the envelope (`Attempt`).
+  /// Distinct from `attempts`, which counts OUR processing retries.
+  sourceAttempt  Int?
+  /// pending | processing | done | failed | dead
+  status         String    @default("pending")
+  attempts       Int       @default(0)
+  maxAttempts    Int       @default(8)
+  lastError      String?
+  /// Next eligible processing time; drives exponential backoff.
+  availableAt    DateTime  @default(now())
+  receivedAt     DateTime  @default(now())
+  startedAt      DateTime?
+  processedAt    DateTime?
+
+  @@index([status, availableAt])
+  @@index([entity, entityId])
+  @@index([type])
+  @@index([receivedAt])
+  @@index([notificationId])
 }

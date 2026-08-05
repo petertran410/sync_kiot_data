@@ -1,572 +1,242 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { HttpService } from '@nestjs/axios';
-import { ConfigService } from '@nestjs/config';
-import { PrismaService } from '../../../prisma/prisma.service';
-import { KiotVietAuthService } from '../auth.service';
-import { firstValueFrom } from 'rxjs';
+import { KiotPageFetcher } from '../shared/kiot-page-fetcher';
+import { BulkUpsertHelper, ColumnSpec } from '../shared/bulk-upsert.helper';
+import { RelationMapHelper } from '../shared/relation-map.helper';
+import { SyncControlHelper } from '../shared/sync-control.helper';
+import { RemovedIdsHandler } from '../shared/removed-ids.handler';
 
-interface KiotVietCategory {
+const SYNC_NAME = 'category_historical';
+
+const COLUMNS: ColumnSpec[] = [
+  { name: 'kiotVietId', type: 'int' },
+  { name: 'name', type: 'text' },
+  { name: 'parentId', type: 'int' },
+  { name: 'retailerId', type: 'int' },
+  { name: 'createdDate', type: 'timestamp' },
+  { name: 'modifiedDate', type: 'timestamp' },
+  { name: 'lastSyncedAt', type: 'timestamp' },
+  { name: 'hasChild', type: 'boolean' },
+  { name: 'rank', type: 'int' },
+  { name: 'parent_name', type: 'varchar' },
+  { name: 'child_name', type: 'varchar' },
+  { name: 'branch_name', type: 'varchar' },
+];
+
+const UPDATE_COLUMNS = [
+  'name',
+  'parentId',
+  'retailerId',
+  'createdDate',
+  'modifiedDate',
+  'lastSyncedAt',
+  'hasChild',
+  'rank',
+  'parent_name',
+  'child_name',
+  'branch_name',
+];
+
+interface Cat {
   categoryId: number;
-  parentId?: number;
-  categoryName: string;
+  parentId?: number | null;
+  categoryName?: string;
   retailerId?: number;
   hasChild?: boolean;
-  modifiedDate?: string;
-  createdDate?: string;
   rank?: number;
-  children?: KiotVietCategory[];
+  createdDate?: string;
+  modifiedDate?: string;
+  children?: Cat[];
 }
 
 @Injectable()
 export class KiotVietCategoryService {
   private readonly logger = new Logger(KiotVietCategoryService.name);
-  private readonly baseUrl: string;
-  private readonly PAGE_SIZE = 100;
 
   constructor(
-    private readonly httpService: HttpService,
-    private readonly configService: ConfigService,
-    private readonly prismaService: PrismaService,
-    private readonly authService: KiotVietAuthService,
-  ) {
-    const baseUrl = this.configService.get<string>('KIOT_BASE_URL');
-    if (!baseUrl) {
-      throw new Error('KIOT_BASE_URL environment variable is not configured');
-    }
-    this.baseUrl = baseUrl;
+    private readonly pageFetcher: KiotPageFetcher,
+    private readonly bulkUpsert: BulkUpsertHelper,
+    private readonly relationMap: RelationMapHelper,
+    private readonly syncControl: SyncControlHelper,
+    private readonly removedIdsHandler: RemovedIdsHandler,
+  ) {}
+
+  async syncFull() {
+    return this.runSync('full', {});
+  }
+
+  async syncIncremental() {
+    return this.runSync('incremental', {});
   }
 
   async syncHistoricalCategories(): Promise<void> {
-    const syncName = 'category_historical';
+    await this.syncFull();
+  }
 
-    let currentItem = 0;
-    let processedCount = 0;
-    let totalCategories = 0;
-    let consecutiveEmptyPages = 0;
-    let consecutiveErrorPages = 0;
-    let processedCategoryIds = new Set<number>();
+  async enableHistoricalSync(): Promise<void> {}
 
+  private async runSync(
+    mode: 'full' | 'incremental',
+    extra: Record<string, any>,
+  ) {
+    if (await this.syncControl.isRunning(SYNC_NAME)) {
+      this.logger.warn(`Category sync already running, skipping`);
+      return { total: 0, processed: 0 };
+    }
+    await this.syncControl.markRunning(SYNC_NAME, mode, ['category']);
     try {
-      await this.updateSyncControl(syncName, {
-        isRunning: true,
-        status: 'running',
-        startedAt: new Date(),
-        error: null,
+      // Fetch hierarchical tree (single pass — categories are low volume).
+      const resp = await this.pageFetcher.fetchPage<Cat>('/categories', {
+        hierachicalData: true,
+        includeRemoveIds: true,
+        pageSize: 100,
+        currentItem: 0,
+        orderBy: 'createdDate',
+        orderDirection: 'ASC',
+        ...extra,
+      } as any);
+      const tree = resp.data || [];
+      const flat = this.flatten(tree);
+      const map = new Map<number, Cat>();
+      flat.forEach((c) => map.set(c.categoryId, c));
+      const now = new Date();
+
+      // Pass 1: upsert all with parentId=null + computed hierarchy fields.
+      const rowsPass1 = flat
+        .filter((c) => c.categoryId && c.categoryName && c.categoryName.trim())
+        .map((c) => {
+          const h = this.hierarchy(c, map);
+          return {
+            kiotVietId: c.categoryId,
+            name: c.categoryName!.trim(),
+            parentId: null,
+            retailerId: c.retailerId ?? null,
+            createdDate: c.createdDate ? new Date(c.createdDate) : now,
+            modifiedDate: c.modifiedDate ? new Date(c.modifiedDate) : now,
+            lastSyncedAt: now,
+            hasChild: c.hasChild ?? false,
+            rank: c.rank ?? 0,
+            parent_name: h.parentName,
+            child_name: h.childName,
+            branch_name: h.branchName,
+          };
+        });
+
+      await this.bulkUpsert.bulkUpsert({
+        table: '"Category"',
+        columns: COLUMNS,
+        rows: rowsPass1,
+        conflictTarget: '"kiotVietId"',
+        updateColumns: UPDATE_COLUMNS,
       });
 
-      this.logger.log('🚀 Starting historical category sync...');
+      // Pass 2: resolve parentId (self-reference) via kiotVietId -> db id map.
+      const idMap = await this.relationMap.buildIdMap(
+        'category',
+        flat.map((c) => c.categoryId),
+      );
+      const rowsPass2 = flat
+        .filter(
+          (c) =>
+            c.categoryId &&
+            c.categoryName &&
+            c.categoryName.trim() &&
+            c.parentId,
+        )
+        .map((c) => ({
+          kiotVietId: c.categoryId,
+          name: c.categoryName!.trim(),
+          parentId: idMap.get(Number(c.parentId)) ?? null,
+          retailerId: c.retailerId ?? null,
+          createdDate: c.createdDate ? new Date(c.createdDate) : now,
+          modifiedDate: c.modifiedDate ? new Date(c.modifiedDate) : now,
+          lastSyncedAt: now,
+          hasChild: c.hasChild ?? false,
+          rank: c.rank ?? 0,
+          parent_name: null,
+          child_name: null,
+          branch_name: null,
+        }));
 
-      const MAX_CONSECUTIVE_EMPTY_PAGES = 3;
-      const MAX_CONSECUTIVE_ERROR_PAGES = 3;
-      const RETRY_DELAY_MS = 2000;
-
-      while (true) {
-        const currentPage = Math.floor(currentItem / this.PAGE_SIZE) + 1;
-
-        if (totalCategories > 0) {
-          const progressPercentage = (processedCount / totalCategories) * 100;
-          this.logger.log(
-            `📄 Fetching page ${currentPage} (${processedCount}/${totalCategories} - ${progressPercentage.toFixed(1)}% completed)`,
-          );
-
-          if (processedCount >= totalCategories) {
-            this.logger.log(
-              `✅ All categories processed successfully! Final count: ${processedCount}/${totalCategories}`,
-            );
-            break;
-          }
-        } else {
-          this.logger.log(
-            `📄 Fetching page ${currentPage} (currentItem: ${currentItem})`,
-          );
-        }
-
-        try {
-          const categoryListResponse = await this.fetchCategoriesWithRetry({
-            hierachicalData: true,
-            orderBy: 'createdDate',
-            orderDirection: 'ASC',
-            pageSize: this.PAGE_SIZE,
-            currentItem,
-          });
-
-          if (!categoryListResponse) {
-            this.logger.warn('⚠️ Received null response from KiotViet API');
-            consecutiveEmptyPages++;
-
-            if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
-              this.logger.log(
-                `🔚 API returned null ${consecutiveEmptyPages} times - ending pagination`,
-              );
-              break;
-            }
-
-            await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
-            currentItem += this.PAGE_SIZE;
-            continue;
-          }
-
-          consecutiveEmptyPages = 0;
-          consecutiveErrorPages = 0;
-
-          const { total, data: categories } = categoryListResponse;
-
-          if (total !== undefined && total !== null) {
-            if (totalCategories === 0) {
-              totalCategories = total;
-              this.logger.log(
-                `📊 Total categories detected: ${totalCategories}`,
-              );
-            } else if (total !== totalCategories) {
-              this.logger.warn(
-                `⚠️ Total count updated: ${totalCategories} → ${total}`,
-              );
-              totalCategories = total;
-            }
-          }
-
-          if (!categories || categories.length === 0) {
-            this.logger.warn(
-              `⚠️ Empty page received at position ${currentItem}`,
-            );
-            consecutiveEmptyPages++;
-
-            if (totalCategories > 0 && processedCount >= totalCategories) {
-              this.logger.log(
-                '✅ All expected categories processed - pagination complete',
-              );
-              break;
-            }
-
-            if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
-              this.logger.log(
-                `🔚 Stopping after ${consecutiveEmptyPages} consecutive empty pages`,
-              );
-              break;
-            }
-
-            currentItem += this.PAGE_SIZE;
-            continue;
-          }
-
-          const newCategories = categories.filter((category) => {
-            if (!category.categoryId || !category.categoryName) {
-              this.logger.warn(
-                `⚠️ Skipping invalid category: id=${category.categoryId}, name='${category.categoryName}'`,
-              );
-              return false;
-            }
-
-            if (processedCategoryIds.has(category.categoryId)) {
-              this.logger.debug(
-                `⚠️ Duplicate category ID detected: ${category.categoryId} (${category.categoryName})`,
-              );
-              return false;
-            }
-
-            processedCategoryIds.add(category.categoryId);
-            return true;
-          });
-
-          if (newCategories.length !== categories.length) {
-            this.logger.warn(
-              `🔄 Filtered out ${categories.length - newCategories.length} invalid/duplicate categories on page ${currentPage}`,
-            );
-          }
-
-          if (newCategories.length === 0) {
-            this.logger.log(
-              `⏭️ Skipping page ${currentPage} - all categories were filtered out`,
-            );
-            currentItem += this.PAGE_SIZE;
-            continue;
-          }
-
-          this.logger.log(
-            `🔄 Processing ${newCategories.length} categories from page ${currentPage}...`,
-          );
-
-          const categoriesWithDetails =
-            await this.enrichCategoriesWithDetails(newCategories);
-          const savedCategories = await this.saveCategoriesToDatabase(
-            categoriesWithDetails,
-          );
-
-          processedCount += savedCategories.length;
-
-          if (totalCategories > 0) {
-            const completionPercentage =
-              (processedCount / totalCategories) * 100;
-            this.logger.log(
-              `📈 Progress: ${processedCount}/${totalCategories} (${completionPercentage.toFixed(1)}%)`,
-            );
-          } else {
-            this.logger.log(
-              `📈 Progress: ${processedCount} categories processed`,
-            );
-          }
-
-          currentItem += this.PAGE_SIZE;
-
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        } catch (error) {
-          consecutiveErrorPages++;
-          this.logger.error(
-            `❌ Error fetching page ${currentPage}: ${error.message}`,
-          );
-
-          if (consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES) {
-            this.logger.error(
-              `💥 Too many consecutive errors (${consecutiveErrorPages}). Stopping sync.`,
-            );
-            throw error;
-          }
-
-          await new Promise((resolve) =>
-            setTimeout(resolve, RETRY_DELAY_MS * consecutiveErrorPages),
-          );
-        }
+      if (rowsPass2.length) {
+        // Only update parentId in pass 2 (avoid overwriting hierarchy fields with null).
+        await this.bulkUpsert.bulkUpsert({
+          table: '"Category"',
+          columns: COLUMNS,
+          rows: rowsPass2,
+          conflictTarget: '"kiotVietId"',
+          updateColumns: ['parentId'],
+        });
       }
 
-      await this.updateSyncControl(syncName, {
-        isRunning: false,
-        status: 'completed',
-        completedAt: new Date(),
-        error: null,
-        progress: { processedCount, expectedTotal: totalCategories },
-      });
+      // KiotViet reports upstream deletions here; nothing read this before.
 
-      const completionRate =
-        totalCategories > 0 ? (processedCount / totalCategories) * 100 : 100;
+      const removed = this.removedIdsHandler.extract(resp);
 
-      this.logger.log(
-        `✅ Historical category sync completed: ${processedCount}/${totalCategories} (${completionRate.toFixed(1)}% completion rate)`,
+      if (removed.length) {
+
+        await this.removedIdsHandler.apply('category', removed);
+
+      }
+
+
+      await this.syncControl.markCompleted(
+        SYNC_NAME,
+        { processedCount: rowsPass1.length, expectedTotal: rowsPass1.length },
+        resp.timestamp,
       );
+      this.logger.log(
+        `category-${mode} completed: ${rowsPass1.length} categories`,
+      );
+      return { total: rowsPass1.length, processed: rowsPass1.length };
     } catch (error) {
-      await this.updateSyncControl(syncName, {
-        isRunning: false,
-        status: 'failed',
-        error: error.message,
-        completedAt: new Date(),
-        progress: { processedCount, expectedTotal: totalCategories },
-      });
-
-      this.logger.error(`❌ Historical category sync failed: ${error.message}`);
+      this.logger.error(`category-${mode} failed: ${error.message}`);
+      await this.syncControl.markFailed(SYNC_NAME, error.message);
       throw error;
     }
   }
 
-  async fetchCategoriesWithRetry(
-    params: {
-      hierachicalData?: boolean;
-      orderBy?: string;
-      orderDirection?: string;
-      pageSize?: number;
-      currentItem?: number;
-      lastModifiedFrom?: string;
-    },
-    maxRetries: number = 3,
-  ): Promise<any> {
-    let lastError: Error | undefined;
-
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        return await this.fetchCategories(params);
-      } catch (error) {
-        lastError = error as Error;
-        this.logger.warn(
-          `⚠️ API attempt ${attempt}/${maxRetries} failed: ${error.message}`,
-        );
-
-        if (attempt < maxRetries) {
-          const delayMs = 1000 * Math.pow(2, attempt - 1);
-          await new Promise((resolve) => setTimeout(resolve, delayMs));
-        }
-      }
-    }
-
-    throw lastError;
-  }
-
-  private async fetchCategories(params: {
-    hierachicalData?: boolean;
-    orderBy?: string;
-    orderDirection?: string;
-    pageSize?: number;
-    currentItem?: number;
-    lastModifiedFrom?: string;
-  }): Promise<any> {
-    const headers = await this.authService.getRequestHeaders();
-
-    const queryParams = new URLSearchParams({
-      hierachicalData: (params.hierachicalData || false).toString(),
-      pageSize: (params.pageSize || this.PAGE_SIZE).toString(),
-      currentItem: (params.currentItem || 0).toString(),
-    });
-
-    if (params.orderBy) {
-      queryParams.append('orderBy', params.orderBy);
-      queryParams.append('orderDirection', params.orderDirection || 'ASC');
-    }
-
-    if (params.lastModifiedFrom) {
-      queryParams.append('lastModifiedFrom', params.lastModifiedFrom);
-    }
-
-    const response = await firstValueFrom(
-      this.httpService.get(`${this.baseUrl}/categories?${queryParams}`, {
-        headers,
-        timeout: 30000,
-      }),
-    );
-
-    return response.data;
-  }
-
-  private async enrichCategoriesWithDetails(
-    categories: KiotVietCategory[],
-  ): Promise<KiotVietCategory[]> {
-    this.logger.log(
-      `🔍 Enriching ${categories.length} categories with details...`,
-    );
-
-    const enrichedCategories: KiotVietCategory[] = [];
-
-    for (const category of categories) {
-      try {
-        const headers = await this.authService.getRequestHeaders();
-        const response = await firstValueFrom(
-          this.httpService.get(
-            `${this.baseUrl}/categories/${category.categoryId}`,
-            {
-              headers,
-              timeout: 15000,
-            },
-          ),
-        );
-
-        if (response.data && response.data.categoryId) {
-          enrichedCategories.push(response.data);
-        } else {
-          this.logger.warn(
-            `⚠️ No detailed data for category ${category.categoryId}, using basic data`,
-          );
-          enrichedCategories.push(category);
-        }
-
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      } catch (error) {
-        this.logger.warn(
-          `⚠️ Failed to enrich category ${category.categoryId}: ${error.message}`,
-        );
-        enrichedCategories.push(category);
-      }
-    }
-
-    return enrichedCategories;
-  }
-
-  private async saveCategoriesToDatabase(
-    categories: KiotVietCategory[],
-  ): Promise<any[]> {
-    this.logger.log(`💾 Saving ${categories.length} categories to database...`);
-    const savedCategories: any[] = [];
-    const processedCategories = this.flattenAndSortCategories(categories);
-
-    const categoryMap = new Map<number, KiotVietCategory>();
-    processedCategories.forEach((cat) => categoryMap.set(cat.categoryId, cat));
-
-    for (const categoryData of processedCategories) {
-      try {
-        if (!categoryData.categoryId || !categoryData.categoryName?.trim()) {
-          this.logger.warn(
-            `⚠️ Skipping invalid category: categoryId=${categoryData.categoryId}, categoryName='${categoryData.categoryName}'`,
-          );
-          continue;
-        }
-
-        const hierarchyInfo = this.calculateCategoryHierarchy(
-          categoryData,
-          categoryMap,
-        );
-
-        let parentDatabaseId: number | null = null;
-        if (categoryData.parentId) {
-          const parentCategory = await this.prismaService.category.findFirst({
-            where: { kiotVietId: categoryData.parentId },
-            select: { id: true },
-          });
-          parentDatabaseId = parentCategory?.id || null;
-        }
-
-        const category = await this.prismaService.category.upsert({
-          where: { kiotVietId: categoryData.categoryId },
-          update: {
-            name: categoryData.categoryName.trim(),
-            parentId: parentDatabaseId,
-            hasChild: categoryData.hasChild ?? false,
-            retailerId: categoryData.retailerId || null,
-            rank: categoryData.rank ?? 0,
-            parent_name: hierarchyInfo.parentName,
-            child_name: hierarchyInfo.childName,
-            branch_name: hierarchyInfo.branchName,
-            createdDate: categoryData.createdDate
-              ? new Date(categoryData.createdDate)
-              : new Date(),
-            modifiedDate: categoryData.modifiedDate
-              ? new Date(categoryData.modifiedDate)
-              : new Date(),
-            lastSyncedAt: new Date(),
-          },
-          create: {
-            kiotVietId: categoryData.categoryId,
-            name: categoryData.categoryName.trim(),
-            parentId: parentDatabaseId,
-            hasChild: categoryData.hasChild ?? false,
-            retailerId: categoryData.retailerId || null,
-            rank: categoryData.rank ?? 0,
-            parent_name: hierarchyInfo.parentName,
-            child_name: hierarchyInfo.childName,
-            branch_name: hierarchyInfo.branchName,
-            createdDate: categoryData.createdDate
-              ? new Date(categoryData.createdDate)
-              : new Date(),
-            modifiedDate: categoryData.modifiedDate
-              ? new Date(categoryData.modifiedDate)
-              : new Date(),
-            lastSyncedAt: new Date(),
-          },
-        });
-
-        savedCategories.push(category);
-      } catch (error) {
-        this.logger.error(
-          `❌ Failed to save category ${categoryData.categoryName}: ${error.message}`,
-        );
-      }
-    }
-
-    this.logger.log(
-      `💾 Saved ${savedCategories.length} categories to database`,
-    );
-    return savedCategories;
-  }
-
-  private flattenAndSortCategories(
-    categories: KiotVietCategory[],
-  ): KiotVietCategory[] {
-    const flattened: KiotVietCategory[] = [];
+  private flatten(categories: Cat[]): Cat[] {
+    const flat: Cat[] = [];
     const visited = new Set<number>();
-
-    const processCategory = (category: KiotVietCategory) => {
-      if (visited.has(category.categoryId)) {
-        return;
-      }
-
-      visited.add(category.categoryId);
-      flattened.push(category);
-
-      // Process children recursively
-      if (category.children && category.children.length > 0) {
-        for (const child of category.children) {
-          processCategory(child);
-        }
-      }
+    const process = (cat: Cat) => {
+      if (visited.has(cat.categoryId)) return;
+      visited.add(cat.categoryId);
+      flat.push(cat);
+      if (cat.children?.length) for (const ch of cat.children) process(ch);
     };
-
-    const rootCategories = categories.filter((cat) => !cat.parentId);
-    const childCategories = categories.filter((cat) => cat.parentId);
-
-    for (const rootCategory of rootCategories) {
-      processCategory(rootCategory);
-    }
-
-    for (const childCategory of childCategories) {
-      if (!visited.has(childCategory.categoryId)) {
-        processCategory(childCategory);
-      }
-    }
-
-    this.logger.log(
-      `📊 Flattened ${categories.length} hierarchical categories into ${flattened.length} ordered entries`,
-    );
-
-    return flattened;
+    for (const root of categories.filter((c) => !c.parentId)) process(root);
+    for (const child of categories.filter((c) => c.parentId))
+      if (!visited.has(child.categoryId)) process(child);
+    return flat;
   }
 
-  private calculateCategoryHierarchy(
-    category: KiotVietCategory,
-    categoryMap: Map<number, KiotVietCategory>,
+  private hierarchy(
+    cat: Cat,
+    map: Map<number, Cat>,
   ): {
     parentName: string | null;
     childName: string | null;
     branchName: string | null;
   } {
-    if (!category.parentId) {
+    if (!cat.parentId)
       return {
-        parentName: category.categoryName,
+        parentName: cat.categoryName ?? null,
         childName: null,
         branchName: null,
       };
-    }
-
-    const parentCategory = categoryMap.get(category.parentId);
-    if (!parentCategory) {
-      return { parentName: null, childName: null, branchName: null };
-    }
-
-    if (!parentCategory.parentId) {
+    const parent = map.get(cat.parentId);
+    if (!parent) return { parentName: null, childName: null, branchName: null };
+    if (!parent.parentId)
       return {
-        parentName: parentCategory.categoryName,
-        childName: category.categoryName,
+        parentName: parent.categoryName ?? null,
+        childName: cat.categoryName ?? null,
         branchName: null,
       };
-    }
-
-    const grandParentCategory = categoryMap.get(parentCategory.parentId);
+    const grand = map.get(parent.parentId);
     return {
-      parentName: grandParentCategory?.categoryName || null,
-      childName: parentCategory.categoryName,
-      branchName: category.categoryName,
+      parentName: grand?.categoryName ?? null,
+      childName: parent.categoryName ?? null,
+      branchName: cat.categoryName ?? null,
     };
-  }
-
-  async enableHistoricalSync(): Promise<void> {
-    await this.updateSyncControl('category_historical', {
-      isEnabled: true,
-      isRunning: false,
-      status: 'idle',
-    });
-
-    this.logger.log('✅ Historical category sync enabled');
-  }
-
-  private async updateSyncControl(name: string, data: any): Promise<void> {
-    try {
-      await this.prismaService.syncControl.upsert({
-        where: { name },
-        create: {
-          name,
-          entities: ['category'],
-          syncMode: 'historical',
-          isRunning: false,
-          isEnabled: true,
-          status: 'idle',
-          ...data,
-        },
-        update: {
-          ...data,
-          lastRunAt:
-            data.status === 'completed' || data.status === 'failed'
-              ? new Date()
-              : undefined,
-        },
-      });
-    } catch (error) {
-      this.logger.error(
-        `Failed to update sync control '${name}': ${error.message}`,
-      );
-      throw error;
-    }
   }
 }

@@ -1,984 +1,549 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { HttpService } from '@nestjs/axios';
-import { ConfigService } from '@nestjs/config';
-import { firstValueFrom } from 'rxjs';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { KiotVietAuthService } from '../auth.service';
-import { LarkOrderSyncService } from '../../lark/order/lark-order-sync.service';
-import { Prisma } from '@prisma/client';
+import { KiotPageFetcher } from '../shared/kiot-page-fetcher';
+import { BulkUpsertHelper, ColumnSpec } from '../shared/bulk-upsert.helper';
+import { RelationMapHelper } from '../shared/relation-map.helper';
+import { SyncControlHelper } from '../shared/sync-control.helper';
+import { RetailerContext } from '../shared/retailer-context';
 
-interface KiotVietOrder {
-  id: number;
-  code: string;
-  purchaseDate: string;
-  branchId?: number;
-  branchName?: string;
-  customerId?: number;
-  customerCode?: string;
-  customerName?: string;
-  soldById?: number;
-  soldByName?: string;
-  description?: string;
-  total?: number;
-  totalPayment?: number;
-  discountRatio?: number;
-  discount?: number;
-  statusValue: string;
-  usingCod?: boolean;
-  status?: number;
-  retailerId: number;
-  modifiedDate?: string;
-  createdDate?: string;
-  saleChannelId?: number;
-  saleChannelName?: string;
-  orderDetails: {
-    productId: number;
-    productCode?: string;
-    productName?: string;
-    isMaster?: boolean;
-    quantity: number;
-    price: number;
-    discount?: number;
-    discountRatio?: number;
-    note?: string;
-  };
-  orderDelivery?: {
-    deliveryCode?: string;
-    type?: number;
-    price?: number;
-    receiver?: string;
-    contactNumber?: string;
-    address?: string;
-    locationId?: number;
-    locationName?: string;
-    weight?: number;
-    length?: number;
-    width?: number;
-    height?: number;
-    partnerDeliveryId?: number;
-    partnerDelivery?: {
-      code?: string;
-      name?: string;
-      address?: string;
-      contactNumber?: string;
-      email?: string;
-    };
-  };
-  payments?: Array<{
-    id?: number;
-    code?: string;
-    amount: number;
-    method: string;
-    status?: number;
-    statusValue?: string;
-    transDate: string;
-    accountId?: number;
-    bankAcount?: string;
-  }>;
-  invoiceOrderSurcharges?: Array<{
-    id?: number;
-    invoiceId?: number;
-    surchargeId?: number;
-    surchargeName?: string;
-    surValue?: number;
-    price?: number;
-    createdDate?: string;
-  }>;
-}
+const SYNC_NAME = 'order_historical';
+
+const ORDER_COLUMNS: ColumnSpec[] = [
+  { name: 'kiotVietId', type: 'bigint' },
+  { name: 'code', type: 'text' },
+  { name: 'purchaseDate', type: 'timestamp' },
+  { name: 'branchId', type: 'int' },
+  { name: 'soldById', type: 'bigint' },
+  { name: 'soldByKiotVietId', type: 'bigint' },
+  { name: 'soldByName', type: 'text' },
+  { name: 'cashierId', type: 'bigint' },
+  { name: 'customerId', type: 'int' },
+  { name: 'total', type: 'numeric' },
+  { name: 'totalPayment', type: 'numeric' },
+  { name: 'discount', type: 'numeric' },
+  { name: 'discountRatio', type: 'real' },
+  { name: 'status', type: 'int' },
+  { name: 'description', type: 'text' },
+  { name: 'usingCod', type: 'boolean' },
+  { name: 'saleChannelId', type: 'int' },
+  { name: 'expectedDelivery', type: 'timestamp' },
+  { name: 'retailerId', type: 'int' },
+  { name: 'createdDate', type: 'timestamp' },
+  { name: 'modifiedDate', type: 'timestamp' },
+  { name: 'lastSyncedAt', type: 'timestamp' },
+  { name: 'statusValue', type: 'text' },
+  { name: 'customerCode', type: 'text' },
+  { name: 'customerName', type: 'text' },
+  { name: 'saleChannelName', type: 'text' },
+];
+
+const ORDER_UPDATE = [
+  'code',
+  'purchaseDate',
+  'branchId',
+  'soldById',
+  'soldByKiotVietId',
+  'soldByName',
+  'cashierId',
+  'customerId',
+  'total',
+  'totalPayment',
+  'discount',
+  'discountRatio',
+  'status',
+  'description',
+  'usingCod',
+  'saleChannelId',
+  'expectedDelivery',
+  'retailerId',
+  'createdDate',
+  'modifiedDate',
+  'lastSyncedAt',
+  'statusValue',
+  'customerCode',
+  'customerName',
+  'saleChannelName',
+];
+
+const ORDER_DETAIL_COLUMNS: ColumnSpec[] = [
+  { name: 'orderId', type: 'int' },
+  { name: 'productId', type: 'int' },
+  { name: 'productKiotVietId', type: 'bigint' },
+  { name: 'quantity', type: 'real' },
+  { name: 'price', type: 'numeric' },
+  { name: 'discount', type: 'numeric' },
+  { name: 'discountRatio', type: 'real' },
+  { name: 'note', type: 'text' },
+  { name: 'isMaster', type: 'boolean' },
+  { name: 'productCode', type: 'text' },
+  { name: 'productName', type: 'text' },
+  { name: 'lineNumber', type: 'int' },
+];
+
+const ORDER_DETAIL_UPDATE = [
+  'productId',
+  'productKiotVietId',
+  'quantity',
+  'price',
+  'discount',
+  'discountRatio',
+  'note',
+  'isMaster',
+  'productCode',
+  'productName',
+];
+
+const ORDER_DELIVERY_COLUMNS: ColumnSpec[] = [
+  { name: 'orderId', type: 'int' },
+  { name: 'deliveryCode', type: 'text' },
+  { name: 'type', type: 'int' },
+  { name: 'price', type: 'numeric' },
+  { name: 'receiver', type: 'text' },
+  { name: 'contactNumber', type: 'text' },
+  { name: 'address', type: 'text' },
+  { name: 'locationId', type: 'int' },
+  { name: 'locationName', type: 'text' },
+  { name: 'wardName', type: 'text' },
+  { name: 'weight', type: 'real' },
+  { name: 'length', type: 'real' },
+  { name: 'width', type: 'real' },
+  { name: 'height', type: 'real' },
+];
+
+const ORDER_DELIVERY_UPDATE = [
+  'deliveryCode',
+  'type',
+  'price',
+  'receiver',
+  'contactNumber',
+  'address',
+  'locationId',
+  'locationName',
+  'wardName',
+  'weight',
+  'length',
+  'width',
+  'height',
+];
+
+const PAYMENT_COLUMNS: ColumnSpec[] = [
+  { name: 'kiotVietId', type: 'bigint' },
+  { name: 'code', type: 'text' },
+  { name: 'amount', type: 'numeric' },
+  { name: 'method', type: 'text' },
+  { name: 'status', type: 'int' },
+  { name: 'transDate', type: 'timestamp' },
+  { name: 'accountId', type: 'int' },
+  { name: 'orderId', type: 'int' },
+  { name: 'description', type: 'text' },
+];
+
+const PAYMENT_UPDATE = [
+  'code',
+  'amount',
+  'method',
+  'status',
+  'transDate',
+  'accountId',
+  'orderId',
+  'description',
+];
+
+const ORDER_SURCHARGE_COLUMNS: ColumnSpec[] = [
+  { name: 'kiotVietId', type: 'bigint' },
+  { name: 'orderId', type: 'int' },
+  { name: 'surchargeId', type: 'int' },
+  { name: 'surchargeName', type: 'text' },
+  { name: 'surValue', type: 'numeric' },
+  { name: 'price', type: 'numeric' },
+];
+
+const ORDER_SURCHARGE_UPDATE = [
+  'surchargeId',
+  'surchargeName',
+  'surValue',
+  'price',
+];
 
 @Injectable()
 export class KiotVietOrderService {
   private readonly logger = new Logger(KiotVietOrderService.name);
-  private readonly baseUrl: string;
-  private readonly PAGE_SIZE = 100;
+  /** Rows whose soldById could not satisfy the FK, tallied per sync run. */
+  private unknownSoldBy = 0;
+  /** Rows examined for soldById, so the summary ratio has a correct denominator. */
+  private soldBySeen = 0;
+  /** staff "id|name" -> row count, so the summary names who is missing. */
+  private unknownSoldByNames = new Map<string, number>();
 
   constructor(
-    private readonly httpService: HttpService,
-    private readonly configService: ConfigService,
     private readonly prismaService: PrismaService,
-    private readonly authService: KiotVietAuthService,
-    private readonly larkOrderSyncService: LarkOrderSyncService,
-  ) {
-    const baseUrl = this.configService.get<string>('KIOT_BASE_URL');
-    if (!baseUrl) {
-      throw new Error('KIOT_BASE_URL environment variable is not configured');
-    }
-    this.baseUrl = baseUrl;
+    private readonly pageFetcher: KiotPageFetcher,
+    private readonly bulkUpsert: BulkUpsertHelper,
+    private readonly relationMap: RelationMapHelper,
+    private readonly syncControl: SyncControlHelper,
+    private readonly retailer: RetailerContext,
+  ) {}
+
+  async syncFull() {
+    return this.runSync('full', {});
   }
 
-  async checkAndRunAppropriateSync(): Promise<void> {
-    try {
-      const runningOrderSyncs = await this.prismaService.syncControl.findMany({
-        where: {
-          OR: [
-            { name: 'order_historical' },
-            // { name: 'order_recent' },
-            { name: 'order_lark_sync' },
-          ],
-          isRunning: true,
-        },
-      });
-
-      if (runningOrderSyncs.length > 0) {
-        this.logger.warn(
-          `Found ${runningOrderSyncs.length} Order syncs still running: ${runningOrderSyncs.map((s) => s.name).join(', ')}`,
-        );
-        this.logger.warn('Skipping order sync to avoid conflicts');
-        return;
-      }
-
-      const historicalSync = await this.prismaService.syncControl.findFirst({
-        where: { name: 'order_historical' },
-      });
-
-      const recentSync = await this.prismaService.syncControl.findFirst({
-        where: { name: 'order_recent' },
-      });
-
-      if (historicalSync?.isEnabled && !historicalSync.isRunning) {
-        this.logger.log('Starting historical order sync...');
-        await this.syncHistoricalOrders();
-        return;
-      }
-
-      if (historicalSync?.isRunning) {
-        this.logger.log(
-          'Historical order sync is running, skipping recent sync',
-        );
-        return;
-      }
-    } catch (error) {
-      this.logger.error(`Sync check failed: ${error.message}`);
-      throw error;
-    }
-  }
-
-  async enableHistoricalSync(): Promise<void> {
-    await this.updateSyncControl('order_historical', {
-      isEnabled: true,
-      isRunning: false,
-      status: 'idle',
+  async syncIncremental() {
+    const last = await this.syncControl.getLastCompletedAt(SYNC_NAME);
+    const lastModifiedFrom = last ?? new Date('2024-12-01');
+    return this.runSync('incremental', {
+      lastModifiedFrom: lastModifiedFrom.toISOString(),
     });
-
-    this.logger.log('Historical order sync enabled');
   }
 
   async syncHistoricalOrders(): Promise<void> {
-    const syncName = 'order_historical';
+    await this.syncFull();
+  }
 
-    let currentItem = 0;
-    let processedCount = 0;
-    let totalOrders = 0;
-    let consecutiveEmptyPages = 0;
-    let consecutiveErrorPages = 0;
-    let lastValidTotal = 0;
-    let processedOrderIds = new Set<number>();
+  async enableHistoricalSync(): Promise<void> {}
 
+  private async runSync(
+    mode: 'full' | 'incremental',
+    extra: Record<string, any>,
+  ) {
+    if (await this.syncControl.isRunning(SYNC_NAME)) {
+      this.logger.warn(`Order sync already running, skipping`);
+      return { total: 0, processed: 0 };
+    }
+    await this.syncControl.markRunning(SYNC_NAME, mode, ['order']);
+    let processed = 0;
+    let total = 0;
+    // Accumulated across pages and reported once at the end. Logging per page
+    // produced a warning every 100 rows, which reads like a recurring failure.
+    this.unknownSoldBy = 0;
+    this.soldBySeen = 0;
+    this.unknownSoldByNames = new Map<string, number>();
     try {
-      await this.updateSyncControl(syncName, {
-        isRunning: true,
-        status: 'running',
-        startedAt: new Date(),
-        error: null,
-      });
-
-      this.logger.log('Starting historical order sync...');
-
-      const MAX_CONSECUTIVE_EMPTY_PAGES = 5;
-      const MAX_CONSECUTIVE_ERROR_PAGES = 3;
-      const RETRY_DELAY_MS = 2000;
-      const MAX_TOTAL_RETRIES = 10;
-
-      let totalRetries = 0;
-
-      while (true) {
-        const currentPage = Math.floor(currentItem / this.PAGE_SIZE) + 1;
-
-        if (totalOrders > 0) {
-          if (currentItem >= totalOrders) {
-            this.logger.log(
-              `Pagination complete. Processed: ${processedCount}/${totalOrders} orders`,
-            );
-            break;
-          }
-
-          const progressPercentage = (currentItem / totalOrders) * 100;
-          this.logger.log(
-            `Fetching page ${currentPage} (${currentItem}/${totalOrders} - ${progressPercentage.toFixed(1)}%)`,
-          );
-        } else {
-          this.logger.log(
-            `Fetching page ${currentPage} (currentItem: ${currentItem})`,
-          );
-        }
-
-        const dateStart = new Date();
-        dateStart.setDate(dateStart.getDate() - 70);
-        const dateStartStr = dateStart.toISOString().split('T')[0];
-
-        const dateEnd = new Date();
-        dateEnd.setDate(dateEnd.getDate() + 1);
-        const dateEndStr = dateEnd.toISOString().split('T')[0];
-
-        try {
-          const orderListResponse = await this.fetchOrdersListWithRetry({
-            currentItem,
-            pageSize: this.PAGE_SIZE,
+      const { total: t, serverTimestamp } =
+        await this.pageFetcher.fetchAll<any>({
+          endpoint: '/orders',
+          baseParams: {
             orderBy: 'id',
             orderDirection: 'DESC',
-            includePayment: true,
             includeOrderDelivery: true,
-            // lastModifiedFrom: dateStartStr,
-            lastModifiedFrom: '2024-12-1',
-            toDate: dateEndStr,
-          });
-
-          if (!orderListResponse) {
-            this.logger.warn('Received null response from KiotViet API');
-            consecutiveEmptyPages++;
-
-            if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
-              this.logger.log(
-                `🔚 Reached end after ${consecutiveEmptyPages} empty pages`,
-              );
-              break;
-            }
-
-            await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
-            continue;
-          }
-
-          consecutiveEmptyPages = 0;
-          consecutiveErrorPages = 0;
-
-          const { total, data: orders } = orderListResponse;
-
-          if (total !== undefined && total !== null) {
-            if (totalOrders === 0) {
-              this.logger.log(
-                `Total orders detected: ${total}. Starting processing...`,
-              );
-
-              totalOrders = total;
-            } else if (total !== totalOrders) {
-              this.logger.warn(
-                `Total count changed: ${totalOrders} -> ${total}. Using latest.`,
-              );
-              totalOrders = total;
-            }
-            lastValidTotal = total;
-          }
-
-          if (!orders || orders.length === 0) {
-            this.logger.warn(`Empty page received at position ${currentItem}`);
-            consecutiveEmptyPages++;
-
-            if (totalOrders > 0 && currentItem >= totalOrders) {
-              this.logger.log('Reached end of data (empty page past total)');
-              break;
-            }
-
-            if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
-              this.logger.log(
-                `🔚 Stopping after ${consecutiveEmptyPages} consecutive empty pages`,
-              );
-              break;
-            }
-
-            currentItem += this.PAGE_SIZE;
-            continue;
-          }
-
-          const pageOrderIds = orders.map((order) => BigInt(order.id));
-          const existingOrderIds = new Set(
-            (
-              await this.prismaService.order.findMany({
-                where: { kiotVietId: { in: pageOrderIds } },
-                select: { kiotVietId: true },
-              })
-            ).map((c) => Number(c.kiotVietId)),
-          );
-
-          const newOrders = orders.filter((order) => {
-            if (
-              !existingOrderIds.has(order.id) &&
-              !processedOrderIds.has(order.id)
-            ) {
-              processedOrderIds.add(order.id);
-              return true;
-            }
-            return false;
-          });
-
-          const existingOrders = orders.filter((order) => {
-            if (
-              existingOrderIds.has(order.id) &&
-              !processedOrderIds.has(order.id)
-            ) {
-              processedOrderIds.add(order.id);
-              return true;
-            }
-            return false;
-          });
-
-          if (newOrders.length === 0 && existingOrders.length === 0) {
-            this.logger.log(
-              `Skipping page ${currentPage} - all orders already processed in this run`,
-            );
-            currentItem += this.PAGE_SIZE;
-            continue;
-          }
-
-          let pageProcessedCount = 0;
-          let allSavedOrders: any[] = [];
-
-          if (newOrders.length > 0) {
-            this.logger.log(
-              `Processing ${newOrders.length} NEW orders from page ${currentPage}...`,
-            );
-
-            const savedOrders = await this.saveOrdersToDatabase(newOrders);
-            pageProcessedCount += savedOrders.length;
-            allSavedOrders.push(...savedOrders);
-          }
-
-          if (existingOrders.length > 0) {
-            this.logger.log(
-              `Processing ${existingOrders.length} EXISTING orders from page ${currentPage}`,
-            );
-
-            const savedOrders = await this.saveOrdersToDatabase(existingOrders);
-            pageProcessedCount += savedOrders.length;
-            allSavedOrders.push(...savedOrders);
-          }
-
-          processedCount += pageProcessedCount;
-          currentItem += this.PAGE_SIZE;
-
-          // if (allSavedOrders.length > 0) {
-          //   try {
-          //     await this.syncOrdersToLarkBase(allSavedOrders);
-          //     this.logger.log(
-          //       `Synced ${allSavedOrders.length} orders to LarkBase`,
-          //     );
-          //   } catch (error) {
-          //     this.logger.warn(
-          //       `LarkBase sync failed for page ${currentPage}: ${error.message}`,
-          //     );
-          //   }
-          // }
-
-          if (totalOrders > 0) {
-            const completionPercentage = (processedCount / totalOrders) * 100;
-            this.logger.log(
-              `Progress: ${processedCount}/${totalOrders} (${completionPercentage.toFixed(1)}%)`,
-            );
-
-            if (processedCount >= totalOrders) {
-              this.logger.log('All orders procesed successfully!');
-              break;
-            }
-          }
-
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        } catch (error) {
-          consecutiveErrorPages++;
-          totalRetries++;
-
-          this.logger.error(
-            `API error on page ${currentPage}: ${error.message}`,
-          );
-
-          if (consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES) {
-            throw new Error(
-              `Multiple consecutive API failures: ${error.message}`,
-            );
-          }
-
-          if (totalRetries >= MAX_TOTAL_RETRIES) {
-            throw new Error(`Maximum total retries exceeded: ${error.message}`);
-          }
-
-          const delay = RETRY_DELAY_MS * Math.pow(2, consecutiveErrorPages - 1);
-          this.logger.log(`Retrying after ${delay}ms delay...`);
-          await new Promise((resolve) => setTimeout(resolve, delay));
-        }
-      }
-
-      await this.updateSyncControl(syncName, {
-        isRunning: false,
-        isEnabled: false,
-        status: 'completed',
-        completedAt: new Date(),
-        lastRunAt: new Date(),
-        progress: { processedCount, expectedTotal: totalOrders },
-      });
-
-      await this.updateSyncControl('order_recent', {
-        isEnabled: true,
-        isRunning: false,
-        status: 'idle',
-      });
-
-      const completionRate =
-        totalOrders > 0 ? (processedCount / totalOrders) * 100 : 100;
-
-      this.logger.log(
-        `Historical order sync completed: ${processedCount}/${totalOrders} (${completionRate.toFixed(1)}% completion rate)`,
+            includePayment: true,
+            ...extra,
+          },
+          label: `order-${mode}`,
+          onPage: async (pageData) => {
+            processed += await this.processPage(pageData);
+            this.logger.log(`order-${mode}: processed ${processed} so far`);
+          },
+        });
+      total = t;
+      this.reportUnknownSoldBy(processed);
+      await this.syncControl.markCompleted(
+        SYNC_NAME,
+        { processedCount: processed, expectedTotal: total },
+        serverTimestamp,
       );
-      this.logger.log(
-        `AUTO-TRANSITION: Historical sync disabled, Recent sync enabled for future cycles`,
-      );
+      return { total, processed };
     } catch (error) {
-      this.logger.error(`❌ Historical order sync failed: ${error.message}`);
-
-      await this.updateSyncControl(syncName, {
-        isRunning: false,
-        status: 'failed',
-        error: error.message,
-        progress: { processedCount, expectedTotal: totalOrders },
+      this.logger.error(`order-${mode} failed: ${error.message}`);
+      await this.syncControl.markFailed(SYNC_NAME, error.message, {
+        processedCount: processed,
+        expectedTotal: total,
       });
-
       throw error;
     }
   }
 
-  async fetchOrdersListWithRetry(
-    params: {
-      currentItem?: number;
-      pageSize?: number;
-      orderBy?: string;
-      orderDirection?: string;
-      includeOrderDelivery?: boolean;
-      includePayment?: boolean;
-      lastModifiedFrom?: string;
-      toDate?: string;
-    },
-    maxRetries: number = 5,
-  ): Promise<any> {
-    let lastError: Error | undefined;
+  private async processPage(orders: any[]): Promise<number> {
+    if (!orders.length) return 0;
+    const now = new Date();
 
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        return await this.fetchOrdersList(params);
-      } catch (error) {
-        lastError = error as Error;
-        this.logger.warn(
-          `API attempt ${attempt}/${maxRetries} failed: ${error.message}`,
-        );
-
-        if (attempt < maxRetries) {
-          const delay = 2000 * attempt;
-          this.logger.log(`Retrying after ${delay / 1000}s delay...`);
-          await new Promise((resolve) => setTimeout(resolve, delay));
-        }
-      }
-    }
-
-    throw lastError;
-  }
-
-  async fetchOrdersList(params: {
-    currentItem?: number;
-    pageSize?: number;
-    orderBy?: string;
-    orderDirection?: string;
-    includeOrderDelivery?: boolean;
-    includePayment?: boolean;
-    lastModifiedFrom?: string;
-    toDate?: string;
-  }): Promise<any> {
-    const headers = await this.authService.getRequestHeaders();
-
-    const queryParams = new URLSearchParams({
-      currentItem: (params.currentItem || 0).toString(),
-      pageSize: (params.pageSize || this.PAGE_SIZE).toString(),
-      orderBy: params.orderBy || 'id',
-      orderDirection: params.orderDirection || 'DESC',
-      includeOrderDelivery: (params.includeOrderDelivery || true).toString(),
-      includePayment: (params.includePayment || true).toString(),
-    });
-
-    if (params.lastModifiedFrom) {
-      queryParams.append('lastModifiedFrom', params.lastModifiedFrom);
-    }
-    if (params.toDate) {
-      queryParams.append('toDate', params.toDate);
-    }
-
-    const response = await firstValueFrom(
-      this.httpService.get(`${this.baseUrl}/orders?${queryParams}`, {
-        headers,
-        timeout: 45000,
-      }),
+    const branchIds = this.uniqueNum(orders.map((o) => o.branchId));
+    const customerIds = this.uniqueNum(orders.map((o) => o.customerId));
+    const saleChannelIds = this.uniqueNum(
+      orders.map((o) => o.SaleChannelId ?? o.saleChannelId),
+    );
+    const productIds = this.uniqueNum(
+      orders.flatMap((o) => (o.orderDetails ?? []).map((d) => d.productId)),
+    );
+    const bankAccountIds = this.uniqueNum(
+      orders.flatMap((o) =>
+        (o.payments ?? []).filter((p) => p.accountId).map((p) => p.accountId),
+      ),
+    );
+    const surchargeIds = this.uniqueNum(
+      orders.flatMap((o) =>
+        (o.invoiceOrderSurcharges ?? [])
+          .filter((s) => s.surchargeId)
+          .map((s) => s.surchargeId),
+      ),
     );
 
-    return response.data;
-  }
-
-  async fetchRecentOrders(fromDate: Date): Promise<any[]> {
-    const headers = await this.authService.getRequestHeaders();
-    const fromDateStr = fromDate.toISOString().split('T')[0];
-    const today = new Date();
-    const todayDateStr = today.toISOString().split('T')[0];
-
-    const queryParams = new URLSearchParams({
-      lastModifiedFrom: fromDateStr,
-      toDate: todayDateStr,
-      currentItem: '0',
-      pageSize: '100',
-      orderBy: 'createdDate',
-      orderDirection: 'DESC',
-      includeOrderDelivery: 'true',
-      includePayment: 'true',
-    });
-
-    const response = await firstValueFrom(
-      this.httpService.get(`${this.baseUrl}/orders?${queryParams}`, {
-        headers,
-        timeout: 60000,
-      }),
+    const soldByIds = this.uniqueNum(
+      orders.flatMap((o) => [o.soldById, o.cashierId]).filter((v) => v != null),
     );
-
-    return response.data?.data;
-  }
-
-  private async saveOrdersToDatabase(orders: any[]): Promise<any[]> {
-    this.logger.log(`Saving ${orders.length} orders to database...`);
-
-    const savedOrders: any[] = [];
-
-    const customerIds = [
-      ...new Set(
-        orders.filter((o) => o.customerId).map((o) => BigInt(o.customerId)),
-      ),
-    ];
-    const branchIds = [
-      ...new Set(
-        orders.filter((o) => o.branchId != null).map((o) => o.branchId),
-      ),
-    ];
-    const userIds = [
-      ...new Set(
-        orders.filter((o) => o.soldById).map((o) => BigInt(o.soldById)),
-      ),
-    ];
-    const saleChannelIds = [
-      ...new Set(
-        orders.filter((o) => o.SaleChannelId).map((o) => o.SaleChannelId),
-      ),
-    ];
-    const productIds = [
-      ...new Set(
-        orders.flatMap((o) =>
-          (o.orderDetails ?? []).map((d) => BigInt(d.productId)),
-        ),
-      ),
-    ];
-    const bankAccountIds = [
-      ...new Set(
-        orders.flatMap((o) =>
-          (o.payments ?? []).filter((p) => p.accountId).map((p) => p.accountId),
-        ),
-      ),
-    ];
-    const surchargeIds = [
-      ...new Set(
-        orders.flatMap((o) =>
-          (o.invoiceOrderSurcharges ?? [])
-            .filter((s) => s.surchargeId)
-            .map((s) => s.surchargeId),
-        ),
-      ),
-    ];
 
     const [
-      customers,
-      branches,
-      users,
-      saleChannels,
-      defaultSaleChannel,
-      products,
-      bankAccounts,
-      surcharges,
+      branchMap,
+      customerMap,
+      saleChannelMap,
+      productMap,
+      bankAccountMap,
+      surchargeMap,
+      userMap,
     ] = await Promise.all([
-      customerIds.length
-        ? this.prismaService.customer.findMany({
-            where: { kiotVietId: { in: customerIds } },
-            select: { id: true, kiotVietId: true },
-          })
-        : [],
-      branchIds.length
-        ? this.prismaService.branch.findMany({
-            where: { kiotVietId: { in: branchIds } },
-            select: { id: true, name: true, kiotVietId: true },
-          })
-        : [],
-      userIds.length
-        ? this.prismaService.user.findMany({
-            where: { kiotVietId: { in: userIds } },
-            select: { kiotVietId: true },
-          })
-        : [],
-      saleChannelIds.length
-        ? this.prismaService.saleChannel.findMany({
-            where: { kiotVietId: { in: saleChannelIds } },
-            select: { id: true, name: true, kiotVietId: true },
-          })
-        : [],
-      this.prismaService.saleChannel.findFirst({
-        where: { id: 1 },
-        select: { id: true, name: true },
-      }),
-      productIds.length
-        ? this.prismaService.product.findMany({
-            where: { kiotVietId: { in: productIds } },
-            select: { id: true, name: true, code: true, kiotVietId: true },
-          })
-        : [],
-      bankAccountIds.length
-        ? this.prismaService.bankAccount.findMany({
-            where: { kiotVietId: { in: bankAccountIds } },
-            select: { id: true, kiotVietId: true },
-          })
-        : [],
-      surchargeIds.length
-        ? this.prismaService.surcharge.findMany({
-            where: { kiotVietId: { in: surchargeIds } },
-            select: { id: true, kiotVietId: true },
-          })
-        : [],
+      this.relationMap.buildIdMap('branch', branchIds),
+      this.relationMap.buildIdMap('customer', customerIds),
+      this.relationMap.buildIdMap('saleChannel', saleChannelIds),
+      this.relationMap.buildIdMap('product', productIds),
+      this.relationMap.buildIdMap('bankAccount', bankAccountIds),
+      this.relationMap.buildIdMap('surcharge', surchargeIds),
+      // Order.soldById / cashierId are FKs onto User.kiotVietId. GET /users only
+      // returns ACTIVE users, but orders keep referencing staff who have since been
+      // removed — one such id appeared on ~98% of orders here. Writing it straight
+      // through violated Order_soldById_fkey, and because BulkUpsertHelper logs and
+      // continues, those orders were dropped while the sync still reported success.
+      // So resolve against the users we actually hold and null out the unknown ones.
+      this.relationMap.buildIdMap('user', soldByIds),
     ]);
 
-    const customerMap = new Map(
-      customers.map((c): [number, any] => [Number(c.kiotVietId), c]),
-    );
-    const branchMap = new Map(
-      branches.map((b): [number, any] => [Number(b.kiotVietId), b]),
-    );
-    const userMap = new Map(
-      users.map((u): [number, any] => [Number(u.kiotVietId), u]),
-    );
-    const saleChannelMap = new Map(
-      saleChannels.map((s): [number, any] => [Number(s.kiotVietId), s]),
-    );
-    const productMap = new Map(
-      products.map((p): [number, any] => [Number(p.kiotVietId), p]),
-    );
-    const bankAccountMap = new Map(
-      bankAccounts.map((b): [number, any] => [Number(b.kiotVietId), b]),
-    );
-    const surchargeMap = new Map(
-      surcharges.map((s): [number, any] => [Number(s.kiotVietId), s]),
+    const orderRows = orders.map((o) => {
+      const saleChannelId = o.SaleChannelId ?? o.saleChannelId;
+      const saleChannelDbId = saleChannelId
+        ? saleChannelMap.get(Number(saleChannelId))
+        : undefined;
+      // Only keep the id when the User row exists, otherwise the FK rejects the order.
+      const rawSoldBy = o.soldById ?? null;
+      const soldByKnown = rawSoldBy != null && userMap.has(Number(rawSoldBy));
+      this.soldBySeen++;
+      if (rawSoldBy != null && !soldByKnown) {
+        this.unknownSoldBy++;
+        const key = `${rawSoldBy}|${o.soldByName || 'unknown'}`;
+        this.unknownSoldByNames.set(
+          key,
+          (this.unknownSoldByNames.get(key) ?? 0) + 1,
+        );
+      }
+      const soldById = soldByKnown ? BigInt(rawSoldBy) : null;
+
+      const rawCashier = o.cashierId ?? rawSoldBy;
+      const cashierKnown =
+        rawCashier != null && userMap.has(Number(rawCashier));
+      const cashierId = cashierKnown ? BigInt(rawCashier) : null;
+
+      return {
+        kiotVietId: o.id,
+        code: o.code,
+        purchaseDate: o.purchaseDate ? new Date(o.purchaseDate) : now,
+        branchId: o.branchId
+          ? (branchMap.get(Number(o.branchId)) ?? null)
+          : null,
+        soldById,
+        // Preserved regardless of whether the FK could be satisfied, so a deleted
+        // staff member's identity is never lost. `soldById` is back-filled later
+        // if that user reappears in GET /users.
+        soldByKiotVietId: rawSoldBy != null ? BigInt(rawSoldBy) : null,
+        soldByName: o.soldByName || null,
+        cashierId,
+        customerId: o.customerId
+          ? (customerMap.get(Number(o.customerId)) ?? null)
+          : null,
+        total: o.total ?? 0,
+        totalPayment: o.totalPayment ?? 0,
+        discount: o.discount ?? 0,
+        discountRatio: o.discountRatio ?? 0,
+        status: o.status ?? null,
+        description: o.description ?? '',
+        usingCod: o.usingCod ?? false,
+        saleChannelId: saleChannelDbId ?? 1,
+        expectedDelivery: o.expectedDelivery
+          ? new Date(o.expectedDelivery)
+          : null,
+        retailerId: this.retailer.resolve(o.retailerId),
+        createdDate: o.createdDate ? new Date(o.createdDate) : now,
+        modifiedDate: o.modifiedDate ? new Date(o.modifiedDate) : now,
+        lastSyncedAt: now,
+        statusValue: o.statusValue || null,
+        customerCode: o.customerCode || null,
+        customerName: o.customerName || null,
+        saleChannelName: saleChannelDbId ? null : null, // resolved below if needed
+      };
+    });
+
+    await this.bulkUpsert.bulkUpsert({
+      table: '"Order"',
+      columns: ORDER_COLUMNS,
+      rows: orderRows,
+      conflictTarget: '"kiotVietId"',
+      updateColumns: ORDER_UPDATE,
+    });
+
+    const orderIdMap = await this.relationMap.buildIdMap(
+      'order',
+      this.uniqueNum(orders.map((o) => o.id)),
     );
 
-    const processOrder = async (orderData: any) => {
-      try {
-        const customer = orderData.customerId
-          ? (customerMap.get(Number(orderData.customerId)) ?? null)
-          : null;
+    const detailRows: any[] = [];
+    const deliveryRows: any[] = [];
+    const paymentRows: any[] = [];
+    const surchargeRows: any[] = [];
+    /** Detail lines kept with a null productId because the product is absent locally. */
+    let unresolvedProducts = 0;
 
-        const branch = branchMap.get(Number(orderData.branchId)) ?? null;
+    for (const o of orders) {
+      const orderDbId = orderIdMap.get(Number(o.id));
+      if (!orderDbId) continue;
 
-        const soldBy = orderData.soldById
-          ? (userMap.get(Number(orderData.soldById)) ?? null)
-          : null;
-
-        let saleChannel = orderData.SaleChannelId
-          ? (saleChannelMap.get(Number(orderData.SaleChannelId)) ?? null)
-          : null;
-
-        if (!saleChannel) {
-          saleChannel = defaultSaleChannel;
-        }
-
-        const orderCode = orderData.code;
-        const shouldSyncToLark = orderCode && orderCode.includes('DH0');
-
-        const order = await this.prismaService.order.upsert({
-          where: { kiotVietId: BigInt(orderData.id) },
-          update: {
-            code: orderData.code,
-            purchaseDate: new Date(orderData.purchaseDate),
-            branchId: branch?.id ?? null,
-            soldById: soldBy?.kiotVietId ?? null,
-            cashierId: soldBy?.kiotVietId ?? null,
-            customerId: customer?.id ?? null,
-            customerCode: orderData.customerCode ?? null,
-            customerName: orderData.customerName ?? null,
-            saleChannelId: saleChannel?.id ?? 1,
-            saleChannelName: saleChannel?.name,
-            status: orderData.status,
-            statusValue: orderData.statusValue ?? null,
-            total: new Prisma.Decimal(orderData.total || 0),
-            totalPayment: new Prisma.Decimal(orderData.totalPayment || 0),
-            retailerId: 310831,
-            description: orderData.description ?? '',
-            usingCod: orderData.usingCod ?? false,
-            discount: orderData.discount ?? 0,
-            discountRatio: orderData.discountRatio ?? 0,
-            createdDate: orderData.createdDate
-              ? new Date(orderData.createdDate)
-              : new Date(),
-            modifiedDate: orderData.modifiedDate
-              ? new Date(orderData.modifiedDate)
-              : new Date(),
-            lastSyncedAt: new Date(),
-            larkSyncStatus: shouldSyncToLark ? 'PENDING' : 'SKIP',
-          },
-          create: {
-            kiotVietId: BigInt(orderData.id),
-            code: orderData.code,
-            purchaseDate: new Date(orderData.purchaseDate),
-            branchId: branch?.id ?? null,
-            soldById: soldBy?.kiotVietId ?? null,
-            cashierId: soldBy?.kiotVietId ?? null,
-            customerId: customer?.id ?? null,
-            customerCode: orderData.customerCode ?? null,
-            customerName: orderData.customerName ?? null,
-            saleChannelId: saleChannel?.id ?? 1,
-            saleChannelName: saleChannel?.name,
-            status: orderData.status,
-            statusValue: orderData.statusValue ?? null,
-            total: new Prisma.Decimal(orderData.total || 0),
-            totalPayment: new Prisma.Decimal(orderData.totalPayment || 0),
-            retailerId: 310831,
-            description: orderData.description ?? '',
-            usingCod: orderData.usingCod ?? false,
-            discount: orderData.discount ?? 0,
-            discountRatio: orderData.discountRatio ?? 0,
-            createdDate: orderData.createdDate
-              ? new Date(orderData.createdDate)
-              : new Date(),
-            modifiedDate: orderData.modifiedDate
-              ? new Date(orderData.modifiedDate)
-              : new Date(),
-            lastSyncedAt: new Date(),
-            larkSyncStatus: shouldSyncToLark ? 'PENDING' : 'SKIP',
-          },
+      if (o.orderDetails) {
+        o.orderDetails.forEach((d: any, idx: number) => {
+          // `productId` is nullable now, so a line whose product is missing locally
+          // (deleted upstream, or not yet synced) is KEPT rather than silently
+          // dropped. productCode/productName/productKiotVietId preserve what was
+          // sold, and the FK is back-filled when the product later syncs in.
+          const product = productMap.get(Number(d.productId)) ?? null;
+          if (!product) unresolvedProducts++;
+          const ln = d.lineNumber ?? idx + 1;
+          detailRows.push({
+            orderId: orderDbId,
+            productId: product,
+            productKiotVietId: d.productId ? BigInt(d.productId) : null,
+            quantity: d.quantity ?? 0,
+            price: d.price ?? 0,
+            discount: d.discount ?? 0,
+            discountRatio: d.discountRatio ?? 0,
+            note: d.note ?? '',
+            isMaster: d.isMaster ?? true,
+          productCode: d.productCode || '',
+          productName: d.productName || '',
+            lineNumber: ln,
+          });
         });
+      }
 
-        if (orderData.orderDetails && orderData.orderDetails.length > 0) {
-          for (let i = 0; i < orderData.orderDetails.length; i++) {
-            const detail = orderData.orderDetails[i];
-            const product = productMap.get(Number(detail.productId)) ?? null;
+      if (o.orderDelivery) {
+        const dl = o.orderDelivery;
+        deliveryRows.push({
+          orderId: orderDbId,
+          deliveryCode: dl.deliveryCode || null,
+          type: dl.type ?? null,
+          price: dl.price ?? 0,
+          receiver: dl.receiver ?? '',
+          contactNumber: dl.contactNumber ?? '',
+          address: dl.address ?? '',
+          locationId: dl.locationId ?? null,
+          locationName: dl.locationName ?? '',
+          wardName: dl.wardName ?? '',
+          weight: dl.weight ?? 0,
+          length: dl.length ?? 0,
+          width: dl.width ?? 0,
+          height: dl.height ?? 0,
+        });
+      }
 
-            if (product) {
-              await this.prismaService.orderDetail.upsert({
-                where: {
-                  orderId_lineNumber: {
-                    orderId: order.id,
-                    lineNumber: i + 1,
-                  },
-                },
-                update: {
-                  productId: product.id,
-                  productName: product.name,
-                  productCode: product.code,
-                  quantity: detail.quantity ?? 0,
-                  lineNumber: i + 1,
-                  price: detail.price ? new Prisma.Decimal(detail.price) : 0,
-                  discount: detail.discount
-                    ? new Prisma.Decimal(detail.discount)
-                    : 0,
-                  discountRatio: detail.discountRatio ?? 0,
-                  note: detail.note ?? '',
-                  isMaster: detail.isMaster ?? true,
-                },
-                create: {
-                  orderId: order.id,
-                  productId: product.id,
-                  productName: product.name,
-                  productCode: product.code,
-                  quantity: detail.quantity ?? 0,
-                  lineNumber: i + 1,
-                  price: detail.price ? new Prisma.Decimal(detail.price) : 0,
-                  discount: detail.discount
-                    ? new Prisma.Decimal(detail.discount)
-                    : 0,
-                  discountRatio: detail.discountRatio ?? 0,
-                  note: detail.note ?? '',
-                  isMaster: detail.isMaster ?? true,
-                },
-              });
-            }
-          }
-        }
-
-        if (orderData.orderDelivery) {
-          const detail = orderData.orderDelivery;
-          await this.prismaService.orderDelivery.upsert({
-            where: { orderId: order.id },
-            update: {
-              deliveryCode: detail.deliveryCode,
-              type: detail.type,
-              price: detail.price ? new Prisma.Decimal(detail.price) : 0,
-              receiver: detail.receiver ?? '',
-              contactNumber: detail.contactNumber ?? '',
-              address: detail.address ?? '',
-              locationId: detail.locationId ?? null,
-              locationName: detail.locationName ?? '',
-              wardName: detail.wardName ?? '',
-              weight: detail.weight ?? 0,
-              length: detail.length ?? 0,
-              width: detail.width ?? 0,
-              height: detail.height ?? 0,
-            },
-            create: {
-              orderId: order.id,
-              deliveryCode: detail.deliveryCode,
-              type: detail.type,
-              price: detail.price ? new Prisma.Decimal(detail.price) : 0,
-              receiver: detail.receiver ?? '',
-              contactNumber: detail.contactNumber ?? '',
-              address: detail.address ?? '',
-              locationId: detail.locationId ?? null,
-              locationName: detail.locationName ?? '',
-              wardName: detail.wardName ?? '',
-              weight: detail.weight ?? 0,
-              length: detail.length ?? 0,
-              width: detail.width ?? 0,
-              height: detail.height ?? 0,
-            },
+      if (o.payments) {
+        for (const p of o.payments) {
+          paymentRows.push({
+            kiotVietId: p.id ? BigInt(p.id) : null,
+            code: p.code || null,
+            amount: p.amount ?? 0,
+            method: p.method || 'Cash',
+            status: p.status ?? null,
+            transDate: p.transDate ? new Date(p.transDate) : now,
+            accountId: p.accountId
+              ? (bankAccountMap.get(Number(p.accountId)) ?? null)
+              : null,
+            orderId: orderDbId,
+            description: p.description || null,
           });
         }
-
-        if (orderData.payments && orderData.payments.length > 0) {
-          for (const payment of orderData.payments) {
-            const bankAccount = payment.accountId
-              ? (bankAccountMap.get(Number(payment.accountId)) ?? null)
-              : null;
-
-            await this.prismaService.payment.upsert({
-              where: {
-                kiotVietId: payment.id ? BigInt(payment.id) : BigInt(0),
-              },
-              update: {
-                code: payment.code,
-                amount: payment.amount ? new Prisma.Decimal(payment.amount) : 0,
-                method: payment.method,
-                status: payment.status,
-                transDate: new Date(payment.transDate),
-                accountId: bankAccount?.id ?? null,
-                description: payment.description,
-                orderId: order.id,
-              },
-              create: {
-                kiotVietId: payment.id ? BigInt(payment.id) : null,
-                orderId: order.id,
-                code: payment.code,
-                amount: new Prisma.Decimal(payment.amount),
-                method: payment.method,
-                status: payment.status,
-                transDate: new Date(payment.transDate),
-                accountId: bankAccount?.id ?? null,
-                description: payment.description,
-              },
-            });
-          }
-        }
-
-        if (
-          orderData.invoiceOrderSurcharges &&
-          orderData.invoiceOrderSurcharges.length > 0
-        ) {
-          for (const surcharge of orderData.invoiceOrderSurcharges) {
-            const surchargeRecord = surcharge.surchargeId
-              ? (surchargeMap.get(Number(surcharge.surchargeId)) ?? null)
-              : null;
-
-            await this.prismaService.orderSurcharge.upsert({
-              where: {
-                kiotVietId: surcharge.id ? BigInt(surcharge.id) : BigInt(0),
-              },
-              update: {
-                surchargeName: surcharge.surchargeName,
-                surValue: surcharge.surValue
-                  ? new Prisma.Decimal(surcharge.surValue)
-                  : null,
-                price: surcharge.price
-                  ? new Prisma.Decimal(surcharge.price)
-                  : null,
-              },
-              create: {
-                kiotVietId: surcharge.id ? BigInt(surcharge.id) : null,
-                orderId: order.id,
-                surchargeId: surchargeRecord?.id ?? null,
-                surchargeName: surcharge.surchargeName,
-                surValue: surcharge.surValue
-                  ? new Prisma.Decimal(surcharge.surValue)
-                  : null,
-                price: surcharge.price
-                  ? new Prisma.Decimal(surcharge.price)
-                  : null,
-                createdDate: new Date(),
-              },
-            });
-          }
-        }
-
-        return order;
-      } catch (error) {
-        this.logger.error(
-          `❌ Failed to save order ${orderData.code}: ${error.message}`,
-        );
-        return null;
       }
-    };
 
-    const CONCURRENCY = 8;
-    for (let i = 0; i < orders.length; i += CONCURRENCY) {
-      const chunk = orders.slice(i, i + CONCURRENCY);
-      const saved = await Promise.all(chunk.map(processOrder));
-      savedOrders.push(...saved.filter((o) => o));
+      if (o.invoiceOrderSurcharges) {
+        for (const s of o.invoiceOrderSurcharges) {
+          surchargeRows.push({
+            kiotVietId: s.id ? BigInt(s.id) : null,
+            orderId: orderDbId,
+            surchargeId: s.surchargeId
+              ? (surchargeMap.get(Number(s.surchargeId)) ?? null)
+              : null,
+            surchargeName: s.surchargeName || null,
+            surValue: s.surValue ?? null,
+            price: s.price ?? null,
+          });
+        }
+      }
     }
 
-    this.logger.log(`💾 Saved ${savedOrders.length} orders to database`);
-    return savedOrders;
+    if (unresolvedProducts > 0) {
+      this.logger.warn(
+        `${unresolvedProducts}/${detailRows.length} order line(s) reference a product ` +
+          `missing from the Product table. Kept with productId=null (was previously ` +
+          `dropped, losing the line). Re-run after a product sync to back-fill the link.`,
+      );
+    }
+
+    await Promise.all([
+      this.bulkUpsert.bulkUpsert({
+        table: '"OrderDetail"',
+        columns: ORDER_DETAIL_COLUMNS,
+        rows: detailRows,
+        conflictTarget: '("orderId", "lineNumber")',
+        updateColumns: ORDER_DETAIL_UPDATE,
+      }),
+      this.bulkUpsert.bulkUpsert({
+        table: '"OrderDelivery"',
+        columns: ORDER_DELIVERY_COLUMNS,
+        rows: deliveryRows,
+        conflictTarget: '"orderId"',
+        updateColumns: ORDER_DELIVERY_UPDATE,
+      }),
+      this.bulkUpsert.bulkUpsert({
+        table: '"Payment"',
+        columns: PAYMENT_COLUMNS,
+        rows: paymentRows,
+        conflictTarget: '"kiotVietId"',
+        updateColumns: PAYMENT_UPDATE,
+      }),
+      this.bulkUpsert.bulkUpsert({
+        table: '"OrderSurcharge"',
+        columns: ORDER_SURCHARGE_COLUMNS,
+        rows: surchargeRows,
+        conflictTarget: '"kiotVietId"',
+        updateColumns: ORDER_SURCHARGE_UPDATE,
+      }),
+    ]);
+
+    return orders.length;
   }
 
-  // private async syncOrdersToLarkBase(orders: any[]): Promise<void> {
-  //   try {
-  //     this.logger.log(`Starting LarkBase sync for ${orders.length} orders...`);
+  /**
+   * One summary line per sync run instead of a warning every page.
+   *
+   * These rows are not errors or data loss: `GET /users` only lists active staff,
+   * so transactions made by removed staff can never satisfy the FK. The identity
+   * is preserved in `soldByKiotVietId` / `soldByName`, and the user sync back-fills
+   * `soldById` if that staff member ever reappears.
+   */
+  private reportUnknownSoldBy(processed: number): void {
+    void processed;
+    if (this.unknownSoldBy === 0) return;
+    const staff = Array.from(this.unknownSoldByNames.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([key, count]) => {
+        const [id, name] = key.split('|');
+        return `${name} (id=${id}, ${count} row(s))`;
+      })
+      .join('; ');
+    this.logger.log(
+      `${this.unknownSoldBy}/${this.soldBySeen} order(s) were sold by staff no longer ` +
+        `returned by GET /users, so soldById is null. Identity preserved in ` +
+        `soldByKiotVietId/soldByName. Staff: ${staff}`,
+    );
+  }
 
-  //     const ordersToSync = orders.filter(
-  //       (c) => c.larkSyncStatus === 'PENDING' || c.larkSyncStatus === 'FAILED',
-  //     );
-
-  //     if (ordersToSync.length === 0) {
-  //       this.logger.log('No orders need LarkBase sync');
-  //       return;
-  //     }
-
-  //     await this.larkOrderSyncService.syncPendingAndFailed();
-  //     this.logger.log(`LarkBase sync completed successfully`);
-  //   } catch (error) {
-  //     this.logger.error(`LarkBase sync FAILED: ${error.message}`);
-  //     this.logger.error(`STOPPING sync to prevent data duplication`);
-
-  //     const orderIds = orders.map((c) => c.id);
-  //     await this.prismaService.order.updateMany({
-  //       where: { id: { in: orderIds } },
-  //       data: {
-  //         larkSyncStatus: 'FAILED',
-  //         larkSyncedAt: new Date(),
-  //       },
-  //     });
-
-  //     throw new Error(`LarkBase sync failed: ${error.message}`);
-  //   }
-  // }
-
-  private async updateSyncControl(name: string, updates: any) {
-    await this.prismaService.syncControl.upsert({
-      where: { name },
-      create: {
-        name,
-        entities: ['order'],
-        syncMode: name.includes('historical') ? 'historical' : 'recent',
-        ...updates,
-      },
-      update: updates,
-    });
+  private uniqueNum(arr: any[]): number[] {
+    return Array.from(
+      new Set(arr.filter((v) => v !== null && v !== undefined).map(Number)),
+    );
   }
 }

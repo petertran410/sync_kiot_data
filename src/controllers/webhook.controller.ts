@@ -2,105 +2,115 @@ import {
   Controller,
   Post,
   Body,
+  Param,
   HttpCode,
   HttpStatus,
   Logger,
+  UseGuards,
+  BadRequestException,
+  InternalServerErrorException,
 } from '@nestjs/common';
-import { WebhookService } from '../services/webhook/webhook.service';
+import { WebhookIngestService } from '../services/webhook/webhook-ingest.service';
+import { WebhookSignatureGuard } from './webhook-signature.guard';
+import {
+  WebhookEnvelope,
+  WebhookEventType,
+  WEBHOOK_EVENT_TYPES,
+  isWebhookEventType,
+} from '../services/webhook/webhook-event.types';
 
+/**
+ * Inbound KiotViet webhook endpoints.
+ *
+ * Contract with KiotViet (doc 2.11):
+ *  - We must answer within 5 seconds, so this controller only persists the raw
+ *    envelope and returns. Processing happens asynchronously in the worker.
+ *  - A 4xx response (400/401/403/404/405) makes KiotViet PERMANENTLY STOP
+ *    delivering to the endpoint. So 4xx is reserved for genuinely invalid input:
+ *    an unknown event type, or a failed signature check (401 is mandated by the doc).
+ *  - A 5xx response is retried, so any transient failure on our side (e.g. the
+ *    database being briefly unavailable) must surface as 5xx and NOT be swallowed.
+ *
+ * The previous implementation returned 200 on every error, which meant KiotViet
+ * never retried and failed events were lost with no record of them.
+ */
 @Controller('webhook')
+@UseGuards(WebhookSignatureGuard)
 export class WebhookController {
   private readonly logger = new Logger(WebhookController.name);
 
-  constructor(private readonly webhookService: WebhookService) {}
+  /** Legacy path segment -> canonical event type, for already-registered webhooks. */
+  private static readonly LEGACY_ROUTES: Record<string, WebhookEventType> = {
+    order: 'order.update',
+    invoice: 'invoice.update',
+    customer: 'customer.update',
+    product: 'product.update',
+    stock: 'stock.update',
+    pricebook: 'pricebook.update',
+    pricebookdetail: 'pricebookdetail.update',
+    category: 'category.update',
+    branch: 'branch.update',
+  };
 
-  @Post('order')
+  constructor(private readonly ingest: WebhookIngestService) {}
+
+  /**
+   * Canonical endpoint. One URL per event type, e.g. POST /webhook/kiot/customer.update
+   * The type comes from the path because delete envelopes ({ RemoveId: [] }) carry
+   * nothing that identifies which entity they refer to.
+   */
+  @Post('kiot/:type')
   @HttpCode(HttpStatus.OK)
-  async handleOrderWebhook(@Body() webhookData: any) {
-    try {
-      this.logger.log('📨 Received KiotViet order webhook');
-      await this.webhookService.processOrderWebhook(webhookData);
-      return { success: true };
-    } catch (error) {
-      this.logger.error(`❌ Webhook error: ${error.message}`);
-      return { success: true };
+  async handleTyped(
+    @Param('type') type: string,
+    @Body() payload: WebhookEnvelope,
+  ) {
+    if (!isWebhookEventType(type)) {
+      // 400 stops KiotViet retrying, which is correct: this URL is misconfigured
+      // and retrying an unknown type will never succeed.
+      throw new BadRequestException(
+        `Unknown webhook type '${type}'. Expected one of: ${WEBHOOK_EVENT_TYPES.join(', ')}`,
+      );
     }
+    return this.accept(type, payload);
   }
 
-  @Post('invoice')
+  /** Legacy endpoints, e.g. POST /webhook/order — kept so existing registrations keep working. */
+  @Post(':legacy')
   @HttpCode(HttpStatus.OK)
-  async handleInvoiceWebhook(@Body() webhookData: any) {
-    try {
-      this.logger.log('📨 Received KiotViet invoice webhook');
-      await this.webhookService.processInvoiceWebhook(webhookData);
-      return { success: true };
-    } catch (error) {
-      this.logger.error(`❌ Invoice webhook error: ${error.message}`);
-      return { success: true };
+  async handleLegacy(
+    @Param('legacy') legacy: string,
+    @Body() payload: WebhookEnvelope,
+  ) {
+    const type = WebhookController.LEGACY_ROUTES[legacy?.toLowerCase()];
+    if (!type) {
+      throw new BadRequestException(
+        `Unknown webhook path '/webhook/${legacy}'. Use /webhook/kiot/{type}.`,
+      );
     }
+    return this.accept(type, payload);
   }
 
-  @Post('customer')
-  @HttpCode(HttpStatus.OK)
-  async handleCustomerWebhook(@Body() webhookData: any) {
-    try {
-      this.logger.log('📨 Received KiotViet customer webhook');
-      await this.webhookService.processCustomerWebhook(webhookData);
-      return { success: true };
-    } catch (error) {
-      this.logger.error(`❌ Customer webhook error: ${error.message}`);
-      return { success: true };
+  private async accept(type: WebhookEventType, payload: WebhookEnvelope) {
+    if (!payload || typeof payload !== 'object') {
+      throw new BadRequestException('Empty or non-object webhook body');
     }
-  }
 
-  @Post('product')
-  @HttpCode(HttpStatus.OK)
-  async handleProductWebhook(@Body() webhookData: any) {
     try {
-      this.logger.log('📨 Received KiotViet product webhook');
-      await this.webhookService.processProductWebhook(webhookData);
-      return { success: true };
-    } catch (error) {
-      this.logger.error(`❌ Product webhook error: ${error.message}`);
-      return { success: true };
-    }
-  }
-
-  @Post('stock')
-  @HttpCode(HttpStatus.OK)
-  async handleStockWebhook(@Body() webhookData: any) {
-    try {
-      await this.webhookService.processStockWebhook(webhookData);
-      return { success: true };
-    } catch (error) {
-      this.logger.error(`❌ Stock webhook error: ${error.message}`);
-      return { success: true };
-    }
-  }
-
-  @Post('pricebook')
-  @HttpCode(HttpStatus.OK)
-  async handlePriceBookWebhook(@Body() webhookData: any) {
-    try {
-      this.logger.log('📨 Received KiotViet pricebook webhook');
-      await this.webhookService.processPriceBookWebhook(webhookData);
-      return { success: true };
-    } catch (error) {
-      this.logger.error(`❌ PriceBook webhook error: ${error.message}`);
-      return { success: true };
-    }
-  }
-
-  @Post('pricebookdetail')
-  @HttpCode(HttpStatus.OK)
-  async handlePriceBookDetailWebhook(@Body() webhookData: any) {
-    try {
-      this.logger.log('📨 Received KiotViet pricebook detail webhook');
-      await this.webhookService.processPriceBookDetailWebhook(webhookData);
-      return { success: true };
-    } catch (error) {
-      this.logger.error(`❌ PriceBook detail webhook error: ${error.message}`);
-      return { success: true };
+      const result = await this.ingest.ingest(type, payload);
+      return {
+        success: true,
+        type,
+        queued: result.accepted,
+        duplicate: result.duplicates,
+      };
+    } catch (error: any) {
+      // Persisting failed. Answer 5xx so KiotViet retries — do not lose the event.
+      this.logger.error(
+        `Failed to queue ${type} webhook: ${error.message}`,
+        error.stack,
+      );
+      throw new InternalServerErrorException('Failed to queue webhook event');
     }
   }
 }

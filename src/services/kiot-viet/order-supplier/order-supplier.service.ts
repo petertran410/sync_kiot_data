@@ -1,726 +1,333 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { HttpService } from '@nestjs/axios';
-import { ConfigService } from '@nestjs/config';
-import { firstValueFrom } from 'rxjs';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { KiotVietAuthService } from '../auth.service';
-import { Prisma } from '@prisma/client';
-import { LarkOrderSupplierSyncService } from '../../../services/lark/order-supplier/lark-order-supplier-sync.service';
+import { KiotPageFetcher } from '../shared/kiot-page-fetcher';
+import { BulkUpsertHelper, ColumnSpec } from '../shared/bulk-upsert.helper';
+import { RelationMapHelper } from '../shared/relation-map.helper';
+import { SyncControlHelper } from '../shared/sync-control.helper';
 
-interface KiotVietOrderSupplier {
-  id: number;
-  code: string;
-  orderDate: string;
-  branchId?: number;
-  supplierId?: number;
-  supplierCode?: string;
-  supplierName?: string;
-  retailerId: number;
-  userId?: number;
-  description?: string;
-  status?: number;
-  discountRatio?: number;
-  productQty?: number;
-  discount?: number;
-  createdDate?: string;
-  createdBy?: number;
-  orderSupplierDetails: Array<{
-    id: number;
-    orderSupplierId: number;
-    orderSupplierCode: string;
-    productId: number;
-    productCode: string;
-    productName: string;
-    quantity: number;
-    price: number;
-    discount: number;
-    allocation: number;
-    createdDate?: string;
-    description?: string;
-    orderByNumber?: number;
-    allocationSuppliers?: number;
-    allocationThirdParty?: number;
-    orderQuantity?: number;
-    subTotal?: number;
-  }>;
-  total?: number;
-  exReturnSuppliers?: number;
-  exReturnThirdParty?: number;
-  totalAmt?: number;
-  totalQty?: number;
-  totalQuantity?: number;
-  totalProductType?: number;
-  subTotal?: number;
-  paidAmount?: number;
-  toComplete?: boolean;
-  statusValue?: string;
-  viewPrice?: boolean;
-  supplierDebt?: number;
-  supplierOldDebt?: number;
-  purchaseOrderCodes?: string;
-}
+const SYNC_NAME = 'order_supplier_historical';
+
+const OS_COLUMNS: ColumnSpec[] = [
+  { name: 'kiotVietId', type: 'bigint' },
+  { name: 'code', type: 'text' },
+  { name: 'orderDate', type: 'timestamp' },
+  { name: 'branchId', type: 'int' },
+  { name: 'retailerId', type: 'int' },
+  { name: 'userId', type: 'bigint' },
+  { name: 'description', type: 'text' },
+  { name: 'status', type: 'int' },
+  { name: 'statusValue', type: 'text' },
+  { name: 'discountRatio', type: 'real' },
+  { name: 'productQty', type: 'real' },
+  { name: 'discount', type: 'numeric' },
+  { name: 'total', type: 'numeric' },
+  { name: 'exReturnSuppliers', type: 'numeric' },
+  { name: 'exReturnThirdParty', type: 'numeric' },
+  { name: 'totalAmt', type: 'numeric' },
+  { name: 'totalQty', type: 'real' },
+  { name: 'totalQuantity', type: 'real' },
+  { name: 'totalProductType', type: 'int' },
+  { name: 'subTotal', type: 'numeric' },
+  { name: 'paidAmount', type: 'numeric' },
+  { name: 'toComplete', type: 'boolean' },
+  { name: 'viewPrice', type: 'boolean' },
+  { name: 'supplierDebt', type: 'numeric' },
+  { name: 'supplierOldDebt', type: 'numeric' },
+  { name: 'purchaseOrderCodes', type: 'text' },
+  { name: 'supplierId', type: 'bigint' },
+  { name: 'supplierCode', type: 'text' },
+  { name: 'supplierName', type: 'text' },
+  { name: 'createdBy', type: 'int' },
+  { name: 'createdDate', type: 'timestamp' },
+  { name: 'modifiedDate', type: 'timestamp' },
+  { name: 'lastSyncedAt', type: 'timestamp' },
+];
+
+const OS_UPDATE = [
+  'code',
+  'orderDate',
+  'branchId',
+  'retailerId',
+  'userId',
+  'description',
+  'status',
+  'statusValue',
+  'discountRatio',
+  'productQty',
+  'discount',
+  'total',
+  'exReturnSuppliers',
+  'exReturnThirdParty',
+  'totalAmt',
+  'totalQty',
+  'totalQuantity',
+  'totalProductType',
+  'subTotal',
+  'paidAmount',
+  'toComplete',
+  'viewPrice',
+  'supplierDebt',
+  'supplierOldDebt',
+  'purchaseOrderCodes',
+  'supplierId',
+  'supplierCode',
+  'supplierName',
+  'createdBy',
+  'createdDate',
+  'modifiedDate',
+  'lastSyncedAt',
+];
+
+const OSD_COLUMNS: ColumnSpec[] = [
+  { name: 'kiotVietId', type: 'bigint' },
+  { name: 'orderSupplierId', type: 'int' },
+  { name: 'productId', type: 'int' },
+  { name: 'quantity', type: 'real' },
+  { name: 'price', type: 'numeric' },
+  { name: 'discount', type: 'numeric' },
+  { name: 'allocation', type: 'numeric' },
+  { name: 'description', type: 'text' },
+  { name: 'orderByNumber', type: 'int' },
+  { name: 'allocationSuppliers', type: 'numeric' },
+  { name: 'allocationThirdParty', type: 'numeric' },
+  { name: 'orderQuantity', type: 'real' },
+  { name: 'subTotal', type: 'numeric' },
+  { name: 'createdDate', type: 'timestamp' },
+  { name: 'orderSupplierCode', type: 'text' },
+  { name: 'productCode', type: 'text' },
+  { name: 'productName', type: 'text' },
+];
+
+const OSD_UPDATE = [
+  'orderSupplierId',
+  'productId',
+  'quantity',
+  'price',
+  'discount',
+  'allocation',
+  'description',
+  'orderByNumber',
+  'allocationSuppliers',
+  'allocationThirdParty',
+  'orderQuantity',
+  'subTotal',
+  'createdDate',
+  'orderSupplierCode',
+  'productCode',
+  'productName',
+];
 
 @Injectable()
 export class KiotVietOrderSupplierService {
   private readonly logger = new Logger(KiotVietOrderSupplierService.name);
-  private readonly baseUrl: string;
-  private readonly PAGE_SIZE = 100;
 
   constructor(
-    private readonly httpService: HttpService,
-    private readonly configService: ConfigService,
     private readonly prismaService: PrismaService,
-    private readonly authService: KiotVietAuthService,
-    private readonly larkOrderSupplierSyncService: LarkOrderSupplierSyncService,
-  ) {
-    const baseUrl = this.configService.get<string>('KIOT_BASE_URL');
-    if (!baseUrl) {
-      throw new Error('KIOT_BASE_URL environment variable is not configured');
-    }
-    this.baseUrl = baseUrl;
+    private readonly pageFetcher: KiotPageFetcher,
+    private readonly bulkUpsert: BulkUpsertHelper,
+    private readonly relationMap: RelationMapHelper,
+    private readonly syncControl: SyncControlHelper,
+  ) {}
+
+  async syncFull() {
+    return this.runSync('full', {});
   }
 
-  async checkAndRunAppropriateSync(): Promise<void> {
-    try {
-      const runningOrderSupplierSyncs =
-        await this.prismaService.syncControl.findMany({
-          where: {
-            OR: [
-              { name: 'order_supplier_historical' },
-              { name: 'order_supplier_lark_sync' },
-            ],
-            isRunning: true,
-          },
-        });
-
-      if (runningOrderSupplierSyncs.length > 0) {
-        this.logger.warn(
-          `Found ${runningOrderSupplierSyncs.length} OrderSuppliers sync still running: ${runningOrderSupplierSyncs.map((s) => s.name).join(', ')}`,
-        );
-        this.logger.warn('Skipping order supplier sync to avoid conflicts');
-        return;
-      }
-
-      const historicalSync = await this.prismaService.syncControl.findFirst({
-        where: { name: 'order_supplier_historical' },
-      });
-
-      if (historicalSync?.isEnabled && !historicalSync.isRunning) {
-        this.logger.log('Starting historical order supplier sync...');
-        await this.syncHistoricalOrderSuppliers();
-        return;
-      }
-
-      if (historicalSync?.isRunning) {
-        this.logger.log('Historical order_supplier sync is running');
-        return;
-      }
-
-      this.logger.log('Running default historical order_supplier sync...');
-      await this.syncHistoricalOrderSuppliers();
-    } catch (error) {
-      this.logger.error(`Sync check failed: ${error.message}`);
-      throw error;
-    }
-  }
-
-  async enableHistoricalSync(): Promise<void> {
-    await this.updateSyncControl('order_supplier_historical', {
-      isEnabled: true,
-      isRunning: false,
-      status: 'idle',
+  async syncIncremental() {
+    const last = await this.syncControl.getLastCompletedAt(SYNC_NAME);
+    const lastModifiedFrom = last ?? new Date('2024-12-01');
+    return this.runSync('incremental', {
+      lastModifiedFrom: lastModifiedFrom.toISOString(),
     });
-
-    this.logger.log('Historical order_supplier sync enabled');
   }
 
   async syncHistoricalOrderSuppliers(): Promise<void> {
-    const syncName = 'order_supplier_historical';
+    await this.syncFull();
+  }
 
-    let currentItem = 0;
-    let processedCount = 0;
-    let totalOrderSuppliers = 0;
-    let consecutiveEmptyPages = 0;
-    let consecutiveErrorPages = 0;
-    let lastValidTotal = 0;
-    let processedOrderSupplierIds = new Set<number>();
+  async enableHistoricalSync(): Promise<void> {}
 
+  private async runSync(
+    mode: 'full' | 'incremental',
+    extra: Record<string, any>,
+  ) {
+    if (await this.syncControl.isRunning(SYNC_NAME)) {
+      this.logger.warn(`OrderSupplier sync already running, skipping`);
+      return { total: 0, processed: 0 };
+    }
+    await this.syncControl.markRunning(SYNC_NAME, mode, ['order_supplier']);
+    let processed = 0;
+    let total = 0;
     try {
-      await this.updateSyncControl(syncName, {
-        isRunning: true,
-        status: 'running',
-        startedAt: new Date(),
-        error: null,
-      });
-
-      this.logger.log('Starting historical order_supplier sync...');
-
-      const MAX_CONSECUTIVE_EMPTY_PAGES = 5;
-      const MAX_CONSECUTIVE_ERROR_PAGES = 3;
-      const RETRY_DELAY_MS = 2000;
-      const MAX_TOTAL_RETRIES = 10;
-
-      let totalRetries = 0;
-
-      while (true) {
-        const currentPage = Math.floor(currentItem / this.PAGE_SIZE) + 1;
-
-        if (totalOrderSuppliers > 0) {
-          if (currentItem >= totalOrderSuppliers) {
+      const { total: t, serverTimestamp } =
+        await this.pageFetcher.fetchAll<any>({
+          endpoint: '/ordersuppliers',
+          baseParams: extra,
+          label: `order-supplier-${mode}`,
+          onPage: async (pageData) => {
+            processed += await this.processPage(pageData);
             this.logger.log(
-              `Pagination complete. Processed ${processedCount}/${totalOrderSuppliers} suppliers`,
+              `order-supplier-${mode}: processed ${processed} so far`,
             );
-            break;
-          }
-
-          const progressPercentage = (currentItem / totalOrderSuppliers) * 100;
-          this.logger.log(
-            `Fetching page ${currentPage} (${currentItem}/${totalOrderSuppliers} - ${progressPercentage.toFixed(1)}%)`,
-          );
-        } else {
-          this.logger.log(
-            `Fetching page ${currentPage} (currentItem: ${currentItem})`,
-          );
-        }
-
-        try {
-          const response = await this.fetchOrderSuppliersListWithRetry({
-            currentItem,
-            pageSize: this.PAGE_SIZE,
-          });
-
-          if (!response) {
-            this.logger.warn('Received null response from KiotViet API');
-
-            consecutiveEmptyPages++;
-
-            if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
-              this.logger.log(
-                `Reached end after ${consecutiveEmptyPages} empty pages`,
-              );
-              break;
-            }
-
-            await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
-            continue;
-          }
-
-          consecutiveEmptyPages = 0;
-          consecutiveErrorPages = 0;
-
-          const { data: order_suppliers, total } = response;
-
-          if (total !== undefined && total !== null) {
-            if (totalOrderSuppliers === 0) {
-              this.logger.log(
-                `Total order_suppliers detected: ${total}. Starting processing...`,
-              );
-
-              totalOrderSuppliers = total;
-            } else if (total !== totalOrderSuppliers) {
-              this.logger.warn(
-                `Total count changed: ${totalOrderSuppliers} → ${total}. Using latest.`,
-              );
-
-              totalOrderSuppliers = total;
-            }
-            lastValidTotal = total;
-          }
-
-          if (!order_suppliers || order_suppliers.length === 0) {
-            this.logger.warn(`Empty page received at position ${currentItem}`);
-            consecutiveEmptyPages++;
-
-            if (totalOrderSuppliers > 0 && currentItem >= totalOrderSuppliers) {
-              this.logger.log('Reached end of data (empty page past total)');
-              break;
-            }
-
-            if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
-              this.logger.log(
-                `🔚 Stopping after ${consecutiveEmptyPages} consecutive empty pages`,
-              );
-              break;
-            }
-
-            currentItem += this.PAGE_SIZE;
-            continue;
-          }
-
-          const existingOrderSupplierIds = new Set(
-            (
-              await this.prismaService.orderSupplier.findMany({
-                select: { kiotVietId: true },
-              })
-            ).map((c) => Number(c.kiotVietId)),
-          );
-
-          const newOrderSuppliers = order_suppliers.filter((order_supplier) => {
-            if (
-              !existingOrderSupplierIds.has(order_supplier.id) &&
-              !processedOrderSupplierIds.has(order_supplier.id)
-            ) {
-              processedOrderSupplierIds.add(order_supplier.id);
-              return true;
-            }
-            return false;
-          });
-
-          const existingOrderSuppliers = order_suppliers.filter(
-            (order_supplier) => {
-              if (
-                existingOrderSupplierIds.has(order_supplier.id) &&
-                !processedOrderSupplierIds.has(order_supplier.id)
-              ) {
-                processedOrderSupplierIds.add(order_supplier.id);
-                return true;
-              }
-              return false;
-            },
-          );
-
-          if (
-            newOrderSuppliers.length === 0 &&
-            existingOrderSuppliers.length === 0
-          ) {
-            this.logger.log(
-              `Skipping page ${currentPage} - all order_suppliers already processed in this run`,
-            );
-            currentItem += this.PAGE_SIZE;
-            continue;
-          }
-
-          let pageProcessedCount = 0;
-          let allSavedOrderSuppliers: any[] = [];
-
-          if (newOrderSuppliers.length > 0) {
-            this.logger.log(
-              `Processing ${newOrderSuppliers.length} NEW order_supplier from page ${currentPage}`,
-            );
-
-            const savedOrderSuppliers =
-              await this.saveOrderSuppliersToDatabase(newOrderSuppliers);
-            pageProcessedCount += savedOrderSuppliers.length;
-            allSavedOrderSuppliers.push(...savedOrderSuppliers);
-          }
-
-          if (existingOrderSuppliers.length > 0) {
-            this.logger.log(
-              `Processing ${existingOrderSuppliers.length} EXISTING order_supplier from page ${currentPage}`,
-            );
-
-            const savedOrderSuppliers = await this.saveOrderSuppliersToDatabase(
-              existingOrderSuppliers,
-            );
-            pageProcessedCount += savedOrderSuppliers.length;
-            allSavedOrderSuppliers.push(...savedOrderSuppliers);
-          }
-
-          processedCount += pageProcessedCount;
-          currentItem += this.PAGE_SIZE;
-
-          // if (allSavedOrderSuppliers.length > 0) {
-          //   try {
-          //     await this.syncOrderSuppliersToLarkBase(allSavedOrderSuppliers);
-          //     this.logger.log(
-          //       `Synced ${allSavedOrderSuppliers.length} order-suppliers to LarkBase`,
-          //     );
-          //   } catch (error) {
-          //     this.logger.warn(
-          //       `LarkBase sync failed for page ${currentPage}: ${error.message}`,
-          //     );
-          //   }
-          // }
-
-          if (totalOrderSuppliers > 0) {
-            const completionPercentage =
-              (processedCount / totalOrderSuppliers) * 100;
-            this.logger.log(
-              `Progress: ${processedCount}/${totalOrderSuppliers} (${completionPercentage.toFixed(1)}%)`,
-            );
-
-            if (processedCount >= totalOrderSuppliers) {
-              this.logger.log('All suppliers processed successfully!');
-              break;
-            }
-          }
-
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        } catch (error) {
-          consecutiveErrorPages++;
-          totalRetries++;
-
-          this.logger.error(
-            `API error on page ${currentPage}: ${error.message}`,
-          );
-
-          if (consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES) {
-            throw new Error(
-              `Multiple consecutive API failures: ${error.message}`,
-            );
-          }
-
-          if (totalRetries >= MAX_TOTAL_RETRIES) {
-            throw new Error(`Maximum total retries exceeded: ${error.message}`);
-          }
-
-          const delay = RETRY_DELAY_MS * Math.pow(2, consecutiveErrorPages - 1);
-          this.logger.log(`Retrying after ${delay}ms delay...`);
-          await new Promise((resolve) => setTimeout(resolve, delay));
-        }
+          },
+        });
+      total = t;
+      await this.syncControl.markCompleted(
+        SYNC_NAME,
+        { processedCount: processed, expectedTotal: total },
+        serverTimestamp,
+      );
+      return { total, processed };
+    } catch (error) {
+      // KiotViet answers HTTP 420 with KvValidateOrderSupplierException ("Thiết lập
+      // 'Đặt hàng nhập' đang không được bật") when the purchase-order feature is off
+      // for this shop. That is a store configuration state, not a failure: there is
+      // nothing to sync and retrying can never succeed. Record it as an empty,
+      // skipped run so it does not fail the whole sync job.
+      if (this.isFeatureDisabled(error)) {
+        this.logger.warn(
+          `order-supplier-${mode} skipped: the "Đặt hàng nhập" feature is disabled for ` +
+            `this shop. Enable it in KiotViet store settings to sync supplier orders.`,
+        );
+        await this.syncControl.markCompleted(SYNC_NAME, {
+          processedCount: 0,
+          expectedTotal: 0,
+          skipped: 'feature_disabled',
+        });
+        return { total: 0, processed: 0, skipped: true };
       }
 
-      await this.updateSyncControl(syncName, {
-        isRunning: false,
-        isEnabled: false,
-        status: 'completed',
-        completedAt: new Date(),
-        lastRunAt: new Date(),
-        progress: { processedCount, expectedTotal: totalOrderSuppliers },
+      this.logger.error(`order-supplier-${mode} failed: ${error.message}`);
+      await this.syncControl.markFailed(SYNC_NAME, error.message, {
+        processedCount: processed,
+        expectedTotal: total,
       });
-
-      const completionRate =
-        totalOrderSuppliers > 0
-          ? (processedCount / totalOrderSuppliers) * 100
-          : 100;
-
-      this.logger.log(
-        `Historical order_supplier sync completed: ${processedCount}/${totalOrderSuppliers} (${completionRate.toFixed(1)}% completion rate)`,
-      );
-    } catch (error) {
-      this.logger.error(
-        `Historical order_supplier sync failed: ${error.message}`,
-      );
-
-      await this.updateSyncControl(syncName, {
-        isRunning: false,
-        status: 'failed',
-        error: error.message,
-        progress: { processedCount, expectedTotal: totalOrderSuppliers },
-      });
-
       throw error;
     }
   }
 
-  async fetchOrderSuppliersListWithRetry(
-    params: {
-      currentItem?: number;
-      pageSize?: number;
-    },
-    maxRetries: number = 5,
-  ): Promise<any> {
-    let lastError: Error | undefined;
+  private async processPage(items: any[]): Promise<number> {
+    if (!items.length) return 0;
+    const now = new Date();
 
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        return await this.fetchOrderSuppliersList(params);
-      } catch (error) {
-        lastError = error as Error;
-        this.logger.warn(
-          `API attempt ${attempt}/${maxRetries} failed: ${error.message}`,
-        );
+    const branchIds = this.uniqueNum(items.map((o) => o.branchId));
+    const userIds = this.uniqueNum(items.map((o) => o.userId));
+    const productIds = this.uniqueNum(
+      items.flatMap((o) =>
+        (o.orderSupplierDetails ?? []).map((d) => d.productId),
+      ),
+    );
 
-        if (attempt < maxRetries) {
-          const delay = 2000 * attempt;
-          await new Promise((resolve) => setTimeout(resolve, delay));
-        }
-      }
-    }
+    const [branchMap, userMap, productMap] = await Promise.all([
+      this.relationMap.buildIdMap('branch', branchIds),
+      this.relationMap.buildIdMap('user', userIds),
+      this.relationMap.buildIdMap('product', productIds),
+    ]);
 
-    throw lastError;
-  }
-
-  async fetchOrderSuppliersList(params: {
-    currentItem?: number;
-    pageSize?: number;
-  }): Promise<any> {
-    const headers = await this.authService.getRequestHeaders();
-
-    const queryParams = new URLSearchParams({
-      currentItem: (params.currentItem || 0).toString(),
-      pageSize: (params.pageSize || this.PAGE_SIZE).toString(),
+    const rows = items.map((o) => {
+      const userDbId = o.userId ? userMap.get(Number(o.userId)) : undefined;
+      return {
+        kiotVietId: o.id,
+        code: o.code,
+        orderDate: o.orderDate ? new Date(o.orderDate) : now,
+        branchId: o.branchId
+          ? (branchMap.get(Number(o.branchId)) ?? null)
+          : null,
+        retailerId: o.retailerId ?? null,
+        userId: userDbId ?? null,
+        description: o.description || '',
+        status: o.status ?? null,
+        statusValue: o.statusValue || '',
+        discountRatio: o.discountRatio || 0,
+        productQty: o.productQty || 0,
+        discount: o.discount || 0,
+        total: o.total || 0,
+        exReturnSuppliers: o.exReturnSuppliers || 0,
+        exReturnThirdParty: o.exReturnThirdParty || 0,
+        totalAmt: o.totalAmt || 0,
+        totalQty: o.totalQty || 0,
+        totalQuantity: o.totalQuantity || 0,
+        totalProductType: o.totalProductType || 0,
+        subTotal: o.subTotal || 0,
+        paidAmount: o.paidAmount || 0,
+        toComplete: o.toComplete || false,
+        viewPrice: o.viewPrice || false,
+        supplierDebt: o.supplierDebt || 0,
+        supplierOldDebt: o.supplierOldDebt || 0,
+        purchaseOrderCodes: o.purchaseOrderCodes || '',
+        supplierId: o.supplierId ? BigInt(o.supplierId) : null,
+        supplierCode: o.supplierCode || null,
+        supplierName: o.supplierName || null,
+        createdBy: userDbId ?? null,
+        createdDate: o.createdDate ? new Date(o.createdDate) : now,
+        modifiedDate: now,
+        lastSyncedAt: now,
+      };
     });
 
-    const response = await firstValueFrom(
-      this.httpService.get(`${this.baseUrl}/ordersuppliers?${queryParams}`, {
-        headers,
-        timeout: 45000,
-      }),
+    await this.bulkUpsert.bulkUpsert({
+      table: '"OrderSupplier"',
+      columns: OS_COLUMNS,
+      rows,
+      conflictTarget: '"kiotVietId"',
+      updateColumns: OS_UPDATE,
+    });
+
+    const osIdMap = await this.relationMap.buildIdMap(
+      'orderSupplier',
+      this.uniqueNum(items.map((o) => o.id)),
     );
 
-    return response.data;
-  }
-
-  private async saveOrderSuppliersToDatabase(
-    order_suppliers: KiotVietOrderSupplier[],
-  ): Promise<any[]> {
-    this.logger.log(
-      `Saving ${order_suppliers.length} order_suppliers to database...`,
-    );
-
-    const savedOrderSuppliers: any[] = [];
-
-    for (const orderSupplierData of order_suppliers) {
-      try {
-        const branch = await this.prismaService.branch.findFirst({
-          where: { kiotVietId: orderSupplierData.branchId },
-          select: { id: true, name: true },
+    const detailRows: any[] = [];
+    for (const o of items) {
+      const osDbId = osIdMap.get(Number(o.id));
+      if (!osDbId) continue;
+      for (const d of o.orderSupplierDetails ?? []) {
+        const product = productMap.get(Number(d.productId));
+        if (!product) continue;
+        detailRows.push({
+          kiotVietId: BigInt(d.id),
+          orderSupplierId: osDbId,
+          productId: product,
+          quantity: d.quantity ?? 0,
+          price: d.price || 0,
+          discount: d.discount || 0,
+          allocation: d.allocation || 0,
+          description: d.description || '',
+          orderByNumber: d.orderByNumber || 0,
+          allocationSuppliers: d.allocationSuppliers ?? null,
+          allocationThirdParty: d.allocationThirdParty ?? null,
+          orderQuantity: d.orderQuantity ?? 0,
+          subTotal: d.subTotal || 0,
+          createdDate: d.createdDate ? new Date(d.createdDate) : now,
+          orderSupplierCode: o.code,
+          productCode: d.productCode || null,
+          productName: d.productName || null,
         });
-
-        const user = await this.prismaService.user.findFirst({
-          where: { kiotVietId: orderSupplierData.userId },
-          select: { id: true, userName: true },
-        });
-
-        const supplier = await this.prismaService.supplier.findFirst({
-          where: { kiotVietId: orderSupplierData.supplierId },
-          select: { kiotVietId: true, code: true, name: true },
-        });
-
-        const order_supplier = await this.prismaService.orderSupplier.upsert({
-          where: { kiotVietId: BigInt(orderSupplierData.id) },
-          update: {
-            code: orderSupplierData.code,
-            orderDate: orderSupplierData.orderDate
-              ? new Date(orderSupplierData.orderDate)
-              : new Date(),
-            branchId: branch?.id ?? null,
-            supplierId: supplier?.kiotVietId ?? null,
-            supplierCode: supplier?.code ?? null,
-            supplierName: supplier?.name ?? null,
-            retailerId: orderSupplierData.retailerId ?? null,
-            userId: user?.id ?? null,
-            description: orderSupplierData.description || '',
-            status: orderSupplierData.status || null,
-            discountRatio: orderSupplierData.discountRatio || 0,
-            productQty: orderSupplierData.productQty || 0,
-            discount: new Prisma.Decimal(orderSupplierData.discount || 0),
-            createdDate: orderSupplierData.createdDate
-              ? new Date(orderSupplierData.createdDate)
-              : new Date(),
-            createdBy: user?.id ?? null,
-            total: new Prisma.Decimal(orderSupplierData.total || 0),
-            exReturnSuppliers: new Prisma.Decimal(
-              orderSupplierData.exReturnSuppliers || 0,
-            ),
-            exReturnThirdParty: new Prisma.Decimal(
-              orderSupplierData.exReturnThirdParty || 0,
-            ),
-            totalAmt: new Prisma.Decimal(orderSupplierData.totalAmt || 0),
-            totalQty: orderSupplierData.totalQty || 0,
-            totalQuantity: orderSupplierData.totalQuantity || 0,
-            totalProductType: orderSupplierData.totalProductType || 0,
-            subTotal: new Prisma.Decimal(orderSupplierData.subTotal || 0),
-            paidAmount: orderSupplierData.paidAmount || 0,
-            toComplete: orderSupplierData.toComplete || false,
-            statusValue: orderSupplierData.statusValue || '',
-            viewPrice: orderSupplierData.viewPrice || false,
-            supplierDebt: orderSupplierData.supplierDebt || 0,
-            supplierOldDebt: orderSupplierData.supplierOldDebt || 0,
-            purchaseOrderCodes: orderSupplierData.purchaseOrderCodes || '',
-            lastSyncedAt: new Date(),
-            larkSyncStatus: 'PENDING',
-          },
-          create: {
-            kiotVietId: BigInt(orderSupplierData.id),
-            code: orderSupplierData.code,
-            orderDate: orderSupplierData.orderDate
-              ? new Date(orderSupplierData.orderDate)
-              : new Date(),
-            branchId: branch?.id ?? null,
-            supplierId: supplier?.kiotVietId ?? null,
-            supplierCode: supplier?.code ?? null,
-            supplierName: supplier?.name ?? null,
-            retailerId: orderSupplierData.retailerId ?? null,
-            userId: user?.id ?? null,
-            description: orderSupplierData.description || '',
-            status: orderSupplierData.status || null,
-            discountRatio: orderSupplierData.discountRatio || 0,
-            productQty: orderSupplierData.productQty || 0,
-            discount: new Prisma.Decimal(orderSupplierData.discount || 0),
-            createdDate: orderSupplierData.createdDate
-              ? new Date(orderSupplierData.createdDate)
-              : new Date(),
-            createdBy: user?.id ?? null,
-            total: new Prisma.Decimal(orderSupplierData.total || 0),
-            exReturnSuppliers: new Prisma.Decimal(
-              orderSupplierData.exReturnSuppliers || 0,
-            ),
-            exReturnThirdParty: new Prisma.Decimal(
-              orderSupplierData.exReturnThirdParty || 0,
-            ),
-            totalAmt: new Prisma.Decimal(orderSupplierData.totalAmt || 0),
-            totalQty: orderSupplierData.totalQty || 0,
-            totalQuantity: orderSupplierData.totalQuantity || 0,
-            totalProductType: orderSupplierData.totalProductType || 0,
-            subTotal: new Prisma.Decimal(orderSupplierData.subTotal || 0),
-            paidAmount: orderSupplierData.paidAmount || 0,
-            toComplete: orderSupplierData.toComplete || false,
-            statusValue: orderSupplierData.statusValue || '',
-            viewPrice: orderSupplierData.viewPrice || false,
-            supplierDebt: orderSupplierData.supplierDebt || 0,
-            supplierOldDebt: orderSupplierData.supplierOldDebt || 0,
-            purchaseOrderCodes: orderSupplierData.purchaseOrderCodes || '',
-            lastSyncedAt: new Date(),
-            larkSyncStatus: 'PENDING',
-          },
-        });
-
-        if (
-          orderSupplierData.orderSupplierDetails &&
-          orderSupplierData.orderSupplierDetails.length > 0
-        ) {
-          for (const detail of orderSupplierData.orderSupplierDetails) {
-            const product = await this.prismaService.product.findFirst({
-              where: { kiotVietId: BigInt(detail.productId) },
-              select: { id: true, name: true, code: true },
-            });
-
-            if (product) {
-              await this.prismaService.orderSupplierDetail.upsert({
-                where: {
-                  kiotVietId: detail.id ? BigInt(detail.id) : BigInt(0),
-                },
-                update: {
-                  orderSupplierId: order_supplier.id,
-                  orderSupplierCode: order_supplier.code,
-                  productId: product.id,
-                  productCode: product.code,
-                  productName: product.name,
-                  quantity: detail.quantity,
-                  price: new Prisma.Decimal(detail.price || 0),
-                  discount: new Prisma.Decimal(detail.discount || 0),
-                  allocation: new Prisma.Decimal(detail.allocation || 0),
-                  createdDate: detail.createdDate
-                    ? new Date(detail.createdDate)
-                    : new Date(),
-                  description: detail.description || '',
-                  orderByNumber: detail.orderByNumber || 0,
-                  allocationSuppliers: detail.allocationSuppliers,
-                  allocationThirdParty: detail.allocationThirdParty,
-                  orderQuantity: detail.orderQuantity,
-                  subTotal: new Prisma.Decimal(detail.subTotal || 0),
-                  larkSyncedAt: new Date(),
-                  larkSyncStatus: 'PENDING',
-                },
-                create: {
-                  kiotVietId: BigInt(detail.id),
-                  orderSupplierId: order_supplier.id,
-                  orderSupplierCode: order_supplier.code,
-                  productId: product.id,
-                  productCode: product.code,
-                  productName: product.name,
-                  price: new Prisma.Decimal(detail.price || 0),
-                  quantity: detail.quantity,
-                  discount: new Prisma.Decimal(detail.discount || 0),
-                  allocation: new Prisma.Decimal(detail.allocation || 0),
-                  createdDate: detail.createdDate
-                    ? new Date(detail.createdDate)
-                    : new Date(),
-                  description: detail.description || '',
-                  orderByNumber: detail.orderByNumber || 0,
-                  allocationSuppliers: detail.allocationSuppliers,
-                  allocationThirdParty: detail.allocationThirdParty,
-                  orderQuantity: detail.orderQuantity,
-                  subTotal: new Prisma.Decimal(detail.subTotal || 0),
-                  larkSyncedAt: new Date(),
-                  larkSyncStatus: 'PENDING',
-                },
-              });
-            }
-          }
-        }
-
-        savedOrderSuppliers.push(order_supplier);
-      } catch (error) {
-        this.logger.error(
-          `Failed to save order_supplier ${orderSupplierData.code}: ${error.message}`,
-        );
       }
     }
 
-    this.logger.log(
-      `Saved ${savedOrderSuppliers.length} suppliers successfully`,
-    );
-    return savedOrderSuppliers;
+    await this.bulkUpsert.bulkUpsert({
+      table: '"OrderSupplierDetail"',
+      columns: OSD_COLUMNS,
+      rows: detailRows,
+      conflictTarget: '"kiotVietId"',
+      updateColumns: OSD_UPDATE,
+    });
+
+    return items.length;
   }
 
-  // async syncOrderSuppliersToLarkBase(order_suppliers: any[]): Promise<void> {
-  //   try {
-  //     this.logger.log(
-  //       `Starting LarkBase sync for ${order_suppliers.length} order_suppliers...`,
-  //     );
+  /** True when the shop has the "Đặt hàng nhập" feature turned off. */
+  private isFeatureDisabled(error: any): boolean {
+    const status = error?.response?.status;
+    const code = error?.response?.data?.responseStatus?.errorCode;
+    return status === 420 || code === 'KvValidateOrderSupplierException';
+  }
 
-  //     const orderSuppliersToSync = order_suppliers.filter(
-  //       (s) => s.larkSyncStatus === 'PENDING' || s.larkSyncStatus === 'FAILED',
-  //     );
-
-  //     if (orderSuppliersToSync.length === 0) {
-  //       this.logger.log('No order_suppliers need LarkBase sync');
-  //       return;
-  //     }
-
-  //     await this.larkOrderSupplierSyncService.syncOrderSuppliersToLarkBase(
-  //       orderSuppliersToSync,
-  //     );
-
-  //     this.logger.log(`LarkBase sync completed successfully`);
-  //   } catch (error) {
-  //     this.logger.error(
-  //       `LarkBase order_supplier sync failed: ${error.message}`,
-  //     );
-
-  //     try {
-  //       const orderSupplierIds = order_suppliers
-  //         .map((o) => o.id)
-  //         .filter((id) => id !== undefined);
-
-  //       if (orderSupplierIds.length > 0) {
-  //         await this.prismaService.orderSupplier.updateMany({
-  //           where: { id: { in: orderSupplierIds } },
-  //           data: {
-  //             larkSyncedAt: new Date(),
-  //             larkSyncStatus: 'FAILED',
-  //           },
-  //         });
-  //       }
-  //     } catch (updateError) {
-  //       this.logger.error(
-  //         `Failed to update order_supplier status: ${updateError.message}`,
-  //       );
-  //     }
-
-  //     throw new Error(`LarkBase sync failed: ${error.message}`);
-  //   }
-  // }
-
-  private async updateSyncControl(name: string, data: any): Promise<void> {
-    try {
-      await this.prismaService.syncControl.upsert({
-        where: { name },
-        create: {
-          name,
-          entities: ['order_supplier'],
-          syncMode: 'historical',
-          isRunning: false,
-          isEnabled: true,
-          status: 'idle',
-          ...data,
-        },
-        update: {
-          ...data,
-          lastRunAt:
-            data.status === 'completed' || data.status === 'failed'
-              ? new Date()
-              : undefined,
-        },
-      });
-    } catch (error) {
-      this.logger.error(
-        `Failed to update sync control '${name}': ${error.message}`,
-      );
-      throw error;
-    }
+  private uniqueNum(arr: any[]): number[] {
+    return Array.from(
+      new Set(arr.filter((v) => v !== null && v !== undefined).map(Number)),
+    );
   }
 }

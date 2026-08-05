@@ -1,480 +1,203 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { HttpService } from '@nestjs/axios';
-import { ConfigService } from '@nestjs/config';
-import { PrismaService } from '../../../prisma/prisma.service';
-import { KiotVietAuthService } from '../auth.service';
-import { firstValueFrom } from 'rxjs';
-import { Prisma } from '@prisma/client';
+import { KiotPageFetcher } from '../shared/kiot-page-fetcher';
+import { BulkUpsertHelper, ColumnSpec } from '../shared/bulk-upsert.helper';
+import { RelationMapHelper } from '../shared/relation-map.helper';
+import { SyncControlHelper } from '../shared/sync-control.helper';
 
-interface KiotVietCustomerGroup {
-  id: number;
-  name?: string;
-  description?: string;
-  createdDate?: string;
-  createdBy?: number;
-  retailerId?: number;
-  discount?: number;
-  uniqueKey: string;
-  customerGroupDetails: Array<{
-    id: number;
-    customerId: number;
-    groupId: number;
-  }>;
-}
+const SYNC_NAME = 'customer_group_historical';
+
+const COLUMNS: ColumnSpec[] = [
+  { name: 'kiotVietId', type: 'int' },
+  { name: 'name', type: 'text' },
+  { name: 'description', type: 'text' },
+  { name: 'discount', type: 'int' },
+  { name: 'retailerId', type: 'int' },
+  { name: 'createdDate', type: 'timestamp' },
+  { name: 'createdBy', type: 'int' },
+  { name: 'lastSyncedAt', type: 'timestamp' },
+];
+
+const UPDATE_COLUMNS = [
+  'name',
+  'description',
+  'discount',
+  'retailerId',
+  'createdDate',
+  'createdBy',
+  'lastSyncedAt',
+];
+
+/**
+ * Membership rows from `customerGroupDetails[]`, i.e. which customer belongs to
+ * which group. These were parsed off the API response and then discarded, leaving
+ * `CustomerGroupRelation` permanently empty (3,631 rows missing on this shop).
+ */
+const RELATION_COLUMNS: ColumnSpec[] = [
+  { name: 'kiotVietId', type: 'bigint' },
+  { name: 'customerId', type: 'int' },
+  { name: 'customerGroupId', type: 'int' },
+];
+
+const RELATION_UPDATE = ['kiotVietId'];
 
 @Injectable()
 export class KiotVietCustomerGroupService {
   private readonly logger = new Logger(KiotVietCustomerGroupService.name);
-  private readonly baseUrl: string;
-  private readonly PAGE_SIZE = 100;
 
   constructor(
-    private readonly httpService: HttpService,
-    private readonly configService: ConfigService,
-    private readonly prismaService: PrismaService,
-    private readonly authService: KiotVietAuthService,
-  ) {
-    const baseUrl = this.configService.get<string>('KIOT_BASE_URL');
-    if (!baseUrl) {
-      throw new Error('KIOT_BASE_URL environment variable is not configured');
-    }
-    this.baseUrl = baseUrl;
+    private readonly pageFetcher: KiotPageFetcher,
+    private readonly bulkUpsert: BulkUpsertHelper,
+    private readonly relationMap: RelationMapHelper,
+    private readonly syncControl: SyncControlHelper,
+  ) {}
+
+  async syncFull() {
+    return this.runSync('full');
   }
 
-  async enableHistoricalSync(): Promise<void> {
-    await this.updateSyncControl('customer_group_historical', {
-      isEnabled: true,
-      isRunning: false,
-      status: 'idle',
-    });
-
-    this.logger.log('✅ Historical customer group sync enabled');
-  }
-
-  async checkAndRunAppropriateSync(): Promise<void> {
-    try {
-      const historicalSync = await this.prismaService.syncControl.findFirst({
-        where: { name: 'customer_group_historical' },
-      });
-
-      if (historicalSync?.isEnabled && !historicalSync.isRunning) {
-        this.logger.log('Starting historical customer_group sync...');
-        await this.syncHistoricalCustomerGroups();
-        return;
-      }
-
-      this.logger.log('Running default historical customer_group sync...');
-      await this.syncHistoricalCustomerGroups();
-    } catch (error) {
-      this.logger.error(`Sync check failed: ${error.message}`);
-      throw error;
-    }
+  async syncIncremental() {
+    return this.runSync('incremental');
   }
 
   async syncHistoricalCustomerGroups(): Promise<void> {
-    const syncName = 'customer_group_historical';
+    await this.syncFull();
+  }
 
-    let currentItem = 0;
-    let processedCount = 0;
-    let totalCustomerGroups = 0;
-    let consecutiveEmptyPages = 0;
-    let consecutiveErrorPages = 0;
-    let lastValidTotal = 0;
-    let processedCustomerGroupsIds = new Set<number>();
+  async enableHistoricalSync(): Promise<void> {}
 
+  private async runSync(mode: 'full' | 'incremental') {
+    if (await this.syncControl.isRunning(SYNC_NAME)) {
+      this.logger.warn(`CustomerGroup sync already running, skipping`);
+      return { total: 0, processed: 0 };
+    }
+    await this.syncControl.markRunning(SYNC_NAME, mode, ['customer_group']);
+    let processed = 0;
+    let total = 0;
+    let relationsSeen = 0;
+    let relationsSaved = 0;
     try {
-      await this.updateSyncControl(syncName, {
-        isRunning: true,
-        status: 'running',
-        startedAt: new Date(),
-        error: null,
-      });
-
-      this.logger.log('🚀 Starting historical customer group sync...');
-
-      const MAX_CONSECUTIVE_EMPTY_PAGES = 5;
-      const MAX_CONSECUTIVE_ERROR_PAGES = 3;
-      const RETRY_DELAY_MS = 2000;
-      const MAX_TOTAL_RETRIES = 10;
-
-      let totalRetries = 0;
-
-      while (true) {
-        const currentPage = Math.floor(currentItem / this.PAGE_SIZE) + 1;
-
-        if (totalCustomerGroups > 0) {
-          if (currentItem >= totalCustomerGroups) {
+      const { total: t, serverTimestamp } =
+        await this.pageFetcher.fetchAll<any>({
+          endpoint: '/customers/group',
+          label: `customer-group-${mode}`,
+          onPage: async (pageData) => {
+            const now = new Date();
+            const rows = pageData.map((g: any) => ({
+              kiotVietId: Number(g.id),
+              name: g.name || '',
+              description: g.description || '',
+              discount: g.discount || 0,
+              retailerId: g.retailerId ? Number(g.retailerId) : null,
+              createdDate: g.createdDate ? new Date(g.createdDate) : now,
+              createdBy: g.createdBy ?? null,
+              lastSyncedAt: now,
+            }));
+            const affected = await this.bulkUpsert.bulkUpsert({
+              table: '"CustomerGroup"',
+              columns: COLUMNS,
+              rows,
+              conflictTarget: '"kiotVietId"',
+              updateColumns: UPDATE_COLUMNS,
+            });
+            processed += rows.length;
             this.logger.log(
-              `✅ Pagination complete. Processed ${processedCount}/${totalCustomerGroups} customer_group`,
-            );
-            break;
-          }
-        }
-
-        try {
-          this.logger.log(
-            `📄 Fetching page ${currentPage} (items ${currentItem} - ${currentItem + this.PAGE_SIZE - 1})`,
-          );
-
-          const response = await this.fetchCustomerGroupsListWithRetry({
-            currentItem,
-            pageSize: this.PAGE_SIZE,
-          });
-
-          consecutiveErrorPages = 0;
-
-          const { data: customer_groups, total } = response;
-
-          if (total !== undefined && total !== null) {
-            if (totalCustomerGroups === 0) {
-              this.logger.log(
-                `📊 Total customer_group detected: ${total}. Starting processing...`,
-              );
-
-              totalCustomerGroups = total;
-            } else if (
-              total !== totalCustomerGroups &&
-              total !== lastValidTotal
-            ) {
-              this.logger.warn(
-                `⚠️ Total count changed: ${totalCustomerGroups} → ${total}. Using latest.`,
-              );
-
-              totalCustomerGroups = total;
-            }
-            lastValidTotal = total;
-          }
-
-          if (!customer_groups || customer_groups.length === 0) {
-            this.logger.warn(
-              `⚠️ Empty page received at position ${currentItem}`,
+              `customer-group-${mode}: saved ${rows.length} (affected ${affected}), total ${processed}`,
             );
 
-            consecutiveEmptyPages++;
-
-            if (totalCustomerGroups > 0 && currentItem >= totalCustomerGroups) {
-              this.logger.log('✅ Reached end of data (empty page past total)');
-              break;
-            }
-
-            if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
-              this.logger.log(
-                `🔚 Stopping after ${consecutiveEmptyPages} consecutive empty pages`,
-              );
-              break;
-            }
-
-            currentItem += this.PAGE_SIZE;
-            continue;
-          }
-
-          const newCustomerGroups = customer_groups.filter((customer_group) => {
-            if (processedCustomerGroupsIds.has(customer_group.id)) {
-              this.logger.debug(
-                `⚠️ Duplicate customer_group ID detected: ${customer_group.id} (${customer_group.name})`,
-              );
-              return false;
-            }
-            processedCustomerGroupsIds.add(customer_group.id);
-            return true;
-          });
-
-          if (newCustomerGroups.length !== customer_groups.length) {
-            this.logger.warn(
-              `🔄 Filtered out ${customer_groups.length - newCustomerGroups.length} duplicate customer_groups on page ${currentPage}`,
-            );
-          }
-
-          if (newCustomerGroups.length === 0) {
-            this.logger.log(
-              `⏭️ Skipping page ${currentPage} - all customer_groups already processed`,
-            );
-            currentItem += this.PAGE_SIZE;
-            continue;
-          }
-
-          this.logger.log(
-            `🔄 Processing ${newCustomerGroups.length} customer_groups from page ${currentPage}...`,
-          );
-
-          const customerGroupsWithDetails =
-            await this.enrichCustomerGroupsWithDetails(newCustomerGroups);
-          const savedCustomerGroups = await this.saveCustomerGroupsToDatabase(
-            customerGroupsWithDetails,
-          );
-
-          processedCount += savedCustomerGroups.length;
-          currentItem += this.PAGE_SIZE;
-
-          if (totalCustomerGroups > 0) {
-            const completionPercentage =
-              (processedCount / totalCustomerGroups) * 100;
-            this.logger.log(
-              `📈 Progress: ${processedCount}/${totalCustomerGroups} (${completionPercentage.toFixed(1)}%)`,
-            );
-
-            if (processedCount >= totalCustomerGroups) {
-              this.logger.log('🎉 All customer_groups processed successfully!');
-              break;
-            }
-          }
-
-          consecutiveEmptyPages = 0;
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        } catch (error) {
-          consecutiveErrorPages++;
-          totalRetries++;
-
-          this.logger.error(
-            `❌ Page ${currentPage} failed (attempt ${consecutiveErrorPages}/${MAX_CONSECUTIVE_ERROR_PAGES}): ${error.message}`,
-          );
-
-          if (
-            consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES ||
-            totalRetries >= MAX_TOTAL_RETRIES
-          ) {
-            throw new Error(
-              `Too many consecutive errors (${consecutiveErrorPages}) or total retries (${totalRetries}). Last error: ${error.message}`,
-            );
-          }
-
-          await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
-        }
-      }
-
-      await this.updateSyncControl(syncName, {
-        isRunning: false,
-        isEnabled: false,
-        status: 'completed',
-        completedAt: new Date(),
-        lastRunAt: new Date(),
-        progress: { processedCount, expectedTotal: totalCustomerGroups },
-      });
-
-      const completionRate =
-        totalCustomerGroups > 0
-          ? (processedCount / totalCustomerGroups) * 100
-          : 100;
-
-      this.logger.log(
-        `✅ Historical customer_group sync completed: ${processedCount}/${totalCustomerGroups} (${completionRate.toFixed(1)}% completion rate)`,
-      );
-    } catch (error) {
-      this.logger.error(
-        `❌ Historical customer_group sync failed: ${error.message}`,
-      );
-
-      await this.updateSyncControl(syncName, {
-        isRunning: false,
-        status: 'failed',
-        error: error.message,
-        progress: { processedCount, expectedTotal: totalCustomerGroups },
-      });
-
-      throw error;
-    }
-  }
-
-  async fetchCustomerGroupsListWithRetry(
-    params: {
-      currentItem?: number;
-      pageSize?: number;
-    },
-    maxRetries: number = 5,
-  ): Promise<any> {
-    let lastError: Error | undefined;
-
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        return await this.fetchCustomerGroupsList(params);
-      } catch (error) {
-        lastError = error as Error;
-        this.logger.warn(
-          `⚠️ API attempt ${attempt}/${maxRetries} failed: ${error.message}`,
-        );
-
-        if (attempt < maxRetries) {
-          const delay = 2000 * attempt;
-          await new Promise((resolve) => setTimeout(resolve, delay));
-        }
-      }
-    }
-
-    throw lastError;
-  }
-
-  private async fetchCustomerGroupsList(params: {
-    currentItem?: number;
-    pageSize?: number;
-  }): Promise<any> {
-    const headers = await this.authService.getRequestHeaders();
-
-    const queryParams = new URLSearchParams({
-      currentItem: (params.currentItem || 0).toString(),
-      pageSize: (params.pageSize || this.PAGE_SIZE).toString(),
-    });
-
-    const response = await firstValueFrom(
-      this.httpService.get(`${this.baseUrl}/customers/group?${queryParams}`, {
-        headers,
-        timeout: 45000,
-      }),
-    );
-
-    return response.data;
-  }
-
-  private async enrichCustomerGroupsWithDetails(
-    customer_groups: KiotVietCustomerGroup[],
-  ): Promise<KiotVietCustomerGroup[]> {
-    this.logger.log(
-      `🔍 Enriching ${customer_groups.length} customer_groups with details...`,
-    );
-
-    const enrichedCustomerGroups: KiotVietCustomerGroup[] = [];
-
-    for (const customer_group of customer_groups) {
-      try {
-        const headers = await this.authService.getRequestHeaders();
-
-        const response = await firstValueFrom(
-          this.httpService.get(`${this.baseUrl}/customers/group`, {
-            headers,
-            timeout: 30000,
-          }),
-        );
-
-        if (response.data) {
-          enrichedCustomerGroups.push(response.data);
-        } else {
-          enrichedCustomerGroups.push(customer_group);
-        }
-
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      } catch (error) {
-        this.logger.warn(
-          `Failed to enrich customer_group ${customer_group.name}: ${error.message}`,
-        );
-
-        enrichedCustomerGroups.push(customer_group);
-      }
-    }
-    return enrichedCustomerGroups;
-  }
-
-  private async saveCustomerGroupsToDatabase(
-    customerGroups: KiotVietCustomerGroup[],
-  ): Promise<any[]> {
-    this.logger.log(
-      `💾 Saving ${customerGroups.length} customer groups to database...`,
-    );
-
-    const savedGroups: any[] = [];
-
-    for (const customerGroup of customerGroups) {
-      try {
-        // const user = await this.prismaService.user.findFirst({
-        //   where: { kiotVietId: groupData.createdBy },
-        //   select: { id: true, userName: true },
-        // });
-
-        const group = await this.prismaService.customerGroup.upsert({
-          where: {
-            kiotVietId: customerGroup.id,
-          },
-          update: {
-            name: customerGroup.name || '',
-            description: customerGroup.description || '',
-            retailerId: Number(customerGroup.retailerId) || null,
-            createdDate: customerGroup.createdDate
-              ? new Date(customerGroup.createdDate)
-              : new Date(),
-            createdBy: customerGroup.createdBy,
-            discount: customerGroup.discount || 0,
-            lastSyncedAt: new Date(),
-          },
-          create: {
-            kiotVietId: Number(customerGroup.id),
-            name: customerGroup.name || '',
-            description: customerGroup.description || '',
-            retailerId: Number(customerGroup.retailerId) || null,
-            createdDate: customerGroup.createdDate
-              ? new Date(customerGroup.createdDate)
-              : new Date(),
-            createdBy: customerGroup.createdBy,
-            discount: customerGroup.discount || 0,
-            lastSyncedAt: new Date(),
+            const r = await this.saveRelations(pageData);
+            relationsSeen += r.seen;
+            relationsSaved += r.saved;
           },
         });
-
-        // if (
-        //   customerGroup.customerGroupDetails &&
-        //   customerGroup.customerGroupDetails.length > 0
-        // ) {
-        //   for (const detail of customerGroup.customerGroupDetails) {
-        //     const customer = await this.prismaService.customer.findFirst({
-        //       where: { kiotVietId: BigInt(detail.customerId) },
-        //       select: { id: true },
-        //     });
-
-        //     if (customer) {
-        //       await this.prismaService.customerGroupRelation.upsert({
-        //         where: {
-        //           kiotVietId: BigInt(detail.id),
-        //         },
-        //         update: {
-        //           customerId: customer.id,
-        //           groupId: detail.groupId,
-        //         },
-        //         create: {
-        //           kiotVietId: BigInt(detail.id),
-        //           customerId: customer.id,
-        //           groupId: detail.groupId,
-        //         },
-        //       });
-        //     }
-        //   }
-        // }
-        savedGroups.push(group);
-      } catch (error) {
-        this.logger.error(
-          `❌ Failed to save customer group ${customerGroup.name}: ${error.message}`,
+      total = t;
+      if (relationsSeen > 0) {
+        this.logger.log(
+          `customer-group-${mode}: linked ${relationsSaved}/${relationsSeen} customer-group relation(s)`,
         );
       }
-    }
-
-    this.logger.log(
-      `💾 Saved ${savedGroups.length} customer groups to database`,
-    );
-    return savedGroups;
-  }
-
-  private async updateSyncControl(name: string, data: any): Promise<void> {
-    try {
-      await this.prismaService.syncControl.upsert({
-        where: { name },
-        create: {
-          name,
-          entities: ['customer_group'],
-          syncMode: 'historical',
-          isRunning: false,
-          isEnabled: true,
-          status: 'idle',
-          ...data,
+      await this.syncControl.markCompleted(
+        SYNC_NAME,
+        {
+          processedCount: processed,
+          expectedTotal: total,
+          relations: relationsSaved,
         },
-        update: {
-          ...data,
-          lastRunAt:
-            data.status === 'completed' || data.status === 'failed'
-              ? new Date()
-              : undefined,
-        },
-      });
-    } catch (error) {
-      this.logger.error(
-        `Failed to update sync control '${name}': ${error.message}`,
+        serverTimestamp,
       );
+      return { total, processed, relations: relationsSaved };
+    } catch (error) {
+      this.logger.error(`customer-group-${mode} failed: ${error.message}`);
+      await this.syncControl.markFailed(SYNC_NAME, error.message, {
+        processedCount: processed,
+        expectedTotal: total,
+      });
       throw error;
     }
+  }
+
+  /**
+   * Persist `customerGroupDetails[]` into `CustomerGroupRelation`.
+   *
+   * Both foreign keys point at local primary keys, so the KiotViet ids have to be
+   * translated first. A customer that has not been synced yet cannot be linked, so
+   * those rows are skipped and counted rather than crashing the group sync — running
+   * the customer sync and then this one again picks them up.
+   */
+  private async saveRelations(
+    groups: any[],
+  ): Promise<{ seen: number; saved: number }> {
+    const details = groups.flatMap((g: any) =>
+      (g.customerGroupDetails ?? []).map((d: any) => ({
+        kiotVietId: d.id ?? null,
+        customerKvId: Number(d.customerId),
+        groupKvId: Number(d.groupId ?? g.id),
+      })),
+    );
+    if (details.length === 0) return { seen: 0, saved: 0 };
+
+    const [customerMap, groupMap] = await Promise.all([
+      this.relationMap.buildIdMap(
+        'customer',
+        details.map((d) => d.customerKvId),
+      ),
+      this.relationMap.buildIdMap(
+        'customerGroup',
+        details.map((d) => d.groupKvId),
+      ),
+    ]);
+
+    const rows = details
+      .map((d) => {
+        const customerId = customerMap.get(d.customerKvId);
+        const customerGroupId = groupMap.get(d.groupKvId);
+        if (!customerId || !customerGroupId) return null;
+        return {
+          kiotVietId: d.kiotVietId != null ? BigInt(d.kiotVietId) : null,
+          customerId,
+          customerGroupId,
+        };
+      })
+      .filter((r): r is NonNullable<typeof r> => r !== null);
+
+    if (rows.length === 0) return { seen: details.length, saved: 0 };
+
+    await this.bulkUpsert.bulkUpsert({
+      table: '"CustomerGroupRelation"',
+      columns: RELATION_COLUMNS,
+      rows,
+      // Natural key: a customer can only be in a group once.
+      conflictTarget: '("customerId", "customerGroupId")',
+      updateColumns: RELATION_UPDATE,
+    });
+
+    const skipped = details.length - rows.length;
+    if (skipped > 0) {
+      this.logger.warn(
+        `${skipped}/${details.length} customer-group link(s) skipped: customer not synced yet. ` +
+          `Run the customer sync first, then this sync again.`,
+      );
+    }
+
+    return { seen: details.length, saved: rows.length };
   }
 }

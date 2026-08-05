@@ -1,645 +1,205 @@
-import { LarkTransferSyncService } from './../../lark/transfer/lark-transfer-sync.service';
 import { Injectable, Logger } from '@nestjs/common';
-import { HttpService } from '@nestjs/axios';
-import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { KiotVietAuthService } from '../auth.service';
-import { async, firstValueFrom } from 'rxjs';
+import { KiotPageFetcher } from '../shared/kiot-page-fetcher';
+import { BulkUpsertHelper, ColumnSpec } from '../shared/bulk-upsert.helper';
+import { RelationMapHelper } from '../shared/relation-map.helper';
+import { SyncControlHelper } from '../shared/sync-control.helper';
 
-interface KiotVietTransfer {
-  id: number;
-  code: string;
-  description?: string;
-  dispatchedDate?: string;
-  fromBranchId?: number;
-  receivedDate?: string;
-  retailerId?: number;
-  status?: number;
-  toBranchId?: number;
-  lastSyncedAt?: string;
-  transferDetails?: Array<{
-    productId?: number;
-    productCode?: string;
-    sendQuantity?: number;
-    receiveQuantity?: number;
-    price?: number;
-    sendPrice?: number;
-    receivePrice?: number;
-  }>;
-}
+const SYNC_NAME = 'transfer_historical';
+
+const TRANSFER_COLUMNS: ColumnSpec[] = [
+  { name: 'kiotVietId', type: 'bigint' },
+  { name: 'code', type: 'text' },
+  { name: 'description', type: 'text' },
+  { name: 'dispatchedDate', type: 'timestamp' },
+  { name: 'fromBranchId', type: 'int' },
+  { name: 'receivedDate', type: 'timestamp' },
+  { name: 'retailerId', type: 'int' },
+  { name: 'status', type: 'int' },
+  { name: 'toBranchId', type: 'int' },
+  { name: 'lastSyncedAt', type: 'timestamp' },
+];
+
+const TRANSFER_UPDATE = [
+  'code',
+  'description',
+  'dispatchedDate',
+  'fromBranchId',
+  'receivedDate',
+  'retailerId',
+  'status',
+  'toBranchId',
+  'lastSyncedAt',
+];
+
+const TD_COLUMNS: ColumnSpec[] = [
+  { name: 'productId', type: 'int' },
+  { name: 'productCode', type: 'text' },
+  { name: 'productName', type: 'text' },
+  { name: 'sendQuantity', type: 'int' },
+  { name: 'receivedQuantity', type: 'int' },
+  { name: 'sendPrice', type: 'int' },
+  { name: 'receivePrice', type: 'int' },
+  { name: 'price', type: 'int' },
+  { name: 'transferId', type: 'int' },
+  { name: 'lineNumber', type: 'int' },
+  { name: 'uniqueKey', type: 'text' },
+];
+
+const TD_UPDATE = [
+  'productId',
+  'productCode',
+  'productName',
+  'sendQuantity',
+  'receivedQuantity',
+  'sendPrice',
+  'receivePrice',
+  'price',
+  'uniqueKey',
+];
 
 @Injectable()
 export class KiotVietTransferService {
   private readonly logger = new Logger(KiotVietTransferService.name);
-  private readonly baseUrl: string;
-  private readonly PAGE_SIZE = 100;
 
   constructor(
-    private readonly httpService: HttpService,
-    private readonly configService: ConfigService,
     private readonly prismaService: PrismaService,
-    private readonly authService: KiotVietAuthService,
-    private readonly larkTransferSyncService: LarkTransferSyncService,
-  ) {
-    const baseUrl = this.configService.get<string>('KIOT_BASE_URL');
-    if (!baseUrl) {
-      throw new Error('KIOT_BASE_URL environment variable is not configured');
-    }
-    this.baseUrl = baseUrl;
+    private readonly pageFetcher: KiotPageFetcher,
+    private readonly bulkUpsert: BulkUpsertHelper,
+    private readonly relationMap: RelationMapHelper,
+    private readonly syncControl: SyncControlHelper,
+  ) {}
+
+  async syncFull() {
+    return this.runSync('full', {});
   }
 
-  async checkAndRunAppropriateSync(): Promise<void> {
-    try {
-      const runningTransferSyncs =
-        await this.prismaService.syncControl.findMany({
-          where: {
-            OR: [
-              { name: 'transfer_historical' },
-              { name: 'transfer_lark_sync' },
-            ],
-            isRunning: true,
-          },
-        });
-
-      if (runningTransferSyncs.length > 0) {
-        this.logger.warn(
-          `Found ${runningTransferSyncs.length} Transfer syncs still running: ${runningTransferSyncs.map((s) => s.name).join(',')}`,
-        );
-        this.logger.warn('Skipping transfer sync to avoid conficts');
-        return;
-      }
-
-      const historicalSync = await this.prismaService.syncControl.findFirst({
-        where: { name: 'transfer_historical' },
-      });
-
-      if (historicalSync?.isEnabled && !historicalSync.isRunning) {
-        this.logger.log('Starting historical transfer sync...');
-        await this.syncHistoricalTransfers();
-        return;
-      }
-
-      if (historicalSync?.isRunning) {
-        this.logger.log('Historical transfer sync is running');
-        return;
-      }
-
-      this.logger.log('Running defaut historical transfer sync...');
-      await this.syncHistoricalTransfers();
-    } catch (error) {
-      this.logger.error(`Sync check failed: ${error.message}`);
-      throw error;
-    }
-  }
-
-  async enableHistoricalSync(): Promise<void> {
-    await this.updateSyncControl('transfer_historical', {
-      isEnabled: true,
-      isRunning: false,
-      status: 'idle',
+  async syncIncremental() {
+    const last = await this.syncControl.getLastCompletedAt(SYNC_NAME);
+    const fromReceivedDate = last ?? new Date('2024-12-01');
+    return this.runSync('incremental', {
+      fromReceivedDate: fromReceivedDate.toISOString().slice(0, 10),
     });
-
-    this.logger.log('Historical transfer sync enabled');
   }
 
   async syncHistoricalTransfers(): Promise<void> {
-    const syncName = 'transfer_historical';
+    await this.syncFull();
+  }
 
-    let currentItem = 0;
-    let processedCount = 0;
-    let totalTransfers = 0;
-    let consecutiveEmptyPages = 0;
-    let consecutiveErrorPages = 0;
-    let lastValidTotal = 0;
-    let processedTransferIds = new Set<number>();
+  async enableHistoricalSync(): Promise<void> {}
 
+  private async runSync(
+    mode: 'full' | 'incremental',
+    extra: Record<string, any>,
+  ) {
+    if (await this.syncControl.isRunning(SYNC_NAME)) {
+      this.logger.warn(`Transfer sync already running, skipping`);
+      return { total: 0, processed: 0 };
+    }
+    await this.syncControl.markRunning(SYNC_NAME, mode, ['transfer']);
+    let processed = 0;
+    let total = 0;
     try {
-      await this.updateSyncControl(syncName, {
-        isRunning: true,
-        status: 'running',
-        startedAt: new Date(),
-        error: null,
-      });
-
-      this.logger.log('Starting historical transfer sync...');
-
-      const MAX_CONSECUTIVE_EMPTY_PAGES = 5;
-      const MAX_CONSECUTIVE_ERROR_PAGES = 3;
-      const RETRY_DELAY_MS = 2000;
-      const MAX_TOTAL_RETRIES = 10;
-
-      let totalRetries = 0;
-
-      while (true) {
-        const currentPage = Math.floor(currentItem / this.PAGE_SIZE) + 1;
-
-        if (totalTransfers > 0) {
-          if (currentItem >= totalTransfers) {
-            this.logger.log(
-              `Pagination complete. Processed ${processedCount}/${totalTransfers} transfers`,
-            );
-            break;
-          }
-
-          const progressPercentage = (currentItem / totalTransfers) * 100;
-          this.logger.log(
-            `Fetching page ${currentPage} (${currentItem}/${totalTransfers} - ${progressPercentage.toFixed(1)}%)`,
-          );
-        } else {
-          this.logger.log(
-            `Fetching page ${currentPage} (currentItem: ${currentItem})`,
-          );
-        }
-
-        const dateEnd = new Date();
-        dateEnd.setDate(dateEnd.getDate() + 1);
-        const dateEndStr = dateEnd.toISOString().split('T')[0];
-
-        try {
-          const response = await this.fetchTransfersListWithRetry({
-            currentItem,
-            pageSize: this.PAGE_SIZE,
-            // fromReceivedDate: '2024-12-1',
-            // toReceivedDate: dateEndStr,
-            // fromTransferDate: '2024-12-1',
-            // toTransferDate: dateEndStr,
-          });
-
-          if (!response) {
-            this.logger.warn('Received null response from KiotViet API');
-
-            consecutiveEmptyPages++;
-
-            if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
-              this.logger.log(
-                `Reached end after ${consecutiveEmptyPages} empty pages`,
-              );
-              break;
-            }
-
-            await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
-            continue;
-          }
-
-          consecutiveEmptyPages = 0;
-          consecutiveErrorPages = 0;
-
-          const { data: transfers, total } = response;
-
-          if (total != undefined && total !== null) {
-            if (totalTransfers === 0) {
-              this.logger.log(
-                `Total transfers detected: ${total}. Starting processing...`,
-              );
-
-              totalTransfers = total;
-            } else if (total !== totalTransfers) {
-              this.logger.warn(
-                `Total count changed: ${totalTransfers} -> ${total}. Using latest.`,
-              );
-              totalTransfers = total;
-            }
-            lastValidTotal = total;
-          }
-
-          if (!transfers || transfers.length === 0) {
-            this.logger.warn(`Empty page received at position ${currentItem}`);
-            consecutiveEmptyPages++;
-
-            if (totalTransfers > 0 && currentItem >= totalTransfers) {
-              this.logger.log('Reached end of data (empty page past total');
-              break;
-            }
-
-            if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
-              this.logger.log(
-                `🔚 Stopping after ${consecutiveEmptyPages} consecutive empty pages`,
-              );
-              break;
-            }
-
-            currentItem += this.PAGE_SIZE;
-            continue;
-          }
-
-          const existingTransferIds = new Set(
-            (
-              await this.prismaService.transfer.findMany({
-                select: { kiotVietId: true },
-              })
-            ).map((c) => Number(c.kiotVietId)),
-          );
-
-          const newTransfers = transfers.filter((transfer) => {
-            if (
-              !existingTransferIds.has(transfer.id) &&
-              !processedTransferIds.has(transfer.id)
-            ) {
-              processedTransferIds.add(transfer.id);
-              return true;
-            }
-            return false;
-          });
-
-          const existingTransfers = transfers.filter((transfer) => {
-            if (
-              existingTransferIds.has(transfer.id) &&
-              !processedTransferIds.has(transfer.id)
-            ) {
-              processedTransferIds.add(transfer.id);
-              return true;
-            }
-            return false;
-          });
-
-          if (newTransfers.length === 0 && existingTransfers.length === 0) {
-            this.logger.log(
-              `Skipping page ${currentPage} - all transfers already processed in this run`,
-            );
-            currentItem += this.PAGE_SIZE;
-            continue;
-          }
-
-          let pageProcessedCount = 0;
-          let allSavedTransfers: any[] = [];
-
-          if (newTransfers.length > 0) {
-            this.logger.log(
-              `Processing ${newTransfers.length} NEW transfers from page ${currentPage}...`,
-            );
-
-            const savedTransfers =
-              await this.saveTransfersToDatabase(newTransfers);
-            pageProcessedCount += savedTransfers.length;
-            allSavedTransfers.push(...savedTransfers);
-          }
-
-          if (existingTransfers.length > 0) {
-            this.logger.log(
-              `Processing ${existingTransfers.length} EXISTING transfers from page ${currentPage}...`,
-            );
-
-            const savedTransfers =
-              await this.saveTransfersToDatabase(existingTransfers);
-            pageProcessedCount += savedTransfers.length;
-            allSavedTransfers.push(...savedTransfers);
-          }
-
-          processedCount += pageProcessedCount;
-          currentItem += this.PAGE_SIZE;
-
-          // if (allSavedTransfers.length > 0) {
-          //   try {
-          //     await this.syncTransfersToLarkBase(allSavedTransfers);
-          //     this.logger.log(
-          //       `Synced ${allSavedTransfers.length} transfers to LarkBase`,
-          //     );
-          //   } catch (error) {
-          //     this.logger.warn(
-          //       `LarkBase sync failed for page ${currentPage}: ${error.message}`,
-          //     );
-          //   }
-          // }
-
-          if (totalTransfers > 0) {
-            const completionPercentage =
-              (processedCount / totalTransfers) * 100;
-            this.logger.log(
-              `Progress: ${processedCount}/${totalTransfers} (${completionPercentage.toFixed(1)}%)`,
-            );
-
-            if (processedCount >= totalTransfers) {
-              this.logger.log('All transfers processed successfully');
-              break;
-            }
-          }
-
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        } catch (error) {
-          consecutiveErrorPages++;
-          totalRetries++;
-
-          this.logger.error(
-            `API error on page ${currentPage}: ${error.message}`,
-          );
-
-          if (consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES) {
-            throw new Error(
-              `Multiple consecutive API failures: ${error.message}`,
-            );
-          }
-
-          if (totalRetries >= MAX_TOTAL_RETRIES) {
-            throw new Error(`Maximum total retries exceeded: ${error.message}`);
-          }
-
-          const delay = RETRY_DELAY_MS * Math.pow(2, consecutiveErrorPages - 1);
-          this.logger.log(`Retrying after ${delay}ms delay...`);
-          await new Promise((resolve) => setTimeout(resolve, delay));
-        }
-      }
-
-      await this.updateSyncControl(syncName, {
-        isRunning: false,
-        isEnabled: false,
-        status: 'completed',
-        completedAt: new Date(),
-        lastRunAt: new Date(),
-        progress: { processedCount, expectedTotal: totalTransfers },
-      });
-
-      const completionRate =
-        totalTransfers > 0 ? (processedCount / totalTransfers) * 100 : 100;
-
-      this.logger.log(
-        `Historical transfer sync completed: ${processedCount}/${totalTransfers} (${completionRate.toFixed(1)}% completion rate)`,
-      );
-    } catch (error) {
-      this.logger.log(`Historical transfer sync failed: ${error.message}`);
-
-      await this.updateSyncControl(syncName, {
-        isRunning: false,
-        status: 'failed',
-        error: error.message,
-        progress: { processedCount, expectedTotal: totalTransfers },
-      });
-
-      throw error;
-    }
-  }
-
-  async fetchTransfersListWithRetry(
-    params: {
-      currentItem?: number;
-      pageSize?: number;
-      // fromReceivedDate?: string;
-      // toReceivedDate?: string;
-      // fromTransferDate?: string;
-      // toTransferDate?: string;
-    },
-    maxRetries: number = 5,
-  ): Promise<any> {
-    let lastError: Error | undefined;
-
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        return await this.fetchTransfersList(params);
-      } catch (error) {
-        lastError = error as Error;
-        this.logger.warn(
-          `API attempt ${attempt}/${maxRetries} failed: ${error.message}`,
-        );
-
-        if (attempt < maxRetries) {
-          const delay = 2000 * attempt;
-          this.logger.log(`Retrying after ${delay / 1000}s delay...`);
-          await new Promise((resolve) => setTimeout(resolve, delay));
-        }
-      }
-    }
-
-    throw lastError;
-  }
-
-  async fetchTransfersList(params: {
-    currentItem?: number;
-    pageSize?: number;
-    // fromReceivedDate: string;
-    // toReceivedDate: string;
-    // fromTransferDate: string;
-    // toTransferDate: string;
-  }): Promise<any> {
-    const headers = await this.authService.getRequestHeaders();
-
-    const queryParams = new URLSearchParams({
-      currentItem: (params.currentItem || 0).toString(),
-      pageSize: (params.pageSize || this.PAGE_SIZE).toString(),
-    });
-
-    // if (params.fromReceivedDate) {
-    //   queryParams.append('fromReceivedDate', params.fromReceivedDate);
-    // }
-
-    // if (params.toReceivedDate) {
-    //   queryParams.append('toReceivedDate', params.toReceivedDate);
-    // }
-
-    // if (params.fromTransferDate) {
-    //   queryParams.append('fromTransferDate', params.fromTransferDate);
-    // }
-
-    // if (params.toTransferDate) {
-    //   queryParams.append('toTransferDate', params.toTransferDate);
-    // }
-
-    const response = await firstValueFrom(
-      this.httpService.get(`${this.baseUrl}/transfers?${queryParams}`, {
-        headers,
-        timeout: 45000,
-      }),
-    );
-
-    return response.data;
-  }
-
-  private async saveTransfersToDatabase(
-    transfers: KiotVietTransfer[],
-  ): Promise<any[]> {
-    this.logger.log(`Saving ${transfers.length} transfers to database...`);
-
-    const savedTransfers: any[] = [];
-
-    for (const transferData of transfers) {
-      try {
-        // const branch = await this.prismaService.branch.findFirst({
-        //   where: {
-        //     AND: [
-        //       { kiotVietId: transferData.fromBranchId },
-        //       { kiotVietId: transferData.toBranchId },
-        //     ],
-        //   },
-        //   select: {
-        //     id: true,
-        //     name: true,
-        //   },
-        // });
-
-        const transfer = await this.prismaService.transfer.upsert({
-          where: { kiotVietId: BigInt(transferData.id) },
-          update: {
-            code: transferData.code.trim(),
-            description: transferData.description ?? '',
-            dispatchedDate: transferData.dispatchedDate
-              ? new Date(transferData.dispatchedDate)
-              : new Date(),
-            fromBranchId: transferData?.fromBranchId ?? null,
-            receivedDate: transferData.receivedDate
-              ? new Date(transferData.receivedDate)
-              : new Date(),
-            retailerId: transferData.retailerId ?? null,
-            status: transferData.status ?? null,
-            toBranchId: transferData?.toBranchId ?? null,
-            lastSyncedAt: new Date(),
-            larkSyncStatus: 'PENDING',
-          },
-          create: {
-            kiotVietId: BigInt(transferData.id),
-            code: transferData.code.trim(),
-            description: transferData.description ?? '',
-            dispatchedDate: transferData.dispatchedDate
-              ? new Date(transferData.dispatchedDate)
-              : new Date(),
-            fromBranchId: transferData?.fromBranchId ?? null,
-            receivedDate: transferData.receivedDate
-              ? new Date(transferData.receivedDate)
-              : new Date(),
-            retailerId: transferData.retailerId ?? null,
-            status: transferData.status ?? null,
-            toBranchId: transferData?.toBranchId ?? null,
-            lastSyncedAt: new Date(),
-            larkSyncStatus: 'PENDING',
+      const { total: t, serverTimestamp } =
+        await this.pageFetcher.fetchAll<any>({
+          endpoint: '/transfers',
+          baseParams: extra,
+          label: `transfer-${mode}`,
+          onPage: async (pageData) => {
+            processed += await this.processPage(pageData);
+            this.logger.log(`transfer-${mode}: processed ${processed} so far`);
           },
         });
-
-        if (
-          transferData.transferDetails &&
-          transferData.transferDetails.length > 0
-        ) {
-          for (let i = 0; i < transferData.transferDetails.length; i++) {
-            const detail = transferData.transferDetails[i];
-            const product = await this.prismaService.product.findFirst({
-              where: { kiotVietId: detail.productId },
-              select: {
-                id: true,
-                name: true,
-                fullName: true,
-                code: true,
-              },
-            });
-
-            const acsNumber: number = i + 1;
-
-            if (product) {
-              await this.prismaService.transferDetail.upsert({
-                where: {
-                  transferId_lineNumber: {
-                    transferId: transfer.id,
-                    lineNumber: i + 1,
-                  },
-                },
-                update: {
-                  productId: product?.id,
-                  productCode: product?.code,
-                  productName: product?.name,
-                  sendQuantity: detail.sendQuantity ?? 0,
-                  receivedQuantity: detail.receiveQuantity ?? 0,
-                  sendPrice: detail.sendPrice ?? 0,
-                  receivePrice: detail.receivePrice ?? 0,
-                  price: detail.price ?? 0,
-                  lineNumber: i + 1,
-                  uniqueKey: transfer.id + '.' + acsNumber,
-                  larkSyncStatus: 'PENDING',
-                },
-                create: {
-                  transferId: transfer.id,
-                  productId: product?.id,
-                  productCode: product?.code,
-                  productName: product?.name,
-                  sendQuantity: detail.sendQuantity ?? 0,
-                  receivedQuantity: detail.receiveQuantity ?? 0,
-                  sendPrice: detail.sendPrice ?? 0,
-                  receivePrice: detail.receivePrice ?? 0,
-                  price: detail.price ?? 0,
-                  lineNumber: i + 1,
-                  uniqueKey: transfer.id + '.' + acsNumber,
-                  larkSyncStatus: 'PENDING',
-                },
-              });
-            }
-          }
-        }
-
-        savedTransfers.push(transfer);
-      } catch (error) {
-        this.logger.error(
-          `Failed to save transfer ${transferData.code}: ${error.message}`,
-        );
-      }
-    }
-
-    this.logger.log(`Saved ${savedTransfers.length} transfers successfully`);
-    return savedTransfers;
-  }
-
-  // async syncTransfersToLarkBase(transfers: any[]): Promise<void> {
-  //   try {
-  //     this.logger.log(
-  //       `Starting LarkBase sync for ${transfers.length} transfers...`,
-  //     );
-
-  //     const transfersToSync = transfers.filter(
-  //       (s) => s.larkSyncStatus === 'PENDING' || s.larkSyncStatus === 'FAILED',
-  //     );
-
-  //     if (transfersToSync.length === 0) {
-  //       return;
-  //     }
-
-  //     await this.larkTransferSyncService.syncTransferToLarkBase(
-  //       transfersToSync,
-  //     );
-  //     this.logger.log(`LarkBase sync completed successfully`);
-  //   } catch (error) {
-  //     this.logger.error(`LarkBase transfers sync failed: ${error.message}`);
-
-  //     try {
-  //       const transferIds = transfers
-  //         .map((t) => t.id)
-  //         .filter((id) => id !== undefined);
-
-  //       if (transferIds.length > 0) {
-  //         await this.prismaService.transfer.updateMany({
-  //           where: { id: { in: transferIds } },
-  //           data: {
-  //             larkSyncedAt: new Date(),
-  //             larkSyncStatus: 'FAILED',
-  //           },
-  //         });
-  //       }
-  //     } catch (error) {
-  //       this.logger.error(`Failed to update transfer status: ${error.message}`);
-  //     }
-
-  //     throw new Error(`LarkBase sync failed: ${error.message}`);
-  //   }
-  // }
-
-  private async updateSyncControl(name: string, data: any): Promise<void> {
-    try {
-      await this.prismaService.syncControl.upsert({
-        where: { name },
-        create: {
-          name,
-          entities: ['transfer'],
-          syncMode: 'historical',
-          isRunning: false,
-          isEnabled: true,
-          status: 'idle',
-          ...data,
-        },
-        update: {
-          ...data,
-          lastRunAt:
-            data.status === 'completed' || data.status === 'failed'
-              ? new Date()
-              : undefined,
-        },
-      });
-    } catch (error) {
-      this.logger.error(
-        `Failed to update sync control '${name}': ${error.message}`,
+      total = t;
+      await this.syncControl.markCompleted(
+        SYNC_NAME,
+        { processedCount: processed, expectedTotal: total },
+        serverTimestamp,
       );
+      return { total, processed };
+    } catch (error) {
+      this.logger.error(`transfer-${mode} failed: ${error.message}`);
+      await this.syncControl.markFailed(SYNC_NAME, error.message, {
+        processedCount: processed,
+        expectedTotal: total,
+      });
       throw error;
     }
+  }
+
+  private async processPage(items: any[]): Promise<number> {
+    if (!items.length) return 0;
+    const now = new Date();
+
+    const productIds = this.uniqueNum(
+      items.flatMap((t) => (t.transferDetails ?? []).map((d) => d.productId)),
+    );
+    const productMap = await this.relationMap.buildIdMap('product', productIds);
+
+    const rows = items.map((t) => ({
+      kiotVietId: t.id,
+      code: (t.code || '').trim(),
+      description: t.description ?? '',
+      dispatchedDate: t.dispatchedDate ? new Date(t.dispatchedDate) : now,
+      fromBranchId: t.fromBranchId ?? null,
+      receivedDate: t.receivedDate ? new Date(t.receivedDate) : now,
+      retailerId: t.retailerId ?? null,
+      status: t.status ?? null,
+      toBranchId: t.toBranchId ?? null,
+      lastSyncedAt: now,
+    }));
+
+    await this.bulkUpsert.bulkUpsert({
+      table: '"Transfer"',
+      columns: TRANSFER_COLUMNS,
+      rows,
+      conflictTarget: '"kiotVietId"',
+      updateColumns: TRANSFER_UPDATE,
+    });
+
+    const transferIdMap = await this.relationMap.buildIdMap(
+      'transfer',
+      this.uniqueNum(items.map((t) => t.id)),
+    );
+
+    const detailRows: any[] = [];
+    for (const t of items) {
+      const transferDbId = transferIdMap.get(Number(t.id));
+      if (!transferDbId) continue;
+      (t.transferDetails ?? []).forEach((d: any, idx: number) => {
+        const product = productMap.get(Number(d.productId));
+        if (!product) return;
+        const ln = d.lineNumber ?? idx + 1;
+        detailRows.push({
+          productId: product,
+          productCode: d.productCode || null,
+          productName: d.productName || null,
+          sendQuantity: d.sendQuantity ?? 0,
+          receivedQuantity: d.receiveQuantity ?? 0,
+          sendPrice: d.sendPrice ?? 0,
+          receivePrice: d.receivePrice ?? 0,
+          price: d.price ?? 0,
+          transferId: transferDbId,
+          lineNumber: ln,
+          uniqueKey: `${t.id}.${ln}`,
+        });
+      });
+    }
+
+    await this.bulkUpsert.bulkUpsert({
+      table: '"TransferDetail"',
+      columns: TD_COLUMNS,
+      rows: detailRows,
+      conflictTarget: '("transferId", "lineNumber")',
+      updateColumns: TD_UPDATE,
+    });
+
+    return items.length;
+  }
+
+  private uniqueNum(arr: any[]): number[] {
+    return Array.from(
+      new Set(arr.filter((v) => v !== null && v !== undefined).map(Number)),
+    );
   }
 }

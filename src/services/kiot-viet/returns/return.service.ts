@@ -1,656 +1,312 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { HttpService } from '@nestjs/axios';
-import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { KiotVietAuthService } from '../auth.service';
-import { async, firstValueFrom } from 'rxjs';
-import { Prisma } from '@prisma/client';
+import { KiotPageFetcher } from '../shared/kiot-page-fetcher';
+import { BulkUpsertHelper, ColumnSpec } from '../shared/bulk-upsert.helper';
+import { RelationMapHelper } from '../shared/relation-map.helper';
+import { SyncControlHelper } from '../shared/sync-control.helper';
 
-interface KiotVietReturn {
-  id: number;
-  code: string;
-  invoiceId?: number;
-  returnDate: string;
-  branchId?: number;
-  branchName?: string;
-  receivedById?: number;
-  soldByName: string;
-  customerId?: number;
-  customerCode?: string;
-  customerName?: string;
-  returnTotal: number;
-  returnDiscount?: number;
-  returnFee?: number;
-  totalPayment: number;
-  status: number;
-  statusValue?: string;
-  createdDate: string;
-  modifiedDate?: string;
-  retailerId?: number;
-  payments?: Array<{
-    id: number;
-    code: string;
-    amount: number;
-    method: string;
-    status?: number;
-    statusValue?: string;
-    transDate: string;
-    bankAccount?: string;
-    accountId?: number;
-    description?: string;
-  }>;
-  returnDetails?: Array<{
-    productId: number;
-    lineNumber: number;
-    productCode: string;
-    productName: string;
-    quantity: number;
-    price: number;
-    note?: string;
-    usePoint?: boolean;
-    subTotal: number;
-  }>;
-}
+const SYNC_NAME = 'return_historical';
+
+const RETURN_COLUMNS: ColumnSpec[] = [
+  { name: 'kiotVietId', type: 'bigint' },
+  { name: 'code', type: 'text' },
+  { name: 'invoiceId', type: 'int' },
+  { name: 'returnDate', type: 'timestamp' },
+  { name: 'branchId', type: 'int' },
+  { name: 'receivedById', type: 'bigint' },
+  { name: 'customerId', type: 'int' },
+  { name: 'returnTotal', type: 'numeric' },
+  { name: 'totalPayment', type: 'numeric' },
+  { name: 'status', type: 'int' },
+  { name: 'createdDate', type: 'timestamp' },
+  { name: 'modifiedDate', type: 'timestamp' },
+  { name: 'lastSyncedAt', type: 'timestamp' },
+  { name: 'branchName', type: 'text' },
+  { name: 'customerCode', type: 'text' },
+  { name: 'customerName', type: 'text' },
+  { name: 'soldByName', type: 'text' },
+];
+
+const RETURN_UPDATE = [
+  'code',
+  'invoiceId',
+  'returnDate',
+  'branchId',
+  'receivedById',
+  'customerId',
+  'returnTotal',
+  'totalPayment',
+  'status',
+  'createdDate',
+  'modifiedDate',
+  'lastSyncedAt',
+  'branchName',
+  'customerCode',
+  'customerName',
+  'soldByName',
+];
+
+const RD_COLUMNS: ColumnSpec[] = [
+  { name: 'returnId', type: 'int' },
+  { name: 'productId', type: 'int' },
+  { name: 'productKiotVietId', type: 'bigint' },
+  { name: 'quantity', type: 'real' },
+  { name: 'price', type: 'numeric' },
+  { name: 'note', type: 'text' },
+  { name: 'usePoint', type: 'boolean' },
+  { name: 'subTotal', type: 'numeric' },
+  { name: 'lineNumber', type: 'int' },
+  { name: 'productCode', type: 'text' },
+  { name: 'productName', type: 'text' },
+];
+
+const RD_UPDATE = [
+  'productId',
+  'productKiotVietId',
+  'quantity',
+  'price',
+  'note',
+  'usePoint',
+  'subTotal',
+  'productCode',
+  'productName',
+];
+
+const PAYMENT_COLUMNS: ColumnSpec[] = [
+  { name: 'kiotVietId', type: 'bigint' },
+  { name: 'code', type: 'text' },
+  { name: 'amount', type: 'numeric' },
+  { name: 'method', type: 'text' },
+  { name: 'status', type: 'int' },
+  { name: 'transDate', type: 'timestamp' },
+  { name: 'accountId', type: 'int' },
+  { name: 'returnId', type: 'int' },
+  { name: 'description', type: 'text' },
+];
+
+const PAYMENT_UPDATE = [
+  'code',
+  'amount',
+  'method',
+  'status',
+  'transDate',
+  'accountId',
+  'returnId',
+  'description',
+];
 
 @Injectable()
 export class KiotVietReturnService {
   private readonly logger = new Logger(KiotVietReturnService.name);
-  private readonly baseUrl: string;
-  private readonly PAGE_SIZE = 100;
 
   constructor(
-    private readonly httpService: HttpService,
-    private readonly configService: ConfigService,
     private readonly prismaService: PrismaService,
-    private readonly authService: KiotVietAuthService,
-  ) {
-    const baseUrl = this.configService.get<string>('KIOT_BASE_URL');
-    if (!baseUrl) {
-      throw new Error('KIOT_BASE_URL environment variable is not configured');
-    }
-    this.baseUrl = baseUrl;
+    private readonly pageFetcher: KiotPageFetcher,
+    private readonly bulkUpsert: BulkUpsertHelper,
+    private readonly relationMap: RelationMapHelper,
+    private readonly syncControl: SyncControlHelper,
+  ) {}
+
+  async syncFull() {
+    return this.runSync('full', {});
   }
 
-  async checkAndRunAppropriateSync(): Promise<void> {
-    try {
-      const runningReturnSyncs = await this.prismaService.syncControl.findMany({
-        where: { OR: [{ name: 'return_historical' }], isRunning: true },
-      });
-
-      if (runningReturnSyncs.length > 0) {
-        this.logger.warn(
-          `Found ${runningReturnSyncs.length} Return syncs still running: ${runningReturnSyncs.map((r) => r.name).join(', ')}`,
-        );
-        this.logger.warn('Skipping return sync to avoid conflicts');
-        return;
-      }
-
-      const historicalSync = await this.prismaService.syncControl.findFirst({
-        where: { name: 'return_historical' },
-      });
-
-      if (historicalSync?.isEnabled && !historicalSync.isRunning) {
-        this.logger.log('Starting historical return sync');
-        await this.syncHistoricalReturns();
-        return;
-      }
-
-      if (historicalSync?.isRunning) {
-        this.logger.log(
-          'Historical return sync is running, skipping recent sync',
-        );
-      }
-      // this.logger.log('Running default historical return sync...');
-      // await this.syncHistoricalReturns();
-    } catch (error) {
-      this.logger.log(`Sync check failed: ${error.message}`);
-      throw error;
-    }
-  }
-
-  async enableHistoricalSync(): Promise<void> {
-    await this.updateSyncControl('return_historical', {
-      isEnabled: true,
-      isRunning: false,
-      status: 'idle',
+  async syncIncremental() {
+    const last = await this.syncControl.getLastCompletedAt(SYNC_NAME);
+    const fromReturnDate = last ?? new Date('2024-12-01');
+    return this.runSync('incremental', {
+      fromReturnDate: fromReturnDate.toISOString().slice(0, 10),
     });
-
-    this.logger.log('Historical return sync enabled');
   }
 
   async syncHistoricalReturns(): Promise<void> {
-    const syncName = 'return_historical';
+    await this.syncFull();
+  }
 
-    let currentItem = 0;
-    let processedCount = 0;
-    let totalReturns = 0;
-    let consecutiveEmptyPages = 0;
-    let consecutiveErrorPages = 0;
-    let lastValidTotal = 0;
-    let processedReturnIds = new Set<number>();
+  async enableHistoricalSync(): Promise<void> {}
 
+  private async runSync(
+    mode: 'full' | 'incremental',
+    extra: Record<string, any>,
+  ) {
+    if (await this.syncControl.isRunning(SYNC_NAME)) {
+      this.logger.warn(`Return sync already running, skipping`);
+      return { total: 0, processed: 0 };
+    }
+    await this.syncControl.markRunning(SYNC_NAME, mode, ['return']);
+    let processed = 0;
+    let total = 0;
     try {
-      await this.updateSyncControl(syncName, {
-        isRunning: true,
-        status: 'running',
-        startedAt: new Date(),
-        error: null,
-      });
-
-      this.logger.log('Starting historical return sync...');
-
-      const MAX_CONSECUTIVE_EMPTY_PAGES = 5;
-      const MAX_CONSECUTIVE_ERROR_PAGES = 3;
-      const RETRY_DELAY_MS = 2000;
-      const MAX_TOTAL_RETRIES = 10;
-
-      let totalRetries = 0;
-
-      while (true) {
-        const currentPage = Math.floor(currentItem / this.PAGE_SIZE) + 1;
-
-        if (totalReturns > 0) {
-          if (currentItem >= totalReturns) {
-            this.logger.log(
-              `Pagination complete. Processed: ${processedCount}/${totalReturns} returns`,
-            );
-            break;
-          }
-
-          const progressPercentage = (processedCount / totalReturns) * 100;
-          this.logger.log(
-            `Fetching page ${currentPage} (${currentItem}/${totalReturns} - ${progressPercentage.toFixed(1)}%)`,
-          );
-        } else {
-          this.logger.log(
-            `Fetching page ${currentPage} (currentItem: ${currentItem})`,
-          );
-        }
-
-        const dateEnd = new Date();
-        dateEnd.setDate(dateEnd.getDate() + 1);
-        const dateEndStr = dateEnd.toISOString().split('T')[0];
-
-        try {
-          const returnListResponse = await this.fetchReturnsWithRetry({
-            currentItem,
-            pageSize: this.PAGE_SIZE,
+      const { total: t, serverTimestamp } =
+        await this.pageFetcher.fetchAll<any>({
+          endpoint: '/returns',
+          baseParams: {
+            pageSize: 100,
+            includePayment: true,
             orderBy: 'id',
             orderDirection: 'DESC',
-            includePayment: true,
-            fromReturnDate: '2024-12-1',
-            toReturnDate: dateEndStr,
-          });
-
-          if (!returnListResponse) {
-            this.logger.warn('Received null response from KiotViet API');
-            consecutiveEmptyPages++;
-
-            if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
-              this.logger.log(
-                `API returned null ${consecutiveEmptyPages} times - ending pagination`,
-              );
-              break;
-            }
-
-            await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
-            currentItem += this.PAGE_SIZE;
-            continue;
-          }
-
-          consecutiveEmptyPages = 0;
-          consecutiveErrorPages = 0;
-
-          const { total, data: returns } = returnListResponse;
-
-          if (total !== undefined && total !== null) {
-            if (totalReturns === 0) {
-              this.logger.log(`Total returns detected: ${totalReturns}`);
-
-              totalReturns = total;
-            } else if (total! == totalReturns) {
-              this.logger.warn(
-                `Total count updated: ${totalReturns} → ${total}. Using latest`,
-              );
-              totalReturns = total;
-            }
-            lastValidTotal = total;
-          }
-
-          if (!returns || returns.length === 0) {
-            this.logger.warn(`Empty page received at position ${currentItem}`);
-            consecutiveEmptyPages++;
-
-            if (totalReturns > 0 && processedCount >= totalReturns) {
-              this.logger.log('Reached end of data (empty page past total)');
-              break;
-            }
-
-            if (consecutiveEmptyPages >= MAX_CONSECUTIVE_EMPTY_PAGES) {
-              this.logger.log(
-                `🔚 Stopping after ${consecutiveEmptyPages} consecutive empty pages`,
-              );
-              break;
-            }
-
-            currentItem += this.PAGE_SIZE;
-            continue;
-          }
-
-          const existingReturnIds = new Set(
-            (
-              await this.prismaService.return.findMany({
-                select: { kiotVietId: true },
-              })
-            ).map((c) => Number(c.kiotVietId)),
-          );
-
-          const newReturns = returns.filter((returnData) => {
-            if (
-              !existingReturnIds.has(returnData.id) &&
-              !processedReturnIds.has(returnData.id)
-            ) {
-              processedReturnIds.add(returnData.id);
-              return true;
-            }
-            return false;
-          });
-
-          const existingReturns = returns.filter((returnData) => {
-            if (
-              existingReturnIds.has(returnData.id) &&
-              !processedReturnIds.has(returnData.id)
-            ) {
-              processedReturnIds.add(returnData.id);
-              return true;
-            }
-            return false;
-          });
-
-          if (newReturns.length === 0 && existingReturns.length === 0) {
-            this.logger.log(
-              `Skipping page ${currentPage} - all returns already processed in this run`,
-            );
-            currentItem += this.PAGE_SIZE;
-            continue;
-          }
-
-          let pageProcessedCount = 0;
-          let allSavedReturns: any[] = [];
-
-          if (newReturns.length > 0) {
-            this.logger.log(
-              `Processing ${newReturns} NEW returns from page ${currentPage}...`,
-            );
-
-            const savedReturns = await this.saveReturnsToDatabase(newReturns);
-            pageProcessedCount += savedReturns.length;
-            allSavedReturns.push(...savedReturns);
-          }
-
-          if (existingReturns.length > 0) {
-            this.logger.log(
-              `Processing ${newReturns} EXISTING returns from page ${currentPage}...`,
-            );
-
-            const savedReturns =
-              await this.saveReturnsToDatabase(existingReturns);
-            pageProcessedCount += savedReturns.length;
-            allSavedReturns.push(...savedReturns);
-          }
-
-          processedCount += pageProcessedCount;
-          currentItem += this.PAGE_SIZE;
-
-          if (totalReturns > 0) {
-            const completionPercentage = (processedCount / totalReturns) * 100;
-            this.logger.log(
-              `Progress: ${processedCount}/${totalReturns} (${completionPercentage.toFixed(1)}%)`,
-            );
-
-            if (processedCount >= totalReturns) {
-              this.logger.log('All returns processed successfully');
-              break;
-            }
-          }
-
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        } catch (error) {
-          consecutiveErrorPages++;
-          totalRetries++;
-
-          this.logger.error(
-            `API error on page ${currentPage}: ${error.message}`,
-          );
-
-          if (consecutiveErrorPages >= MAX_CONSECUTIVE_ERROR_PAGES) {
-            throw new Error(
-              `Multiple consecutive API failures: ${error.message}`,
-            );
-          }
-
-          if (totalRetries >= MAX_TOTAL_RETRIES) {
-            throw new Error(`Maximum total retries exceeded: ${error.message}`);
-          }
-
-          const delay = RETRY_DELAY_MS * Math.pow(2, consecutiveErrorPages - 1);
-          this.logger.log(`Retrying after ${delay}ms delay...`);
-          await new Promise((resolve) => setTimeout(resolve, delay));
-        }
-
-        await this.updateSyncControl(syncName, {
-          isRunning: false,
-          isEnabled: false,
-          status: 'completed',
-          completedAt: new Date(),
-          lastRunAt: new Date(),
-          progress: { processedCount, expectedTotal: totalReturns },
+            ...extra,
+          },
+          label: `return-${mode}`,
+          onPage: async (pageData) => {
+            processed += await this.processPage(pageData);
+            this.logger.log(`return-${mode}: processed ${processed} so far`);
+          },
         });
-
-        const completionRate =
-          totalReturns > 0 ? (processedCount / totalReturns) * 100 : 100;
-
-        this.logger.log(
-          `Historical return sync completed: ${processedCount}/${totalReturns} (${completionRate.toFixed(1)}% completion rate)`,
-        );
-      }
+      total = t;
+      await this.syncControl.markCompleted(
+        SYNC_NAME,
+        { processedCount: processed, expectedTotal: total },
+        serverTimestamp,
+      );
+      return { total, processed };
     } catch (error) {
-      this.logger.error(`Historical return sync failed: ${error.message}`);
-
-      await this.updateSyncControl(syncName, {
-        isRunning: false,
-        status: 'failed',
-        error: error.message,
-        progress: { processedCount, expectedTotal: totalReturns },
+      this.logger.error(`return-${mode} failed: ${error.message}`);
+      await this.syncControl.markFailed(SYNC_NAME, error.message, {
+        processedCount: processed,
+        expectedTotal: total,
       });
-
       throw error;
     }
   }
 
-  async fetchReturnsWithRetry(
-    params: {
-      pageSize?: number;
-      currentItem?: number;
-      includePayment?: boolean;
-      fromReturnDate?: string;
-      toReturnDate?: string;
-      // lastModifiedFrom?: string;
-      orderBy?: string;
-      orderDirection?: string;
-    },
-    maxRetries: number = 5,
-  ): Promise<any> {
-    let lastError: Error | undefined;
+  private async processPage(items: any[]): Promise<number> {
+    if (!items.length) return 0;
+    const now = new Date();
 
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        return await this.fetchReturnsList(params);
-      } catch (error) {
-        lastError = error as Error;
-        this.logger.warn(
-          `API attempt ${attempt}/${maxRetries} failed: ${error.message}`,
-        );
-
-        if (attempt < maxRetries) {
-          const delay = 2000 * attempt;
-          this.logger.log(`Retrying after ${delay / 1000}s delay...`);
-          await new Promise((resolve) => setTimeout(resolve, delay));
-        }
-      }
-    }
-
-    throw lastError;
-  }
-
-  private async fetchReturnsList(params: {
-    pageSize?: number;
-    currentItem?: number;
-    includePayment?: boolean;
-    fromReturnDate?: string;
-    toReturnDate?: string;
-    // lastModifiedFrom?: string;
-    orderBy?: string;
-    orderDirection?: string;
-  }): Promise<any> {
-    const headers = await this.authService.getRequestHeaders();
-
-    const queryParams = new URLSearchParams({
-      pageSize: (params.pageSize || this.PAGE_SIZE).toString(),
-      currentItem: (params.currentItem || 0).toString(),
-      includePayment: (params.includePayment || true).toString(),
-    });
-
-    if (params.fromReturnDate) {
-      queryParams.append('fromReturnDate', params.fromReturnDate);
-    }
-
-    if (params.toReturnDate) {
-      queryParams.append('toReturnDate', params.toReturnDate);
-    }
-
-    // if (params.lastModifiedFrom) {
-    //   queryParams.append('lastModifiedFrom', params.lastModifiedFrom);
-    // }
-
-    if (params.orderBy) {
-      queryParams.append('orderBy', params.orderBy);
-      queryParams.append('orderDirection', params.orderDirection || 'ASC');
-    }
-
-    const response = await firstValueFrom(
-      this.httpService.get(`${this.baseUrl}/returns?${queryParams}`, {
-        headers,
-        timeout: 45000,
-      }),
+    const invoiceIds = this.uniqueNum(items.map((r) => r.invoiceId));
+    const branchIds = this.uniqueNum(items.map((r) => r.branchId));
+    const customerIds = this.uniqueNum(items.map((r) => r.customerId));
+    const productIds = this.uniqueNum(
+      items.flatMap((r) => (r.returnDetails ?? []).map((d) => d.productId)),
+    );
+    const bankAccountIds = this.uniqueNum(
+      items.flatMap((r) =>
+        (r.payments ?? []).filter((p) => p.accountId).map((p) => p.accountId),
+      ),
     );
 
-    return response.data;
-  }
+    const [invoiceMap, branchMap, customerMap, productMap, bankAccountMap] =
+      await Promise.all([
+        this.relationMap.buildIdMap('invoice', invoiceIds),
+        this.relationMap.buildIdMap('branch', branchIds),
+        this.relationMap.buildIdMap('customer', customerIds),
+        this.relationMap.buildIdMap('product', productIds),
+        this.relationMap.buildIdMap('bankAccount', bankAccountIds),
+      ]);
 
-  private async saveReturnsToDatabase(returns: any[]): Promise<any[]> {
-    this.logger.log(`Saving ${returns.length} returns to database...`);
+    const rows = items.map((r) => ({
+      kiotVietId: r.id,
+      code: r.code,
+      invoiceId: r.invoiceId
+        ? (invoiceMap.get(Number(r.invoiceId)) ?? null)
+        : null,
+      returnDate: r.returnDate ? new Date(r.returnDate) : now,
+      branchId: r.branchId ? (branchMap.get(Number(r.branchId)) ?? null) : null,
+      receivedById: r.receivedById ? BigInt(r.receivedById) : null,
+      customerId: r.customerId
+        ? (customerMap.get(Number(r.customerId)) ?? null)
+        : null,
+      returnTotal: r.returnTotal ?? 0,
+      totalPayment: r.totalPayment ?? 0,
+      status: r.status ?? 0,
+      createdDate: r.createdDate ? new Date(r.createdDate) : now,
+      modifiedDate: r.modifiedDate ? new Date(r.modifiedDate) : now,
+      lastSyncedAt: now,
+      branchName: r.branchName || null,
+      customerCode: r.customerCode || null,
+      customerName: r.customerName || null,
+      soldByName: r.soldByName || '',
+    }));
 
-    const savedReturns: any[] = [];
+    await this.bulkUpsert.bulkUpsert({
+      table: '"Return"',
+      columns: RETURN_COLUMNS,
+      rows,
+      conflictTarget: '"kiotVietId"',
+      updateColumns: RETURN_UPDATE,
+    });
 
-    for (const returnData of returns) {
-      try {
-        const invoice = returnData.invoiceId
-          ? await this.prismaService.invoice.findFirst({
-              where: { kiotVietId: BigInt(returnData.invoiceId) },
-              select: { id: true, code: true },
-            })
-          : null;
+    const returnIdMap = await this.relationMap.buildIdMap(
+      'return',
+      this.uniqueNum(items.map((r) => r.id)),
+    );
 
-        const branch = await this.prismaService.branch.findFirst({
-          where: { kiotVietId: returnData.branchId },
-          select: { id: true, name: true },
+    const detailRows: any[] = [];
+    const paymentRows: any[] = [];
+    /** Detail lines kept with a null productId because the product is absent locally. */
+    let unresolvedProducts = 0;
+    for (const r of items) {
+      const returnDbId = returnIdMap.get(Number(r.id));
+      if (!returnDbId) continue;
+      (r.returnDetails ?? []).forEach((d: any, idx: number) => {
+        // `productId` is nullable now: keep the returned line even when the product
+        // row is missing locally, instead of dropping it via the FK.
+        const product = productMap.get(Number(d.productId)) ?? null;
+        if (!product) unresolvedProducts++;
+        const ln = d.lineNumber ?? idx + 1;
+        detailRows.push({
+          returnId: returnDbId,
+          productId: product,
+          productKiotVietId: d.productId ? BigInt(d.productId) : null,
+          quantity: d.quantity ?? 0,
+          price: d.price ?? 0,
+          note: d.note || null,
+          usePoint: d.usePoint || false,
+          subTotal: d.subTotal ?? 0,
+          lineNumber: ln,
+          productCode: d.productCode || '',
+          productName: d.productName || '',
         });
-
-        const customer = returnData.customerId
-          ? await this.prismaService.customer.findFirst({
-              where: { kiotVietId: BigInt(returnData.customerId) },
-              select: { id: true, name: true, code: true },
-            })
-          : null;
-
-        const returnRecord = await this.prismaService.return.upsert({
-          where: { kiotVietId: BigInt(returnData.id) },
-          update: {
-            code: returnData.code,
-            invoiceId: returnData.invoiceId || null,
-            returnDate: new Date(returnData.returnDate),
-            branchId: branch?.id,
-            branchName: branch?.name,
-            receivedById: returnData.receivedById
-              ? BigInt(returnData.receivedById)
-              : null,
-            soldByName: returnData.soldByName,
-            customerId: customer?.id || null,
-            customerCode: customer?.code,
-            customerName: customer?.name,
-            returnTotal: new Prisma.Decimal(returnData.returnTotal),
-            totalPayment: new Prisma.Decimal(returnData.totalPayment),
-            status: returnData.status,
-            createdDate: returnData.createdDate
-              ? new Date(returnData.createdDate)
-              : new Date(),
-            modifiedDate: returnData.modifiedDate
-              ? new Date(returnData.modifiedDate)
-              : new Date(),
-            lastSyncedAt: new Date(),
-          },
-          create: {
-            kiotVietId: BigInt(returnData.id),
-            code: returnData.code,
-            invoiceId: returnData.invoiceId || null,
-            returnDate: new Date(returnData.returnDate),
-            branchId: branch?.id,
-            branchName: branch?.name,
-            receivedById: returnData.receivedById
-              ? BigInt(returnData.receivedById)
-              : null,
-            soldByName: returnData.soldByName,
-            customerId: customer?.id || null,
-            customerCode: customer?.code,
-            customerName: customer?.name,
-            returnTotal: new Prisma.Decimal(returnData.returnTotal),
-            totalPayment: new Prisma.Decimal(returnData.totalPayment),
-            status: returnData.status,
-            createdDate: returnData.createdDate
-              ? new Date(returnData.createdDate)
-              : new Date(),
-            modifiedDate: returnData.modifiedDate
-              ? new Date(returnData.modifiedDate)
-              : new Date(),
-            lastSyncedAt: new Date(),
-          },
+      });
+      for (const p of r.payments ?? []) {
+        paymentRows.push({
+          kiotVietId: p.id ? BigInt(p.id) : null,
+          code: p.code || null,
+          amount: p.amount ?? 0,
+          method: p.method || 'Cash',
+          status: p.status ?? null,
+          transDate: p.transDate ? new Date(p.transDate) : now,
+          accountId: p.accountId
+            ? (bankAccountMap.get(Number(p.accountId)) ?? null)
+            : null,
+          returnId: returnDbId,
+          description: p.description || null,
         });
-
-        if (returnData.returnDetails && returnData.returnDetails.length > 0) {
-          for (let i = 0; i < returnData.returnDetails.length; i++) {
-            const detail = returnData.returnDetails[i];
-            const product = await this.prismaService.product.findFirst({
-              where: { kiotVietId: BigInt(detail.productId) },
-              select: {
-                id: true,
-                code: true,
-                name: true,
-              },
-            });
-
-            if (product) {
-              await this.prismaService.returnDetail.upsert({
-                where: {
-                  returnId_lineNumber: {
-                    returnId: returnRecord.id,
-                    lineNumber: i + 1,
-                  },
-                },
-                update: {
-                  lineNumber: i + 1,
-                  productId: product.id,
-                  productCode: product.code,
-                  productName: product.name,
-                  quantity: detail.quantity,
-                  price: new Prisma.Decimal(detail.price),
-                  note: detail.note || null,
-                  usePoint: detail.usePoint || false,
-                  subTotal: new Prisma.Decimal(detail.subTotal),
-                },
-                create: {
-                  returnId: returnRecord.id,
-                  lineNumber: i + 1,
-                  productId: product.id,
-                  productCode: product.code,
-                  productName: product.name,
-                  quantity: detail.quantity,
-                  price: new Prisma.Decimal(detail.price),
-                  note: detail.note || null,
-                  usePoint: detail.usePoint || false,
-                  subTotal: new Prisma.Decimal(detail.subTotal),
-                },
-              });
-            }
-          }
-        }
-
-        if (returnData.payments && returnData.payments.length > 0) {
-          for (const payment of returnData.payments) {
-            const bankAccount = payment.accountId
-              ? await this.prismaService.bankAccount.findFirst({
-                  where: { kiotVietId: payment.accountId },
-                  select: { id: true },
-                })
-              : null;
-
-            await this.prismaService.payment.upsert({
-              where: {
-                kiotVietId: payment.id ? BigInt(payment.id) : BigInt(0),
-              },
-              update: {
-                code: payment.code,
-                amount: new Prisma.Decimal(payment.amount),
-                method: payment.method,
-                status: payment.status,
-                transDate: new Date(payment.transDate),
-                accountId: bankAccount?.id ?? null,
-                description: payment.description,
-                returnId: returnRecord.id,
-              },
-              create: {
-                kiotVietId: payment.id ? BigInt(payment.id) : null,
-                code: payment.code,
-                amount: new Prisma.Decimal(payment.amount),
-                method: payment.method,
-                status: payment.status,
-                transDate: new Date(payment.transDate),
-                accountId: bankAccount?.id ?? null,
-                description: payment.description,
-                returnId: returnRecord.id,
-              },
-            });
-          }
-        }
-
-        savedReturns.push(returnRecord);
-      } catch (error) {
-        this.logger.error(
-          `❌ Failed to save return ${returnData.code}: ${error.message}`,
-        );
       }
     }
 
-    this.logger.log(`Saved ${savedReturns.length} returns to database`);
-    return savedReturns;
+    if (unresolvedProducts > 0) {
+      this.logger.warn(
+        `${unresolvedProducts}/${detailRows.length} return line(s) reference a product ` +
+          `missing from the Product table. Kept with productId=null (was previously ` +
+          `dropped). Re-run after a product sync to back-fill the link.`,
+      );
+    }
+
+    await Promise.all([
+      this.bulkUpsert.bulkUpsert({
+        table: '"ReturnDetail"',
+        columns: RD_COLUMNS,
+        rows: detailRows,
+        conflictTarget: '("returnId", "lineNumber")',
+        updateColumns: RD_UPDATE,
+      }),
+      this.bulkUpsert.bulkUpsert({
+        table: '"Payment"',
+        columns: PAYMENT_COLUMNS,
+        rows: paymentRows,
+        conflictTarget: '"kiotVietId"',
+        updateColumns: PAYMENT_UPDATE,
+      }),
+    ]);
+
+    return items.length;
   }
 
-  private async updateSyncControl(name: string, data: any): Promise<void> {
-    try {
-      await this.prismaService.syncControl.upsert({
-        where: { name },
-        create: {
-          name,
-          entities: ['return'],
-          syncMode: 'historical',
-          isRunning: false,
-          isEnabled: true,
-          status: 'idle',
-          ...data,
-        },
-        update: {
-          ...data,
-          lastRunAt:
-            data.status === 'completed' || data.status === 'failed'
-              ? new Date()
-              : undefined,
-        },
-      });
-    } catch (error) {
-      this.logger.error(
-        `Failed to update sync control '${name}': ${error.message}`,
-      );
-      throw error;
-    }
+  private uniqueNum(arr: any[]): number[] {
+    return Array.from(
+      new Set(arr.filter((v) => v !== null && v !== undefined).map(Number)),
+    );
   }
 }
