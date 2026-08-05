@@ -44,6 +44,11 @@ interface SyncResult {
   skipped: number;
 }
 
+interface CustomerLarkIndexes {
+  byKiotVietId: Map<string, string>;
+  byCode: Map<string, string>;
+}
+
 @Injectable()
 export class LarkCustomerSyncService {
   private readonly logger = new Logger(LarkCustomerSyncService.name);
@@ -114,7 +119,9 @@ export class LarkCustomerSyncService {
     this.logger.log(
       `Webhook Customer ${customer.id} (${customer.code}) syncing to Lark`,
     );
-    await this.upsertCustomer(customer);
+    const indexes = await this.loadLarkIndexes();
+    const existingRecordId = this.resolveLarkRecordId(customer, indexes);
+    await this.upsertCustomer(customer, existingRecordId);
     this.logger.log(
       `Webhook Customer ${customer.id} (${customer.code}) synced to Lark`,
     );
@@ -169,29 +176,46 @@ export class LarkCustomerSyncService {
   private async syncPendingInternal(limit: number): Promise<SyncResult> {
     const result: SyncResult = { processed: 0, synced: 0, failed: 0, deleted: 0, skipped: 0 };
     const customers = await this.pendingCustomers(limit);
-    const existingIds = await this.lark.listRecordIdsByField(
-      this.baseToken,
-      this.tableId,
-      this.kiotVietIdFieldName,
-    );
+    const indexes = await this.loadLarkIndexes();
     this.logger.log(
       `Customer Lark sync started: ${customers.length} record(s) selected; ` +
-        `${existingIds.size} Lark record(s) indexed`,
+        `${indexes.byKiotVietId.size} Lark ID(s), ${indexes.byCode.size} customer code(s) indexed`,
     );
 
     const liveCustomers = customers.filter((customer) => !customer.deletedAt);
     const deletedCustomers = customers.filter((customer) => customer.deletedAt);
+    // The fresh Lark index is authoritative. larkRecordId is only a cache and
+    // may point to a record that was manually removed from Base.
     const updateCustomers = liveCustomers.filter((customer) =>
-      Boolean(customer.larkRecordId ?? existingIds.get(String(customer.kiotVietId))),
+      Boolean(this.resolveLarkRecordId(customer, indexes)),
     );
     const createCustomers = liveCustomers.filter(
-      (customer) =>
-        !customer.larkRecordId && !existingIds.has(String(customer.kiotVietId)),
+      (customer) => !this.resolveLarkRecordId(customer, indexes),
     );
 
-    await this.syncUpdates(updateCustomers, existingIds, result);
+    const codeFallbackCount = updateCustomers.filter(
+      (customer) =>
+        !indexes.byKiotVietId.has(String(customer.kiotVietId)) &&
+        indexes.byCode.has(customer.code.trim()),
+    ).length;
+    if (codeFallbackCount > 0) {
+      this.logger.log(
+        `${codeFallbackCount} Customer record(s) matched existing Lark data by Mã Khách Hàng`,
+      );
+    }
+
+    const staleCacheCount = createCustomers.filter(
+      (customer) => customer.larkRecordId,
+    ).length;
+    if (staleCacheCount > 0) {
+      this.logger.warn(
+        `${staleCacheCount} Customer record(s) have stale larkRecordId caches; recreating them`,
+      );
+    }
+
+    await this.syncUpdates(updateCustomers, indexes, result);
     await this.syncCreates(createCustomers, result);
-    await this.syncDeletes(deletedCustomers, result);
+    await this.syncDeletes(deletedCustomers, indexes, result);
 
     this.logger.log(
       `Customer Lark sync finished: ${result.synced} synced, ${result.deleted} deleted, ${result.failed} failed`,
@@ -259,13 +283,12 @@ export class LarkCustomerSyncService {
 
   private async syncUpdates(
     customers: Customer[],
-    existingIds: Map<string, string>,
+    indexes: CustomerLarkIndexes,
     result: SyncResult,
   ): Promise<void> {
     for (const batch of this.chunks(customers, LARK_BATCH_SIZE)) {
       const records = batch.map((customer) => ({
-        record_id:
-          customer.larkRecordId ?? existingIds.get(String(customer.kiotVietId))!,
+        record_id: this.resolveLarkRecordId(customer, indexes)!,
         fields: this.fields(customer),
       }));
       try {
@@ -273,8 +296,7 @@ export class LarkCustomerSyncService {
         await this.markSynced(
           batch.map((customer) => ({
             id: customer.id,
-            recordId:
-              customer.larkRecordId ?? existingIds.get(String(customer.kiotVietId))!,
+            recordId: this.resolveLarkRecordId(customer, indexes)!,
           })),
         );
         result.processed += batch.length;
@@ -283,7 +305,11 @@ export class LarkCustomerSyncService {
           `Lark batch update: ${batch.length} Customer record(s) synced (${result.processed} processed)`,
         );
       } catch (error: any) {
-        await this.failBatch(batch, error, result, 'update');
+        if (this.lark.isNotFound(error)) {
+          await this.recoverMissingUpdateRecords(batch, result);
+        } else {
+          await this.failBatch(batch, error, result, 'update');
+        }
       }
     }
   }
@@ -315,13 +341,20 @@ export class LarkCustomerSyncService {
     }
   }
 
-  private async syncDeletes(customers: Customer[], result: SyncResult): Promise<void> {
+  private async syncDeletes(
+    customers: Customer[],
+    indexes: CustomerLarkIndexes,
+    result: SyncResult,
+  ): Promise<void> {
     for (const batch of this.chunks(customers, LARK_BATCH_SIZE)) {
       try {
+        const recordIds = batch
+          .map((customer) => this.resolveLarkRecordId(customer, indexes))
+          .filter((recordId): recordId is string => Boolean(recordId));
         await this.lark.batchRemove(
           this.baseToken,
           this.tableId,
-          batch.map((customer) => customer.larkRecordId!).filter(Boolean),
+          recordIds,
         );
         await this.prisma.customer.updateMany({
           where: { id: { in: batch.map((customer) => customer.id) } },
@@ -339,6 +372,59 @@ export class LarkCustomerSyncService {
         );
       } catch (error: any) {
         await this.failBatch(batch, error, result, 'delete');
+      }
+    }
+  }
+
+  /**
+   * A record can disappear after the index was loaded. Refresh once, update
+   * records that still exist, and recreate the missing subset.
+   */
+  private async recoverMissingUpdateRecords(
+    customers: Customer[],
+    result: SyncResult,
+  ): Promise<void> {
+    this.logger.warn(
+      `Lark record disappeared during batch update; refreshing index for ${customers.length} Customer record(s)`,
+    );
+    const refreshedIndexes = await this.loadLarkIndexes();
+    for (const customer of customers) {
+      try {
+        let recordId = this.resolveLarkRecordId(customer, refreshedIndexes);
+        if (recordId) {
+          try {
+            await this.lark.update(
+              this.baseToken,
+              this.tableId,
+              recordId,
+              this.fields(customer),
+            );
+          } catch (error) {
+            if (!this.lark.isNotFound(error)) throw error;
+            recordId = null;
+          }
+        }
+
+        if (!recordId) {
+          recordId = await this.lark.create(
+            this.baseToken,
+            this.tableId,
+            this.fields(customer),
+          );
+        }
+        if (!recordId) {
+          throw new Error(
+            `Lark did not return record id for Customer ${customer.id}`,
+          );
+        }
+
+        await this.markSynced([{ id: customer.id, recordId }]);
+        result.processed++;
+        result.synced++;
+      } catch (error: any) {
+        result.processed++;
+        result.failed++;
+        await this.markFailed(customer.id, error);
       }
     }
   }
@@ -383,11 +469,42 @@ export class LarkCustomerSyncService {
     return chunks;
   }
 
-  private async upsertCustomer(customer: Customer): Promise<void> {
-    const fields = this.fields(customer);
-    let recordId = customer.larkRecordId;
+  private async loadLarkIndexes(): Promise<CustomerLarkIndexes> {
+    const indexes = await this.lark.listRecordIdsByFields(
+      this.baseToken,
+      this.tableId,
+      [FIELD.kiotVietId, FIELD.code],
+    );
+    return {
+      byKiotVietId:
+        indexes.get(FIELD.kiotVietId) ?? new Map<string, string>(),
+      byCode: indexes.get(FIELD.code) ?? new Map<string, string>(),
+    };
+  }
 
-    if (!recordId) {
+  private resolveLarkRecordId(
+    customer: Customer,
+    indexes: CustomerLarkIndexes,
+  ): string | null {
+    return (
+      indexes.byKiotVietId.get(String(customer.kiotVietId)) ??
+      indexes.byCode.get(customer.code.trim()) ??
+      null
+    );
+  }
+
+  private async upsertCustomer(
+    customer: Customer,
+    indexedRecordId?: string | null,
+  ): Promise<void> {
+    const fields = this.fields(customer);
+    const indexWasSupplied = indexedRecordId !== undefined;
+    // A freshly indexed match by kiotVietId or customer code is authoritative.
+    // Only use the DB cache when no index was supplied (legacy/manual caller).
+    let recordId =
+      indexedRecordId === undefined ? customer.larkRecordId : indexedRecordId;
+
+    if (!recordId && !indexWasSupplied) {
       recordId = await this.lark.searchByKiotVietId(
         this.baseToken,
         this.tableId,
@@ -401,11 +518,36 @@ export class LarkCustomerSyncService {
         await this.lark.update(this.baseToken, this.tableId, recordId, fields);
       } catch (error) {
         if (!this.lark.isNotFound(error)) throw error;
-        recordId = null;
+        this.logger.warn(
+          `Lark record ${recordId} for Customer ${customer.id} disappeared; resolving by ID/code before create`,
+        );
+        const refreshedIndexes = await this.loadLarkIndexes();
+        recordId = this.resolveLarkRecordId(customer, refreshedIndexes);
+        if (recordId) {
+          await this.lark.update(
+            this.baseToken,
+            this.tableId,
+            recordId,
+            fields,
+          );
+        }
       }
     }
 
+    if (recordId && recordId !== customer.larkRecordId) {
+      this.logger.log(
+        `Customer ${customer.id} (${customer.code}) linked to existing Lark record ${recordId}`,
+      );
+    }
+
     if (!recordId) {
+      // Clear the stale cache before create so a retry cannot reuse it.
+      if (customer.larkRecordId) {
+        await this.prisma.customer.update({
+          where: { id: customer.id },
+          data: { larkRecordId: null },
+        });
+      }
       recordId = await this.lark.create(this.baseToken, this.tableId, fields);
     }
     if (!recordId) {

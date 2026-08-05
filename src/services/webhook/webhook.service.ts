@@ -20,9 +20,9 @@ export class WebhookService {
     private readonly prismaService: PrismaService,
     private readonly authService: KiotVietAuthService,
     private readonly configService: ConfigService,
-     private readonly httpService: HttpService,
-     private readonly retailer: RetailerContext,
-     private readonly larkCustomerSync: LarkCustomerSyncService,
+    private readonly httpService: HttpService,
+    private readonly retailer: RetailerContext,
+    private readonly larkCustomerSync: LarkCustomerSyncService,
   ) {
     const raw = this.configService.get('KIOT_HTTP_TIMEOUT_MS');
     const parsed = Number(raw);
@@ -74,6 +74,29 @@ export class WebhookService {
       this.logger.error(`❌ Process invoice webhook failed: ${error.message}`);
       throw error;
     }
+  }
+
+  /** Refresh one order after another integration writes it in KiotViet. */
+  async refreshOrderByKiotVietId(orderId: number): Promise<any> {
+    const detail = await this.fetchOrderDetail(orderId);
+    return this.upsertOrder(this.orderSummary(detail), detail);
+  }
+
+  /** Refresh one invoice and its generated payment after an external receipt. */
+  async refreshInvoiceByKiotVietId(invoiceId: number): Promise<any> {
+    const detail = await this.fetchInvoiceDetail(invoiceId);
+    return this.upsertInvoice(this.invoiceSummary(detail), detail);
+  }
+
+  /** Refresh authoritative customer debt and immediately propagate it to Lark. */
+  async refreshCustomerByKiotVietId(customerId: number): Promise<any> {
+    const detail = await this.fetchCustomerDetail(customerId);
+    const customer = await this.upsertCustomer(
+      this.customerSummary(detail),
+      detail,
+    );
+    await this.larkCustomerSync.syncCustomerById(customer.id);
+    return customer;
   }
 
   async processCustomerWebhook(webhookData: any): Promise<string> {
@@ -966,29 +989,33 @@ export class WebhookService {
             customerData.IdentificationNumber ??
             null,
           comments: customerData.Comments ?? null,
-          debt: detailedCustomer?.debt
-            ? new Prisma.Decimal(detailedCustomer.debt)
-            : 0,
-          totalInvoiced: detailedCustomer?.totalInvoiced
-            ? new Prisma.Decimal(detailedCustomer.totalInvoiced)
-            : 0,
+          debt:
+            detailedCustomer?.debt != null
+              ? new Prisma.Decimal(detailedCustomer.debt)
+              : 0,
+          totalInvoiced:
+            detailedCustomer?.totalInvoiced != null
+              ? new Prisma.Decimal(detailedCustomer.totalInvoiced)
+              : 0,
           totalPoint: detailedCustomer?.totalPoint ?? null,
-          totalRevenue: detailedCustomer?.totalRevenue
-            ? new Prisma.Decimal(detailedCustomer.totalRevenue)
-            : 0,
+          totalRevenue:
+            detailedCustomer?.totalRevenue != null
+              ? new Prisma.Decimal(detailedCustomer.totalRevenue)
+              : 0,
           retailerId: this.retailer.resolve(
             customerData.RetailerId ?? detailedCustomer?.retailerId,
           ),
-          rewardPoint: detailedCustomer?.rewardPoint
-            ? BigInt(detailedCustomer.rewardPoint)
-            : 0,
+          rewardPoint:
+            detailedCustomer?.rewardPoint != null
+              ? BigInt(detailedCustomer.rewardPoint)
+              : 0,
           groups: detailedCustomer?.groups ?? null,
           branchId,
-           modifiedDate: customerData.ModifiedDate
-             ? new Date(customerData.ModifiedDate)
-             : new Date(),
-           lastSyncedAt: new Date(),
-           larkSyncStatus: this.larkStatusForContact(customerData.ContactNumber),
+          modifiedDate: customerData.ModifiedDate
+            ? new Date(customerData.ModifiedDate)
+            : new Date(),
+          lastSyncedAt: new Date(),
+          larkSyncStatus: this.larkStatusForContact(customerData.ContactNumber),
         },
         create: {
           kiotVietId,
@@ -1011,31 +1038,35 @@ export class WebhookService {
             customerData.IdentificationNumber ??
             null,
           comments: customerData.Comments ?? null,
-          debt: detailedCustomer?.debt
-            ? new Prisma.Decimal(detailedCustomer.debt)
-            : null,
+          debt:
+            detailedCustomer?.debt != null
+              ? new Prisma.Decimal(detailedCustomer.debt)
+              : null,
           retailerId: this.retailer.resolve(
             customerData.RetailerId ?? detailedCustomer?.retailerId,
           ),
-          totalInvoiced: detailedCustomer?.totalInvoiced
-            ? new Prisma.Decimal(detailedCustomer.totalInvoiced)
-            : null,
+          totalInvoiced:
+            detailedCustomer?.totalInvoiced != null
+              ? new Prisma.Decimal(detailedCustomer.totalInvoiced)
+              : null,
           totalPoint: detailedCustomer?.totalPoint ?? null,
-          totalRevenue: detailedCustomer?.totalRevenue
-            ? new Prisma.Decimal(detailedCustomer.totalRevenue)
-            : null,
-          rewardPoint: detailedCustomer?.rewardPoint
-            ? BigInt(detailedCustomer.rewardPoint)
-            : null,
+          totalRevenue:
+            detailedCustomer?.totalRevenue != null
+              ? new Prisma.Decimal(detailedCustomer.totalRevenue)
+              : null,
+          rewardPoint:
+            detailedCustomer?.rewardPoint != null
+              ? BigInt(detailedCustomer.rewardPoint)
+              : null,
           groups: detailedCustomer?.groups ?? null,
           branchId,
           createdDate: detailedCustomer?.createdDate
             ? new Date(detailedCustomer.createdDate)
             : new Date(),
-           modifiedDate: customerData.ModifiedDate
-             ? new Date(customerData.ModifiedDate)
-             : new Date(),
-           larkSyncStatus: this.larkStatusForContact(customerData.ContactNumber),
+          modifiedDate: customerData.ModifiedDate
+            ? new Date(customerData.ModifiedDate)
+            : new Date(),
+          larkSyncStatus: this.larkStatusForContact(customerData.ContactNumber),
         },
       });
 
@@ -1813,7 +1844,7 @@ export class WebhookService {
       return response.data;
     } catch (error) {
       this.logger.warn(`⚠️ Could not fetch customer detail: ${error.message}`);
-      return null;
+      throw error;
     }
   }
 
@@ -1839,7 +1870,7 @@ export class WebhookService {
       return response.data;
     } catch (error) {
       this.logger.warn(`⚠️ Could not fetch order detail: ${error.message}`);
-      return null;
+      throw error;
     }
   }
 
@@ -1865,8 +1896,81 @@ export class WebhookService {
       return response.data;
     } catch (error) {
       this.logger.warn(`⚠️ Could not fetch invoice detail: ${error.message}`);
-      return null;
+      throw error;
     }
+  }
+
+  private orderSummary(detail: any): any {
+    return {
+      Id: detail.id,
+      Code: detail.code,
+      PurchaseDate: detail.purchaseDate,
+      BranchId: detail.branchId,
+      SoldById: detail.soldById,
+      SoldByName: detail.soldByName,
+      CustomerId: detail.customerId,
+      CustomerCode: detail.customerCode,
+      CustomerName: detail.customerName,
+      Total: detail.total,
+      TotalPayment: detail.totalPayment,
+      Discount: detail.discount,
+      DiscountRatio: detail.discountRatio,
+      Status: detail.status,
+      StatusValue: detail.statusValue,
+      Description: detail.description,
+      SaleChannelId: detail.saleChannelId,
+      RetailerId: detail.retailerId,
+      CreatedDate: detail.createdDate,
+      ModifiedDate: detail.modifiedDate,
+    };
+  }
+
+  private invoiceSummary(detail: any): any {
+    return {
+      Id: detail.id,
+      Code: detail.code,
+      OrderId: detail.orderId,
+      PurchaseDate: detail.purchaseDate,
+      BranchId: detail.branchId,
+      SoldById: detail.soldById,
+      SoldByName: detail.soldByName,
+      CustomerId: detail.customerId,
+      CustomerCode: detail.customerCode,
+      CustomerName: detail.customerName,
+      Total: detail.total,
+      TotalPayment: detail.totalPayment,
+      Discount: detail.discount,
+      DiscountRatio: detail.discountRatio,
+      Status: detail.status,
+      StatusValue: detail.statusValue,
+      Description: detail.description,
+      SaleChannelId: detail.saleChannelId,
+      RetailerId: detail.retailerId,
+      CreatedDate: detail.createdDate,
+      ModifiedDate: detail.modifiedDate,
+    };
+  }
+
+  private customerSummary(detail: any): any {
+    return {
+      Id: detail.id,
+      Code: detail.code,
+      Name: detail.name,
+      Type: detail.type,
+      Gender: detail.gender,
+      BirthDate: detail.birthDate,
+      ContactNumber: detail.contactNumber,
+      Address: detail.address,
+      LocationName: detail.locationName,
+      WardName: detail.wardName,
+      Email: detail.email,
+      Organization: detail.organization,
+      TaxCode: detail.taxCode,
+      IdentificationNumber: detail.identificationNumber,
+      Comments: detail.comments,
+      RetailerId: detail.retailerId,
+      ModifiedDate: detail.modifiedDate,
+    };
   }
 
   private async fetchProductDetail(productId: number): Promise<any> {

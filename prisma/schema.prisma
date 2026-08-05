@@ -1711,3 +1711,45 @@ model WebhookEvent {
   @@index([receivedAt])
   @@index([notificationId])
 }
+
+/// SePay bank transactions. This single table is both the immutable webhook
+/// ledger and the small processing queue for matching KiotViet documents.
+model SePayTransaction {
+  id                 Int       @id @default(autoincrement())
+  sepayTransactionId String    @unique
+  gateway            String?
+  transactionDate    DateTime
+  accountNumber      String
+  subAccount         String?
+  code               String?
+  content            String
+  transferType       String
+  transferAmount     Decimal   @db.Decimal(15, 2)
+  accumulated        Decimal?  @db.Decimal(15, 2)
+  description        String?
+  referenceCode      String?
+  rawPayload         Json
+  documentType       String?
+  documentCode       String?
+  kiotDocumentId     BigInt?
+  kiotCustomerId     BigInt?
+  kiotBranchId       Int?
+  kiotAccountId      Int?
+  kiotPaymentId      BigInt?
+  kiotPaymentCode    String?
+  status             String    @default("RECEIVED")
+  attempts           Int       @default(0)
+  errorMessage       String?
+  availableAt        DateTime  @default(now())
+  receivedAt         DateTime  @default(now())
+  startedAt          DateTime?
+  writeStartedAt     DateTime?
+  processedAt        DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@index([status, availableAt])
+  @@index([documentCode])
+  @@index([transactionDate])
+  @@index([accountNumber])
+}

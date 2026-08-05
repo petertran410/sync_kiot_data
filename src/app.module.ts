@@ -13,6 +13,7 @@ import { WebhookController } from './controllers/webhook.controller';
 import { WebhookAdminController } from './controllers/webhook-admin.controller';
 import { HttpModule } from '@nestjs/axios';
 import { LarkModule } from './services/lark/lark.module';
+import { SePayModule } from './services/sepay/sepay.module';
 
 @Module({
   imports: [
@@ -66,6 +67,20 @@ import { LarkModule } from './services/lark/lark.module';
           .min(1)
           .max(100)
           .default(50),
+        // SePay inbound bank transaction webhook. Secret may be added after
+        // deployment; the endpoint fails closed until it is configured.
+        SEPAY_WEBHOOK_SECRET: Joi.string().allow('').default(''),
+        SEPAY_API_TOKEN: Joi.string().allow('').default(''),
+        SEPAY_API_BASE_URL: Joi.string()
+          .uri()
+          .default('https://my.sepay.vn/userapi'),
+        SEPAY_SYNC_FROM_DATE: Joi.string().default('2000-01-01 00:00:00'),
+        SEPAY_ACCOUNT_MAP: Joi.string().default('{}'),
+        SEPAY_PAYMENT_MODE: Joi.string()
+          .valid('dry-run', 'live')
+          .default('dry-run'),
+        SEPAY_WORKER_ENABLED: Joi.boolean().default(true),
+        SEPAY_WORKER_POLL_MS: Joi.number().integer().min(500).default(2000),
       }).unknown(true),
     }),
     // Drives the incremental sync + webhook drift cron jobs.
@@ -73,9 +88,10 @@ import { LarkModule } from './services/lark/lark.module';
     PrismaModule,
     KiotVietModule,
     SyncModule,
-     WebhookModule,
-     LarkModule,
-     HttpModule,
+    WebhookModule,
+    LarkModule,
+    HttpModule,
+    SePayModule,
   ],
   controllers: [
     AppController,

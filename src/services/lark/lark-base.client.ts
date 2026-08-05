@@ -70,7 +70,21 @@ export class LarkBaseClient {
     tableId: string,
     fieldName: string,
   ): Promise<Map<string, string>> {
-    const recordIds = new Map<string, string>();
+    const indexes = await this.listRecordIdsByFields(baseToken, tableId, [
+      fieldName,
+    ]);
+    return indexes.get(fieldName) ?? new Map<string, string>();
+  }
+
+  async listRecordIdsByFields(
+    baseToken: string,
+    tableId: string,
+    fieldNames: string[],
+  ): Promise<Map<string, Map<string, string>>> {
+    const indexes = new Map<string, Map<string, string>>(
+      fieldNames.map((fieldName) => [fieldName, new Map<string, string>()]),
+    );
+    const duplicates = new Map<string, number>();
     let pageToken: string | undefined;
 
     do {
@@ -83,15 +97,30 @@ export class LarkBaseClient {
       });
       this.assertSuccess(response, 'list records');
       for (const record of response.data?.items ?? []) {
-        const key = record.fields?.[fieldName];
-        if (record.record_id && key !== null && key !== undefined) {
-          recordIds.set(String(key), record.record_id);
+        if (!record.record_id) continue;
+        for (const fieldName of fieldNames) {
+          const key = record.fields?.[fieldName];
+          if (key === null || key === undefined || String(key).trim() === '') {
+            continue;
+          }
+          const index = indexes.get(fieldName)!;
+          const normalizedKey = String(key).trim();
+          if (index.has(normalizedKey)) {
+            duplicates.set(fieldName, (duplicates.get(fieldName) ?? 0) + 1);
+            continue;
+          }
+          index.set(normalizedKey, record.record_id);
         }
       }
       pageToken = response.data?.has_more ? response.data.page_token : undefined;
     } while (pageToken);
 
-    return recordIds;
+    for (const [fieldName, count] of duplicates) {
+      this.logger.warn(
+        `Lark field '${fieldName}' has ${count} duplicate value(s); using the first record for each value`,
+      );
+    }
+    return indexes;
   }
 
   async create(
@@ -154,7 +183,12 @@ export class LarkBaseClient {
   }
 
   isNotFound(error: any): boolean {
-    return error?.code === 1254034 || error?.response?.data?.code === 1254034;
+    const code = error?.code ?? error?.response?.data?.code;
+    return (
+      code === 1254034 ||
+      code === 1254043 ||
+      /record not found/i.test(error?.message ?? '')
+    );
   }
 
   private assertSuccess(response: any, operation: string): void {
