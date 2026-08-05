@@ -4,7 +4,7 @@
 /build
 
 # Deployment
-deploy-sync-kiot.sh
+deploy-app.sh
 Dockerfile
 docker-compose.yml
 
