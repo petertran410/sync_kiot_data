@@ -233,4 +233,19 @@ export class SePayWorkerService implements OnModuleInit, OnModuleDestroy {
       data: { ...data, status, processedAt: new Date() },
     });
   }
+
+  async retryFailed(id: number): Promise<boolean> {
+    const result = await this.prisma.sePayTransaction.updateMany({
+      where: { id, status: SEPAY_STATUS.Failed },
+      data: {
+        status: SEPAY_STATUS.Received,
+        errorMessage: null,
+        availableAt: new Date(),
+        startedAt: null,
+        writeStartedAt: null,
+        processedAt: null,
+      },
+    });
+    return result.count === 1;
+  }
 }

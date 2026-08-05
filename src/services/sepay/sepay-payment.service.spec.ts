@@ -62,4 +62,54 @@ describe('SePayPaymentService account resolution', () => {
       select: { kiotVietId: true },
     });
   });
+
+  it('builds an order update payload without partial customer or read-only delivery fields', () => {
+    const paymentService = service(jest.fn());
+    const payload = (paymentService as any).orderPaymentPayload(
+      {
+        purchaseDate: '2026-08-05T23:35:34.3830000',
+        branchId: 912403,
+        soldById: 1066304,
+        customerId: 38740205,
+        discount: 0,
+        orderDetails: [
+          {
+            productId: 45087392,
+            productCode: 'SP007485',
+            productName: 'test - 2',
+            quantity: 4,
+            price: 500,
+          },
+        ],
+        orderDelivery: {
+          serviceType: '0',
+          status: 1,
+          receiver: 'Test abc',
+          contactNumber: '0977861862',
+          address: 'Test dia chi',
+          locationId: 341,
+          locationName: 'Ho Chi Minh',
+          wardId: 9316,
+          wardName: 'Phuong Son Ky',
+          latestStatus: 0,
+        },
+      },
+      2000,
+      821595,
+    );
+
+    expect(payload).not.toHaveProperty('customer');
+    expect(payload.orderDelivery).not.toHaveProperty('status');
+    expect(payload.orderDelivery).not.toHaveProperty('serviceType');
+    expect(payload.orderDelivery).not.toHaveProperty('wardId');
+    expect(payload.orderDelivery).not.toHaveProperty('latestStatus');
+    expect(payload).toEqual(
+      expect.objectContaining({
+        method: 'Transfer',
+        totalPayment: 2000,
+        accountId: 821595,
+        makeInvoice: false,
+      }),
+    );
+  });
 });

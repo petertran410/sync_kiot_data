@@ -95,7 +95,30 @@ export class SePayPaymentService {
 
     const totalPayment = Number(order.totalPayment ?? 0) + amount;
     await beforeWrite?.();
-    await this.put(`/orders/${order.id}`, {
+    await this.put(
+      `/orders/${order.id}`,
+      this.orderPaymentPayload(order, totalPayment, accountId),
+    );
+    await afterWrite?.(common);
+    await this.webhookService.refreshOrderByKiotVietId(Number(order.id));
+    await this.refreshCustomer(order.customerId);
+
+    return { ...common, dryRun: false };
+  }
+
+  private orderPaymentPayload(
+    order: any,
+    totalPayment: number,
+    accountId: number,
+  ): Record<string, unknown> {
+    const delivery = order.orderDelivery;
+    const surcharges = (order.invoiceOrderSurcharges ?? [])
+      .filter((item: any) => item.surchargeId != null)
+      .map((item: any) => ({
+        id: item.surchargeId,
+        price: item.price,
+      }));
+    return {
       purchaseDate: order.purchaseDate,
       branchId: order.branchId,
       soldById: order.soldById ?? undefined,
@@ -118,18 +141,27 @@ export class SePayPaymentService {
         discountRatio: line.discountRatio ?? 0,
         note: line.note ?? '',
       })),
-      orderDelivery: order.orderDelivery ?? undefined,
-      customer: order.customerId ? { id: order.customerId } : undefined,
-      surchages: (order.invoiceOrderSurcharges ?? []).map((item: any) => ({
-        id: item.surchargeId,
-        price: item.price,
-      })),
-    });
-    await afterWrite?.(common);
-    await this.webhookService.refreshOrderByKiotVietId(Number(order.id));
-    await this.refreshCustomer(order.customerId);
-
-    return { ...common, dryRun: false };
+      orderDelivery: delivery
+        ? {
+            deliveryCode: delivery.deliveryCode ?? undefined,
+            type: delivery.type ?? undefined,
+            price: delivery.price ?? undefined,
+            receiver: delivery.receiver ?? undefined,
+            contactNumber: delivery.contactNumber ?? undefined,
+            address: delivery.address ?? undefined,
+            locationId: delivery.locationId ?? undefined,
+            locationName: delivery.locationName ?? undefined,
+            wardName: delivery.wardName ?? undefined,
+            weight: delivery.weight ?? undefined,
+            length: delivery.length ?? undefined,
+            width: delivery.width ?? undefined,
+            height: delivery.height ?? undefined,
+            partnerDeliveryId: delivery.partnerDeliveryId ?? undefined,
+            expectedDelivery: delivery.expectedDelivery ?? undefined,
+          }
+        : undefined,
+      surchages: surcharges.length > 0 ? surcharges : undefined,
+    };
   }
 
   private commonResult(
@@ -218,16 +250,47 @@ export class SePayPaymentService {
     body?: any,
   ): Promise<any> {
     const headers = await this.auth.getRequestHeaders();
-    const response = await firstValueFrom(
-      this.http.request({
-        method,
-        url: `${this.baseUrl}${path}`,
-        data: body,
-        headers: { ...headers, 'Content-Type': 'application/json' },
-        timeout: this.timeoutMs,
-      }),
-    );
-    return response.data;
+    try {
+      const response = await firstValueFrom(
+        this.http.request({
+          method,
+          url: `${this.baseUrl}${path}`,
+          data: body,
+          headers: { ...headers, 'Content-Type': 'application/json' },
+          timeout: this.timeoutMs,
+        }),
+      );
+      return response.data;
+    } catch (error: any) {
+      const status = error?.response?.status;
+      const responseData = error?.response?.data;
+      const details = this.errorDetails(responseData);
+      const message =
+        `KiotViet ${method.toUpperCase()} ${path} failed` +
+        (status ? ` (${status})` : '') +
+        (details ? `: ${details}` : `: ${error?.message ?? 'Unknown error'}`);
+      this.logger.error(message);
+      throw new Error(message);
+    }
+  }
+
+  private errorDetails(data: unknown): string {
+    if (data == null) return '';
+    if (typeof data === 'string') return data.slice(0, 1500);
+    const value = data as any;
+    const responseStatus = value.responseStatus ?? value.ResponseStatus;
+    const parts = [
+      responseStatus?.errorCode ?? responseStatus?.ErrorCode,
+      responseStatus?.message ?? responseStatus?.Message,
+      value.message ?? value.Message,
+      value.error ?? value.Error,
+    ].filter(Boolean);
+    if (parts.length > 0) return parts.join(' - ').slice(0, 1500);
+    try {
+      return JSON.stringify(data).slice(0, 1500);
+    } catch {
+      return String(data).slice(0, 1500);
+    }
   }
 
   private parseAccountMap(value: string): Record<string, string> {
