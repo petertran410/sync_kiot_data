@@ -10,11 +10,12 @@ import { createHmac, timingSafeEqual } from 'crypto';
 import { Request } from 'express';
 
 /**
- * Verifies the KiotViet webhook signature (`X-Hub-Signature`) using HMAC-SHA-256
- * over the raw request body, keyed by KIOT_WEBHOOK_SECRET.
+ * Verifies the KiotViet webhook signature (`X-Hub-Signature`) over the raw
+ * request body, keyed by KIOT_WEBHOOK_SECRET. The documented signature is
+ * HMAC-SHA256, while live deliveries may explicitly use `sha1=`.
  *
  * Per doc section 2.11.1: the secret is the Base64 string supplied when registering
- * the webhook; KiotViet computes `HMACSHA256(secret, body)` and sends the hex digest.
+ * the webhook; KiotViet computes an HMAC and sends its digest in the header.
  * The secret is used as the key *verbatim* (the Base64 text itself, not its decoded
  * bytes) because that is the string handed to KiotViet at registration time.
  *
@@ -84,16 +85,24 @@ export class WebhookSignatureGuard implements CanActivate {
       );
     }
 
-    // KiotViet may prefix with "sha256=".
-    const received = (
-      signature.startsWith('sha256=') ? signature.slice(7) : signature
-    ).trim();
+    // The v4.7.1 document says HMAC-SHA256, but live KiotViet deliveries use
+    // `sha1=<hex>` on some retailers. Select the HMAC algorithm from the
+    // explicit prefix instead of stripping only `sha256=` and rejecting valid
+    // deliveries. Unprefixed signatures retain the documented SHA-256 default.
+    const parsed = signature.trim().match(/^(sha1|sha256)=(.+)$/i);
+    const algorithm = parsed?.[1]?.toLowerCase() ?? 'sha256';
+    const received = (parsed?.[2] ?? signature).trim();
+
+    if (algorithm !== 'sha1' && algorithm !== 'sha256') {
+      this.logger.error(`Unsupported webhook signature algorithm: ${algorithm}`);
+      throw new UnauthorizedException('Unsupported webhook signature algorithm');
+    }
 
     // The doc shows `body.CreateHmacSignature(Secret)` but never states the digest
     // encoding. .NET helpers return Base64 about as often as hex, and guessing wrong
     // means every delivery 401s — which per doc 2.11.1 makes KiotViet permanently
     // disable the endpoint. So accept either encoding.
-    const mac = createHmac('sha256', this.secret).update(raw).digest();
+    const mac = createHmac(algorithm, this.secret).update(raw).digest();
     const candidates = [mac.toString('hex'), mac.toString('base64')];
 
     const ok = candidates.some((expected) =>
@@ -103,7 +112,8 @@ export class WebhookSignatureGuard implements CanActivate {
       this.logger.error(
         `Webhook signature mismatch — responding 401. NOTE: KiotViet stops delivering ` +
           `to an endpoint after a 4xx, so verify KIOT_WEBHOOK_SECRET matches the value ` +
-          `used at registration, then re-register. (received prefix: ${received.slice(0, 12)})`,
+          `used at registration, then re-register. ` +
+          `(algorithm: ${algorithm}, received prefix: ${received.slice(0, 12)})`,
       );
       throw new UnauthorizedException('Invalid webhook signature');
     }

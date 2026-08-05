@@ -102,19 +102,25 @@ export class WebhookDeleteHandler {
   private async markCustomers(kiotIds: number[]): Promise<string> {
     if (!kiotIds.length) return 'customer.delete: no ids in payload';
     const now = new Date();
-     const res = await this.prisma.customer.updateMany({
-       where: { kiotVietId: { in: kiotIds.map((n) => BigInt(n)) } },
-       data: {
-         deletedAt: now,
-         isCurrentForCode: false,
-         lastSyncedAt: now,
-         larkSyncStatus: 'PENDING',
-       },
-     });
-     void this.larkCustomerSync.syncPending().catch((error) =>
-       this.logger.error(`Customer delete Lark sync kick failed: ${error.message}`),
-     );
-    return `customer.delete: marked ${res.count}/${kiotIds.length}`;
+    const customers = await this.prisma.customer.findMany({
+      where: { kiotVietId: { in: kiotIds.map((n) => BigInt(n)) } },
+      select: { id: true },
+    });
+    const res = await this.prisma.customer.updateMany({
+      where: { id: { in: customers.map((customer) => customer.id) } },
+      data: {
+        deletedAt: now,
+        isCurrentForCode: false,
+        lastSyncedAt: now,
+        larkSyncStatus: 'PENDING',
+      },
+    });
+
+    for (const customer of customers) {
+      await this.larkCustomerSync.syncCustomerById(customer.id);
+    }
+
+    return `customer.delete: marked ${res.count}/${kiotIds.length}, removed ${customers.length} from Lark`;
   }
 
   private async markProducts(kiotIds: number[]): Promise<string> {

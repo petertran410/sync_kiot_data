@@ -81,6 +81,47 @@ export class LarkCustomerSyncService {
   }
 
   /**
+   * Sync exactly one Customer after a KiotViet webhook has committed it to DB.
+   * Throws on Lark failure so the durable webhook event is retried by its worker.
+   */
+  async syncCustomerById(
+    customerId: number,
+  ): Promise<'synced' | 'deleted' | 'skipped'> {
+    const customer = await this.prisma.customer.findUnique({
+      where: { id: customerId },
+    });
+    if (!customer) throw new Error(`Customer ${customerId} not found after upsert`);
+
+    if (customer.deletedAt) {
+      await this.deleteCustomer(customer);
+      this.logger.log(
+        `Webhook Customer ${customer.id} (${customer.code}) deleted from Lark`,
+      );
+      return 'deleted';
+    }
+
+    if (!customer.contactNumber?.trim()) {
+      await this.prisma.customer.update({
+        where: { id: customer.id },
+        data: { larkSyncStatus: LarkSyncStatus.SKIP },
+      });
+      this.logger.log(
+        `Webhook Customer ${customer.id} (${customer.code}) skipped for Lark: contactNumber is empty`,
+      );
+      return 'skipped';
+    }
+
+    this.logger.log(
+      `Webhook Customer ${customer.id} (${customer.code}) syncing to Lark`,
+    );
+    await this.upsertCustomer(customer);
+    this.logger.log(
+      `Webhook Customer ${customer.id} (${customer.code}) synced to Lark`,
+    );
+    return 'synced';
+  }
+
+  /**
    * Drains the entire eligible Customer queue in bounded API batches. Use this
    * for a first backfill or a manual catch-up; the minute cron uses syncPending.
    */

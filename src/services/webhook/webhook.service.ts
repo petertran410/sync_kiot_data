@@ -76,9 +76,12 @@ export class WebhookService {
     }
   }
 
-  async processCustomerWebhook(webhookData: any): Promise<void> {
+  async processCustomerWebhook(webhookData: any): Promise<string> {
     try {
       const notifications = webhookData?.Notifications || [];
+      let dbUpdated = 0;
+      let larkSynced = 0;
+      let larkSkipped = 0;
 
       for (const notification of notifications) {
         const data = notification?.Data || [];
@@ -92,17 +95,24 @@ export class WebhookService {
             detailedCustomer,
           );
 
-           if (savedCustomer) {
-             this.logger.log(`✅ Upserted customer ${savedCustomer.code}`);
-           }
-         }
-       }
-       // The outbound sync is bounded and non-blocking: the webhook queue remains
-       // durable even if Lark is temporarily unavailable.
-       void this.larkCustomerSync.syncPending().catch((error) =>
-         this.logger.error(`Customer Lark sync kick failed: ${error.message}`),
-       );
-     } catch (error) {
+          if (savedCustomer) {
+            dbUpdated++;
+            this.logger.log(`Upserted customer ${savedCustomer.code} in DB`);
+
+            // Await the exact Customer rather than kicking the general queue. If
+            // Lark is unavailable this throws, and WebhookWorkerService retries
+            // the durable event until both DB and Lark have converged.
+            const larkResult = await this.larkCustomerSync.syncCustomerById(
+              savedCustomer.id,
+            );
+            if (larkResult === 'synced') larkSynced++;
+            if (larkResult === 'skipped') larkSkipped++;
+          }
+        }
+      }
+
+      return `customers: ${dbUpdated} DB updated, ${larkSynced} Lark synced, ${larkSkipped} Lark skipped`;
+    } catch (error) {
       this.logger.error(`❌ Process customer webhook failed: ${error.message}`);
       throw error;
     }

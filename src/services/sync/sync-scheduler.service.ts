@@ -33,38 +33,45 @@ export class SyncSchedulerService {
 
   private readonly incrementalEnabled: boolean;
   private readonly reconcileEnabled: boolean;
-   private readonly fullSweepEnabled: boolean;
-   private readonly larkCustomerEnabled: boolean;
+  private readonly fullSweepEnabled: boolean;
+  private readonly targetedNightlyEnabled: boolean;
+  private readonly larkCustomerEnabled: boolean;
 
-   /** Guards against overlap when a run takes longer than the cron interval. */
+  /** Guards against overlap when a run takes longer than the cron interval. */
   private incrementalRunning = false;
+  private targetedNightlyRunning = false;
 
   constructor(
     private readonly orchestrator: SyncOrchestratorService,
     private readonly syncControl: SyncControlHelper,
-     private readonly registry: WebhookRegistryService,
-     private readonly larkCustomerSync: LarkCustomerSyncService,
-     config: ConfigService,
+    private readonly registry: WebhookRegistryService,
+    private readonly larkCustomerSync: LarkCustomerSyncService,
+    config: ConfigService,
   ) {
-    this.incrementalEnabled = this.bool(config.get('SYNC_CRON_ENABLED'), true);
+    this.incrementalEnabled = this.bool(config.get('SYNC_CRON_ENABLED'), false);
     this.reconcileEnabled = this.bool(
       config.get('WEBHOOK_RECONCILE_CRON_ENABLED'),
       true,
     );
-     this.fullSweepEnabled = this.bool(
-       config.get('SYNC_FULL_SWEEP_CRON_ENABLED'),
-       true,
-     );
-     this.larkCustomerEnabled = this.bool(
-       config.get('LARK_CUSTOMER_SYNC_CRON_ENABLED'),
-       false,
-     );
+    this.fullSweepEnabled = this.bool(
+      config.get('SYNC_FULL_SWEEP_CRON_ENABLED'),
+      false,
+    );
+    this.targetedNightlyEnabled = this.bool(
+      config.get('SYNC_NIGHTLY_TARGETED_CRON_ENABLED'),
+      true,
+    );
+    this.larkCustomerEnabled = this.bool(
+      config.get('LARK_CUSTOMER_SYNC_CRON_ENABLED'),
+      false,
+    );
 
     this.logger.log(
       `Scheduler: incremental sync ${this.incrementalEnabled ? 'ENABLED (hourly)' : 'disabled'}, ` +
-         `nightly full sweep ${this.fullSweepEnabled ? 'ENABLED (03:00)' : 'disabled'}, ` +
-         `Lark customer queue ${this.larkCustomerEnabled ? 'ENABLED (every minute)' : 'disabled'}, ` +
-         `webhook reconcile ${this.reconcileEnabled ? 'ENABLED (every 6h)' : 'disabled'}`,
+        `nightly full sweep ${this.fullSweepEnabled ? 'ENABLED (03:00)' : 'disabled'}, ` +
+        `targeted sync ${this.targetedNightlyEnabled ? 'ENABLED (23:00 Asia/Ho_Chi_Minh)' : 'disabled'}, ` +
+        `Lark customer queue ${this.larkCustomerEnabled ? 'ENABLED (every minute)' : 'disabled'}, ` +
+        `webhook reconcile ${this.reconcileEnabled ? 'ENABLED (every 6h)' : 'disabled'}`,
     );
   }
 
@@ -153,29 +160,93 @@ export class SyncSchedulerService {
     }
   }
 
-   @Cron(CronExpression.EVERY_MINUTE, { name: 'lark-customer-sync' })
-   async syncLarkCustomers(): Promise<void> {
-     if (!this.larkCustomerEnabled) return;
-     try {
-       const result = await this.larkCustomerSync.syncPending();
-       if (result.processed > 0) {
-         this.logger.log(
-           `Lark customer queue: ${result.synced} synced, ${result.deleted} deleted, ${result.failed} failed`,
-         );
-       }
-     } catch (error: any) {
-       this.logger.error(`Lark customer queue failed: ${error?.message}`);
-     }
-   }
+  /**
+   * Daily fallback for the four operational datasets that must remain current.
+   * Webhooks provide near-real-time updates; this incremental pass repairs any
+   * missed deliveries without running the expensive all-entity full sync.
+   */
+  @Cron('0 23 * * *', {
+    name: 'nightly-targeted-sync',
+    timeZone: 'Asia/Ho_Chi_Minh',
+  })
+  async nightlyTargetedSync(): Promise<void> {
+    if (!this.targetedNightlyEnabled) return;
+    if (this.targetedNightlyRunning || this.incrementalRunning) {
+      this.logger.warn('Skipping targeted 23:00 sync: another sync is running');
+      return;
+    }
+    if (await this.syncControl.isRunning(this.jobSyncName)) {
+      this.logger.warn('Skipping targeted 23:00 sync: a manual sync is running');
+      return;
+    }
+
+    this.targetedNightlyRunning = true;
+    const started = Date.now();
+    const entities = ['customer', 'product-onhand', 'order', 'invoice'] as const;
+    const completed: string[] = [];
+    const failed: Array<{ entity: string; error: string }> = [];
+
+    try {
+      this.logger.log(
+        `Starting targeted 23:00 incremental sync: ${entities.join(', ')}`,
+      );
+      for (const entity of entities) {
+        try {
+          this.logger.log(`Targeted sync starting: ${entity}`);
+          await this.orchestrator.syncSingle(entity, 'incremental');
+          completed.push(entity);
+          this.logger.log(`Targeted sync completed: ${entity}`);
+        } catch (error: any) {
+          const message = error?.message ?? String(error);
+          failed.push({ entity, error: message });
+          this.logger.error(`Targeted sync failed for ${entity}: ${message}`);
+        }
+      }
+
+      try {
+        const result = await this.larkCustomerSync.drainPending();
+        this.logger.log(
+          `Targeted Customer-to-Lark drain: ${result.synced} synced, ` +
+            `${result.deleted} deleted, ${result.failed} failed`,
+        );
+      } catch (error: any) {
+        const message = error?.message ?? String(error);
+        failed.push({ entity: 'customer-lark', error: message });
+        this.logger.error(`Targeted Customer-to-Lark drain failed: ${message}`);
+      }
+
+      this.logger.log(
+        `Targeted 23:00 sync finished in ${((Date.now() - started) / 1000).toFixed(0)}s: ` +
+          `completed=[${completed.join(', ')}], failed=[${failed.map((item) => item.entity).join(', ')}]`,
+      );
+    } finally {
+      this.targetedNightlyRunning = false;
+    }
+  }
+
+  @Cron(CronExpression.EVERY_MINUTE, { name: 'lark-customer-sync' })
+  async syncLarkCustomers(): Promise<void> {
+    if (!this.larkCustomerEnabled) return;
+    try {
+      const result = await this.larkCustomerSync.syncPending();
+      if (result.processed > 0) {
+        this.logger.log(
+          `Lark customer queue: ${result.synced} synced, ${result.deleted} deleted, ${result.failed} failed`,
+        );
+      }
+    } catch (error: any) {
+      this.logger.error(`Lark customer queue failed: ${error?.message}`);
+    }
+  }
 
 
-   /**
-    * Detect webhook subscription drift.
-    *
-    * Reports drift only; repair remains an explicit admin action.
-    */
-   @Cron(CronExpression.EVERY_6_HOURS, { name: 'webhook-reconcile' })
-   async webhookReconcile(): Promise<void> {
+  /**
+   * Detect webhook subscription drift.
+   *
+   * Reports drift only; repair remains an explicit admin action.
+   */
+  @Cron(CronExpression.EVERY_6_HOURS, { name: 'webhook-reconcile' })
+  async webhookReconcile(): Promise<void> {
     if (!this.reconcileEnabled) return;
 
     try {

@@ -44,22 +44,28 @@ import { LarkModule } from './services/lark/lark.module';
         WEBHOOK_PUBLIC_BASE_URL: Joi.string().uri().optional(),
         // Protects the /webhooks admin endpoints. Without it they reject everything.
         ADMIN_API_KEY: Joi.string().allow('').default(''),
-        // Scheduled jobs (see SyncSchedulerService). Both default to on.
-        SYNC_CRON_ENABLED: Joi.boolean().default(true),
-        SYNC_FULL_SWEEP_CRON_ENABLED: Joi.boolean().default(true),
+        // Scheduled jobs. Full/hourly syncs are opt-in; the targeted operational
+        // fallback runs customer, stock, order, and invoice daily at 23:00.
+        SYNC_CRON_ENABLED: Joi.boolean().default(false),
+        SYNC_FULL_SWEEP_CRON_ENABLED: Joi.boolean().default(false),
+        SYNC_NIGHTLY_TARGETED_CRON_ENABLED: Joi.boolean().default(true),
         WEBHOOK_RECONCILE_CRON_ENABLED: Joi.boolean().default(true),
         // Sync tuning (optional, with defaults)
         SYNC_FETCH_CONCURRENCY: Joi.number().default(5),
         SYNC_DB_BATCH_SIZE: Joi.number().default(500),
         SYNC_RATE_LIMIT_PER_HOUR: Joi.number().default(4500),
-         SYNC_RATE_LIMIT_BURST: Joi.number().default(1),
-         // Lark Base customer outbound sync
-         LARK_APP_ID: Joi.string().required(),
-         LARK_APP_SECRET: Joi.string().required(),
-         LARK_CUSTOMER_BASE_ID: Joi.string().required(),
-         LARK_CUSTOMER_TABLE_ID: Joi.string().required(),
-         LARK_CUSTOMER_SYNC_CRON_ENABLED: Joi.boolean().default(false),
-         LARK_CUSTOMER_SYNC_BATCH_SIZE: Joi.number().integer().min(1).max(100).default(50),
+        SYNC_RATE_LIMIT_BURST: Joi.number().default(1),
+        // Lark Base customer outbound sync
+        LARK_APP_ID: Joi.string().required(),
+        LARK_APP_SECRET: Joi.string().required(),
+        LARK_CUSTOMER_BASE_ID: Joi.string().required(),
+        LARK_CUSTOMER_TABLE_ID: Joi.string().required(),
+        LARK_CUSTOMER_SYNC_CRON_ENABLED: Joi.boolean().default(false),
+        LARK_CUSTOMER_SYNC_BATCH_SIZE: Joi.number()
+          .integer()
+          .min(1)
+          .max(100)
+          .default(50),
       }).unknown(true),
     }),
     // Drives the incremental sync + webhook drift cron jobs.
