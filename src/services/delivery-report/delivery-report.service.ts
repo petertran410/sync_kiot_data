@@ -20,8 +20,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import {
   assertDeliveryReportPassword,
   createDeliveryReportToken,
-  DELIVERY_REPORT_IMAGE_URL_TTL_SECONDS,
-  signDeliveryReportImage,
+  signSharedDeliveryReportImage,
 } from './delivery-report-auth';
 
 type UploadedImage = {
@@ -240,6 +239,7 @@ export class DeliveryReportService {
     buffer: Buffer;
     mimeType: string;
     fileName: string;
+    relativePath: string;
   }> {
     const image = await this.prisma.deliveryReportImage.findUnique({
       where: { id },
@@ -252,6 +252,7 @@ export class DeliveryReportService {
         buffer: await readFile(filePath),
         mimeType: image.mimeType,
         fileName: image.fileName,
+        relativePath: image.relativePath,
       };
     } catch {
       throw new NotFoundException('Delivery report image file not found');
@@ -393,7 +394,9 @@ export class DeliveryReportService {
     return report;
   }
 
-  private imageUrls(images: Array<{ id: number }>): string[] {
+  private imageUrls(
+    images: Array<{ id: number; relativePath: string }>,
+  ): string[] {
     if (!images.length) return [];
     if (!this.tokenSecret) {
       throw new Error('Packing image signing is not configured');
@@ -410,14 +413,15 @@ export class DeliveryReportService {
       );
     }
 
-    const expiresAt =
-      Math.floor(Date.now() / 1000) + DELIVERY_REPORT_IMAGE_URL_TTL_SECONDS;
-    return images.map(({ id }) => {
-      const url = new URL(`/packing/shared-images/${id}`, publicUrl.origin);
-      url.searchParams.set('expires', String(expiresAt));
+    return images.map(({ id, relativePath }) => {
+      const storedFileName = basename(relativePath);
+      const url = new URL(
+        `/packing/shared-images/${id}/${encodeURIComponent(storedFileName)}`,
+        publicUrl.origin,
+      );
       url.searchParams.set(
         'signature',
-        signDeliveryReportImage(id, expiresAt, this.tokenSecret),
+        signSharedDeliveryReportImage(id, storedFileName, this.tokenSecret),
       );
       return url.toString();
     });

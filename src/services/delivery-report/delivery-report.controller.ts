@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   HttpCode,
+  NotFoundException,
   Param,
   ParseIntPipe,
   Post,
@@ -21,6 +22,7 @@ import {
   DELIVERY_REPORT_COOKIE,
   DeliveryReportAuthGuard,
   verifyDeliveryReportImage,
+  verifySharedDeliveryReportImage,
 } from './delivery-report-auth';
 import { DeliveryReportService } from './delivery-report.service';
 
@@ -120,12 +122,46 @@ export class DeliveryReportController {
     @Query('signature') signature: string,
     @Res() response: Response,
   ) {
+    return this.serveSharedImage(id, expires, signature, response);
+  }
+
+  @Get('shared-images/:id/:storedFileName')
+  async sharedImageFile(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('storedFileName') storedFileName: string,
+    @Query('expires') expires: string | undefined,
+    @Query('signature') signature: string,
+    @Res() response: Response,
+  ) {
+    return this.serveSharedImage(
+      id,
+      expires,
+      signature,
+      response,
+      storedFileName,
+    );
+  }
+
+  private async serveSharedImage(
+    id: number,
+    expires: string | undefined,
+    signature: string,
+    response: Response,
+    storedFileName?: string,
+  ) {
     const secret = this.config.get<string>('PACKING_FORM_TOKEN_SECRET') ?? '';
-    if (!verifyDeliveryReportImage(id, expires, signature, secret)) {
-      throw new UnauthorizedException('Invalid or expired image URL');
+    const valid =
+      storedFileName && expires === undefined
+        ? verifySharedDeliveryReportImage(id, storedFileName, signature, secret)
+        : verifyDeliveryReportImage(id, expires ?? '', signature, secret);
+    if (!valid) {
+      throw new UnauthorizedException('Invalid image URL');
     }
 
     const image = await this.service.getImage(id);
+    if (storedFileName && storedFileName !== image.relativePath) {
+      throw new NotFoundException('Delivery report image not found');
+    }
     response.setHeader('Content-Type', image.mimeType);
     response.setHeader('Content-Disposition', 'inline');
     response.setHeader('Cache-Control', 'private, no-store');

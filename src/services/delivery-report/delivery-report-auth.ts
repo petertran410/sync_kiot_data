@@ -10,7 +10,6 @@ import { Request } from 'express';
 
 export const DELIVERY_REPORT_COOKIE = 'delivery_report_access';
 export const DELIVERY_REPORT_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60;
-export const DELIVERY_REPORT_IMAGE_URL_TTL_SECONDS = 24 * 60 * 60;
 
 type AccessTokenPayload = {
   exp: number;
@@ -31,6 +30,40 @@ export function signDeliveryReportImage(
   secret: string,
 ): string {
   return sign(`delivery-report-image:${imageId}:${expiresAt}`, secret);
+}
+
+export function signSharedDeliveryReportImage(
+  imageId: number,
+  storedFileName: string,
+  secret: string,
+): string {
+  return sign(
+    `delivery-report-shared-image:${imageId}:${storedFileName}`,
+    secret,
+  );
+}
+
+export function verifySharedDeliveryReportImage(
+  imageId: number,
+  storedFileName: string,
+  signature: string,
+  secret: string,
+): boolean {
+  if (
+    !secret ||
+    !Number.isSafeInteger(imageId) ||
+    imageId <= 0 ||
+    typeof storedFileName !== 'string' ||
+    !storedFileName ||
+    typeof signature !== 'string'
+  ) {
+    return false;
+  }
+
+  return safeEqual(
+    signature,
+    signSharedDeliveryReportImage(imageId, storedFileName, secret),
+  );
 }
 
 export function verifyDeliveryReportImage(

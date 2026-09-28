@@ -6,6 +6,7 @@ import * as request from 'supertest';
 import {
   DeliveryReportAuthGuard,
   signDeliveryReportImage,
+  signSharedDeliveryReportImage,
 } from './delivery-report-auth';
 import { DeliveryReportController } from './delivery-report.controller';
 import { DeliveryReportService } from './delivery-report.service';
@@ -43,6 +44,7 @@ describe('DeliveryReportController shared image', () => {
       buffer: Buffer.from('image-bytes'),
       mimeType: 'image/webp',
       fileName: 'image.webp',
+      relativePath: 'stored-image.webp',
     });
   });
 
@@ -60,6 +62,39 @@ describe('DeliveryReportController shared image', () => {
     expect(response.headers['cache-control']).toBe('private, no-store');
     expect(response.body).toEqual(Buffer.from('image-bytes'));
     expect(getImage).toHaveBeenCalledWith(42);
+  });
+
+  it('serves a stable signed image URL and rejects another filename', async () => {
+    const signature = signSharedDeliveryReportImage(
+      42,
+      'stored-image.webp',
+      'test-secret',
+    );
+
+    const response = await request(app.getHttpServer() as Server)
+      .get(`/packing/shared-images/42/stored-image.webp?signature=${signature}`)
+      .expect(200);
+    expect(response.headers['content-type']).toMatch(/^image\/webp/);
+
+    await request(app.getHttpServer() as Server)
+      .get(`/packing/shared-images/42/wrong.jpg?signature=${signature}`)
+      .expect(401);
+  });
+
+  it('keeps previously issued expiring image URLs valid until their expiry', async () => {
+    const expires = Math.floor(Date.now() / 1000) + 300;
+    const signature = signDeliveryReportImage(42, expires, 'test-secret');
+
+    await request(app.getHttpServer() as Server)
+      .get(
+        `/packing/shared-images/42/stored-image.webp?expires=${expires}&signature=${signature}`,
+      )
+      .expect(200);
+    await request(app.getHttpServer() as Server)
+      .get(
+        `/packing/shared-images/42/wrong.jpg?expires=${expires}&signature=${signature}`,
+      )
+      .expect(404);
   });
 
   it('rejects unsigned and expired URLs while keeping the original route private', async () => {

@@ -7,7 +7,7 @@ import {
   DeliveryReportWebhookStatus,
   Prisma,
 } from '@prisma/client';
-import { verifyDeliveryReportImage } from './delivery-report-auth';
+import { verifySharedDeliveryReportImage } from './delivery-report-auth';
 import { DeliveryReportService } from './delivery-report.service';
 
 describe('DeliveryReportService webhook images', () => {
@@ -29,6 +29,7 @@ describe('DeliveryReportService webhook images', () => {
       images: imageIds.map((id) => ({
         id,
         fileName: `image-${id}.webp`,
+        relativePath: `image-${id}.webp`,
       })),
       invoices: [],
     };
@@ -75,11 +76,14 @@ describe('DeliveryReportService webhook images', () => {
       const url = new URL(rawUrl);
       const id = index + 7;
       expect(url.origin).toBe('https://example.com');
-      expect(url.pathname).toBe(`/packing/shared-images/${id}`);
+      expect(url.pathname).toBe(
+        `/packing/shared-images/${id}/image-${id}.webp`,
+      );
+      expect(url.searchParams.has('expires')).toBe(false);
       expect(
-        verifyDeliveryReportImage(
+        verifySharedDeliveryReportImage(
           id,
-          url.searchParams.get('expires') ?? '',
+          `image-${id}.webp`,
           url.searchParams.get('signature') ?? '',
           'test-secret',
         ),

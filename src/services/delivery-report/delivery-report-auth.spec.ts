@@ -1,10 +1,11 @@
 import {
   createDeliveryReportToken,
   DELIVERY_REPORT_TOKEN_TTL_SECONDS,
-  DELIVERY_REPORT_IMAGE_URL_TTL_SECONDS,
   signDeliveryReportImage,
+  signSharedDeliveryReportImage,
   verifyDeliveryReportImage,
   verifyDeliveryReportToken,
+  verifySharedDeliveryReportImage,
 } from './delivery-report-auth';
 
 describe('delivery report auth', () => {
@@ -32,8 +33,7 @@ describe('delivery report auth', () => {
   });
 
   it('accepts only a signed, unexpired URL for the matching image', () => {
-    const expiresAt =
-      Math.floor(Date.now() / 1000) + DELIVERY_REPORT_IMAGE_URL_TTL_SECONDS;
+    const expiresAt = Math.floor(Date.now() / 1000) + 60;
     const signature = signDeliveryReportImage(42, expiresAt, 'test-secret');
 
     expect(
@@ -84,5 +84,53 @@ describe('delivery report auth', () => {
         'test-secret',
       ),
     ).toBe(false);
+  });
+
+  it('keeps a shared image link valid independently of the session lifetime', () => {
+    const signature = signSharedDeliveryReportImage(
+      42,
+      'stored-image.webp',
+      'test-secret',
+    );
+    const verify = () =>
+      verifySharedDeliveryReportImage(
+        42,
+        'stored-image.webp',
+        signature,
+        'test-secret',
+      );
+    expect(verify()).toBe(true);
+    expect(
+      verifySharedDeliveryReportImage(
+        43,
+        'stored-image.webp',
+        signature,
+        'test-secret',
+      ),
+    ).toBe(false);
+    expect(
+      verifySharedDeliveryReportImage(
+        42,
+        'other.webp',
+        signature,
+        'test-secret',
+      ),
+    ).toBe(false);
+    expect(
+      verifySharedDeliveryReportImage(
+        42,
+        'stored-image.webp',
+        signature,
+        'other-secret',
+      ),
+    ).toBe(false);
+
+    const now = Date.now;
+    Date.now = () => now() + 365 * 24 * 60 * 60 * 1000;
+    try {
+      expect(verify()).toBe(true);
+    } finally {
+      Date.now = now;
+    }
   });
 });
