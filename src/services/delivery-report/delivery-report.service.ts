@@ -222,9 +222,12 @@ export class DeliveryReportService {
       throw error;
     }
 
-    await this.sendWebhook(report.id);
-    const finalReport = await this.getReport(report.id);
-    return this.serializeReport(finalReport);
+    const response = this.serializeReport({
+      ...report,
+      invoices: invoices.map((invoice) => ({ invoice })),
+    });
+    this.scheduleWebhook(report.id);
+    return response;
   }
 
   async retryWebhook(id: number) {
@@ -279,6 +282,17 @@ export class DeliveryReportService {
   @Cron('*/5 * * * *', { name: 'delivery-report-webhook-retry' })
   async scheduledWebhookRetry(): Promise<void> {
     await this.retryPendingReports();
+  }
+
+  private scheduleWebhook(id: number): void {
+    setImmediate(() => {
+      void this.sendWebhook(id).catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(
+          `Delivery report webhook ${id} could not be dispatched: ${message}`,
+        );
+      });
+    });
   }
 
   private async sendWebhook(id: number): Promise<void> {

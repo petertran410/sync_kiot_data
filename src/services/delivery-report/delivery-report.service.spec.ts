@@ -2,7 +2,11 @@ import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
 import { of } from 'rxjs';
 import { PrismaService } from '../../prisma/prisma.service';
-import { DeliveryReportWebhookStatus } from '@prisma/client';
+import {
+  DeliveryReportPaymentMethod,
+  DeliveryReportWebhookStatus,
+  Prisma,
+} from '@prisma/client';
 import { verifyDeliveryReportImage } from './delivery-report-auth';
 import { DeliveryReportService } from './delivery-report.service';
 
@@ -31,6 +35,7 @@ describe('DeliveryReportService webhook images', () => {
     const prisma = {
       deliveryReport: {
         findUnique: jest.fn().mockResolvedValue(report),
+        findMany: jest.fn().mockResolvedValue([{ id: 6 }]),
         update: jest
           .fn<Promise<typeof report>, [StatusUpdate]>()
           .mockResolvedValue(report),
@@ -112,5 +117,88 @@ describe('DeliveryReportService webhook images', () => {
     expect(failedUpdate?.data.webhookLastError).toContain(
       'WEBHOOK_PUBLIC_BASE_URL',
     );
+  });
+
+  it('picks up a persisted pending report on the retry sweep', async () => {
+    const { service, http, prisma } = setup([7]);
+
+    await service.retryPendingReports();
+
+    expect(prisma.deliveryReport.findMany).toHaveBeenCalledTimes(1);
+    expect(http.post).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('DeliveryReportService creation', () => {
+  it('returns the saved report before webhook delivery finishes', async () => {
+    const invoice = { id: 101, code: 'HD000101', customerName: 'Customer' };
+    const createdAt = new Date('2026-09-28T10:00:00.000Z');
+    const created = {
+      id: 6,
+      code: 'TMP-temporary',
+      packageCount: 2,
+      paymentMethod: DeliveryReportPaymentMethod.CASH,
+      cashAmount: new Prisma.Decimal(1234567),
+      note: null,
+      createdAt,
+      webhookStatus: DeliveryReportWebhookStatus.PENDING,
+      webhookAttempts: 0,
+      webhookLastError: null,
+      webhookSentAt: null,
+      images: [],
+    };
+    const saved = { ...created, code: 'BD000006' };
+    const transaction = {
+      deliveryReport: {
+        create: jest.fn().mockResolvedValue(created),
+        update: jest.fn().mockResolvedValue(saved),
+      },
+    };
+    const prisma = {
+      invoice: { findMany: jest.fn().mockResolvedValue([invoice]) },
+      $transaction: jest.fn(
+        async (callback: (tx: typeof transaction) => Promise<typeof saved>) =>
+          callback(transaction),
+      ),
+      deliveryReport: { findUnique: jest.fn() },
+    };
+    const service = new DeliveryReportService(
+      prisma as unknown as PrismaService,
+      {} as HttpService,
+      { get: () => undefined } as unknown as ConfigService,
+    );
+    const pendingDelivery = new Promise<void>(() => undefined);
+    const dispatch = jest
+      .spyOn(
+        service as unknown as { sendWebhook: (id: number) => Promise<void> },
+        'sendWebhook',
+      )
+      .mockReturnValue(pendingDelivery);
+
+    const response = await service.create(
+      {
+        invoiceIds: [101],
+        packageCount: 2,
+        paymentMethod: DeliveryReportPaymentMethod.CASH,
+        cashAmount: '1234567',
+        note: '',
+      },
+      [],
+    );
+
+    expect(response).toEqual(
+      expect.objectContaining({
+        id: 6,
+        code: 'BD000006',
+        cashAmount: 1234567,
+        webhookStatus: DeliveryReportWebhookStatus.PENDING,
+        invoices: [{ invoiceId: 101, invoiceCode: 'HD000101' }],
+        images: [],
+      }),
+    );
+    expect(prisma.deliveryReport.findUnique).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(dispatch).toHaveBeenCalledWith(6);
   });
 });

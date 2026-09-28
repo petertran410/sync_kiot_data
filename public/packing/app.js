@@ -22,6 +22,7 @@
   const paymentOptions = [...document.querySelectorAll('input[name="paymentMethod"]')];
   const cashField = $('#cash-amount-field');
   const cashAmount = $('#cash-amount');
+  const cashFormatter = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
   const submitButton = $('#submit-button');
   const submitMessage = $('#submit-message');
 
@@ -222,6 +223,23 @@
     });
   });
 
+  cashAmount.addEventListener('input', () => {
+    const value = cashAmount.value;
+    const caret = cashAmount.selectionStart ?? value.length;
+    const digitsBeforeCaret = value.slice(0, caret).replace(/\D/g, '').length;
+    const digits = value.replace(/\D/g, '');
+    const formatted = digits ? cashFormatter.format(BigInt(digits)) : '';
+    cashAmount.value = formatted;
+
+    let position = 0;
+    let digitCount = 0;
+    while (position < formatted.length && digitCount < digitsBeforeCaret) {
+      if (/\d/.test(formatted[position])) digitCount++;
+      position++;
+    }
+    cashAmount.setSelectionRange(position, position);
+  });
+
   function addSelectedFiles(input) {
     state.files = [...state.files, ...Array.from(input.files || [])].slice(0, 10);
     input.value = '';
@@ -267,7 +285,7 @@
     formData.append('invoiceIds', JSON.stringify(state.invoices.map((invoice) => invoice.id)));
     formData.append('packageCount', $('#package-count').value);
     formData.append('paymentMethod', paymentMethod);
-    formData.append('cashAmount', paymentMethod === 'CASH' ? cashAmount.value : '');
+    formData.append('cashAmount', paymentMethod === 'CASH' ? cashAmount.value.replaceAll(',', '') : '');
     formData.append('note', $('#note').value);
     state.files.forEach((file) => formData.append('images', file));
 
@@ -278,11 +296,7 @@
         method: 'POST',
         body: formData,
       });
-      const webhookText =
-        report.webhookStatus === 'SENT'
-          ? 'Webhook đã gửi thành công.'
-          : 'Đã lưu, webhook sẽ được tự động thử lại.';
-      setMessage(`Đã tạo ${report.code}. ${webhookText}`, 'success');
+      setMessage(`Đã lưu ${report.code}. Thông báo sẽ được gửi tự động.`, 'success');
       reportForm.reset();
       state.invoices = [];
       state.files = [];
