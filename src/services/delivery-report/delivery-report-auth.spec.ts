@@ -1,6 +1,9 @@
 import {
   createDeliveryReportToken,
   DELIVERY_REPORT_TOKEN_TTL_SECONDS,
+  DELIVERY_REPORT_IMAGE_URL_TTL_SECONDS,
+  signDeliveryReportImage,
+  verifyDeliveryReportImage,
   verifyDeliveryReportToken,
 } from './delivery-report-auth';
 
@@ -26,5 +29,60 @@ describe('delivery report auth', () => {
     } finally {
       Date.now = now;
     }
+  });
+
+  it('accepts only a signed, unexpired URL for the matching image', () => {
+    const expiresAt =
+      Math.floor(Date.now() / 1000) + DELIVERY_REPORT_IMAGE_URL_TTL_SECONDS;
+    const signature = signDeliveryReportImage(42, expiresAt, 'test-secret');
+
+    expect(
+      verifyDeliveryReportImage(
+        42,
+        String(expiresAt),
+        signature,
+        'test-secret',
+      ),
+    ).toBe(true);
+    expect(
+      verifyDeliveryReportImage(
+        43,
+        String(expiresAt),
+        signature,
+        'test-secret',
+      ),
+    ).toBe(false);
+    expect(
+      verifyDeliveryReportImage(
+        42,
+        String(expiresAt),
+        signature,
+        'other-secret',
+      ),
+    ).toBe(false);
+    expect(
+      verifyDeliveryReportImage(42, String(expiresAt), signature, ''),
+    ).toBe(false);
+    expect(
+      verifyDeliveryReportImage(42, 'not-a-date', signature, 'test-secret'),
+    ).toBe(false);
+    expect(
+      verifyDeliveryReportImage(
+        42,
+        String(expiresAt),
+        'tampered',
+        'test-secret',
+      ),
+    ).toBe(false);
+
+    const past = Math.floor(Date.now() / 1000) - 1;
+    expect(
+      verifyDeliveryReportImage(
+        42,
+        String(past),
+        signDeliveryReportImage(42, past, 'test-secret'),
+        'test-secret',
+      ),
+    ).toBe(false);
   });
 });

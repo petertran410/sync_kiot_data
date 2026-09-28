@@ -20,6 +20,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import {
   assertDeliveryReportPassword,
   createDeliveryReportToken,
+  DELIVERY_REPORT_IMAGE_URL_TTL_SECONDS,
+  signDeliveryReportImage,
 } from './delivery-report-auth';
 
 type UploadedImage = {
@@ -56,6 +58,7 @@ export class DeliveryReportService {
   private readonly formPassword: string;
   private readonly tokenSecret: string;
   private readonly webhookUrl: string;
+  private readonly publicBaseUrl: string;
   private readonly webhookTimeoutMs: number;
   private readonly sending = new Set<number>();
 
@@ -69,6 +72,8 @@ export class DeliveryReportService {
     this.uploadDir =
       config.get<string>('PACKING_UPLOADS_DIR') ?? '/app/uploads/packing';
     this.webhookUrl = config.get<string>('PACKING_WEBHOOK_URL') ?? '';
+    this.publicBaseUrl =
+      config.get<string>('WEBHOOK_PUBLIC_BASE_URL')?.replace(/\/+$/, '') ?? '';
     this.webhookTimeoutMs = Number(
       config.get<string>('PACKING_WEBHOOK_TIMEOUT_MS') ?? 10000,
     );
@@ -212,7 +217,6 @@ export class DeliveryReportService {
           include: { images: true },
         });
       });
-
     } catch (error) {
       await this.removeStoredImages(storedImages);
       throw error;
@@ -297,15 +301,26 @@ export class DeliveryReportService {
       if (!this.webhookUrl) {
         throw new Error('PACKING_WEBHOOK_URL is not configured');
       }
+      const payload = report.webhookPayload;
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+        throw new Error('Stored delivery report webhook payload is invalid');
+      }
 
       await firstValueFrom(
-        this.http.post(this.webhookUrl, report.webhookPayload, {
-          timeout: this.webhookTimeoutMs,
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Idempotency-Key': String(id),
+        this.http.post(
+          this.webhookUrl,
+          {
+            ...payload,
+            imageUrls: this.imageUrls(report.images),
           },
-        }),
+          {
+            timeout: this.webhookTimeoutMs,
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Idempotency-Key': String(id),
+            },
+          },
+        ),
       );
 
       await this.prisma.deliveryReport.update({
@@ -364,6 +379,36 @@ export class DeliveryReportService {
     return report;
   }
 
+  private imageUrls(images: Array<{ id: number }>): string[] {
+    if (!images.length) return [];
+    if (!this.tokenSecret) {
+      throw new Error('Packing image signing is not configured');
+    }
+    if (!this.publicBaseUrl) {
+      throw new Error(
+        'WEBHOOK_PUBLIC_BASE_URL must be a public HTTPS URL for packing images',
+      );
+    }
+    const publicUrl = new URL(this.publicBaseUrl);
+    if (publicUrl.protocol !== 'https:') {
+      throw new Error(
+        'WEBHOOK_PUBLIC_BASE_URL must be a public HTTPS URL for packing images',
+      );
+    }
+
+    const expiresAt =
+      Math.floor(Date.now() / 1000) + DELIVERY_REPORT_IMAGE_URL_TTL_SECONDS;
+    return images.map(({ id }) => {
+      const url = new URL(`/packing/shared-images/${id}`, publicUrl.origin);
+      url.searchParams.set('expires', String(expiresAt));
+      url.searchParams.set(
+        'signature',
+        signDeliveryReportImage(id, expiresAt, this.tokenSecret),
+      );
+      return url.toString();
+    });
+  }
+
   private serializeReport(report: any): Record<string, unknown> {
     return {
       id: report.id,
@@ -406,7 +451,9 @@ export class DeliveryReportService {
       packageCount: input.packageCount,
       paymentMethod: input.paymentMethod,
       ...(input.paymentMethod === DeliveryReportPaymentMethod.CASH
-        ? { cashAmount: input.cashAmount == null ? 0 : Number(input.cashAmount) }
+        ? {
+            cashAmount: input.cashAmount == null ? 0 : Number(input.cashAmount),
+          }
         : {}),
       note: input.note,
       invoices: input.invoices.map((invoice) => ({

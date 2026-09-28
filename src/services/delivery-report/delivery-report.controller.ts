@@ -9,6 +9,7 @@ import {
   Query,
   Req,
   Res,
+  UnauthorizedException,
   UploadedFiles,
   UseGuards,
   UseInterceptors,
@@ -19,6 +20,7 @@ import { Request, Response } from 'express';
 import {
   DELIVERY_REPORT_COOKIE,
   DeliveryReportAuthGuard,
+  verifyDeliveryReportImage,
 } from './delivery-report-auth';
 import { DeliveryReportService } from './delivery-report.service';
 
@@ -81,24 +83,18 @@ export class DeliveryReportController {
   @Post('delivery-reports')
   @UseGuards(DeliveryReportAuthGuard)
   @UseInterceptors(
-    FileFieldsInterceptor(
-      [{ name: 'images', maxCount: 10 }],
-      {
-        limits: { files: 10, fileSize: 10 * 1024 * 1024 },
-        fileFilter: (_request, file, callback) => {
-          if (!file.mimetype.startsWith('image/')) {
-            callback(new Error('Only image files are allowed'), false);
-            return;
-          }
-          callback(null, true);
-        },
+    FileFieldsInterceptor([{ name: 'images', maxCount: 10 }], {
+      limits: { files: 10, fileSize: 10 * 1024 * 1024 },
+      fileFilter: (_request, file, callback) => {
+        if (!file.mimetype.startsWith('image/')) {
+          callback(new Error('Only image files are allowed'), false);
+          return;
+        }
+        callback(null, true);
       },
-    ),
+    }),
   )
-  create(
-    @Body() body: any,
-    @UploadedFiles() files: Record<string, any[]>,
-  ) {
+  create(@Body() body: any, @UploadedFiles() files: Record<string, any[]>) {
     return this.service.create(body, files?.images ?? []);
   }
 
@@ -114,6 +110,26 @@ export class DeliveryReportController {
       'Content-Disposition',
       `inline; filename="${image.fileName.replace(/"/g, '')}"`,
     );
+    response.send(image.buffer);
+  }
+
+  @Get('shared-images/:id')
+  async sharedImage(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('expires') expires: string,
+    @Query('signature') signature: string,
+    @Res() response: Response,
+  ) {
+    const secret = this.config.get<string>('PACKING_FORM_TOKEN_SECRET') ?? '';
+    if (!verifyDeliveryReportImage(id, expires, signature, secret)) {
+      throw new UnauthorizedException('Invalid or expired image URL');
+    }
+
+    const image = await this.service.getImage(id);
+    response.setHeader('Content-Type', image.mimeType);
+    response.setHeader('Content-Disposition', 'inline');
+    response.setHeader('Cache-Control', 'private, no-store');
+    response.setHeader('X-Content-Type-Options', 'nosniff');
     response.send(image.buffer);
   }
 

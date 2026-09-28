@@ -10,6 +10,7 @@ import { Request } from 'express';
 
 export const DELIVERY_REPORT_COOKIE = 'delivery_report_access';
 export const DELIVERY_REPORT_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60;
+export const DELIVERY_REPORT_IMAGE_URL_TTL_SECONDS = 24 * 60 * 60;
 
 type AccessTokenPayload = {
   exp: number;
@@ -22,6 +23,45 @@ function base64Url(value: string): string {
 
 function sign(value: string, secret: string): string {
   return createHmac('sha256', secret).update(value).digest('base64url');
+}
+
+export function signDeliveryReportImage(
+  imageId: number,
+  expiresAt: number,
+  secret: string,
+): string {
+  return sign(`delivery-report-image:${imageId}:${expiresAt}`, secret);
+}
+
+export function verifyDeliveryReportImage(
+  imageId: number,
+  expires: string,
+  signature: string,
+  secret: string,
+): boolean {
+  if (
+    !secret ||
+    !Number.isSafeInteger(imageId) ||
+    imageId <= 0 ||
+    typeof expires !== 'string' ||
+    !/^\d+$/.test(expires) ||
+    typeof signature !== 'string'
+  ) {
+    return false;
+  }
+
+  const expiresAt = Number(expires);
+  if (
+    !Number.isSafeInteger(expiresAt) ||
+    expiresAt <= Math.floor(Date.now() / 1000)
+  ) {
+    return false;
+  }
+
+  return safeEqual(
+    signature,
+    signDeliveryReportImage(imageId, expiresAt, secret),
+  );
 }
 
 function safeEqual(left: string, right: string): boolean {
@@ -106,7 +146,9 @@ export class DeliveryReportAuthGuard implements CanActivate {
     const token = getCookie(request, DELIVERY_REPORT_COOKIE);
 
     if (!token || !secret || !verifyDeliveryReportToken(token, secret)) {
-      throw new UnauthorizedException('Delivery report session is missing or expired');
+      throw new UnauthorizedException(
+        'Delivery report session is missing or expired',
+      );
     }
     return true;
   }
