@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#163b36" />
+    <title>Báo đơn giao hàng</title>
+    <link rel="stylesheet" href="/packing/styles.css" />
+  </head>
+  <body>
+    <main class="page-shell">
+      <section id="login-view" class="auth-panel" aria-labelledby="login-title">
+        <div class="brand-mark">ĐIỆP TRA</div>
+        <p class="eyebrow">KHO VẬN HÀNH</p>
+        <h1 id="login-title">Báo đơn giao hàng</h1>
+        <p class="muted">Nhập mật khẩu để mở biểu mẫu.</p>
+        <form id="login-form" class="stack-form">
+          <label for="password">Mật khẩu</label>
+          <input id="password" name="password" type="password" autocomplete="current-password" required />
+          <button class="primary-button" type="submit">Mở biểu mẫu</button>
+          <p id="login-error" class="form-error" role="alert"></p>
+        </form>
+      </section>
+
+      <section id="form-view" class="form-view" hidden aria-labelledby="form-title">
+        <header class="page-header">
+          <div>
+            <p class="eyebrow">KHO VẬN HÀNH</p>
+            <h1 id="form-title">Báo đơn giao hàng</h1>
+            <p class="muted">Chọn các hóa đơn thuộc cùng một lần giao hàng.</p>
+          </div>
+          <button id="logout-button" class="ghost-button" type="button">Đăng xuất</button>
+        </header>
+
+        <form id="delivery-report-form" class="report-form">
+          <div class="form-section">
+            <div class="section-heading">
+              <div>
+                <p class="section-kicker">01</p>
+                <h2>Hóa đơn</h2>
+              </div>
+              <span id="selected-count" class="count-label">0 hóa đơn</span>
+            </div>
+            <div class="search-field">
+              <label for="invoice-search">Tìm mã hóa đơn</label>
+              <input
+                id="invoice-search"
+                type="search"
+                autocomplete="off"
+                placeholder="Ví dụ: HD000123"
+                role="combobox"
+                aria-expanded="false"
+                aria-controls="invoice-results"
+              />
+              <div id="invoice-results" class="search-results" role="listbox" hidden></div>
+            </div>
+            <div id="selected-invoices" class="selected-invoices" aria-live="polite">
+              <p class="empty-state">Chưa chọn hóa đơn.</p>
+            </div>
+          </div>
+
+          <div class="form-grid">
+            <div class="form-section">
+              <div class="section-heading">
+                <div>
+                  <p class="section-kicker">02</p>
+                  <h2>Đóng gói</h2>
+                </div>
+              </div>
+              <label for="package-count">Tổng số kiện</label>
+              <input id="package-count" type="number" min="1" step="1" required placeholder="Nhập số kiện" />
+            </div>
+
+            <div class="form-section">
+              <div class="section-heading">
+                <div>
+                  <p class="section-kicker">03</p>
+                  <h2>Thanh toán</h2>
+                </div>
+              </div>
+              <fieldset class="payment-options">
+                <legend>Hình thức thanh toán</legend>
+                <label class="payment-option">
+                  <input type="radio" name="paymentMethod" value="TRANSFER" checked />
+                  <span>Chuyển khoản</span>
+                </label>
+                <label class="payment-option">
+                  <input type="radio" name="paymentMethod" value="CASH" />
+                  <span>Tiền mặt</span>
+                </label>
+              </fieldset>
+              <div id="cash-amount-field" class="conditional-field" hidden>
+                <label for="cash-amount">Số tiền mặt</label>
+                <input id="cash-amount" type="number" min="0" step="1000" placeholder="Nhập số tiền" />
+              </div>
+            </div>
+          </div>
+
+          <div class="form-section">
+            <div class="section-heading">
+              <div>
+                <p class="section-kicker">04</p>
+                <h2>Hình ảnh và ghi chú</h2>
+              </div>
+            </div>
+            <label for="images">Hình ảnh</label>
+            <input id="images" type="file" accept="image/*" capture="environment" multiple />
+            <div id="image-preview" class="image-preview" aria-live="polite"></div>
+            <label for="note">Ghi chú</label>
+            <textarea id="note" rows="4" maxlength="5000" placeholder="Nhập ghi chú nếu có"></textarea>
+          </div>
+
+          <div class="form-actions">
+            <p id="submit-message" class="status-message" role="status"></p>
+            <button id="submit-button" class="primary-button" type="submit">Tạo báo đơn</button>
+          </div>
+        </form>
+      </section>
+    </main>
+    <script src="/packing/app.js" defer></script>
+  </body>
+</html>

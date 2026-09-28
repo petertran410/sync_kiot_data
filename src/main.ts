@@ -1,5 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
+import * as express from 'express';
+import { join } from 'path';
 
 (BigInt.prototype as any).toJSON = function () {
   return this.toString();
@@ -12,6 +14,15 @@ async function bootstrap() {
     rawBody: true,
   });
   app.enableShutdownHooks();
+  app
+    .getHttpAdapter()
+    .getInstance()
+    .use(
+      '/packing',
+      express.static(join(process.cwd(), 'public', 'packing'), {
+        index: 'index.html',
+      }),
+    );
   await app.listen(process.env.PORT ?? 8083);
 }
 bootstrap();

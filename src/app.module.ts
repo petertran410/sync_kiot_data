@@ -14,6 +14,7 @@ import { WebhookAdminController } from './controllers/webhook-admin.controller';
 import { HttpModule } from '@nestjs/axios';
 import { LarkModule } from './services/lark/lark.module';
 import { SePayModule } from './services/sepay/sepay.module';
+import { DeliveryReportModule } from './services/delivery-report/delivery-report.module';
 
 @Module({
   imports: [
@@ -81,6 +82,15 @@ import { SePayModule } from './services/sepay/sepay.module';
           .default('dry-run'),
         SEPAY_WORKER_ENABLED: Joi.boolean().default(true),
         SEPAY_WORKER_POLL_MS: Joi.number().integer().min(500).default(2000),
+        // Public delivery-report form.
+        PACKING_FORM_PASSWORD: Joi.string().allow('').default(''),
+        PACKING_FORM_TOKEN_SECRET: Joi.string().allow('').default(''),
+        PACKING_WEBHOOK_URL: Joi.string().uri().allow('').default(''),
+        PACKING_UPLOADS_DIR: Joi.string().default('/app/uploads/packing'),
+        PACKING_WEBHOOK_TIMEOUT_MS: Joi.number()
+          .integer()
+          .min(1000)
+          .default(10000),
       }).unknown(true),
     }),
     // Drives the incremental sync + webhook drift cron jobs.
@@ -92,6 +102,7 @@ import { SePayModule } from './services/sepay/sepay.module';
     LarkModule,
     HttpModule,
     SePayModule,
+    DeliveryReportModule,
   ],
   controllers: [
     AppController,

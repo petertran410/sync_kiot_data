@@ -638,16 +638,17 @@ model Invoice {
   misaConfirmed          Boolean        @default(false)
   misaErrorMessage       String?
 
-  branch            Branch?            @relation(fields: [branchId], references: [id])
-  customer          Customer?          @relation(fields: [customerId], references: [id])
-  order             Order?             @relation(fields: [orderId], references: [id])
-  saleChannel       SaleChannel?       @relation(fields: [saleChannelId], references: [id])
-  soldBy            User?              @relation("InvoiceSoldBy", fields: [soldById], references: [kiotVietId])
+  branch            Branch?                 @relation(fields: [branchId], references: [id])
+  customer          Customer?               @relation(fields: [customerId], references: [id])
+  order             Order?                  @relation(fields: [orderId], references: [id])
+  saleChannel       SaleChannel?            @relation(fields: [saleChannelId], references: [id])
+  soldBy            User?                   @relation("InvoiceSoldBy", fields: [soldById], references: [kiotVietId])
   invoiceDelivery   InvoiceDelivery?
   invoiceDetails    InvoiceDetail[]
   invoiceSurcharges InvoiceSurcharge[]
   payments          Payment[]
-  Branch            Branch[]           @relation("BranchInvoices")
+  deliveryReports   DeliveryReportInvoice[]
+  Branch            Branch[]                @relation("BranchInvoices")
 
   @@index([kiotVietId])
   @@index([code])
@@ -743,6 +744,64 @@ model InvoiceSurcharge {
   @@index([invoiceId])
   @@index([surchargeId])
   @@index([isCurrent])
+}
+
+enum DeliveryReportPaymentMethod {
+  TRANSFER
+  CASH
+}
+
+enum DeliveryReportWebhookStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+model DeliveryReport {
+  id               Int                         @id @default(autoincrement())
+  code             String                      @unique
+  packageCount     Int
+  paymentMethod    DeliveryReportPaymentMethod
+  cashAmount       Decimal?                    @db.Decimal(15, 2)
+  note             String?
+  createdAt        DateTime                    @default(now())
+  updatedAt        DateTime                    @updatedAt
+  webhookStatus    DeliveryReportWebhookStatus @default(PENDING)
+  webhookAttempts  Int                         @default(0)
+  webhookLastError String?
+  webhookSentAt    DateTime?
+  webhookPayload   Json?
+  invoices         DeliveryReportInvoice[]
+  images           DeliveryReportImage[]
+
+  @@index([createdAt])
+  @@index([webhookStatus, updatedAt])
+}
+
+model DeliveryReportInvoice {
+  id               Int            @id @default(autoincrement())
+  deliveryReportId Int
+  invoiceId        Int
+  createdAt        DateTime       @default(now())
+  deliveryReport   DeliveryReport @relation(fields: [deliveryReportId], references: [id], onDelete: Cascade)
+  invoice          Invoice        @relation(fields: [invoiceId], references: [id])
+
+  @@unique([deliveryReportId, invoiceId])
+  @@index([invoiceId])
+  @@index([deliveryReportId])
+}
+
+model DeliveryReportImage {
+  id               Int            @id @default(autoincrement())
+  deliveryReportId Int
+  fileName         String
+  relativePath     String
+  mimeType         String
+  fileSize         Int
+  createdAt        DateTime       @default(now())
+  deliveryReport   DeliveryReport @relation(fields: [deliveryReportId], references: [id], onDelete: Cascade)
+
+  @@index([deliveryReportId])
 }
 
 model Payment {
