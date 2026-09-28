@@ -62,6 +62,12 @@ export class DeliveryReportController {
     return { success: true };
   }
 
+  @Get('session')
+  @UseGuards(DeliveryReportAuthGuard)
+  session() {
+    return { authenticated: true, expiresInDays: 7 };
+  }
+
   @Get('invoices')
   @UseGuards(DeliveryReportAuthGuard)
   searchInvoices(@Query('search') search = '') {

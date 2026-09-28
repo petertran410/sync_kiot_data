@@ -104,7 +104,12 @@
               </div>
             </div>
             <label for="images">Hình ảnh</label>
-            <input id="images" type="file" accept="image/*" capture="environment" multiple />
+            <div class="upload-actions">
+              <label class="upload-button" for="take-images">Chụp hình</label>
+              <input id="take-images" class="visually-hidden" type="file" accept="image/*" capture="environment" />
+              <label class="upload-button secondary" for="upload-images">Tải ảnh từ thiết bị</label>
+              <input id="upload-images" class="visually-hidden" type="file" accept="image/*" multiple />
+            </div>
             <div id="image-preview" class="image-preview" aria-live="polite"></div>
             <label for="note">Ghi chú</label>
             <textarea id="note" rows="4" maxlength="5000" placeholder="Nhập ghi chú nếu có"></textarea>

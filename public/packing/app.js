@@ -16,7 +16,8 @@
   const results = $('#invoice-results');
   const selectedInvoices = $('#selected-invoices');
   const selectedCount = $('#selected-count');
-  const imageInput = $('#images');
+  const cameraInput = $('#take-images');
+  const uploadInput = $('#upload-images');
   const imagePreview = $('#image-preview');
   const paymentOptions = [...document.querySelectorAll('input[name="paymentMethod"]')];
   const cashField = $('#cash-amount-field');
@@ -32,6 +33,21 @@
   function showLogin() {
     loginView.hidden = false;
     formView.hidden = true;
+  }
+
+  async function restoreSession() {
+    try {
+      const response = await fetch('/packing/session', {
+        credentials: 'same-origin',
+      });
+      if (response.ok) {
+        showForm();
+      } else {
+        showLogin();
+      }
+    } catch {
+      showLogin();
+    }
   }
 
   function setMessage(message, type = '') {
@@ -205,11 +221,14 @@
     });
   });
 
-  imageInput.addEventListener('change', () => {
-    state.files = [...state.files, ...Array.from(imageInput.files || [])].slice(0, 10);
-    imageInput.value = '';
+  function addSelectedFiles(input) {
+    state.files = [...state.files, ...Array.from(input.files || [])].slice(0, 10);
+    input.value = '';
     renderPreviews();
-  });
+  }
+
+  cameraInput.addEventListener('change', () => addSelectedFiles(cameraInput));
+  uploadInput.addEventListener('change', () => addSelectedFiles(uploadInput));
 
   function renderPreviews() {
     imagePreview.innerHTML = '';
@@ -288,4 +307,5 @@
   }
 
   renderSelectedInvoices();
+  restoreSession();
 })();
