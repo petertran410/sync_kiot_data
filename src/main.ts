@@ -21,6 +21,11 @@ async function bootstrap() {
       '/packing',
       express.static(join(process.cwd(), 'public', 'packing'), {
         index: 'index.html',
+        setHeaders: (response, filePath) => {
+          if (filePath.endsWith('index.html') || filePath.endsWith('app.js')) {
+            response.setHeader('Cache-Control', 'no-store');
+          }
+        },
       }),
     );
   await app.listen(process.env.PORT ?? 8083);

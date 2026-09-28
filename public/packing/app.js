@@ -38,7 +38,8 @@
   async function restoreSession() {
     try {
       const response = await fetch('/packing/session', {
-        credentials: 'same-origin',
+        credentials: 'include',
+        cache: 'no-store',
       });
       if (response.ok) {
         showForm();
@@ -57,7 +58,7 @@
 
   async function request(url, options = {}) {
     const response = await fetch(url, {
-      credentials: 'same-origin',
+      credentials: 'include',
       ...options,
     });
     if (response.status === 401) {

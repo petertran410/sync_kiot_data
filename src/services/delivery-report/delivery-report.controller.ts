@@ -7,6 +7,7 @@ import {
   ParseIntPipe,
   Post,
   Query,
+  Req,
   Res,
   UploadedFiles,
   UseGuards,
@@ -14,7 +15,7 @@ import {
 } from '@nestjs/common';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import { ConfigService } from '@nestjs/config';
-import { Response } from 'express';
+import { Request, Response } from 'express';
 import {
   DELIVERY_REPORT_COOKIE,
   DeliveryReportAuthGuard,
@@ -32,33 +33,36 @@ export class DeliveryReportController {
   @HttpCode(200)
   login(
     @Body() body: { password?: string },
+    @Req() request: Request,
     @Res({ passthrough: true }) response: Response,
   ) {
     const token = this.service.login(body?.password ?? '');
-    const secure = this.config.get<string>('NODE_ENV') === 'production';
-    response.setHeader(
-      'Set-Cookie',
-      [
-        `${DELIVERY_REPORT_COOKIE}=${encodeURIComponent(token)}`,
-        'Path=/',
-        'HttpOnly',
-        'SameSite=Lax',
-        `Max-Age=${7 * 24 * 60 * 60}`,
-        secure ? 'Secure' : '',
-      ]
-        .filter(Boolean)
-        .join('; '),
-    );
+    const forwardedProto = request.headers['x-forwarded-proto'];
+    const secure =
+      this.config.get<string>('NODE_ENV') === 'production' ||
+      request.protocol === 'https' ||
+      (typeof forwardedProto === 'string' &&
+        forwardedProto.split(',')[0].trim() === 'https');
+    response.cookie(DELIVERY_REPORT_COOKIE, token, {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure,
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+      path: '/',
+    });
+    response.setHeader('Cache-Control', 'no-store');
     return { success: true, expiresInDays: 7 };
   }
 
   @Post('logout')
   @HttpCode(200)
   logout(@Res({ passthrough: true }) response: Response) {
-    response.setHeader(
-      'Set-Cookie',
-      `${DELIVERY_REPORT_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`,
-    );
+    response.clearCookie(DELIVERY_REPORT_COOKIE, {
+      httpOnly: true,
+      sameSite: 'lax',
+      path: '/',
+    });
+    response.setHeader('Cache-Control', 'no-store');
     return { success: true };
   }
 
